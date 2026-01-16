@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 import streamlit as st
 from google import genai
+from google.genai import types
 
 from utils.cache import cached_data, cached_resource
 
@@ -46,19 +47,20 @@ def _hash_key(payload: Dict[str, Any]) -> str:
 @cached_data(ttl_seconds=3600)
 def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, config: Dict[str, Any]) -> str:
     client = _client(config["api_key"], config["timeout"])
-    tools = [{"google_search": {}}]
+    tools = [types.Tool(google_search=types.GoogleSearch())]
+    gen_config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=config["temperature"],
+        max_output_tokens=config["max_output_tokens"],
+        tools=tools,
+    )
     last_error: Optional[Exception] = None
     for attempt in range(3):
         try:
             response = client.models.generate_content(
                 model=config["model"],
                 contents=[{"role": "user", "parts": [{"text": user_prompt}]}],
-                system_instruction=system_prompt,
-                tools=tools,
-                generation_config={
-                    "temperature": config["temperature"],
-                    "max_output_tokens": config["max_output_tokens"],
-                },
+                config=gen_config,
             )
             text = _response_text(response)
             if text:
