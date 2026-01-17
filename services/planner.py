@@ -7,6 +7,7 @@ from services import llm
 from utils import validators
 
 SNIPPET_MAX_LENGTH = 500
+MISSING_DAY_BY_DAY_PLAN = "MISSING_DAY_BY_DAY_PLAN"
 
 
 class ItineraryResult(NamedTuple):
@@ -224,7 +225,7 @@ def normalize_itinerary(itin: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]
                         "sources": [],
                     }
                 )
-            warnings.append("MISSING_DAY_BY_DAY_PLAN")
+            warnings.append(MISSING_DAY_BY_DAY_PLAN)
         else:
             return {}, warnings, "MISSING_DAYS_LIST"
     else:
@@ -247,8 +248,8 @@ def normalize_itinerary(itin: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]
             _ensure_sources(normalized_day)
             normalized_days.append(normalized_day)
         if not normalized_days:
-            if "MISSING_DAY_BY_DAY_PLAN" not in warnings:
-                warnings.append("MISSING_DAY_BY_DAY_PLAN")
+            if MISSING_DAY_BY_DAY_PLAN not in warnings:
+                warnings.append(MISSING_DAY_BY_DAY_PLAN)
     itin["days"] = normalized_days
 
     for key in ["alternatives", "lodging", "food"]:
@@ -324,8 +325,8 @@ def generate_itinerary(
                 ts_days = trip_summary.get("days") if isinstance(trip_summary, dict) else None
                 if isinstance(ts_days, int) and ts_days > 0:
                     parsed["days"] = []
-                    if "MISSING_DAY_BY_DAY_PLAN" not in warnings:
-                        warnings.append("MISSING_DAY_BY_DAY_PLAN")
+                    if MISSING_DAY_BY_DAY_PLAN not in warnings:
+                        warnings.append(MISSING_DAY_BY_DAY_PLAN)
                 else:
                     parse_error = reason
             else:

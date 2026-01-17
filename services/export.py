@@ -9,14 +9,21 @@ from utils import validators
 
 
 def _set_font(pdf: FPDF):
-    system_font = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-    if system_font.exists():
-        try:
-            pdf.add_font("DejaVu", "", str(system_font), uni=True)
-            pdf.set_font("DejaVu", size=12)
-            return
-        except (OSError, RuntimeError):
-            pass
+    font_candidates = [
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/Library/Fonts/Arial Unicode.ttf"),
+        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+    ]
+    for font_path in font_candidates:
+        if font_path.exists():
+            try:
+                font_name = font_path.stem
+                pdf.add_font(font_name, "", str(font_path), uni=True)
+                pdf.set_font(font_name, size=12)
+                return
+            except (OSError, RuntimeError):
+                continue
     # Fallback to core font; may limit glyphs but avoids crash
     pdf.set_font("Helvetica", size=12)
 
@@ -32,7 +39,10 @@ def itinerary_to_pdf(itinerary: Dict) -> bytes:
     _set_font(pdf)
 
     def write_line(text: str):
-        pdf.multi_cell(0, 10, text=text, new_x="LMARGIN", new_y="NEXT")
+        try:
+            pdf.multi_cell(0, 10, text=text, new_x="LMARGIN", new_y="NEXT")
+        except TypeError:
+            pdf.multi_cell(0, 10, txt=text)
 
     summary = itinerary.get("trip_summary") if isinstance(itinerary.get("trip_summary"), dict) else {}
     write_line(f"Trip to {summary.get('destination', 'Destination')}")

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 def validate_profile(profile: Dict) -> Tuple[bool, str]:
@@ -15,7 +15,7 @@ def validate_profile(profile: Dict) -> Tuple[bool, str]:
     return True, ""
 
 
-def validate_itinerary_schema(itinerary: Dict) -> Tuple[bool, Optional[str]]:
+def validate_itinerary_schema(itinerary: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     if not isinstance(itinerary, dict):
         return False, "INVALID_ROOT_TYPE"
     if "trip_summary" not in itinerary:
