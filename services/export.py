@@ -1,31 +1,38 @@
 from datetime import datetime, timedelta
-from importlib import resources
+from pathlib import Path
 from typing import Dict
 
 from fpdf import FPDF
 from ics import Calendar, Event
 
+from utils import validators
+
 
 def _set_font(pdf: FPDF):
-    try:
-        with resources.path("fpdf.fonts", "DejaVuSans.ttf") as font_path:
-            pdf.add_font("DejaVu", "", font_path, uni=True)
+    system_font = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    if system_font.exists():
+        try:
+            pdf.add_font("DejaVu", "", str(system_font), uni=True)
             pdf.set_font("DejaVu", size=12)
             return
-    except (FileNotFoundError, OSError, RuntimeError):
-        # Fallback to core font; may limit glyphs but avoids crash
-        pdf.set_font("Helvetica", size=12)
+        except (OSError, RuntimeError):
+            pass
+    # Fallback to core font; may limit glyphs but avoids crash
+    pdf.set_font("Helvetica", size=12)
 
 
 def itinerary_to_pdf(itinerary: Dict) -> bytes:
     if not isinstance(itinerary, dict):
         raise ValueError("itinerary must be a dict")
+    ok, reason = validators.validate_itinerary_schema(itinerary)
+    if not ok:
+        raise ValueError(f"Invalid itinerary: {reason}")
     pdf = FPDF()
     pdf.add_page()
     _set_font(pdf)
 
     def write_line(text: str):
-        pdf.multi_cell(0, 10, txt=text)
+        pdf.multi_cell(0, 10, text=text, new_x="LMARGIN", new_y="NEXT")
 
     summary = itinerary.get("trip_summary") if isinstance(itinerary.get("trip_summary"), dict) else {}
     write_line(f"Trip to {summary.get('destination', 'Destination')}")
@@ -87,7 +94,10 @@ def itinerary_to_pdf(itinerary: Dict) -> bytes:
         pdf.ln(4)
         write_line(f"Disclaimer: {disclaimer}")
 
-    return pdf.output(dest="S").encode("latin-1")
+    output = pdf.output(dest="S")
+    if isinstance(output, (bytes, bytearray)):
+        return bytes(output)
+    return str(output).encode("latin-1", errors="replace")
 
 
 def itinerary_to_ics(itinerary: Dict) -> bytes:

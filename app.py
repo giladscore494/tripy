@@ -22,9 +22,9 @@ FILTER_HE = {
     "pace": "קצב",
     "mobility": "ניידות",
     "interests": "תחומי עניין",
-    "constraints": "הגבלות (תזונה, נגישות, אלרגיות)",
+    "constraints": "הגבלות",
     "lodging": "העדפת לינה",
-    "dates": "תאריכים (אופציונלי)",
+    "dates": "תאריכים",
     "open_to_alternatives": "פתוח ליעדים חלופיים?",
     "save_button": "שמור פרטי טיול",
     "save_success": "פרטי הטיול נשמרו.",
@@ -116,11 +116,16 @@ def _handle_generate(refinement: Optional[str] = None, force_destination: Option
             st.session_state["last_raw_response"] = raw_text
             if parse_error:
                 error_labels = {
-                    "MISSING_TOP_LEVEL_DAYS_LIST": "Invalid itinerary shape: missing top-level days list.",
-                    "trip_summary_missing_or_not_object": "Invalid itinerary shape: trip_summary missing or not an object.",
-                    "invalid_root_type": "Invalid itinerary shape: root must be a JSON object.",
+                    "MISSING_DAYS_LIST": "Invalid itinerary shape: missing top-level days list.",
+                    "DAYS_NOT_LIST": "Invalid itinerary shape: days must be an array.",
+                    "MISSING_TRIP_SUMMARY": "Invalid itinerary shape: trip_summary missing.",
+                    "TRIP_SUMMARY_NOT_OBJECT": "Invalid itinerary shape: trip_summary must be an object.",
+                    "INVALID_ROOT_TYPE": "Invalid itinerary shape: root must be a JSON object.",
                 }
-                friendly_error = error_labels.get(parse_error, parse_error)
+                if isinstance(parse_error, str) and parse_error.startswith("TRUNCATED_JSON"):
+                    friendly_error = parse_error
+                else:
+                    friendly_error = error_labels.get(parse_error, parse_error)
                 st.session_state["generation_error"] = friendly_error
                 st.error(f"Generation failed: {friendly_error}. Keeping previous itinerary.")
                 return
@@ -260,6 +265,7 @@ def sidebar():
         st.sidebar.caption(f"Configured timeout: {cfg.get('configured_timeout_sec')}s")
         st.sidebar.caption(f"Effective timeout: {cfg.get('timeout_sec')}s")
         st.sidebar.caption(f"Client timeout: {cfg.get('timeout_ms')}ms")
+        st.sidebar.caption(f"Max output tokens: {cfg.get('max_output_tokens')} (consider 4096 for detailed plans)")
         st.sidebar.caption(f"google-genai: {cfg.get('library_version')}")
         st.sidebar.caption(f"API key: {formatting.mask_key(cfg.get('api_key'))}")
         if status.get("warning"):

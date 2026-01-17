@@ -34,20 +34,23 @@ def _get_config() -> Dict[str, Any]:
 
     def _safe_int(val, default: int) -> int:
         try:
-            return int(val)
+            parsed = int(val)
+            return parsed if parsed > 0 else default
         except (TypeError, ValueError):
             return default
 
     configured_timeout_sec = _safe_float(secrets.get("GEMINI_TIMEOUT_SEC", 60), 60.0)
-    timeout_sec = max(configured_timeout_sec, float(MIN_TIMEOUT))
-    timeout_ms = int(timeout_sec * 1000)
+    effective_timeout_sec = max(configured_timeout_sec, float(MIN_TIMEOUT))
+    timeout_ms = int(effective_timeout_sec * 1000)
+    temperature = _safe_float(secrets.get("GEMINI_TEMPERATURE", 0.5), 0.5)
+    max_output_tokens = _safe_int(secrets.get("GEMINI_MAX_OUTPUT_TOKENS", 2048), 2048)
     return {
         "api_key": api_key,
         "model": secrets.get("GEMINI_MODEL", "gemini-3-flash-preview"),
-        "temperature": _safe_float(secrets.get("GEMINI_TEMPERATURE", 0.5), 0.5),
-        "max_output_tokens": _safe_int(secrets.get("GEMINI_MAX_OUTPUT_TOKENS", 2048), 2048),
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
         "configured_timeout_sec": configured_timeout_sec,
-        "timeout_sec": timeout_sec,
+        "timeout_sec": effective_timeout_sec,
         "timeout_ms": timeout_ms,
         "log_level": secrets.get("LOG_LEVEL", "INFO"),
         "library_version": _library_version(),
