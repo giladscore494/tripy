@@ -30,6 +30,28 @@ FILTER_HE = {
     "save_success": "פרטי הטיול נשמרו.",
 }
 
+TRAVELER_OPTIONS = {
+    "יחיד": "solo",
+    "זוג": "couple",
+    "חברים": "friends",
+    "משפחה": "family",
+}
+PACE_OPTIONS = {"רגוע": "relaxed", "מאוזן": "balanced", "אינטנסיבי": "packed"}
+BUDGET_OPTIONS = {"נמוך": "low", "בינוני": "medium", "גבוה": "high"}
+MOBILITY_OPTIONS = {"עם רכב": "with car", "בלי רכב": "no car"}
+LODGING_OPTIONS = {"מלון": "hotel", "הוסטל": "hostel", "דירה": "apartment", "גמיש": "flexible"}
+INTEREST_OPTIONS = {
+    "חופים": "beaches",
+    "חיי לילה": "nightlife",
+    "אוכל": "food",
+    "תרבות": "culture",
+    "קניות": "shopping",
+    "טבע": "nature",
+    "ספורט": "sports",
+    "מוזיאונים": "museums",
+    "פארקי שעשועים": "theme parks",
+}
+
 
 def _init_state():
     defaults = {
@@ -37,6 +59,7 @@ def _init_state():
         "trip_profile": None,
         "chosen_destination": None,
         "itinerary_json": None,
+        "itinerary_warnings": [],
         "revision_history": [],
         "generation_error": None,
         "last_raw_response": None,
@@ -46,12 +69,15 @@ def _init_state():
             st.session_state[key] = val
     if not isinstance(st.session_state.get("revision_history"), list):
         st.session_state["revision_history"] = []
+    if not isinstance(st.session_state.get("itinerary_warnings"), list):
+        st.session_state["itinerary_warnings"] = []
 
 
 def _reset_session_state():
     st.session_state["trip_profile"] = None
     st.session_state["chosen_destination"] = None
     st.session_state["itinerary_json"] = None
+    st.session_state["itinerary_warnings"] = []
     st.session_state["revision_history"] = []
     st.session_state["generation_error"] = None
     st.session_state["last_raw_response"] = None
@@ -64,6 +90,7 @@ def _get_valid_itinerary_from_state() -> Optional[Dict]:
         err = f"Internal error: itinerary_json must be an object, got {type(itinerary).__name__}"
         st.session_state["generation_error"] = err
         st.session_state["itinerary_json"] = None
+        st.session_state["itinerary_warnings"] = []
         st.error(err)
         return None
     return itinerary
@@ -72,20 +99,30 @@ def _get_valid_itinerary_from_state() -> Optional[Dict]:
 def _handle_generate(refinement: Optional[str] = None, force_destination: Optional[str] = None):
     st.session_state["generation_error"] = None
     st.session_state["last_raw_response"] = None
+    st.session_state["itinerary_warnings"] = []
     profile: Dict = st.session_state.get("trip_profile") or {}
     ok, msg = validators.validate_profile(profile)
     if not ok:
         st.error(msg)
         return
     destination = force_destination or profile.get("destination")
+    current_itinerary = _get_valid_itinerary_from_state()
     with st.spinner("Generating itinerary with Gemini..."):
         start = time.time()
         try:
-            itinerary, raw_text, parse_error = planner.generate_itinerary(profile, destination, refinement)
+            itinerary, raw_text, parse_error, warnings = planner.generate_itinerary(
+                profile, destination, refinement, current_itinerary=current_itinerary
+            )
             st.session_state["last_raw_response"] = raw_text
             if parse_error:
-                st.session_state["generation_error"] = parse_error
-                st.error(f"Generation failed: {parse_error}. Keeping previous itinerary.")
+                error_labels = {
+                    "MISSING_TOP_LEVEL_DAYS_LIST": "Invalid itinerary shape: missing top-level days list.",
+                    "trip_summary_missing_or_not_object": "Invalid itinerary shape: trip_summary missing or not an object.",
+                    "invalid_root_type": "Invalid itinerary shape: root must be a JSON object.",
+                }
+                friendly_error = error_labels.get(parse_error, parse_error)
+                st.session_state["generation_error"] = friendly_error
+                st.error(f"Generation failed: {friendly_error}. Keeping previous itinerary.")
                 return
             if not isinstance(itinerary, dict):
                 err_msg = f"Invalid itinerary type: {type(itinerary).__name__}"
@@ -96,12 +133,13 @@ def _handle_generate(refinement: Optional[str] = None, force_destination: Option
                 st.session_state["generation_error"] = "No itinerary returned."
                 st.error("No itinerary returned. Please retry. Keeping previous itinerary.")
                 return
-            if "trip_summary" not in itinerary or "days" not in itinerary:
-                err_msg = "Invalid itinerary shape returned."
+            if "trip_summary" not in itinerary:
+                err_msg = "Invalid itinerary shape returned: missing trip_summary"
                 st.session_state["generation_error"] = err_msg
                 st.error(f"Generation failed: {err_msg}. Keeping previous itinerary.")
                 return
             st.session_state["itinerary_json"] = itinerary
+            st.session_state["itinerary_warnings"] = warnings
             st.session_state["chosen_destination"] = itinerary.get("trip_summary", {}).get(
                 "destination", destination
             )
@@ -121,22 +159,27 @@ def intake_form():
     st.subheader(FILTER_HE["form_title"])
     with st.form("trip_form"):
         col1, col2, col3 = st.columns(3)
-        destination = col1.text_input(FILTER_HE["destination"], value="Miami")
+        destination = col1.text_input(FILTER_HE["destination"], value="תל אביב", placeholder="הקלד יעד")
         days = col2.number_input(FILTER_HE["days"], min_value=1, max_value=21, value=5)
-        traveler_type = col3.selectbox(FILTER_HE["traveler_type"], ["solo", "couple", "friends", "family"])
+        traveler_label = col3.selectbox(FILTER_HE["traveler_type"], list(TRAVELER_OPTIONS.keys()))
+        traveler_type = TRAVELER_OPTIONS[traveler_label]
 
-        budget = col1.selectbox(FILTER_HE["budget"], ["low", "medium", "high"])
-        pace = col2.selectbox(FILTER_HE["pace"], ["relaxed", "balanced", "packed"])
-        mobility = col3.selectbox(FILTER_HE["mobility"], ["with car", "no car"])
+        budget_label = col1.selectbox(FILTER_HE["budget"], list(BUDGET_OPTIONS.keys()))
+        budget = BUDGET_OPTIONS[budget_label]
+        pace_label = col2.selectbox(FILTER_HE["pace"], list(PACE_OPTIONS.keys()))
+        pace = PACE_OPTIONS[pace_label]
+        mobility_label = col3.selectbox(FILTER_HE["mobility"], list(MOBILITY_OPTIONS.keys()))
+        mobility = MOBILITY_OPTIONS[mobility_label]
 
         interests = st.multiselect(
             FILTER_HE["interests"],
-            ["beaches", "nightlife", "food", "culture", "shopping", "nature", "sports", "museums", "theme parks"],
-            default=["food", "beaches", "culture"],
+            list(INTEREST_OPTIONS.keys()),
+            default=["אוכל", "חופים", "תרבות"],
         )
-        constraints = st.text_input(FILTER_HE["constraints"], value="")
-        lodging = st.selectbox(FILTER_HE["lodging"], ["hotel", "hostel", "apartment", "flexible"])
-        dates = st.text_input(FILTER_HE["dates"])
+        constraints = st.text_input(FILTER_HE["constraints"], value="", placeholder="כשרות, אלרגיות, נגישות ועוד")
+        lodging_label = st.selectbox(FILTER_HE["lodging"], list(LODGING_OPTIONS.keys()))
+        lodging = LODGING_OPTIONS[lodging_label]
+        dates = st.text_input(FILTER_HE["dates"], placeholder="לדוגמה: 12-18 ביוני")
         open_to_alternatives = st.checkbox(FILTER_HE["open_to_alternatives"], value=True)
 
         submitted = st.form_submit_button(FILTER_HE["save_button"])
@@ -148,7 +191,7 @@ def intake_form():
                 "budget": budget,
                 "pace": pace,
                 "mobility": mobility,
-                "interests": interests,
+                "interests": [INTEREST_OPTIONS.get(label, label) for label in interests],
                 "constraints": constraints,
                 "lodging": lodging,
                 "dates": dates,
@@ -163,7 +206,7 @@ def render_alternatives() -> Optional[str]:
     itinerary = _get_valid_itinerary_from_state()
     if not itinerary or not isinstance(itinerary, dict):
         return None
-    alts = itinerary.get("alternatives") or []
+    alts = itinerary.get("alternatives") if isinstance(itinerary.get("alternatives"), list) else []
     if not alts:
         return None
     st.subheader("Destination alternatives")
@@ -252,6 +295,12 @@ def main():
     itinerary = _get_valid_itinerary_from_state()
     if st.session_state.get("generation_error"):
         st.error(st.session_state["generation_error"])
+    warning_labels = st.session_state.get("itinerary_warnings") or []
+    if warning_labels:
+        if "MISSING_DAY_BY_DAY_PLAN" in warning_labels:
+            st.warning("Partial itinerary: day-by-day plan missing; showing recommendations.")
+        else:
+            st.warning(f"Partial itinerary: {', '.join(warning_labels)}")
     if itinerary:
         formatting.render_itinerary(itinerary, raw_response=st.session_state.get("last_raw_response"))
         render_export()
