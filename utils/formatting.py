@@ -15,12 +15,14 @@ def render_sources(sources):
     if not sources:
         return
     for src in sources:
+        if not isinstance(src, dict):
+            continue
         title = src.get("title", "Source")
         url = src.get("url")
         domain = src.get("domain", "")
         label = f"{title} ({domain})" if domain else title
         if url:
-            st.markdown(f"- [{label}]({url})", help=url)
+            st.markdown(f"- [{label}]({url})")
         else:
             st.markdown(f"- {label}")
 
@@ -30,6 +32,8 @@ def render_itinerary(itinerary: dict, raw_response: str | None = None):
         return
 
     summary = itinerary.get("trip_summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
     st.subheader("Trip summary")
     cols = st.columns(3)
     cols[0].markdown(f"**Destination:** {summary.get('destination', 'N/A')}")
@@ -39,9 +43,13 @@ def render_itinerary(itinerary: dict, raw_response: str | None = None):
     for focus in summary.get("high_level_focus", []):
         st.markdown(f"- {focus}")
 
-    if itinerary.get("lodging"):
+    lodging_list = itinerary.get("lodging") if isinstance(itinerary.get("lodging"), list) else []
+    if lodging_list:
         st.subheader("Lodging recommendations")
-        for lodging in itinerary["lodging"]:
+        for lodging in lodging_list:
+            if not isinstance(lodging, dict):
+                st.markdown(f"- {lodging}")
+                continue
             with st.expander(lodging.get("name", "Option")):
                 st.markdown(f"**Type:** {lodging.get('type')}")
                 st.markdown(f"**Area:** {lodging.get('area')}")
@@ -56,21 +64,45 @@ def render_itinerary(itinerary: dict, raw_response: str | None = None):
                 st.markdown("**Sources:**")
                 render_sources(lodging.get("sources"))
 
-    if itinerary.get("days"):
+    days_list = itinerary.get("days") if isinstance(itinerary.get("days"), list) else []
+    if days_list:
         st.subheader("Day-by-day itinerary")
-        for day in itinerary["days"]:
-            with st.expander(f"Day {day.get('day')}: {day.get('theme', '')}", expanded=False):
+        for day in days_list:
+            if not isinstance(day, dict):
+                continue
+            title = day.get("title") or day.get("theme", "")
+            with st.expander(f"Day {day.get('day')}: {title}", expanded=False):
                 st.markdown("**Activities:**")
-                for block in day.get("blocks", []):
-                    st.markdown(
-                        f"- **{block.get('time', '').title()}**: {block.get('activity')} "
-                        f"({block.get('area')}) — {block.get('duration_est')}. "
-                        f"Transit: {block.get('transit_note')}. {block.get('notes', '')}"
-                    )
-                    render_sources(block.get("sources"))
+                blocks = day.get("blocks") if isinstance(day.get("blocks"), list) else []
+                if not blocks:
+                    for slot in ("morning", "afternoon", "evening"):
+                        slot_items = day.get(slot) if isinstance(day.get(slot), list) else []
+                        for item in slot_items:
+                            activity = item.get("activity") if isinstance(item, dict) else str(item)
+                            notes = item.get("notes", "") if isinstance(item, dict) else ""
+                            area = item.get("area", "") if isinstance(item, dict) else ""
+                            duration = item.get("duration_est", "") if isinstance(item, dict) else ""
+                            st.markdown(
+                                f"- **{slot.title()}**: {activity} ({area}) — {duration}. {notes}"
+                            )
+                            if isinstance(item, dict):
+                                render_sources(item.get("sources"))
+                else:
+                    for block in blocks:
+                        if not isinstance(block, dict):
+                            continue
+                        st.markdown(
+                            f"- **{block.get('time', '').title()}**: {block.get('activity')} "
+                            f"({block.get('area')}) — {block.get('duration_est')}. "
+                            f"Transit: {block.get('transit_note')}. {block.get('notes', '')}"
+                        )
+                        render_sources(block.get("sources"))
                 if day.get("food"):
                     st.markdown("**Food:**")
-                    for food in day["food"]:
+                    for food in day.get("food", []):
+                        if not isinstance(food, dict):
+                            st.markdown(f"- {food}")
+                            continue
                         st.markdown(
                             f"- **{food.get('type', '').title()}**: {food.get('name')} "
                             f"({food.get('budget', '')} budget, {food.get('area', '')}) "
@@ -79,17 +111,22 @@ def render_itinerary(itinerary: dict, raw_response: str | None = None):
                         render_sources(food.get("sources"))
                 if day.get("plan_b"):
                     st.markdown("**Plan B:**")
-                    for alt in day["plan_b"]:
+                    for alt in day.get("plan_b", []):
+                        if not isinstance(alt, dict):
+                            st.markdown(f"- {alt}")
+                            continue
                         st.markdown(f"- For **{alt.get('reason')}**: {alt.get('alternative')}")
                         render_sources(alt.get("sources"))
 
-    if itinerary.get("assumptions"):
+    assumptions = itinerary.get("assumptions") if isinstance(itinerary.get("assumptions"), list) else []
+    if assumptions:
         st.subheader("Assumptions")
-        for item in itinerary["assumptions"]:
+        for item in assumptions:
             st.markdown(f"- {item}")
 
-    if itinerary.get("disclaimer"):
-        st.info(itinerary["disclaimer"])
+    disclaimer = itinerary.get("disclaimer") if isinstance(itinerary.get("disclaimer"), str) else ""
+    if disclaimer:
+        st.info(disclaimer)
 
     with st.expander("Debug: raw JSON"):
         st.code(json.dumps(itinerary, indent=2))
