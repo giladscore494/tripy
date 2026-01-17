@@ -22,6 +22,7 @@ def render_sources(sources):
         domain = src.get("domain", "")
         label = f"{title} ({domain})" if domain else title
         if url:
+            # st.markdown does not support a help tooltip; show the URL in the link itself.
             st.markdown(f"- [{label}]({url})")
         else:
             st.markdown(f"- {label}")

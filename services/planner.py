@@ -135,7 +135,7 @@ def _extract_json(text: str) -> Tuple[Dict[str, Any], Optional[str]]:
     if isinstance(parsed, str):
         try:
             parsed = json.loads(parsed.strip())
-        except (JSONDecodeError, ValueError) as err:  # pragma: no cover - defensive
+        except (JSONDecodeError, ValueError) as err:  # pragma: no cover - defensive double-decode
             last_error = str(err)
 
     if isinstance(parsed, dict):

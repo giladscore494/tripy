@@ -12,7 +12,7 @@ def _set_font(pdf: FPDF):
             pdf.add_font("DejaVu", "", font_path, uni=True)
             pdf.set_font("DejaVu", size=12)
             return
-    except Exception:
+    except (FileNotFoundError, OSError, RuntimeError):
         # Fallback to core font; may limit glyphs but avoids crash
         pdf.set_font("Helvetica", size=12)
 
