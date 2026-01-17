@@ -34,8 +34,8 @@ def _get_config() -> Dict[str, Any]:
 
     def _safe_int(val, default: int) -> int:
         try:
-            parsed = int(val)
-            return parsed if parsed > 0 else default
+            int_val = int(val)
+            return int_val if int_val > 0 else default
         except (TypeError, ValueError):
             return default
 

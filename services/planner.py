@@ -99,7 +99,7 @@ def _strip_code_fences(text: str) -> str:
 
 def _structure_only_snippet(text: str) -> str:
     snippet = text[:SNIPPET_MAX_LENGTH]
-    return re.sub(r"[^{}\[\]:,\"'\\s]", "·", snippet)
+    return re.sub(r"[^{}\[\]:,\"'\s]", "·", snippet)
 
 
 def _is_balanced_braces(text: str) -> bool:

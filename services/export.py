@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict
@@ -18,7 +19,8 @@ def _set_font(pdf: FPDF):
     for font_path in font_candidates:
         if font_path.exists():
             try:
-                font_name = f"{font_path.stem}_{abs(hash(font_path))}"
+                font_hash = hashlib.md5(str(font_path).encode()).hexdigest()[:8]
+                font_name = f"{font_path.stem}_{font_hash}"
                 pdf.add_font(font_name, "", str(font_path), uni=True)
                 pdf.set_font(font_name, size=12)
                 return
