@@ -1,31 +1,52 @@
+import hashlib
 from datetime import datetime, timedelta
-from importlib import resources
+from pathlib import Path
 from typing import Dict
 
 from fpdf import FPDF
 from ics import Calendar, Event
 
+from utils import validators
+
 
 def _set_font(pdf: FPDF):
-    try:
-        with resources.path("fpdf.fonts", "DejaVuSans.ttf") as font_path:
-            pdf.add_font("DejaVu", "", font_path, uni=True)
-            pdf.set_font("DejaVu", size=12)
-            return
-    except (FileNotFoundError, OSError, RuntimeError):
-        # Fallback to core font; may limit glyphs but avoids crash
-        pdf.set_font("Helvetica", size=12)
+    font_candidates = [
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/Library/Fonts/Arial Unicode.ttf"),
+        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+    ]
+    for font_path in font_candidates:
+        if font_path.exists():
+            try:
+                font_hash = hashlib.md5(str(font_path).encode()).hexdigest()[:8]
+                font_name = f"{font_path.stem}_{font_hash}"
+                pdf.add_font(font_name, "", str(font_path), uni=True)
+                pdf.set_font(font_name, size=12)
+                return
+            except (OSError, RuntimeError):
+                continue
+    # Fallback to core font; may limit glyphs but avoids crash
+    pdf.set_font("Helvetica", size=12)
 
 
 def itinerary_to_pdf(itinerary: Dict) -> bytes:
     if not isinstance(itinerary, dict):
         raise ValueError("itinerary must be a dict")
+    ok, reason = validators.validate_itinerary_schema(itinerary)
+    if not ok:
+        raise ValueError(f"Invalid itinerary: {reason}")
     pdf = FPDF()
     pdf.add_page()
     _set_font(pdf)
 
     def write_line(text: str):
-        pdf.multi_cell(0, 10, txt=text)
+        try:
+            pdf.multi_cell(0, 10, txt=text, new_x="LMARGIN", new_y="NEXT")
+        except TypeError as err:
+            if "new_x" not in str(err) and "new_y" not in str(err):
+                raise
+            pdf.multi_cell(0, 10, txt=text)
 
     summary = itinerary.get("trip_summary") if isinstance(itinerary.get("trip_summary"), dict) else {}
     write_line(f"Trip to {summary.get('destination', 'Destination')}")
@@ -87,7 +108,10 @@ def itinerary_to_pdf(itinerary: Dict) -> bytes:
         pdf.ln(4)
         write_line(f"Disclaimer: {disclaimer}")
 
-    return pdf.output(dest="S").encode("latin-1")
+    output = pdf.output(dest="S")
+    if isinstance(output, (bytes, bytearray)):
+        return bytes(output)
+    return str(output).encode("latin-1", errors="replace")
 
 
 def itinerary_to_ics(itinerary: Dict) -> bytes:
