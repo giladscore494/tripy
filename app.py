@@ -21,6 +21,8 @@ def _init_state():
         "chosen_destination": None,
         "itinerary_json": None,
         "revision_history": [],
+        "generation_error": None,
+        "last_raw_response": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -28,6 +30,8 @@ def _init_state():
 
 
 def _handle_generate(refinement: Optional[str] = None, force_destination: Optional[str] = None):
+    st.session_state["generation_error"] = None
+    st.session_state["last_raw_response"] = None
     profile: Dict = st.session_state.get("trip_profile") or {}
     ok, msg = validators.validate_profile(profile)
     if not ok:
@@ -37,9 +41,15 @@ def _handle_generate(refinement: Optional[str] = None, force_destination: Option
     with st.spinner("Generating itinerary with Gemini..."):
         start = time.time()
         try:
-            itinerary = planner.generate_itinerary(profile, destination, refinement)
+            itinerary, raw_text, parse_error = planner.generate_itinerary(profile, destination, refinement)
+            st.session_state["last_raw_response"] = raw_text
+            if parse_error:
+                st.session_state["generation_error"] = parse_error
+                st.error(f"Generation failed: {parse_error}. Keeping previous itinerary.")
+                return
             if not itinerary:
-                st.error("No itinerary returned. Please retry.")
+                st.session_state["generation_error"] = "No itinerary returned."
+                st.error("No itinerary returned. Please retry. Keeping previous itinerary.")
                 return
             st.session_state["itinerary_json"] = itinerary
             st.session_state["chosen_destination"] = itinerary.get("trip_summary", {}).get(
@@ -49,7 +59,8 @@ def _handle_generate(refinement: Optional[str] = None, force_destination: Option
                 {"timestamp": time.time(), "refinement": refinement, "destination": destination}
             )
         except Exception as exc:  # pragma: no cover - defensive
-            st.error(f"Generation failed: {exc}")
+            st.session_state["generation_error"] = str(exc)
+            st.error(f"Generation failed: {exc}. Keeping previous itinerary.")
         finally:
             st.info(f"Completed in {time.time() - start:.1f}s")
 
@@ -148,12 +159,19 @@ def sidebar():
         st.sidebar.caption(f"Model: {cfg.get('model')}")
         st.sidebar.caption(f"Temperature: {cfg.get('temperature')}")
         st.sidebar.caption(f"Timeout: {cfg.get('timeout')}s")
+        st.sidebar.caption(f"google-genai: {cfg.get('library_version')}")
         st.sidebar.caption(f"API key: {formatting.mask_key(cfg.get('api_key'))}")
+        if status.get("warning"):
+            st.sidebar.warning(status["warning"])
     else:
         st.sidebar.error(status["error"])
     if st.sidebar.button("Reset session"):
-        for key in ["trip_profile", "chosen_destination", "itinerary_json", "revision_history"]:
-            st.session_state[key] = None
+        st.session_state["trip_profile"] = None
+        st.session_state["chosen_destination"] = None
+        st.session_state["itinerary_json"] = None
+        st.session_state["revision_history"] = []
+        st.session_state["generation_error"] = None
+        st.session_state["last_raw_response"] = None
         st.session_state["started"] = False
         st.rerun()
 
@@ -182,9 +200,21 @@ def main():
 
     render_alternatives()
 
-    formatting.render_itinerary(st.session_state.get("itinerary_json") or {})
-    render_refinement()
-    render_export()
+    itinerary = st.session_state.get("itinerary_json") or {}
+    if st.session_state.get("generation_error"):
+        st.error(st.session_state["generation_error"])
+    if itinerary:
+        formatting.render_itinerary(itinerary, raw_response=st.session_state.get("last_raw_response"))
+        render_refinement()
+        render_export()
+    elif not st.session_state.get("generation_error"):
+        st.info("No itinerary yet. Provide details to generate one.")
+    if st.session_state.get("last_raw_response") and not itinerary:
+        with st.expander("Debug: last model output"):
+            raw = st.session_state["last_raw_response"]
+            limit = formatting.RAW_SNIPPET_LIMIT
+            snippet = raw if len(raw) <= limit else raw[:limit] + "... [truncated]"
+            st.code(snippet)
 
 
 if __name__ == "__main__":
