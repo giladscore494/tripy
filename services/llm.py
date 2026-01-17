@@ -25,21 +25,25 @@ def _get_config() -> Dict[str, Any]:
             "Missing GOOGLE_API_KEY in Streamlit secrets. "
             "Add it via Streamlit Cloud -> Advanced settings -> Secrets."
         )
+    configured_timeout_sec = float(secrets.get("GEMINI_TIMEOUT_SEC", 60))
+    timeout_sec = max(configured_timeout_sec, MIN_TIMEOUT)
+    timeout_ms = int(timeout_sec * 1000)
     return {
         "api_key": api_key,
         "model": secrets.get("GEMINI_MODEL", "gemini-3-flash-preview"),
         "temperature": float(secrets.get("GEMINI_TEMPERATURE", 0.5)),
         "max_output_tokens": int(secrets.get("GEMINI_MAX_OUTPUT_TOKENS", 2048)),
-        "configured_timeout": int(secrets.get("GEMINI_TIMEOUT_SEC", 60)),
-        "timeout": max(int(secrets.get("GEMINI_TIMEOUT_SEC", 60)), MIN_TIMEOUT),
+        "configured_timeout_sec": configured_timeout_sec,
+        "timeout_sec": timeout_sec,
+        "timeout_ms": timeout_ms,
         "log_level": secrets.get("LOG_LEVEL", "INFO"),
         "library_version": _library_version(),
     }
 
 
 @cached_resource(ttl_seconds=3600)
-def _client(api_key: str, timeout: int):
-    return genai.Client(api_key=api_key, http_options={"timeout": timeout})
+def _client(api_key: str, timeout_ms: int):
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=timeout_ms))
 
 
 def _response_text(resp: Any) -> str:
@@ -78,7 +82,7 @@ def _hash_key(payload: Dict[str, Any]) -> str:
 
 @cached_data(ttl_seconds=3600)
 def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, config: Dict[str, Any]) -> str:
-    client = _client(config["api_key"], config["timeout"])
+    client = _client(config["api_key"], config["timeout_ms"])
     tools = [types.Tool(google_search=types.GoogleSearch())]
     system_instruction_supported = True
     contents = _build_contents(system_prompt, user_prompt, include_system_instruction=True)
@@ -99,7 +103,7 @@ def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, confi
         )
 
     last_error: Optional[Exception] = None
-    max_attempts = LOW_TIMEOUT_ATTEMPTS if config["configured_timeout"] < MIN_TIMEOUT else DEFAULT_MAX_ATTEMPTS
+    max_attempts = LOW_TIMEOUT_ATTEMPTS if config["configured_timeout_sec"] < MIN_TIMEOUT else DEFAULT_MAX_ATTEMPTS
     attempt = 0
     while attempt < max_attempts:
         start = time.time()
@@ -135,19 +139,23 @@ def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, confi
                 continue
             _log_attempt(attempt + 1, elapsed, config, tools_enabled=True, status="error", error=str(err))
             last_error = err
-        except httpx.ReadTimeout as err:
+        except (httpx.ReadTimeout, httpx.TimeoutException) as err:
             elapsed = time.time() - start
+            timeout_error_msg = (
+                "Request timed out. Increase GEMINI_TIMEOUT_SEC and/or reduce output size. "
+                f"(configured={config['configured_timeout_sec']}s, "
+                f"effective={config['timeout_sec']}s, timeout_ms={config['timeout_ms']}) "
+                f"exception={type(err).__name__}"
+            )
             _log_attempt(
                 attempt + 1,
                 elapsed,
                 config,
                 tools_enabled=True,
                 status="timeout",
-                error="Request timed out. Increase GEMINI_TIMEOUT_SEC and/or reduce output size.",
+                error=timeout_error_msg,
             )
-            last_error = TimeoutError(
-                "Request timed out. Increase GEMINI_TIMEOUT_SEC and/or reduce output size."
-            )
+            last_error = TimeoutError(timeout_error_msg)
             break
         except Exception as err:  # pragma: no cover - defensive
             elapsed = time.time() - start
@@ -156,7 +164,7 @@ def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, confi
         attempt += 1
         if attempt >= max_attempts:
             break
-        sleep_for = _backoff_sleep(attempt, config["timeout"])
+        sleep_for = _backoff_sleep(attempt, config["timeout_sec"])
         time.sleep(sleep_for)
     if last_error:
         raise last_error
@@ -173,8 +181,8 @@ def secrets_status() -> Dict[str, Any]:
     try:
         cfg = _get_config()
         warning = None
-        if cfg["configured_timeout"] < MIN_TIMEOUT:
-            warning = f"Configured timeout {cfg['configured_timeout']}s is too low; clamped to {cfg['timeout']}s."
+        if cfg["configured_timeout_sec"] < MIN_TIMEOUT:
+            warning = f"Configured timeout {cfg['configured_timeout_sec']}s is too low; clamped to {cfg['timeout_sec']}s."
         return {"ok": True, "config": cfg, "warning": warning}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -185,7 +193,7 @@ def _log_attempt(
 ):
     details = (
         f"Attempt {attempt} ({status}) in {elapsed:.1f}s — model={config['model']}, "
-        f"timeout={config['timeout']}s, tools={'on' if tools_enabled else 'off'}"
+        f"timeout={config['timeout_sec']}s/{config['timeout_ms']}ms, tools={'on' if tools_enabled else 'off'}"
     )
     if error:
         details += f" | {error}"

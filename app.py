@@ -158,7 +158,9 @@ def sidebar():
         st.sidebar.success("API key detected.")
         st.sidebar.caption(f"Model: {cfg.get('model')}")
         st.sidebar.caption(f"Temperature: {cfg.get('temperature')}")
-        st.sidebar.caption(f"Timeout: {cfg.get('timeout')}s")
+        st.sidebar.caption(f"Configured timeout: {cfg.get('configured_timeout_sec')}s")
+        st.sidebar.caption(f"Effective timeout: {cfg.get('timeout_sec')}s")
+        st.sidebar.caption(f"Client timeout: {cfg.get('timeout_ms')}ms")
         st.sidebar.caption(f"google-genai: {cfg.get('library_version')}")
         st.sidebar.caption(f"API key: {formatting.mask_key(cfg.get('api_key'))}")
         if status.get("warning"):
