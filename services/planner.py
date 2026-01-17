@@ -1,7 +1,17 @@
 import json
-from typing import Any, Dict, Optional
+import re
+from json import JSONDecodeError
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 from services import llm
+
+SNIPPET_MAX_LENGTH = 500
+
+
+class ItineraryResult(NamedTuple):
+    data: Dict[str, Any]
+    raw: str
+    error: Optional[str]
 
 SCHEMA_TEXT = r"""
 Return ONLY JSON with this schema:
@@ -106,23 +116,51 @@ def _build_user_prompt(profile: Dict[str, Any], destination: str, refinement: Op
     return "\n".join(base + [instructions])
 
 
-def _extract_json(text: str) -> Dict[str, Any]:
+def _strip_fences(text: str) -> str:
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+        if text.endswith("```"):
+            text = text[: -3].strip()
+    return text
+
+
+def _extract_json(text: str) -> Tuple[Dict[str, Any], Optional[str]]:
+    cleaned = _strip_fences(text.strip())
     try:
-        return json.loads(text)
-    except Exception:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(text[start : end + 1])
-            except Exception:
-                return {}
-    return {}
+        return json.loads(cleaned), None
+    except (JSONDecodeError, ValueError) as err:
+        last_error = str(err)
+
+    decoder = json.JSONDecoder()
+    for idx in range(len(cleaned)):
+        try:
+            obj, _ = decoder.raw_decode(cleaned, idx=idx)
+            return obj, None
+        except JSONDecodeError:
+            continue
+        except ValueError as err:  # pragma: no cover - defensive
+            last_error = str(err)
+            continue
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        snippet = cleaned[start : end + 1]
+        try:
+            return json.loads(snippet), None
+        except (JSONDecodeError, ValueError) as err:
+            last_error = str(err)
+
+    snippet = cleaned[:SNIPPET_MAX_LENGTH]
+    return {}, f"Invalid JSON returned from model. Last error: {last_error}. Snippet: {snippet}"
 
 
-def generate_itinerary(profile: Dict[str, Any], destination: str, refinement: Optional[str] = None) -> Dict[str, Any]:
+def generate_itinerary(
+    profile: Dict[str, Any], destination: str, refinement: Optional[str] = None
+) -> ItineraryResult:
     system_prompt = _system_prompt()
     user_prompt = _build_user_prompt(profile, destination, refinement)
     payload = {"destination": destination, "profile": profile, "refinement": refinement or ""}
     text = llm.generate_json(system_prompt, user_prompt, payload)
-    return _extract_json(text)
+    parsed, parse_error = _extract_json(text)
+    return ItineraryResult(parsed, text, parse_error)

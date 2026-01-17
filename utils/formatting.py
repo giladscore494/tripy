@@ -1,6 +1,7 @@
 import json
 import streamlit as st
 
+RAW_SNIPPET_LIMIT = 4000
 
 def mask_key(key: str, shown: int = 4) -> str:
     if not key:
@@ -24,9 +25,8 @@ def render_sources(sources):
             st.markdown(f"- {label}")
 
 
-def render_itinerary(itinerary: dict):
+def render_itinerary(itinerary: dict, raw_response: str | None = None):
     if not itinerary:
-        st.info("No itinerary yet. Provide details to generate one.")
         return
 
     summary = itinerary.get("trip_summary", {})
@@ -93,3 +93,11 @@ def render_itinerary(itinerary: dict):
 
     with st.expander("Debug: raw JSON"):
         st.code(json.dumps(itinerary, indent=2))
+    if raw_response:
+        snippet = (
+            raw_response
+            if len(raw_response) <= RAW_SNIPPET_LIMIT
+            else raw_response[:RAW_SNIPPET_LIMIT] + "... [truncated]"
+        )
+        with st.expander("Debug: raw model output"):
+            st.code(snippet)
