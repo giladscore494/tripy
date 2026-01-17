@@ -99,7 +99,7 @@ def _strip_code_fences(text: str) -> str:
 
 def _structure_only_snippet(text: str) -> str:
     snippet = text[:SNIPPET_MAX_LENGTH]
-    return re.sub(r"[^\{\}\[\]:,]", "·", snippet)
+    return re.sub(r"[^{}\[\]:,\"'\\s]", "·", snippet)
 
 
 def _is_balanced_braces(text: str) -> bool:
@@ -170,15 +170,16 @@ def _extract_json(text: str) -> Tuple[Dict[str, Any], Optional[str]]:
     cleaned = _strip_code_fences(text)
     last_error: Optional[str] = None
 
-    if cleaned and not _is_balanced_braces(cleaned):
-        snippet = _structure_only_snippet(cleaned)
-        return {}, f"TRUNCATED_JSON: output cut mid-JSON. Increase max tokens or reduce detail. Snippet: {snippet}"
-
     parsed: Any = None
     try:
         parsed = json.loads(cleaned)
     except (JSONDecodeError, ValueError) as err:
         last_error = str(err)
+        if cleaned and not _is_balanced_braces(cleaned):
+            snippet = _structure_only_snippet(cleaned)
+            return {}, (
+                f"TRUNCATED_JSON: output cut mid-JSON. Increase max tokens or reduce detail. Snippet: {snippet}"
+            )
 
     if isinstance(parsed, str):
         try:
