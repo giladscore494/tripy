@@ -25,14 +25,27 @@ def _get_config() -> Dict[str, Any]:
             "Missing GOOGLE_API_KEY in Streamlit secrets. "
             "Add it via Streamlit Cloud -> Advanced settings -> Secrets."
         )
-    configured_timeout_sec = float(secrets.get("GEMINI_TIMEOUT_SEC", 60))
-    timeout_sec = max(configured_timeout_sec, MIN_TIMEOUT)
+
+    def _safe_float(val, default: float) -> float:
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_int(val, default: int) -> int:
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    configured_timeout_sec = _safe_float(secrets.get("GEMINI_TIMEOUT_SEC", 60), 60.0)
+    timeout_sec = max(configured_timeout_sec, float(MIN_TIMEOUT))
     timeout_ms = int(timeout_sec * 1000)
     return {
         "api_key": api_key,
         "model": secrets.get("GEMINI_MODEL", "gemini-3-flash-preview"),
-        "temperature": float(secrets.get("GEMINI_TEMPERATURE", 0.5)),
-        "max_output_tokens": int(secrets.get("GEMINI_MAX_OUTPUT_TOKENS", 2048)),
+        "temperature": _safe_float(secrets.get("GEMINI_TEMPERATURE", 0.5), 0.5),
+        "max_output_tokens": _safe_int(secrets.get("GEMINI_MAX_OUTPUT_TOKENS", 2048), 2048),
         "configured_timeout_sec": configured_timeout_sec,
         "timeout_sec": timeout_sec,
         "timeout_ms": timeout_ms,
@@ -139,13 +152,13 @@ def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, confi
                 continue
             _log_attempt(attempt + 1, elapsed, config, tools_enabled=True, status="error", error=str(err))
             last_error = err
-        except (httpx.ReadTimeout, httpx.TimeoutException) as err:
+        except (httpx.ReadTimeout, httpx.TimeoutException, TimeoutError) as err:
             elapsed = time.time() - start
             timeout_error_msg = (
                 "Request timed out. Increase GEMINI_TIMEOUT_SEC and/or reduce output size. "
                 f"(configured={config['configured_timeout_sec']}s, "
-                f"effective={config['timeout_sec']}s, timeout_ms={config['timeout_ms']}) "
-                f"exception={type(err).__name__}"
+                f"effective={config['timeout_sec']}s, timeout_ms={config['timeout_ms']}), "
+                f"elapsed={elapsed:.1f}s, exception={type(err).__name__}: {repr(err)}"
             )
             _log_attempt(
                 attempt + 1,
@@ -159,7 +172,10 @@ def _cached_generate(cache_key: str, system_prompt: str, user_prompt: str, confi
             break
         except Exception as err:  # pragma: no cover - defensive
             elapsed = time.time() - start
-            _log_attempt(attempt + 1, elapsed, config, tools_enabled=True, status="error", error=str(err))
+            error_detail = (
+                f"{type(err).__name__}: {repr(err)} (elapsed={elapsed:.1f}s, timeout_ms={config['timeout_ms']})"
+            )
+            _log_attempt(attempt + 1, elapsed, config, tools_enabled=True, status="error", error=error_detail)
             last_error = err
         attempt += 1
         if attempt >= max_attempts:

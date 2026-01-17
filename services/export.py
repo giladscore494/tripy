@@ -6,9 +6,11 @@ from ics import Calendar, Event
 
 
 def itinerary_to_pdf(itinerary: Dict) -> bytes:
+    if not isinstance(itinerary, dict):
+        raise ValueError("itinerary must be a dict")
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Helvetica", size=12)
 
     def write_line(text: str):
         pdf.multi_cell(0, 10, txt=text)
@@ -57,6 +59,8 @@ def itinerary_to_pdf(itinerary: Dict) -> bytes:
 
 
 def itinerary_to_ics(itinerary: Dict) -> bytes:
+    if not isinstance(itinerary, dict):
+        raise ValueError("itinerary must be a dict")
     cal = Calendar()
     start_date = datetime.utcnow().date()
     for day in itinerary.get("days", []):
