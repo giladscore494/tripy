@@ -97,26 +97,51 @@ def _strip_code_fences(text: str) -> str:
     return text
 
 
+def _structure_only_snippet(text: str) -> str:
+    snippet = text[:SNIPPET_MAX_LENGTH]
+    return re.sub(r"[^\{\}\[\]:,]", "·", snippet)
+
+
 def _is_balanced_braces(text: str) -> bool:
     depth = 0
     in_string = False
     string_delim = ""
+    triple_delim = False
     escape = False
-    for ch in text:
+    i = 0
+    text_len = len(text)
+    while i < text_len:
+        ch = text[i]
         if in_string:
             if escape:
                 escape = False
+                i += 1
                 continue
             if ch == "\\":
                 escape = True
+                i += 1
                 continue
-            if ch == string_delim:
+            if triple_delim and i + 2 < text_len and text[i : i + 3] == string_delim * 3:
+                in_string = False
+                triple_delim = False
+                string_delim = ""
+                i += 3
+                continue
+            if not triple_delim and ch == string_delim:
                 in_string = False
                 string_delim = ""
+            i += 1
             continue
         if ch in ('"', "'"):
+            if i + 2 < text_len and text[i + 1] == ch and text[i + 2] == ch:
+                triple_delim = True
+                in_string = True
+                string_delim = ch
+                i += 3
+                continue
             in_string = True
             string_delim = ch
+            i += 1
             continue
         if ch == "{":
             depth += 1
@@ -124,6 +149,7 @@ def _is_balanced_braces(text: str) -> bool:
             depth -= 1
         if depth < 0:
             return False
+        i += 1
     return depth == 0
 
 
@@ -145,7 +171,7 @@ def _extract_json(text: str) -> Tuple[Dict[str, Any], Optional[str]]:
     last_error: Optional[str] = None
 
     if cleaned and not _is_balanced_braces(cleaned):
-        snippet = cleaned[:SNIPPET_MAX_LENGTH]
+        snippet = _structure_only_snippet(cleaned)
         return {}, f"TRUNCATED_JSON: output cut mid-JSON. Increase max tokens or reduce detail. Snippet: {snippet}"
 
     parsed: Any = None
@@ -169,7 +195,7 @@ def _extract_json(text: str) -> Tuple[Dict[str, Any], Optional[str]]:
             return ensured, None
         last_error = err
 
-    snippet = cleaned[:SNIPPET_MAX_LENGTH]
+    snippet = _structure_only_snippet(cleaned)
     last_error = last_error or "No JSON object found"
     return {}, f"Invalid JSON returned from model. Last error: {last_error}. Snippet: {snippet}"
 

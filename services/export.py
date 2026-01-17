@@ -18,7 +18,7 @@ def _set_font(pdf: FPDF):
     for font_path in font_candidates:
         if font_path.exists():
             try:
-                font_name = font_path.stem
+                font_name = f"{font_path.stem}_{font_path.suffix.replace('.', '')}"
                 pdf.add_font(font_name, "", str(font_path), uni=True)
                 pdf.set_font(font_name, size=12)
                 return
@@ -40,7 +40,7 @@ def itinerary_to_pdf(itinerary: Dict) -> bytes:
 
     def write_line(text: str):
         try:
-            pdf.multi_cell(0, 10, text=text, new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(0, 10, txt=text, new_x="LMARGIN", new_y="NEXT")
         except TypeError:
             pdf.multi_cell(0, 10, txt=text)
 
