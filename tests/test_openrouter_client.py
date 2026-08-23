@@ -54,7 +54,7 @@ class BuildPayloadTests(unittest.TestCase):
 class ParseResponseTests(unittest.TestCase):
     def test_parses_model_search_usage_and_unique_citations(self):
         data = {
-            "model": "openai/gpt-oss-120b:free",
+            "model": "stealth/ox-alpha",
             "choices": [
                 {
                     "message": {

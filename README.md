@@ -1,7 +1,7 @@
 # Tripy Chat
 
 A minimal Streamlit chat app backed by OpenRouter. The default model is the free
-`openai/gpt-oss-120b:free` endpoint.
+Ox Alpha preview at `stealth/ox-alpha`.
 
 ## What it includes
 
@@ -13,6 +13,10 @@ A minimal Streamlit chat app backed by OpenRouter. The default model is the free
 
 > The model endpoint is free but rate-limited. OpenRouter web search has a separate
 > cost, so the search toggle is off by default.
+
+> Ox Alpha is a third-party stealth preview. OpenRouter states that its provider
+> retains prompts and completions but does not use them for training. Do not send
+> sensitive information.
 
 ## Run locally
 
@@ -42,7 +46,7 @@ the same settings as environment variables.
 
    ```toml
    OPENROUTER_API_KEY = "sk-or-v1-replace-me"
-   OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+   OPENROUTER_MODEL = "stealth/ox-alpha"
    OPENROUTER_APP_URL = "https://your-app.streamlit.app"
    ```
 

@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-oss-120b:free"
+DEFAULT_MODEL = "stealth/ox-alpha"
 DEFAULT_TIMEOUT_SECONDS = 120
 MAX_HISTORY_MESSAGES = 40
 
