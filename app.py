@@ -5,11 +5,19 @@ from typing import Any
 
 import streamlit as st
 
-from openrouter_client import DEFAULT_MODEL, OpenRouterError, chat_completion
+from kimi_client import DEFAULT_MODEL as DEFAULT_KIMI_MODEL
+from kimi_client import KimiError, chat_completion as kimi_chat_completion
+from openrouter_client import DEFAULT_MODEL as DEFAULT_OPENROUTER_MODEL
+from openrouter_client import OpenRouterError, chat_completion as openrouter_chat_completion
 from web_search import search_web
 
 
 st.set_page_config(page_title="Tripy Chat", page_icon="💬", layout="centered")
+
+PROVIDER_LABELS = {
+    "openrouter": "Ox Alpha · OpenRouter",
+    "kimi": "Kimi K3 · Moonshot",
+}
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -54,29 +62,57 @@ def _render_message(message: dict[str, Any]) -> None:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-api_key = _setting("OPENROUTER_API_KEY")
-model = _setting("OPENROUTER_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
+openrouter_api_key = _setting("OPENROUTER_API_KEY")
+moonshot_api_key = _setting("MOONSHOT_API_KEY")
+openrouter_model = _setting("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL) or DEFAULT_OPENROUTER_MODEL
+kimi_model = _setting("KIMI_MODEL", DEFAULT_KIMI_MODEL) or DEFAULT_KIMI_MODEL
 app_url = _setting("OPENROUTER_APP_URL")
 
 st.title("Tripy Chat")
-st.caption("צ׳אט מינימליסטי דרך OpenRouter")
+st.caption("צ׳אט מינימליסטי דרך OpenRouter או Kimi API")
 
 with st.sidebar:
-    st.caption(f"מודל: `{model}`")
-    web_search = st.toggle(
-        "חיפוש חינמי באינטרנט",
-        value=True,
-        help="חיפוש ללא מפתח נוסף דרך DDGS. הוא אינו משתמש בכלי החיפוש בתשלום של OpenRouter.",
+    provider = st.selectbox(
+        "מודל",
+        options=list(PROVIDER_LABELS),
+        format_func=PROVIDER_LABELS.get,
     )
-    if web_search:
-        st.caption("ללא חיוב חיפוש של OpenRouter · חיפוש אחד ועד 3 תוצאות · שירות ניסיוני שעלול להיות מוגבל")
+    model = openrouter_model if provider == "openrouter" else kimi_model
+    st.caption(f"מודל: `{model}`")
+    if provider == "openrouter":
+        web_search = st.toggle(
+            "חיפוש חינמי באינטרנט",
+            value=True,
+            help=(
+                "חיפוש ללא מפתח נוסף דרך DDGS. "
+                "הוא אינו משתמש בכלי החיפוש בתשלום של OpenRouter."
+            ),
+        )
+        if web_search:
+            st.caption(
+                "ללא חיוב חיפוש של OpenRouter · חיפוש אחד ועד 3 תוצאות · "
+                "שירות ניסיוני שעלול להיות מוגבל"
+            )
+    else:
+        web_search = st.toggle(
+            "חיפוש מובנה של Kimi",
+            value=True,
+            help="כלי web-search הרשמי של Moonshot דרך Formula API.",
+        )
+        if web_search:
+            st.caption(
+                "חיפוש רשמי של Moonshot · עד חיפוש אחד להודעה · "
+                "הזמינות והתמחור נקבעים על ידי Kimi"
+            )
     if st.button("נקה שיחה", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
+api_key = openrouter_api_key if provider == "openrouter" else moonshot_api_key
+required_secret = "OPENROUTER_API_KEY" if provider == "openrouter" else "MOONSHOT_API_KEY"
 if not api_key:
     st.error(
-        "חסר `OPENROUTER_API_KEY`. הוסף אותו ל־Streamlit Secrets או לקובץ המקומי "
+        f"חסר `{required_secret}`. הוסף אותו ל־Streamlit Secrets או לקובץ המקומי "
         "`.streamlit/secrets.toml`."
     )
     st.stop()
@@ -92,15 +128,23 @@ if prompt := st.chat_input("כתוב הודעה..."):
     with st.chat_message("assistant"):
         with st.spinner("חושב..."):
             try:
-                result = chat_completion(
-                    api_key=api_key,
-                    messages=st.session_state.messages,
-                    model=model,
-                    web_search=web_search,
-                    app_url=app_url or None,
-                    search_runner=_cached_search,
-                )
-            except OpenRouterError as exc:
+                if provider == "openrouter":
+                    result = openrouter_chat_completion(
+                        api_key=api_key,
+                        messages=st.session_state.messages,
+                        model=model,
+                        web_search=web_search,
+                        app_url=app_url or None,
+                        search_runner=_cached_search,
+                    )
+                else:
+                    result = kimi_chat_completion(
+                        api_key=api_key,
+                        messages=st.session_state.messages,
+                        model=model,
+                        web_search=web_search,
+                    )
+            except (OpenRouterError, KimiError) as exc:
                 st.error(str(exc))
             else:
                 assistant_message = {
@@ -110,6 +154,8 @@ if prompt := st.chat_input("כתוב הודעה..."):
                     "model": result.model,
                     "web_search_requests": result.web_search_requests,
                 }
+                if provider == "kimi":
+                    assistant_message["provider_message"] = result.provider_message
                 st.session_state.messages.append(assistant_message)
                 st.markdown(result.content)
                 _render_citations(assistant_message["citations"])
