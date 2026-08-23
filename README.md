@@ -10,6 +10,8 @@ through OpenRouter and Kimi K3 through Moonshot's direct API.
 - `stealth/ox-alpha` with optional keyless web search executed by the app with
   DDGS and Trafilatura.
 - `kimi-k3` with Moonshot's official `moonshot/web-search:latest` Formula tool.
+- Multi-image vision input for Kimi K3, including JPEG, PNG, WebP, HEIC, and
+  HEIF uploads.
 - Web-search citations and the actual model ID used in each response.
 - A model selector in the Streamlit sidebar.
 - An explicit limit of one web search per message.
@@ -62,7 +64,7 @@ The app also supports the same settings as environment variables.
    ```
 
 4. Deploy. `requirements.txt` is in the repository root, so Community Cloud will
-   install Streamlit, DDGS, and Trafilatura automatically.
+   install Streamlit and all image/search dependencies automatically.
 
 The API keys stay server-side, but a public app can still consume both your
 OpenRouter quota and your Moonshot balance. Keep the Streamlit app private unless
@@ -114,6 +116,31 @@ When Kimi K3 is selected, the app calls Moonshot directly at
 Kimi K3 runs with `reasoning_effort="low"` and a bounded completion budget for a
 responsive chat experience. Search results are processed by Moonshot rather than by
 the app's DDGS/Trafilatura path.
+
+## Kimi K3 image input
+
+Select Kimi K3 and use the attachment control in the chat box to select multiple
+images. There is no application-level image-count cap. Instead, the app fills the
+available infrastructure budget while enforcing these bounds:
+
+- 25 MiB per original upload, configured in `.streamlit/config.toml`.
+- 256 MiB of original files in one submitted batch.
+- 60 MiB of processed images across the active chat session.
+- 90 MB maximum serialized Moonshot request body, below the provider's 100 MB
+  request limit.
+- A preflight call to Moonshot's token-estimation endpoint; the request is stopped
+  before it reaches the configured safe context threshold.
+
+Images are orientation-corrected, resized to an orientation-aware 4K bound, and
+re-encoded as JPEG before being sent as base64 data to Moonshot. This removes EXIF
+metadata and reduces upload size. Duplicate originals are skipped, and the per-image
+size budget automatically shrinks when a large batch is selected, so small images
+can be submitted in much larger quantities than large photos.
+
+Processed images live only in Streamlit's in-memory session state and are not
+written to this app's disk. They are still transmitted to Moonshot for inference,
+so do not upload sensitive medical photos unless that provider's privacy terms are
+acceptable to you. Visual analysis is informational and is not a medical diagnosis.
 
 ## Tests
 
