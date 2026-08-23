@@ -6,6 +6,7 @@ from typing import Any
 import streamlit as st
 
 from openrouter_client import DEFAULT_MODEL, OpenRouterError, chat_completion
+from web_search import search_web
 
 
 st.set_page_config(page_title="Tripy Chat", page_icon="💬", layout="centered")
@@ -27,7 +28,13 @@ def _render_citations(citations: list[dict[str, str]]) -> None:
         return
     with st.expander("מקורות"):
         for citation in citations:
-            st.markdown(f"- [{citation['title']}]({citation['url']})")
+            title = citation["title"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+            st.markdown(f"- [{title}]({citation['url']})")
+
+
+@st.cache_data(ttl=900, max_entries=128, show_spinner=False)
+def _cached_search(query: str) -> list[dict[str, str]]:
+    return search_web(query)
 
 
 def _render_message(message: dict[str, Any]) -> None:
@@ -57,12 +64,12 @@ st.caption("צ׳אט מינימליסטי דרך OpenRouter")
 with st.sidebar:
     st.caption(f"מודל: `{model}`")
     web_search = st.toggle(
-        "חיפוש באינטרנט",
-        value=False,
-        help="מוסיף את כלי openrouter:web_search. החיפוש עשוי להיות כרוך בתשלום גם כשהמודל חינמי.",
+        "חיפוש חינמי באינטרנט",
+        value=True,
+        help="חיפוש ללא מפתח נוסף דרך DDGS. הוא אינו משתמש בכלי החיפוש בתשלום של OpenRouter.",
     )
     if web_search:
-        st.warning("חיפוש רשת כרוך בעלות נפרדת ב־OpenRouter ומוגבל כאן לחיפוש אחד ועד 3 תוצאות.")
+        st.caption("ללא חיוב חיפוש של OpenRouter · חיפוש אחד ועד 3 תוצאות · שירות ניסיוני שעלול להיות מוגבל")
     if st.button("נקה שיחה", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -91,6 +98,7 @@ if prompt := st.chat_input("כתוב הודעה..."):
                     model=model,
                     web_search=web_search,
                     app_url=app_url or None,
+                    search_runner=_cached_search,
                 )
             except OpenRouterError as exc:
                 st.error(str(exc))

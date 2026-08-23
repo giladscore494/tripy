@@ -7,12 +7,13 @@ Ox Alpha preview at `stealth/ox-alpha`.
 
 - Streamlit chat history stored only in the current browser session.
 - Server-side OpenRouter API key through Streamlit Secrets.
-- Optional API-level web search using the current `openrouter:web_search` server tool.
+- Optional keyless web search executed by the app with DDGS and Trafilatura.
 - Web-search citations and the actual model ID used in each response.
 - Explicit limits of one search and three results per message.
 
-> The model endpoint is free but rate-limited. OpenRouter web search has a separate
-> cost, so the search toggle is off by default.
+> The app does not use OpenRouter's separately billed web-search server tool. Search
+> requires no additional API key, but public search backends can rate-limit or block
+> automated requests and should be treated as experimental.
 
 > Ox Alpha is a third-party stealth preview. OpenRouter states that its provider
 > retains prompts and completions but does not use them for training. Do not send
@@ -51,37 +52,41 @@ the same settings as environment variables.
    ```
 
 4. Deploy. `requirements.txt` is in the repository root, so Community Cloud will
-   install the required Streamlit version automatically. The OpenRouter client uses
-   Python's standard library and adds no extra HTTP dependency.
+   install Streamlit, DDGS, and Trafilatura automatically.
 
 The API key stays server-side, but a public app can still consume your OpenRouter
 quota. Keep the Streamlit app private unless public usage is intentional.
 
 ## Web search behavior
 
-When enabled, requests include:
+When enabled, the first OpenRouter request exposes a normal client-side function:
 
 ```json
 {
   "tools": [
     {
-      "type": "openrouter:web_search",
-      "parameters": {
-        "engine": "parallel",
-        "mode": "basic",
-        "max_results": 3,
-        "max_total_results": 3,
-        "max_uses": 1,
-        "search_context_size": "low"
+      "type": "function",
+      "function": {
+        "name": "search_web",
+        "description": "Search the live public web for current or factual information"
       }
     }
-  ],
-  "max_tool_calls": 1
+  ]
 }
 ```
 
-The model decides whether a search is necessary. OpenRouter currently marks server
-tools as beta, so check its documentation if the API schema changes.
+If Ox Alpha requests the function, the app runs DDGS locally, reads at most one
+public HTML page with Trafilatura, and sends the bounded results back to the model in
+a second OpenRouter request. Search results are cached for 15 minutes.
+
+The app enforces one search, three results, a 300-character query, and up to 5,000
+characters of extracted page text per message. It rejects local/private destinations,
+credential-bearing URLs, oversized responses, and non-HTML content. Tool output is
+explicitly marked as untrusted so webpage instructions are not followed.
+
+DDGS is an educational metasearch library without a service-level guarantee. This
+keyless path is useful for a personal demo, but a production deployment should use a
+supported search API or a self-hosted metasearch service.
 
 ## Tests
 
