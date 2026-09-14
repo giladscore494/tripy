@@ -172,13 +172,65 @@ def paged_routes(resource_id, token, records, total=None, page_size=None,
 # Toyota HTML fixtures
 # --------------------------------------------------------------------------
 
-_FILLER = "<p>Toyota Israel official site content block.</p>" * 20
+_FILLER = "<p>\u05ea\u05d5\u05db\u05df \u05e8\u05e9\u05de\u05d9 \u05e9\u05dc \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4 \u05d9\u05e9\u05e8\u05d0\u05dc.</p>" * 45
+
+# Third-party widgets a perfectly healthy Toyota page loads site-wide. Every
+# occurrence of "captcha" below is in markup or script, never in visible text.
+_RECAPTCHA_MARKUP = (
+    '<script src="https://www.google.com/recaptcha/api.js" async defer></script>'
+    '<div class="g-recaptcha" data-sitekey="6LcEXAMPLEKEY"></div>'
+    '<input type="hidden" name="g-recaptcha-response">'
+    '<script>window.___grecaptcha_cfg={};'
+    'grecaptcha.ready(function(){grecaptcha.execute("6LcEXAMPLEKEY");});</script>'
+)
+
+# Generic error wording that lives only inside JavaScript on a healthy page.
+_JS_ERROR_STRINGS = (
+    '<script>var i18n={notFound:"Page Not Found",e404:"404 Not Found",'
+    'e500:"500 Internal Server Error",unavailable:"Service Unavailable",'
+    'signIn:"Please sign in",denied:"Access Denied"};</script>'
+)
+
+_ENDED_MARKETING_HE = (
+    "\u05e9\u05d9\u05d5\u05d5\u05e7 \u05d4\u05d3\u05d2\u05dd \u05e8\u05d0\u05d14 "
+    "\u05e4\u05dc\u05d0\u05d2-\u05d0\u05d9\u05df \u05d4\u05e1\u05ea\u05d9\u05d9\u05dd"
+)
+
+_ARCHIVE_SECTION_HE = (
+    "\u05d0\u05e8\u05db\u05d9\u05d5\u05df \u05d3\u05d2\u05de\u05d9\u05dd - "
+    "\u05d3\u05d2\u05de\u05d9 \u05e2\u05d1\u05e8"
+)
 
 TOYOTA_ARCHIVE_INDEX_HTML = (
     "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
-    "<title>דגמי טויוטה</title></head><body>"
-    "<h1>TOYOTA טויוטה</h1>"
-    "<ul><li>RAV4</li><li>Corolla</li><li>Yaris</li></ul>"
+    "<title>\u05d0\u05e8\u05db\u05d9\u05d5\u05df \u05d3\u05d2\u05de\u05d9\u05dd | "
+    "\u05d8\u05d5\u05d9\u05d5\u05d8\u05d4</title></head><body>"
+    "<h1>TOYOTA \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4</h1>"
+    "<h2>" + _ARCHIVE_SECTION_HE + "</h2>"
+    "<ul><li>RAV4 Plug-in Hybrid (PHEV)</li><li>Corolla</li><li>Yaris</li></ul>"
+    + _FILLER + "</body></html>"
+)
+
+# Same legitimate page, plus the site-wide reCAPTCHA widget and JS error strings.
+TOYOTA_ARCHIVE_INDEX_WITH_CAPTCHA_HTML = (
+    "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
+    "<title>\u05d0\u05e8\u05db\u05d9\u05d5\u05df \u05d3\u05d2\u05de\u05d9\u05dd | "
+    "\u05d8\u05d5\u05d9\u05d5\u05d8\u05d4</title>"
+    + _RECAPTCHA_MARKUP + "</head><body>"
+    "<h1>TOYOTA \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4</h1>"
+    "<h2>" + _ARCHIVE_SECTION_HE + "</h2>"
+    "<ul><li>RAV4 Plug-in Hybrid (PHEV)</li></ul>"
+    + _JS_ERROR_STRINGS + _FILLER + "</body></html>"
+)
+
+# Archive index that never establishes RAV4 Plug-in identity.
+TOYOTA_ARCHIVE_INDEX_NO_PLUGIN_HTML = (
+    "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
+    "<title>\u05d0\u05e8\u05db\u05d9\u05d5\u05df | \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4"
+    "</title></head><body>"
+    "<h1>TOYOTA \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4</h1>"
+    "<h2>" + _ARCHIVE_SECTION_HE + "</h2>"
+    "<ul><li>RAV4 Hybrid</li><li>Corolla</li></ul>"
     + _FILLER + "</body></html>"
 )
 
@@ -186,9 +238,17 @@ TOYOTA_RAV4_PHEV_HTML = (
     "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
     "<title>TOYOTA RAV4 Plug-in</title></head><body>"
     "<h1>TOYOTA RAV4 Plug-in Hybrid (PHEV)</h1>"
-    "<p>הסתיים השיווק "
-    "של הדגם.</p>"
+    "<p>" + _ENDED_MARKETING_HE + "</p>"
     + _FILLER + "</body></html>"
+)
+
+# Same legitimate model page, plus the site-wide reCAPTCHA widget.
+TOYOTA_RAV4_PHEV_WITH_RECAPTCHA_HTML = (
+    "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
+    "<title>TOYOTA RAV4 Plug-in</title>" + _RECAPTCHA_MARKUP + "</head><body>"
+    "<h1>TOYOTA RAV4 Plug-in Hybrid (PHEV)</h1>"
+    "<p>" + _ENDED_MARKETING_HE + "</p>"
+    + _JS_ERROR_STRINGS + _FILLER + "</body></html>"
 )
 
 # Official RAV4 page with no Plug-in/PHEV identity: must be rejected.
@@ -196,7 +256,7 @@ TOYOTA_RAV4_HYBRID_HTML = (
     "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
     "<title>TOYOTA RAV4 Hybrid</title></head><body>"
     "<h1>TOYOTA RAV4 Hybrid</h1>"
-    "<p>הסתיים השיווק.</p>"
+    "<p>\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd \u05d4\u05e9\u05d9\u05d5\u05d5\u05e7.</p>"
     + _FILLER + "</body></html>"
 )
 
@@ -205,7 +265,8 @@ TOYOTA_RAV4_PHEV_NO_ARCHIVE_HTML = (
     "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
     "<title>TOYOTA RAV4 Plug-in</title></head><body>"
     "<h1>TOYOTA RAV4 Plug-in Hybrid (PHEV)</h1>"
-    "<p>קבעו נסיעת מבחן.</p>"
+    "<p>\u05e7\u05d1\u05e2\u05d5 \u05e0\u05e1\u05d9\u05e2\u05ea "
+    "\u05de\u05d1\u05d7\u05df \u05e2\u05d5\u05d3 \u05d4\u05d9\u05d5\u05dd.</p>"
     + _FILLER + "</body></html>"
 )
 
@@ -214,27 +275,42 @@ TOYOTA_NO_RAV4_HTML = (
     "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
     "<title>TOYOTA Prius Plug-in</title></head><body>"
     "<h1>TOYOTA Prius Plug-in Hybrid (PHEV)</h1>"
-    "<p>הסתיים השיווק.</p>"
+    "<p>\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd \u05d4\u05e9\u05d9\u05d5\u05d5\u05e7.</p>"
     + _FILLER + "</body></html>"
 )
 
 TOYOTA_BLOCKED_HTML = (
     "<!DOCTYPE html><html><head><title>Access Denied</title></head><body>"
     "<h1>Access Denied</h1><p>TOYOTA RAV4 Plug-in PHEV</p>"
-    "<p>הסתיים השיווק.</p>"
-    + "<p>You do not have permission to access this resource.</p>" * 20
+    "<p>\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd \u05d4\u05e9\u05d9\u05d5\u05d5\u05e7.</p>"
+    + "<p>You do not have permission to access this resource.</p>" * 45
     + "</body></html>"
 )
 
-TOYOTA_CAPTCHA_HTML = (
-    "<!DOCTYPE html><html><head><title>Attention Required</title></head><body>"
-    "<h1>TOYOTA</h1><p>Please complete the CAPTCHA to continue.</p>"
-    + "<p>Cloudflare Ray ID: 0123456789abcdef</p>" * 20
-    + "</body></html>"
+# A real challenge page: the CAPTCHA wording is VISIBLE, not just a script.
+TOYOTA_VISIBLE_CAPTCHA_HTML = (
+    "<!DOCTYPE html><html><head><title>Attention Required</title>"
+    + _RECAPTCHA_MARKUP + "</head><body>"
+    "<h1>Please complete the CAPTCHA to continue</h1>"
+    "<p>TOYOTA \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4 RAV4 Plug-in</p>"
+    "<p>Cloudflare Ray ID: 0123456789abcdef</p>"
+    "</body></html>"
+)
+
+TOYOTA_CAPTCHA_HTML = TOYOTA_VISIBLE_CAPTCHA_HTML
+
+# 404 content served with HTTP 200 ("soft 404"): must still fail.
+TOYOTA_404_HTTP200_HTML = (
+    "<!DOCTYPE html><html lang=\"he\" dir=\"rtl\"><head>"
+    "<title>404 - Page Not Found | TOYOTA</title></head><body>"
+    "<h1>Page Not Found</h1>"
+    "<p>TOYOTA \u05d8\u05d5\u05d9\u05d5\u05d8\u05d4 RAV4 Plug-in PHEV</p>"
+    "<p>" + _ENDED_MARKETING_HE + "</p>"
+    + _FILLER + "</body></html>"
 )
 
 TOYOTA_404_HTML = (
-    "<!DOCTYPE html><html><head><title>404</title></head><body>"
+    "<!DOCTYPE html><html><head><title>404 - Page Not Found</title></head><body>"
     "<h1>TOYOTA</h1><p>404 Not Found</p>"
     + "<p>The page you requested does not exist.</p>" * 20
     + "</body></html>"
