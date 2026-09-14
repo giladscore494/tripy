@@ -1,2 +1,8 @@
+# No secrets are read by this app. There is no secrets.toml and none is needed:
+# every captured source is a public, read-only endpoint.
+
 [server]
-maxUploadSize = 25
+headless = true
+
+[browser]
+gatherUsageStats = false

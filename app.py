@@ -1,271 +1,198 @@
-from __future__ import annotations
+"""MILO R5 Source Capture - Streamlit entrypoint.
 
-import os
-from typing import Any, Mapping
+A temporary evidence-capture tool. It performs a fixed, bounded set of public
+read-only HTTP GET requests from the Streamlit server, preserves the returned
+bodies byte-for-byte, validates them, and offers a verified ZIP for download.
+
+There is deliberately no URL input, no database, no model provider, no AI API,
+no user account and no secret of any kind.
+"""
 
 import streamlit as st
 
-from image_processing import (
-    MAX_SESSION_IMAGE_BYTES,
-    MEBIBYTE,
-    SUPPORTED_IMAGE_EXTENSIONS,
-    ImageInputError,
-    prepare_uploads,
-)
-from kimi_client import DEFAULT_MODEL as DEFAULT_KIMI_MODEL
-from kimi_client import KimiError, chat_completion as kimi_chat_completion
-from openrouter_client import DEFAULT_MODEL as DEFAULT_OPENROUTER_MODEL
-from openrouter_client import OpenRouterError, chat_completion as openrouter_chat_completion
-from web_search import search_web
+import capture
 
+STATE_KEY = "milo_r5_capture_result"
 
-st.set_page_config(page_title="Tripy Chat", page_icon="💬", layout="centered")
-
-PROVIDER_LABELS = {
-    "openrouter": "Ox Alpha · OpenRouter",
-    "kimi": "Kimi K3 · Moonshot",
+STATUS_PRESENTATION = {
+    capture.STATUS_READY: (
+        "success",
+        "Ready for R5 bundle review",
+        "All mandatory sources passed, at least one Government query returned "
+        "records, and the Toyota HTML contains technical markers.",
+    ),
+    capture.STATUS_NO_RECORDS: (
+        "warning",
+        "No matching Government records",
+        "All Government calls were valid, but every bounded query returned zero "
+        "records.",
+    ),
+    capture.STATUS_INCOMPLETE_WEB: (
+        "warning",
+        "Incomplete official web source",
+        "Government evidence passed, but the saved Toyota HTML lacked usable "
+        "technical content.",
+    ),
+    capture.STATUS_FAILED: (
+        "error",
+        "Capture failed",
+        "A network, HTTP, redirect, size, JSON, blocking-page or integrity "
+        "failure occurred during the capture.",
+    ),
 }
 
 
-def _setting(name: str, default: str = "") -> str:
-    value: Any = os.getenv(name, default)
-    try:
-        value = st.secrets.get(name, value)
-    except Exception:
-        # Streamlit raises when no local secrets file exists. Environment variables
-        # remain a valid fallback for local and non-Community-Cloud deployments.
-        pass
-    return str(value).strip() if value is not None else default
+def _planned_sources():
+    return [
+        (source.source_id, source.source_type, source.url)
+        for source in capture.build_base_plan()
+    ]
 
 
-def _render_citations(citations: list[dict[str, str]]) -> None:
-    if not citations:
-        return
-    with st.expander("מקורות"):
-        for citation in citations:
-            title = citation["title"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
-            st.markdown(f"- [{title}]({citation['url']})")
+def _results_rows(entries):
+    rows = []
+    for entry in entries:
+        rows.append(
+            {
+                "source_id": entry["source_id"],
+                "type": entry["source_type"],
+                "status": entry["http_status"],
+                "validation": entry["validation_result"],
+                "detail": entry["validation_detail"],
+                "records": entry.get("record_count"),
+                "bytes": entry["byte_count"],
+                "attempts": entry["attempts"],
+                "redirects": len(entry["redirect_chain"]),
+                "sha256": entry["sha256"][:16] + "...",
+                "error": entry["error"] or "",
+            }
+        )
+    return rows
 
 
-@st.cache_data(ttl=900, max_entries=128, show_spinner=False)
-def _cached_search(query: str) -> list[dict[str, str]]:
-    return search_web(query)
-
-
-def _session_image_usage() -> tuple[int, set[str]]:
-    total_bytes = 0
-    source_hashes: set[str] = set()
-    for message in st.session_state.messages:
-        images = message.get("images")
-        if not isinstance(images, list):
-            continue
-        for image in images:
-            if not isinstance(image, Mapping):
-                continue
-            data = image.get("data")
-            if isinstance(data, bytes):
-                total_bytes += len(data)
-            source_sha256 = image.get("source_sha256")
-            if isinstance(source_sha256, str):
-                source_hashes.add(source_sha256)
-    return total_bytes, source_hashes
-
-
-def _render_images(images: Any) -> None:
-    if not isinstance(images, list) or not images:
-        return
-    valid_images = [image for image in images if isinstance(image, Mapping)]
-    if not valid_images:
-        return
-
-    with st.expander(f"תמונות ({len(valid_images)})", expanded=len(valid_images) <= 4):
-        columns = st.columns(min(3, len(valid_images)))
-        for index, image in enumerate(valid_images):
-            data = image.get("data")
-            if not isinstance(data, bytes):
-                continue
-            name = image.get("name") if isinstance(image.get("name"), str) else "תמונה"
-            width = image.get("width")
-            height = image.get("height")
-            dimensions = f" · {width}×{height}" if isinstance(width, int) and isinstance(height, int) else ""
-            columns[index % len(columns)].image(
-                data,
-                caption=f"{index + 1}. {name}{dimensions}",
-                use_container_width=True,
-            )
-
-
-def _render_message(message: dict[str, Any]) -> None:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        _render_images(message.get("images"))
-        if message["role"] == "assistant":
-            _render_citations(message.get("citations", []))
-            details = []
-            if message.get("model"):
-                details.append(f"מודל: `{message['model']}`")
-            if message.get("web_search_requests"):
-                details.append(f"חיפושי רשת: {message['web_search_requests']}")
-            if message.get("estimated_input_tokens"):
-                details.append(f"טוקני קלט מוערכים: {message['estimated_input_tokens']:,}")
-            if details:
-                st.caption(" · ".join(details))
-
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-openrouter_api_key = _setting("OPENROUTER_API_KEY")
-moonshot_api_key = _setting("MOONSHOT_API_KEY")
-openrouter_model = _setting("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL) or DEFAULT_OPENROUTER_MODEL
-kimi_model = _setting("KIMI_MODEL", DEFAULT_KIMI_MODEL) or DEFAULT_KIMI_MODEL
-app_url = _setting("OPENROUTER_APP_URL")
-
-st.title("Tripy Chat")
-st.caption("צ׳אט מינימליסטי דרך OpenRouter או Kimi API")
-
-with st.sidebar:
-    provider = st.selectbox(
-        "מודל",
-        options=list(PROVIDER_LABELS),
-        format_func=PROVIDER_LABELS.get,
+def _render_status(result):
+    kind, headline, explanation = STATUS_PRESENTATION.get(
+        result["overall_status"],
+        ("error", "Unknown status", "The capture returned an unrecognised status."),
     )
-    model = openrouter_model if provider == "openrouter" else kimi_model
-    st.caption(f"מודל: `{model}`")
-    if provider == "openrouter":
-        web_search = st.toggle(
-            "חיפוש חינמי באינטרנט",
-            value=True,
-            help=(
-                "חיפוש ללא מפתח נוסף דרך DDGS. "
-                "הוא אינו משתמש בכלי החיפוש בתשלום של OpenRouter."
-            ),
+    banner = {"success": st.success, "warning": st.warning, "error": st.error}[kind]
+    banner("**{0}**\n\n`{1}`\n\n{2}".format(headline, result["overall_status"], explanation))
+
+    if result["overall_status"] != capture.STATUS_READY:
+        st.warning(
+            "**This archive is INCOMPLETE and is not R5-ready.** It is a "
+            "diagnostic bundle. Do not treat it as a verified R5 evidence set, "
+            "and do not relabel it as one. The filename is prefixed "
+            "`milo-r5-source-capture-INCOMPLETE-` for this reason."
         )
-        if web_search:
-            st.caption(
-                "ללא חיוב חיפוש של OpenRouter · חיפוש אחד ועד 3 תוצאות · "
-                "שירות ניסיוני שעלול להיות מוגבל"
+
+    toyota = [
+        e for e in result["entries"] if e["source_type"] == capture.SOURCE_TYPE_WEB
+    ]
+    for entry in toyota:
+        if entry["validation_result"] == capture.TOYOTA_RESULT_CANDIDATE:
+            st.info(
+                "Toyota page: `{0}`. Technical markers were found in the saved "
+                "HTML, but **no vehicle fact has been established**. Nothing was "
+                "inferred from the URL or filename. A human must read the "
+                "preserved HTML to confirm any specification.".format(
+                    entry["validation_result"]
+                )
             )
-    else:
-        web_search = st.toggle(
-            "חיפוש מובנה של Kimi",
-            value=True,
-            help="כלי web-search הרשמי של Moonshot דרך Formula API.",
-        )
-        if web_search:
-            st.caption(
-                "חיפוש רשמי של Moonshot · עד חיפוש אחד להודעה · "
-                "הזמינות והתמחור נקבעים על ידי Kimi"
-            )
-        image_bytes, _ = _session_image_usage()
+
+
+def _render_integrity(result):
+    if result["integrity_verified"]:
         st.caption(
-            "אפשר לצרף כמה תמונות שרוצים עד מגבלת הנפח · "
-            "25MB לקובץ · "
-            f"{image_bytes / MEBIBYTE:.1f}/{MAX_SESSION_IMAGE_BYTES / MEBIBYTE:.0f}MB בשיחה · "
-            "התמונות מוקטנות ל־4K וה־EXIF מוסר"
+            "Integrity verified: body byte counts and SHA-256 digests were "
+            "recalculated and checked against manifest.json, manifest.json was "
+            "hashed, and SHA256SUMS.txt was generated and verified before the "
+            "archive was built."
         )
-    if st.button("נקה שיחה", use_container_width=True):
-        st.session_state.messages = []
+    else:
+        st.error(
+            "Archive integrity verification FAILED:\n\n"
+            + "\n".join("- {0}".format(p) for p in result["integrity_problems"])
+        )
+
+
+def main():
+    st.set_page_config(page_title="MILO R5 Source Capture", page_icon="\U0001f4e6")
+
+    st.title("MILO R5 Source Capture")
+    st.write(
+        "Captures a fixed, bounded set of **public** Government (data.gov.il "
+        "CKAN) and official Toyota sources from the Streamlit server, preserves "
+        "the response bodies byte-for-byte, validates them, and produces a "
+        "verified evidence ZIP for MILO R5."
+    )
+
+    st.info(
+        "**No API key is required and none is used.** Every source is a public, "
+        "read-only endpoint. This app sends `GET` requests only. It uses no "
+        "Authorization header, no CKAN API token, no Streamlit secret, no "
+        "cookie and no credential of any kind. There is no URL input: the "
+        "request set is fixed in code. Full datasets are never downloaded - "
+        "schema probes use `limit=0` and record queries use `limit={0}`.".format(
+            capture.QUERY_LIMIT
+        )
+    )
+
+    with st.expander("Exactly which requests will be made"):
+        st.caption(
+            "These six requests always run, in this order. Two extra bounded "
+            "queries per resource run only if a valid RAV4 query returns zero "
+            "records."
+        )
+        for source_id, source_type, url in _planned_sources():
+            st.markdown("- `{0}` ({1})  \n  {2}".format(source_id, source_type, url))
+
+    run_clicked = st.button("Run bounded R5 capture", type="primary")
+    reset_clicked = st.button("Reset capture")
+
+    if reset_clicked:
+        st.session_state.pop(STATE_KEY, None)
         st.rerun()
 
-api_key = openrouter_api_key if provider == "openrouter" else moonshot_api_key
-required_secret = "OPENROUTER_API_KEY" if provider == "openrouter" else "MOONSHOT_API_KEY"
-if not api_key:
-    st.error(
-        f"חסר `{required_secret}`. הוסף אותו ל־Streamlit Secrets או לקובץ המקומי "
-        "`.streamlit/secrets.toml`."
-    )
-    st.stop()
+    if run_clicked:
+        progress_bar = st.progress(0.0, text="Starting bounded capture...")
 
-for stored_message in st.session_state.messages:
-    _render_message(stored_message)
-
-submission = st.chat_input(
-    "כתוב הודעה או צרף תמונות..." if provider == "kimi" else "כתוב הודעה...",
-    key=f"chat_input_{provider}",
-    accept_file="multiple" if provider == "kimi" else False,
-    file_type=list(SUPPORTED_IMAGE_EXTENSIONS) if provider == "kimi" else None,
-)
-
-if submission is not None:
-    if provider == "kimi":
-        prompt = str(getattr(submission, "text", "") or "").strip()
-        uploaded_files = list(getattr(submission, "files", []) or [])
-    else:
-        prompt = str(submission).strip()
-        uploaded_files = []
-
-    image_records: list[dict[str, Any]] = []
-    if uploaded_files:
-        existing_image_bytes, existing_source_hashes = _session_image_usage()
-        try:
-            prepared_batch = prepare_uploads(
-                uploaded_files,
-                existing_image_bytes=existing_image_bytes,
-                existing_source_hashes=existing_source_hashes,
-            )
-        except ImageInputError as exc:
-            st.error(str(exc))
-            st.stop()
-        image_records = [image.as_session_record() for image in prepared_batch.images]
-        if prepared_batch.duplicate_names:
-            st.info(
-                f"דילגתי על {len(prepared_batch.duplicate_names)} תמונות כפולות שכבר נמצאות בשיחה."
+        def on_progress(source_id, completed, planned):
+            fraction = min(completed / float(max(planned, 1)), 1.0)
+            progress_bar.progress(
+                fraction, text="Requesting {0} ({1}/{2})".format(source_id, completed + 1, planned)
             )
 
-    if not prompt:
-        prompt = (
-            f"נתח את {len(image_records)} התמונות המצורפות."
-            if image_records
-            else "נתח את התמונות שכבר צורפו בשיחה."
+        # Deliberately not cached: every run performs its own live requests.
+        result = capture.run_and_package(progress=on_progress)
+        progress_bar.progress(1.0, text="Capture complete")
+        st.session_state[STATE_KEY] = result
+
+    result = st.session_state.get(STATE_KEY)
+    if not result:
+        st.caption("No capture has been run in this session yet.")
+        return
+
+    _render_status(result)
+
+    st.subheader("Results")
+    st.dataframe(_results_rows(result["entries"]))
+
+    _render_integrity(result)
+
+    st.subheader("Download")
+    st.caption(
+        "Archive `{0}` - {1} bytes, sha256 `{2}`.".format(
+            result["archive_filename"], result["archive_byte_count"], result["archive_sha256"]
         )
+    )
+    st.download_button(
+        label="Download {0}".format(result["archive_filename"]),
+        data=result["archive_bytes"],
+        file_name=result["archive_filename"],
+        mime="application/zip",
+    )
 
-    user_message: dict[str, Any] = {"role": "user", "content": prompt}
-    if image_records:
-        user_message["images"] = image_records
-    st.session_state.messages.append(user_message)
-    _render_message(user_message)
 
-    with st.chat_message("assistant"):
-        with st.spinner("חושב..."):
-            try:
-                if provider == "openrouter":
-                    result = openrouter_chat_completion(
-                        api_key=api_key,
-                        messages=st.session_state.messages,
-                        model=model,
-                        web_search=web_search,
-                        app_url=app_url or None,
-                        search_runner=_cached_search,
-                    )
-                else:
-                    result = kimi_chat_completion(
-                        api_key=api_key,
-                        messages=st.session_state.messages,
-                        model=model,
-                        web_search=web_search,
-                    )
-            except (OpenRouterError, KimiError) as exc:
-                st.error(str(exc))
-            else:
-                assistant_message = {
-                    "role": "assistant",
-                    "content": result.content,
-                    "citations": list(result.citations),
-                    "model": result.model,
-                    "web_search_requests": result.web_search_requests,
-                }
-                estimated_input_tokens = getattr(result, "estimated_input_tokens", None)
-                if estimated_input_tokens is not None:
-                    assistant_message["estimated_input_tokens"] = estimated_input_tokens
-                if provider == "kimi":
-                    assistant_message["provider_message"] = result.provider_message
-                st.session_state.messages.append(assistant_message)
-                st.markdown(result.content)
-                _render_citations(assistant_message["citations"])
-                details = [f"מודל: `{result.model}`"]
-                if result.web_search_requests:
-                    details.append(f"חיפושי רשת: {result.web_search_requests}")
-                if estimated_input_tokens is not None:
-                    details.append(f"טוקני קלט מוערכים: {estimated_input_tokens:,}")
-                st.caption(" · ".join(details))
+if __name__ == "__main__":
+    main()

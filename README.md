@@ -1,149 +1,166 @@
-# Tripy Chat
+# MILO R5 Source Capture
 
-A minimal Streamlit chat app with a model selector for the free Ox Alpha preview
-through OpenRouter and Kimi K3 through Moonshot's direct API.
+A **temporary** Streamlit evidence-capture app. It makes a fixed, bounded set of
+public read-only `GET` requests from the Streamlit server, preserves the returned
+source bodies byte-for-byte, validates them, and produces a verified ZIP for
+MILO R5 review.
 
-## What it includes
+This repository previously held a different application. The prior contents are
+preserved on the backup branch created before the replacement.
 
-- Streamlit chat history stored only in the current browser session.
-- Server-side OpenRouter and Moonshot API keys through Streamlit Secrets.
-- `stealth/ox-alpha` with optional keyless web search executed by the app with
-  DDGS and Trafilatura.
-- `kimi-k3` with Moonshot's official `moonshot/web-search:latest` Formula tool.
-- Multi-image vision input for Kimi K3, including JPEG, PNG, WebP, HEIC, and
-  HEIF uploads.
-- Web-search citations and the actual model ID used in each response.
-- A model selector in the Streamlit sidebar.
-- An explicit limit of one web search per message.
+## No authentication is required or used
 
-> The app does not use OpenRouter's separately billed web-search server tool. Search
-> requires no additional API key, but public search backends can rate-limit or block
-> automated requests and should be treated as experimental.
+Every source is a **public** endpoint. There is nothing to configure.
 
-> Kimi K3 and its search path are billed and rate-limited according to the Moonshot
-> account. Moonshot currently describes Formula official tools as free for a limited
-> time, but availability and pricing can change. Kimi's documentation also marks web
-> search as experimental and not recommended for near-term production workflows.
+The app does **not** use — and has no code path for — API keys, access tokens,
+usernames, passwords, `Authorization` headers, CKAN API tokens, Streamlit
+secrets, cookies copied from a browser, or any other credential. The resource
+identifiers below are public resource IDs, not secrets.
 
-> Ox Alpha is a third-party stealth preview. OpenRouter states that its provider
-> retains prompts and completions but does not use them for training. Do not send
-> sensitive information.
+| Identifier | Value |
+| --- | --- |
+| `CKAN_API_BASE` | `https://data.gov.il/api/3/action` |
+| `CKAN_API_VERSION` | `3` |
+| `CKAN_PACKAGE_ID` | `degem-rechev-wltp` |
+| `WLTP_RESOURCE_ID` | `142afde2-6228-49f9-8a29-9b6c3a0cbe40` |
+| `ADDITIONAL_RESOURCE_ID` | `5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6` |
+| `TOYOTA_URL` | `https://www.toyota.co.il/models/rav4-plugin` |
 
-## Run locally
+## Run it
 
-1. Install the dependencies:
-
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
-
-2. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and replace
-   the placeholders with the API keys you want to use. Never commit `secrets.toml`.
-
-3. Start the app:
-
-   ```bash
-   streamlit run app.py
-   ```
-
-You can override the provider model IDs with `OPENROUTER_MODEL` and `KIMI_MODEL`.
-The app also supports the same settings as environment variables.
-
-## Deploy on Streamlit Community Cloud
-
-1. Select this repository and `app.py` as the entrypoint.
-2. Use Python 3.12 in **Advanced settings**.
-3. Paste this into **Secrets**, using your real key:
-
-   ```toml
-   OPENROUTER_API_KEY = "sk-or-v1-replace-me"
-   OPENROUTER_MODEL = "stealth/ox-alpha"
-   MOONSHOT_API_KEY = "sk-replace-with-your-kimi-key"
-   KIMI_MODEL = "kimi-k3"
-   OPENROUTER_APP_URL = "https://your-app.streamlit.app"
-   ```
-
-4. Deploy. `requirements.txt` is in the repository root, so Community Cloud will
-   install Streamlit and all image/search dependencies automatically.
-
-The API keys stay server-side, but a public app can still consume both your
-OpenRouter quota and your Moonshot balance. Keep the Streamlit app private unless
-public usage is intentional.
-
-## Ox Alpha web search
-
-When enabled, the first OpenRouter request exposes a normal client-side function:
-
-```json
-{
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "search_web",
-        "description": "Search the live public web for current or factual information"
-      }
-    }
-  ]
-}
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-If Ox Alpha requests the function, the app runs DDGS locally, reads at most one
-public HTML page with Trafilatura, and sends the bounded results back to the model in
-a second OpenRouter request. Search results are cached for 15 minutes.
+The Streamlit entrypoint is **`app.py`**.
 
-The app enforces one search, three results, a 300-character query, and up to 5,000
-characters of extracted page text per message. It rejects local/private destinations,
-credential-bearing URLs, oversized responses, and non-HTML content. Tool output is
-explicitly marked as untrusted so webpage instructions are not followed.
+## What it captures
 
-DDGS is an educational metasearch library without a service-level guarantee. This
-keyless path is useful for a personal demo, but a production deployment should use a
-supported search API or a self-hosted metasearch service.
+Six mandatory requests, executed serially in this order:
 
-## Kimi K3 web search
+1. Package metadata — `package_show?id=degem-rechev-wltp`
+2. WLTP resource schema — `datastore_search?resource_id=142afde2…&limit=0`
+3. WLTP RAV4 query — `datastore_search?resource_id=142afde2…&limit=100&q=RAV4`
+4. Additional resource schema — `datastore_search?resource_id=5e87a7a1…&limit=0`
+5. Additional resource RAV4 query — `datastore_search?resource_id=5e87a7a1…&limit=100&q=RAV4`
+6. Official Toyota page — `https://www.toyota.co.il/models/rav4-plugin`
 
-When Kimi K3 is selected, the app calls Moonshot directly at
-`https://api.moonshot.ai/v1` using `MOONSHOT_API_KEY`. If search is enabled, it:
+If a **valid** RAV4 query returns zero records, two extra bounded queries run for
+that resource: `q=RAV%204` and `q=%D7%A8%D7%90%D7%91`. Each alternative gets its
+own body file, header file and manifest entry.
 
-1. Fetches the official tool declaration from
-   `moonshot/web-search:latest`.
-2. Sends that declaration to `kimi-k3` through Chat Completions.
-3. Executes at most one requested `web_search` Formula Fiber.
-4. Returns the complete assistant tool-call message and Fiber result to Kimi until
-   the model produces its final answer.
+The full dataset is never requested. Schema probes use `limit=0`; record queries
+use `limit=100`.
 
-Kimi K3 runs with `reasoning_effort="low"` and a bounded completion budget for a
-responsive chat experience. Search results are processed by Moonshot rather than by
-the app's DDGS/Trafilatura path.
+## Request policy
 
-## Kimi K3 image input
+| Control | Value |
+| --- | --- |
+| Method | `GET` only |
+| Session | none — `requests.get`, never `requests.Session` |
+| Execution | serial |
+| Redirects | `allow_redirects=False`, at most 5 processed manually |
+| Redirect targets | must be HTTPS and one of `data.gov.il`, `www.data.gov.il`, `toyota.co.il`, `www.toyota.co.il` |
+| Attempts | 3 total; retries only transport errors, HTTP 429 and HTTP 5xx |
+| Timeouts | connect 10 s, read 45 s |
+| Max response | 15 MiB |
+| `User-Agent` | `MILO-R5-streamlit-evidence-capture/1.0` |
+| `Accept-Encoding` | `identity` |
+| `Accept` | `application/json` (Government), `text/html,application/xhtml+xml` (Toyota) |
 
-Select Kimi K3 and use the attachment control in the chat box to select multiple
-images. There is no application-level image-count cap. Instead, the app fills the
-available infrastructure budget while enforcing these bounds:
+Cookies received from one response are never sent to the next request: a fresh
+header dict is built for every hop and no session object carries state.
 
-- 25 MiB per original upload, configured in `.streamlit/config.toml`.
-- 256 MiB of original files in one submitted batch.
-- 60 MiB of processed images across the active chat session.
-- 90 MB maximum serialized Moonshot request body, below the provider's 100 MB
-  request limit.
-- A preflight call to Moonshot's token-estimation endpoint; the request is stopped
-  before it reaches the configured safe context threshold.
+There is **no URL input in the UI**. Every URL is constructed in code from the
+constants above.
 
-Images are orientation-corrected, resized to an orientation-aware 4K bound, and
-re-encoded as JPEG before being sent as base64 data to Moonshot. This removes EXIF
-metadata and reduces upload size. Duplicate originals are skipped, and the per-image
-size budget automatically shrinks when a large batch is selected, so small images
-can be submitted in much larger quantities than large photos.
+## Preservation and provenance
 
-Processed images live only in Streamlit's in-memory session state and are not
-written to this app's disk. They are still transmitted to Moonshot for inference,
-so do not upload sensitive medical photos unless that provider's privacy terms are
-acceptable to you. Visual analysis is informational and is not a medical diagnosis.
+Response bodies are stored as exact bytes. Government JSON and Toyota HTML are
+never pretty-printed, normalized, renamed or otherwise rewritten.
+
+Only these response headers are preserved: `Date`, `Content-Type`,
+`Content-Length`, `Content-Encoding`, `ETag`, `Last-Modified`, `Location`,
+`Cache-Control`. `Set-Cookie`, `Authorization`, environment variables, proxy
+details, local paths and server identifiers are never saved.
+
+Each request records: logical source ID, source type, requested URL, final URL,
+redirect chain, UTC start/finish, final HTTP status, sanitized headers, body
+filename, exact byte count, SHA-256, attempt count,
+`credentials_used=false`, `api_key_used=false`, `cookies_supplied=false`,
+validation result, sanitized error, and — for Government queries — the record
+count and the original `_id` values.
+
+Errors are sanitized to the exception type only, so proxy URLs and local paths
+cannot leak into the manifest.
+
+## Archive
+
+Built entirely in memory. Archive root: `milo-r5-source-capture-YYYYMMDDTHHMMSSZ/`
+
+```
+manifest.json
+SHA256SUMS.txt
+README.txt
+government/
+  package_show_degem_rechev_wltp.json          + .headers.json
+  resource_142afde2_schema.json                + .headers.json
+  resource_142afde2_rav4.json                  + .headers.json
+  resource_5e87a7a1_schema.json                + .headers.json
+  resource_5e87a7a1_rav4.json                  + .headers.json
+web/
+  toyota_rav4_plugin.html                      + .headers.json
+```
+
+Before the download is exposed, the app recalculates every byte count and body
+hash, verifies them against `manifest.json`, hashes the final `manifest.json`,
+generates and verifies `SHA256SUMS.txt`, and only then builds the ZIP from the
+verified bytes. Verify a downloaded archive with `sha256sum -c SHA256SUMS.txt`.
+
+## Overall statuses
+
+| Status | Meaning |
+| --- | --- |
+| `ready_for_r5_bundle_review` | All mandatory sources passed, at least one Government query returned records, and the Toyota HTML contains technical markers. |
+| `no_matching_government_records` | All Government calls were valid but all bounded queries returned zero records. |
+| `incomplete_official_web_source` | Government evidence passed but the Toyota HTML lacked usable technical content. |
+| `capture_failed` | Network, HTTP, redirect, size, JSON, blocking-page or integrity failure. |
+
+A diagnostic ZIP is always downloadable. Only a `ready_for_r5_bundle_review`
+capture uses the plain filename `milo-r5-source-capture-<timestamp>.zip`; every
+other status produces `milo-r5-source-capture-INCOMPLETE-<timestamp>.zip`. An
+incomplete archive is never labelled R5-ready.
+
+## Toyota validation
+
+The saved HTML must be 2xx, HTML-typed, non-empty and plausible, must contain
+Toyota and RAV4 identifiers, and must not be an Access Denied, CAPTCHA, WAF or
+error page.
+
+When technical specification markers are present the result is
+`passed_candidate_requires_human_fact_check` — **a candidate, not a fact**. No
+specification value is extracted and nothing is inferred from the URL or the
+filename; a human must read the preserved HTML to establish any vehicle fact.
+When the official page is captured but its saved HTML lacks technical content
+the result is `insufficient_official_content`.
+
+## Not used
+
+No databases, model providers, AI APIs, user accounts, secrets, production
+services, generic user-supplied URLs, browser automation, Playwright, Selenium,
+or full Government dataset downloads.
 
 ## Tests
 
 ```bash
+python -m compileall app.py capture.py tests
 python -m unittest discover -s tests -v
 ```
+
+All tests use mocked responses through an injected fake transport; none reaches
+a live source. `tests/test_capture.py` also contains a permanent source-code
+audit (`SourceAuditTests`) asserting the absence of mutating HTTP verbs,
+`requests.Session`, secret lookups, credential values, generic URL inputs,
+browser automation, provider clients, response caching and any database or
+MILO/Supabase/GCP write path.

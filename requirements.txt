@@ -1,5 +1,2 @@
-streamlit>=1.43,<2
-ddgs>=9.15,<10
-trafilatura>=2.2,<3
-Pillow>=10.4,<13
-pillow-heif>=0.18,<2
+streamlit>=1.36
+requests>=2.32

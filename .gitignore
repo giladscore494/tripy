@@ -1,6 +1,9 @@
-.streamlit/secrets.toml
-.env
 __pycache__/
-.pytest_cache/
 *.py[cod]
-.DS_Store
+*.egg-info/
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+*.zip
+.pytest_cache/
