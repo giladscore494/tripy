@@ -61,12 +61,42 @@ The archived model page states that marketing of the RAV4 Plug-in has ended.
 It is an official **model-identity and archived-status** source, not a complete
 technical specification source.
 
-Model page validation requires all of: HTTP 200, HTTPS, a final hostname still
-on `toyota.co.il` / `www.toyota.co.il`, non-empty plausible HTML, no CAPTCHA /
-WAF / access-denied / login / error page, Toyota identity, RAV4 identity, at
-least one Plug-in identity marker (`plug-in`, `plugin`, `phev`, `פלאג`), and a
-credible ended-marketing or archive indication. Every marker must appear in the
-saved response body; nothing is read from the URL or the filename.
+### Validation runs on visible text, not raw source
+
+Markers are matched against the **human-visible text** of the page, extracted
+with the standard library's `html.parser.HTMLParser`. Text inside `script`,
+`style`, `template`, `svg`, `noscript`, `iframe`, `object` and `canvas` is
+discarded, and only text nodes are collected — attribute values such as
+`class="g-recaptcha"` or `src=".../recaptcha/api.js"` are never scanned.
+Whitespace is normalized and HTML entities are decoded.
+
+This is **validation-only**. The raw response bytes saved under `raw/` are never
+modified, reformatted or rewritten, and every hash is taken over those raw bytes.
+
+Blocking detection is contextual, in two tiers:
+
+- **Strong indicators** fail whenever they appear in visible text or the title:
+  `Access Denied`, `Request Blocked`, `Attention Required`, WAF/incident wording,
+  `403 Forbidden`, and explicit challenge phrasing such as
+  "verify you are human" or "complete the CAPTCHA".
+- **Generic terms** — `captcha`, `page not found`, `service unavailable`,
+  `please sign in`, `forbidden` — count only in an error or challenge *context*:
+  in the document `<title>`, or on a page too content-poor (under 1200 visible
+  characters) to be anything but an error page.
+
+A third-party CAPTCHA script reference alone therefore never fails a page.
+
+### Model page requirements
+
+HTTP **exactly 200**, HTTPS, a final hostname still on `toyota.co.il` /
+`www.toyota.co.il`, non-empty plausible HTML, no visible block or error page,
+then in the visible text: Toyota identity, RAV4 identity, at least one Plug-in
+marker (`plug-in`, `plugin`, `phev`, `פלאג`), and a credible ended-marketing
+statement. Nothing is read from the URL or the filename.
+
+Ended-marketing wording is matched both as contiguous phrases and as word pairs
+within 80 characters, so real-world phrasing that puts the model name between
+the words — `שיווק הדגם ראב4 פלאג-אין הסתיים` — is recognised.
 
 A passing model page yields:
 
@@ -81,9 +111,12 @@ source**; Toyota provides official importer corroboration of model identity and
 archived status. A human must read the preserved HTML to establish any claim
 about the model.
 
-The archive index has its own, lighter validation
-(`passed_official_archive_index`) — it establishes that the official archive
-section exists and was reachable.
+### Archive index requirements
+
+The archive index (`passed_official_archive_index`) must visibly establish all
+of: Toyota identity, an archive or past-model section, RAV4 identity, and
+Plug-in/PHEV identity — that is, that the official archive section actually
+lists the RAV4 Plug-in.
 
 ## Install and run
 
@@ -251,7 +284,9 @@ The capture runs **server-side**, so the Streamlit host must be able to reach
 | `transport_error: ProxyError` / `ConnectionError` | The host could not egress. Sandboxes and corporate proxies commonly block these domains — check the egress allowlist. |
 | `transport_error: ConnectTimeout` | DNS or firewall is dropping the connection. |
 | `failed_http_status` | The source returned a non-200 code. If an official URL moved again, update the constants at the top of `capture.py`. |
-| `failed_blocking_page` | A CAPTCHA / WAF / access-denied page was served instead of content. |
+| `failed_blocking_page` | A CAPTCHA / WAF / access-denied / error page was served instead of content. The detail names the visible marker and the context that made it count. A CAPTCHA *script* on a healthy page does not trigger this. |
+| `failed_missing_archive_section` | The archive index did not visibly show an archive or past-model section. |
+| `failed_no_visible_text` | The document parsed but contained no readable text. |
 | `failed_missing_archive_indication` | The page was captured but contained no ended-marketing or archive wording; adjust `TOYOTA_ARCHIVE_MARKERS` if Toyota rewords it. |
 | `pagination_*` | Pagination did not advance or totals were inconsistent. The capture fails closed rather than truncating. |
 | `host_not_allowed` / `redirect_host_not_allowed` | A redirect pointed off the allowlist and was refused by design. |

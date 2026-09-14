@@ -27,6 +27,7 @@ import time
 import urllib.parse
 import zipfile
 from collections import namedtuple
+from html.parser import HTMLParser
 
 # --------------------------------------------------------------------------
 # Public connection identifiers (public resource IDs, not secrets)
@@ -126,46 +127,95 @@ JSON_CONTENT_TYPE_MARKERS = ("application/json", "text/json", "+json")
 HTML_CONTENT_TYPE_MARKERS = ("text/html", "application/xhtml+xml")
 MIN_HTML_BYTES = 512
 
-TOYOTA_BRAND_MARKERS = ("toyota", "טויוטה")
-TOYOTA_MODEL_MARKERS = ("rav4", "rav 4", "rav-4")
-TOYOTA_PLUGIN_MARKERS = ("plug-in", "plugin", "phev", "פלאג")
+TOYOTA_BRAND_MARKERS = ("toyota", "\u05d8\u05d5\u05d9\u05d5\u05d8\u05d4")
+TOYOTA_MODEL_MARKERS = (
+    "rav4", "rav 4", "rav-4",
+    "\u05e8\u05d0\u05d14", "\u05e8\u05d0\u05d1 4", "\u05e8\u05d0\u05d1-4",
+)
+TOYOTA_PLUGIN_MARKERS = ("plug-in", "plugin", "phev", "\u05e4\u05dc\u05d0\u05d2")
 
-TOYOTA_BLOCK_MARKERS = (
+# Sections that credibly mark an archive / past-model area of the site.
+TOYOTA_ARCHIVE_SECTION_MARKERS = (
+    "\u05d0\u05e8\u05db\u05d9\u05d5\u05df",                                   # archive
+    "\u05d3\u05d2\u05de\u05d9 \u05e2\u05d1\u05e8",                            # past models
+    "\u05d3\u05d2\u05de\u05d9 \u05d4\u05e2\u05d1\u05e8",                     # the past models
+    "\u05d3\u05d2\u05de\u05d9\u05dd \u05e7\u05d5\u05d3\u05de\u05d9\u05dd",  # previous models
+    "archive",
+    "past models",
+    "previous models",
+)
+
+# Contiguous phrases stating that marketing of a model has ended.
+TOYOTA_ENDED_MARKETING_PHRASES = (
+    "\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd \u05d4\u05e9\u05d9\u05d5\u05d5\u05e7",   # marketing has ended
+    "\u05d4\u05e9\u05d9\u05d5\u05d5\u05e7 \u05d4\u05e1\u05ea\u05d9\u05d9\u05dd",   # the marketing ended
+    "\u05d4\u05d5\u05e4\u05e1\u05e7 \u05d4\u05e9\u05d9\u05d5\u05d5\u05e7",         # marketing was stopped
+    "\u05d0\u05d9\u05e0\u05d5 \u05de\u05e9\u05d5\u05d5\u05e7",                       # is not marketed
+    "\u05d0\u05d9\u05e0\u05dd \u05de\u05e9\u05d5\u05d5\u05e7\u05d9\u05dd",         # are not marketed
+    "\u05dc\u05d0 \u05de\u05e9\u05d5\u05d5\u05e7",                                     # not marketed
+    "discontinued",
+    "no longer marketed",
+    "no longer available",
+    "end of production",
+)
+
+# Word pairs that state the same thing with the model name in between, e.g.
+# "\u05e9\u05d9\u05d5\u05d5\u05e7 \u05d4\u05d3\u05d2\u05dd \u05e8\u05d0\u05d14 \u05e4\u05dc\u05d0\u05d2-\u05d0\u05d9\u05df \u05d4\u05e1\u05ea\u05d9\u05d9\u05dd".
+TOYOTA_ENDED_MARKETING_PAIRS = (
+    ("\u05e9\u05d9\u05d5\u05d5\u05e7", "\u05d4\u05e1\u05ea\u05d9\u05d9\u05dd"),
+    ("\u05e9\u05d9\u05d5\u05d5\u05e7", "\u05d4\u05e1\u05ea\u05d9\u05d9\u05de\u05d4"),
+    ("\u05e9\u05d9\u05d5\u05d5\u05e7", "\u05d4\u05d5\u05e4\u05e1\u05e7"),
+    ("marketing", "ended"),
+)
+ENDED_MARKETING_PROXIMITY_CHARS = 80
+
+# Unambiguous block/challenge wording. Failing on these in VISIBLE text is
+# always correct, because no content page displays them.
+TOYOTA_STRONG_BLOCK_MARKERS = (
     "access denied",
-    "captcha",
-    "are you a human",
-    "attention required",
     "request blocked",
+    "attention required",
     "web application firewall",
     "incapsula incident",
     "cloudflare ray id",
     "403 forbidden",
     "error 403",
+    "are you a human",
+    "verify you are human",
+    "verify that you are human",
+    "i am not a robot",
+    "i'm not a robot",
+    "complete the captcha",
+    "complete the security check",
+    "security check to access",
+    "unusual traffic",
+    "\u05d4\u05d2\u05d9\u05e9\u05d4 \u05e0\u05d3\u05d7\u05ea\u05d4",       # access denied
+)
+
+# Generic terms that also occur on perfectly healthy pages. These count as
+# blocking evidence only in an error/challenge CONTEXT: in the document title,
+# or on a page too content-poor to be anything but an error page.
+TOYOTA_GENERIC_BLOCK_MARKERS = (
+    "captcha",
     "404 not found",
+    "not found",
     "page not found",
     "500 internal server error",
+    "internal server error",
     "service unavailable",
     "please sign in",
     "please log in",
-    "הדף לא נמצא",       # page not found
-    "הגישה נדחתה",   # access denied
+    "forbidden",
+    "\u05d4\u05d3\u05e3 \u05dc\u05d0 \u05e0\u05de\u05e6\u05d0",             # page not found
 )
 
-# Credible indications that the model is archived / no longer marketed.
-TOYOTA_ARCHIVE_MARKERS = (
-    "הסתיים השיווק",       # marketing has ended
-    "השיווק הסתיים",       # the marketing ended
-    "הופסק השיווק",             # marketing was stopped
-    "שיווק הדגם הסתיים",  # model marketing ended
-    "אינו משווק",                         # is not marketed
-    "אינם משווקים",             # are not marketed
-    "לא משווק",                                     # not marketed
-    "דגמי עבר",                                     # past models
-    "ארכיון",                                            # archive
-    "discontinued",
-    "no longer marketed",
-    "no longer available",
-    "end of production",
+# A real Toyota page carries far more visible text than an error or challenge
+# page. Below this, a generic marker is treated as an error context.
+MIN_CONTENT_CHARS_FOR_GENERIC = 1200
+
+# Elements whose text is never visible to a reader.
+NON_VISIBLE_TAGS = frozenset(
+    {"script", "style", "template", "svg", "noscript", "iframe", "object", "canvas"}
 )
 
 RESULT_ARCHIVE_INDEX = "passed_official_archive_index"
@@ -611,52 +661,196 @@ def validate_datastore_page(fetch):
     )
 
 
+class _VisibleTextExtractor(HTMLParser):
+    """Collect human-visible text and the document title.
+
+    Only text nodes are collected, so attribute values such as
+    ``class="g-recaptcha"`` or ``src=".../recaptcha/api.js"`` never reach the
+    validator. Text inside script, style, template, SVG and other non-visible
+    elements is discarded.
+    """
+
+    def __init__(self):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self._skip_depth = 0
+        self._in_title = False
+        self._visible = []
+        self._title = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in NON_VISIBLE_TAGS:
+            self._skip_depth += 1
+        elif tag == "title":
+            self._in_title = True
+
+    def handle_startendtag(self, tag, attrs):
+        # Self-closing: opens and closes at once, so it skips nothing.
+        return
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in NON_VISIBLE_TAGS:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+        elif tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data):
+        if self._skip_depth > 0:
+            return
+        if self._in_title:
+            self._title.append(data)
+        self._visible.append(data)
+
+    @property
+    def visible_text(self):
+        return " ".join("".join(self._visible).split())
+
+    @property
+    def title_text(self):
+        return " ".join("".join(self._title).split())
+
+
+def extract_visible_text(body):
+    """Return (visible_text, title_text), both lowercased and whitespace-normalized.
+
+    Validation-only. The raw response bytes are never modified or rewritten.
+    """
+    parser = _VisibleTextExtractor()
+    try:
+        parser.feed(body.decode("utf-8", "replace"))
+        parser.close()
+    except Exception:  # malformed markup: keep whatever was parsed so far
+        pass
+    return parser.visible_text.lower(), parser.title_text.lower()
+
+
+def _pair_within(text, first, second, window):
+    """True when ``first`` and ``second`` occur within ``window`` characters."""
+    start = 0
+    while True:
+        index = text.find(first, start)
+        if index < 0:
+            return False
+        lower = max(0, index - window)
+        upper = index + len(first) + window
+        if second in text[lower:upper]:
+            return True
+        start = index + 1
+
+
+def has_ended_marketing_statement(text):
+    """True when the visible text states that marketing of the model ended."""
+    if any(phrase in text for phrase in TOYOTA_ENDED_MARKETING_PHRASES):
+        return True
+    return any(
+        _pair_within(text, first, second, ENDED_MARKETING_PROXIMITY_CHARS)
+        for first, second in TOYOTA_ENDED_MARKETING_PAIRS
+    )
+
+
+def detect_blocking_page(visible_text, title_text):
+    """Return a blocking marker when the VISIBLE page is a block/error page.
+
+    A third-party CAPTCHA script reference alone is not blocking evidence: this
+    only ever sees visible text, and generic terms additionally require an error
+    or challenge context.
+    """
+    for marker in TOYOTA_STRONG_BLOCK_MARKERS:
+        if marker in visible_text or marker in title_text:
+            return marker, "visible block or challenge wording"
+
+    content_poor = len(visible_text) < MIN_CONTENT_CHARS_FOR_GENERIC
+    for marker in TOYOTA_GENERIC_BLOCK_MARKERS:
+        if marker in title_text:
+            return marker, "error or challenge context: document title"
+        if content_poor and marker in visible_text:
+            return marker, "error or challenge context: content-poor page"
+    return None, None
+
+
 def _web_preconditions(fetch):
-    """Shared Toyota checks: 200, HTTPS, allowed final host, plausible HTML."""
+    """Transport-level checks, then visible-text extraction and block detection.
+
+    Order: HTTP 200 -> HTTPS -> final host -> content type -> non-empty
+    plausible HTML -> extract visible text -> detect an actual visible block or
+    error page -> (caller then validates official identity and markers).
+
+    Returns (visible_text, title_text, failure_outcome).
+    """
     if fetch["error"]:
-        return _outcome("failed_request", fetch["error"])
+        return None, None, _outcome("failed_request", fetch["error"])
     if fetch["http_status"] != 200:
-        return _outcome("failed_http_status", "HTTP {0}".format(fetch["http_status"]))
+        return None, None, _outcome(
+            "failed_http_status", "HTTP {0}".format(fetch["http_status"])
+        )
 
     parsed = urllib.parse.urlsplit(fetch["final_url"])
     if parsed.scheme.lower() != "https":
-        return _outcome("failed_not_https", "final URL is not HTTPS")
+        return None, None, _outcome("failed_not_https", "final URL is not HTTPS")
     host = (parsed.hostname or "").lower()
     if host not in TOYOTA_HOSTS:
-        return _outcome("failed_final_host", "final host: {0}".format(host or "<empty>"))
+        return None, None, _outcome(
+            "failed_final_host", "final host: {0}".format(host or "<empty>")
+        )
 
     if not _content_type_matches(fetch["content_type"], HTML_CONTENT_TYPE_MARKERS):
-        return _outcome("failed_content_type", fetch["content_type"] or "<missing>")
+        return None, None, _outcome(
+            "failed_content_type", fetch["content_type"] or "<missing>"
+        )
 
     body = fetch["body"]
     if len(body.strip()) < MIN_HTML_BYTES:
-        return _outcome("failed_empty_body", "{0} bytes".format(len(body)))
+        return None, None, _outcome("failed_empty_body", "{0} bytes".format(len(body)))
 
-    text = body.decode("utf-8", "replace").lower()
-    if "<html" not in text and "<!doctype html" not in text:
-        return _outcome("failed_implausible_html", "no html document element")
+    raw = body.decode("utf-8", "replace").lower()
+    if "<html" not in raw and "<!doctype html" not in raw:
+        return None, None, _outcome("failed_implausible_html", "no html document element")
 
-    for marker in TOYOTA_BLOCK_MARKERS:
-        if marker in text:
-            return _outcome("failed_blocking_page", "marker: {0}".format(marker))
+    visible_text, title_text = extract_visible_text(body)
+    if not visible_text:
+        return None, None, _outcome("failed_no_visible_text", "no readable text in document")
 
-    if not any(marker in text for marker in TOYOTA_BRAND_MARKERS):
-        return _outcome("failed_missing_brand_identifier", "no Toyota identity in body")
+    marker, context = detect_blocking_page(visible_text, title_text)
+    if marker:
+        return None, None, _outcome(
+            "failed_blocking_page", "visible marker {0!r} ({1})".format(marker, context)
+        )
 
-    return None
+    if not any(m in visible_text for m in TOYOTA_BRAND_MARKERS):
+        return None, None, _outcome(
+            "failed_missing_brand_identifier", "no Toyota identity in visible text"
+        )
+
+    return visible_text, title_text, None
 
 
 def validate_toyota_archive_index(fetch):
-    """The archive index establishes that the official archive section exists."""
-    failure = _web_preconditions(fetch)
+    """The official archive index must visibly place RAV4 Plug-in in an archive."""
+    visible_text, _title, failure = _web_preconditions(fetch)
     if failure:
         return failure
-    text = fetch["body"].decode("utf-8", "replace").lower()
-    mentions_rav4 = any(marker in text for marker in TOYOTA_MODEL_MARKERS)
+
+    sections = sorted({m for m in TOYOTA_ARCHIVE_SECTION_MARKERS if m in visible_text})
+    if not sections:
+        return _outcome(
+            "failed_missing_archive_section", "no archive or past-model section in visible text"
+        )
+    if not any(m in visible_text for m in TOYOTA_MODEL_MARKERS):
+        return _outcome("failed_missing_model_identifier", "no RAV4 identity in visible text")
+
+    plugin_markers = sorted({m for m in TOYOTA_PLUGIN_MARKERS if m in visible_text})
+    if not plugin_markers:
+        return _outcome(
+            "failed_missing_plugin_identifier", "no Plug-in/PHEV identity in visible text"
+        )
+
     return _outcome(
         RESULT_ARCHIVE_INDEX,
-        "official archive index captured",
-        mentions_rav4=mentions_rav4,
+        "official archive index lists RAV4 Plug-in",
+        archive_sections=sections,
+        plugin_markers=plugin_markers,
     )
 
 
@@ -664,28 +858,31 @@ def validate_toyota_archived_model(fetch):
     """Model identity and archived status only. No technical fact is inferred.
 
     Nothing is read from the URL or the filename: every marker below must be
-    present in the saved response body.
+    present in the human-visible text of the saved response body.
     """
-    failure = _web_preconditions(fetch)
+    visible_text, _title, failure = _web_preconditions(fetch)
     if failure:
         return failure
 
-    text = fetch["body"].decode("utf-8", "replace").lower()
+    if not any(m in visible_text for m in TOYOTA_MODEL_MARKERS):
+        return _outcome("failed_missing_model_identifier", "no RAV4 identity in visible text")
 
-    if not any(marker in text for marker in TOYOTA_MODEL_MARKERS):
-        return _outcome("failed_missing_model_identifier", "no RAV4 identity in body")
-
-    plugin_markers = sorted({m for m in TOYOTA_PLUGIN_MARKERS if m in text})
+    plugin_markers = sorted({m for m in TOYOTA_PLUGIN_MARKERS if m in visible_text})
     if not plugin_markers:
-        return _outcome("failed_missing_plugin_identifier", "no Plug-in/PHEV identity in body")
-
-    archive_markers = sorted({m for m in TOYOTA_ARCHIVE_MARKERS if m in text})
-    if not archive_markers:
         return _outcome(
-            "failed_missing_archive_indication",
-            "no ended-marketing or archive indication in body",
+            "failed_missing_plugin_identifier", "no Plug-in/PHEV identity in visible text"
         )
 
+    if not has_ended_marketing_statement(visible_text):
+        return _outcome(
+            "failed_missing_archive_indication",
+            "no ended-marketing or archive statement in visible text",
+        )
+
+    archive_markers = sorted(
+        {m for m in TOYOTA_ENDED_MARKETING_PHRASES + TOYOTA_ARCHIVE_SECTION_MARKERS
+         if m in visible_text}
+    )
     return _outcome(
         RESULT_ARCHIVED_MODEL,
         "model identity and archived status corroborated",
@@ -891,7 +1088,8 @@ def _build_entry(source, fetch, outcome):
         entry["archive_markers"] = outcome.get("archive_markers")
         entry["previous_obsolete_url"] = TOYOTA_PREVIOUS_OBSOLETE_URL
     elif source.source_type == SOURCE_TYPE_WEB_INDEX:
-        entry["mentions_rav4"] = outcome.get("mentions_rav4")
+        entry["archive_sections"] = outcome.get("archive_sections")
+        entry["plugin_markers"] = outcome.get("plugin_markers")
     return entry
 
 
