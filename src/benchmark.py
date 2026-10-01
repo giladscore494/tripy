@@ -88,7 +88,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         meta = cache.get(doc_id) if cache is not None else None
         if meta:
             urls.add(meta.get("final_url") or meta.get("url"))
-    by_tool = Counter(call["name"] for call in result.get("tool_calls", []))
+    executed = [call for call in result.get("tool_calls", []) if not call.get("reused")]
+    by_tool = Counter(call["name"] for call in executed)  # real executions; replayed repeats are separate
     counters = result.get("counters", {})
     usage = result.get("usage", {})
     conflicts = output.get("conflicts") if isinstance(output, dict) else None
@@ -142,7 +143,16 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "documents_opened": len(result.get("documents", [])),
         "tool_calls": sum(by_tool.values()),
         "tool_calls_by_name": dict(by_tool),
-        "tool_errors": sum(1 for call in result.get("tool_calls", []) if call.get("error")),
+        "tool_errors": sum(1 for call in executed if call.get("error")),
+        "duplicate_calls_suppressed": tracking.get("duplicate_calls_suppressed",
+                                                   counters.get("duplicate_calls_suppressed", 0)),
+        "duplicate_searches_suppressed": tracking.get("duplicate_searches_suppressed", 0),
+        "duplicate_fetches_suppressed": tracking.get("duplicate_fetches_suppressed", 0),
+        "duplicate_inspections_suppressed": tracking.get("duplicate_inspections_suppressed", 0),
+        "recovery_operations_with_new_material":
+            (tracking.get("operations_with_new_material") or {}).get("field_recovery", 0),
+        "recovery_operations_without_new_material":
+            (tracking.get("operations_without_new_material") or {}).get("field_recovery", 0),
         "document_cache_hits": counters.get("cache_hits", 0),
         "document_cache_misses": counters.get("cache_misses", 0),
         "search_cache_hits": counters.get("search_cache_hits", 0),
@@ -161,6 +171,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "fields_recovered": len(recovery.get("fields_recovered") or []),
         "fields_still_failed": len(recovery.get("fields_still_failed") or []),
         "field_retry_attempts": recovery.get("attempt_count") or 0,
+        "fields_resolved_directly_by_recovery": len(recovery.get("fields_resolved_directly") or []),
+        "fields_resolved_indirectly_by_other_recovery": len(recovery.get("fields_resolved_indirectly") or {}),
         "finalizer_model_calls": usage_finalizer.get("model_calls", 0),
         "finalizer_input_chars": finalization.get("finalizer_input_chars") or 0,
         "finalizer_prompt_tokens": usage_finalizer.get("prompt_tokens", 0),
@@ -189,7 +201,11 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "search_api_calls", "api_errors", "conflicts_reported", "additional_findings", "duration_s",
             "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
             "research_steps", "research_model_calls", "field_recovery_model_calls", "fields_failed_primary",
-            "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts", "evidence_with_market", "fields_israel_direct",
+            "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts",
+            "fields_resolved_directly_by_recovery", "fields_resolved_indirectly_by_other_recovery",
+            "duplicate_calls_suppressed", "duplicate_searches_suppressed", "duplicate_fetches_suppressed",
+            "duplicate_inspections_suppressed", "recovery_operations_with_new_material",
+            "recovery_operations_without_new_material", "evidence_with_market", "fields_israel_direct",
             "fields_foreign_direct", "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "finalizer_model_calls", "finalizer_input_chars",
             "finalizer_prompt_tokens", "finalizer_completion_tokens", "api_attempts", "chat_attempts",
             "search_attempts", "timeout_count", "unknown_usage_attempts", "duplicate_searches", "duplicate_fetches")

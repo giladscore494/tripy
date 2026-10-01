@@ -145,7 +145,8 @@ def tool_pairs(events: Iterable[dict]) -> list[dict]:
         kind = event.get("kind")
         if kind == "tool_call":
             pair = {"step": event.get("step"), "call_id": event.get("call_id"), "name": event.get("name"),
-                    "arguments": event.get("arguments"), "result": None, "call_ts": event.get("ts")}
+                    "arguments": event.get("arguments"), "result": None, "call_ts": event.get("ts"),
+                    "phase": event.get("phase"), "field": event.get("field"), "attempt": event.get("attempt")}
             pairs.append(pair)
             if pair["call_id"]:
                 open_by_id[pair["call_id"]] = pair
@@ -233,7 +234,25 @@ def tool_counters(events: Iterable[dict], chat_path: str = "chat/completions") -
                     counters["search_cache_hits" if info["cache_hit"] else "search_cache_misses"] += 1
     counters["search_api_calls"] = billable_search_calls(events, chat_path)
     counters["api_errors"] = sum(1 for e in events if e.get("kind") == "api_error")
+    for event in events:  # exact repeats answered before dispatch: never executions, never billed
+        if event.get("kind") == "tool_reused":
+            counters["duplicate_calls_suppressed"] += 1
+            counters[f"reused:{event.get('name')}"] += 1
     return counters
+
+
+def reuse_counts(events: Iterable[dict]) -> dict:
+    """Suppressed exact repeats by kind, recovered from `tool_reused` events."""
+    out = {"duplicate_calls_suppressed": 0, "duplicate_searches_suppressed": 0,
+           "duplicate_fetches_suppressed": 0, "duplicate_inspections_suppressed": 0}
+    for event in events:
+        if event.get("kind") != "tool_reused":
+            continue
+        name = event.get("name")
+        out["duplicate_calls_suppressed"] += 1
+        kind = "searches" if name in SEARCH_TOOLS else "fetches" if name in FETCH_TOOLS else "inspections"
+        out[f"duplicate_{kind}_suppressed"] += 1
+    return out
 
 
 def model_responses(events: Iterable[dict]) -> list[dict]:
@@ -294,6 +313,9 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
         "fields_retried": retried,
         "fields_recovered": [f for f in retried if not (states.get(f) or {}).get("retry_eligible")],
         "fields_still_failed": [f for f in retried if (states.get(f) or {}).get("retry_eligible")],
+        "fields_resolved_indirectly": {e.get("field"): {"resolved_during_field": e.get("resolved_during_field"),
+                                                        "attempt": e.get("attempt"), "state": e.get("state")}
+                                       for e in events if e.get("kind") == "field_recovery_queue_resolved_indirectly"},
         "attempts": attempts,
         "attempt_count": len(attempts),
         "turns": sum(int(a.get("turns") or 0) for a in attempts),

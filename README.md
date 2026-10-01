@@ -195,6 +195,67 @@ and Benchmark shows `fields_failed_primary`, `fields_retried`, `fields_recovered
 `field_retry_attempts` and `field_recovery_model_calls`. `--finalize-existing` never retries fields (it
 makes no new research).
 
+### Exact repeats, novelty and the dynamic retry queue
+
+**Exact repeats are answered before dispatch.** Every read-only call gets a canonical signature
+(`src/context.py: call_signature`) built from its normalized arguments, with defaults filled in:
+
+| Tool | Signature |
+| --- | --- |
+| `search_web` | whitespace-normalized query, domain, `max_results` |
+| `search_official_domains` | query and sorted domains |
+| `fetch_url` / `fetch_pdf` / `render_page` | tool and URL without fragment (render also `wait_ms`) |
+| `find_in_document` | document, query (case-insensitive, like the tool), scope, `context_chars`, `max_hits` |
+| `extract_html` | document, offset, `max_chars` |
+| `get_cached_document` | key, offset, `max_chars` |
+| `extract_tables` | document, `max_tables`, `max_rows`, `start_table` |
+| `get_structured_data` | document, `max_chars` |
+
+If the same signature already completed successfully in this vehicle run (in any phase), `ToolSession`
+does not dispatch. It returns the earlier result to the model as a normal `role=tool` response, marked
+`reused_from_step` with an operational note, and logs a `tool_reused` event instead of
+`tool_call`/`tool_result`. A replay makes no HTTP request, no extraction, no billable search, no new
+document and no novelty.
+
+Only identical operations are replayed: a different query, document, offset or option always runs.
+Failed calls are never replayed, and `store_evidence` / `report_field_status` are never deduplicated.
+This applies within one vehicle run; the document cache still handles reuse across runs.
+
+**Novelty means new material, not a new operation.**
+
+- A zero-hit `find_in_document`, empty tables or structured data, or reloading a document the run
+  already knows is a new operation but not new material.
+- A turn of only such calls, or only replays, is idle, so `AGENT_NO_NEW_RESEARCH_TURNS` ends unproductive
+  loops (including a recovery attempt that keeps re-emitting the same call).
+- New material is content not exposed before: new hit offsets, new table indexes, first structured data
+  per document, or uncovered text spans.
+
+**Field recovery memory and dynamic queue**
+
+- Each retry packet includes `already_attempted_operations`: up to 40 compact entries (tool, document,
+  query or offset, phase, field/attempt, outcome such as `no_hits`, `hits`/`hit_count` or `loaded`, never
+  contents). It covers primary research and earlier attempts.
+- The retry prompt says not to repeat those operations, and allows by-product `store_evidence` for other
+  requested fields clearly stated in the same source.
+- After every attempt, all requested fields are re-evaluated. A queued field that another field's
+  recovery resolved is skipped without its own model call (`field_recovery_queue_resolved_indirectly`).
+
+**Live feed**
+
+- Recovery turns read `🧠 field_recovery · <field> · attempt 1/2 · turn 2/4 · tokens N`.
+- Tool rows read `🔧 <field> · attempt 1 · step 39`.
+- Replays read `↺ reused result of step N (not executed again)`.
+- `model_response` events carry `field`, `attempt`, `turn` and `turn_budget`, while `phase` stays
+  `field_recovery`.
+
+**Metrics:**
+
+- Suppressed repeats: `duplicate_calls_suppressed`, plus the `duplicate_searches_suppressed`,
+  `duplicate_fetches_suppressed` and `duplicate_inspections_suppressed` breakdown.
+- Recovery outcomes: `fields_resolved_directly_by_recovery`, `fields_resolved_indirectly_by_other_recovery`,
+  `recovery_operations_with_new_material` and `recovery_operations_without_new_material`.
+- `tool_calls` now counts real executions only.
+
 ### Retries, timeouts and cost
 
 `GLM_CHAT_MAX_ATTEMPTS` and `GLM_SEARCH_MAX_ATTEMPTS` count **total** HTTP attempts: 2 means one

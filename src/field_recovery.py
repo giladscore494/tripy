@@ -203,6 +203,81 @@ def related_documents(events: list[dict], field_evidence: list[dict], doc_metas:
     return [{k: m.get(k) for k in keys if m.get(k) not in (None, "")} for m in ranked[:limit]]
 
 
+MAX_ATTEMPTED_OPERATIONS = 40
+# Keys that describe where/what came out of an operation, not which operation it was.
+OUTCOME_KEYS = {"step", "phase", "field", "attempt", "outcome", "hit_count", "result_count", "tables_total", "kinds",
+                "chars", "next_offset", "status", "error"}
+READ_ONLY_TOOLS = trace.SEARCH_TOOLS + trace.FETCH_TOOLS + ("extract_html", "extract_tables", "find_in_document",
+                                                            "get_structured_data", "get_cached_document")
+
+
+def _operation_outcome(name: str, result: dict | None) -> dict:
+    """Compact outcome of one executed read-only call (never its content)."""
+    if result is None:
+        return {"outcome": "no_result_logged"}
+    if result.get("error"):
+        return {"outcome": "error", "error": str(result.get("error"))[:60]}
+    if name in trace.SEARCH_TOOLS:
+        n = len(result.get("results") or [])
+        return {"outcome": "results" if n else "no_results", "result_count": n}
+    if name in trace.FETCH_TOOLS:
+        return {"outcome": "fetched", "document_id": result.get("document_id"), "status": result.get("status")}
+    if name == "find_in_document":
+        n = int(result.get("hit_count") or len(result.get("hits") or []))
+        return {"outcome": "hits", "hit_count": n} if n else {"outcome": "no_hits"}
+    if name == "extract_tables":
+        n = int(result.get("tables_total") or 0)
+        return {"outcome": "tables", "tables_total": n} if n else {"outcome": "no_tables"}
+    if name == "get_structured_data":
+        found = [k for k, v in (result.get("found") or {}).items() if v]
+        return {"outcome": "structured_data", "kinds": found} if found else {"outcome": "empty"}
+    if name == "get_cached_document" and not result.get("found"):
+        return {"outcome": "not_found"}
+    out = {"outcome": "loaded", "chars": len(result.get("text") or "")}
+    if result.get("next_offset") is not None:
+        out["next_offset"] = result["next_offset"]
+    return out
+
+
+def attempted_operations(events: list[dict], spec: dict | None = None,
+                         limit: int = MAX_ATTEMPTED_OPERATIONS) -> list[dict]:
+    """Operational memory for a retry: read-only operations already executed in this vehicle run
+    (primary research and earlier field-recovery attempts) with compact outcomes.
+
+    One entry per distinct operation (its latest execution), bounded to `limit`; operations made
+    for this field or related to its wording are kept first. Never includes document contents.
+    """
+    keys = _tokens(spec["name"].replace("_", " "), spec.get("description")) if spec else set()
+    by_op: dict[str, dict] = {}
+    for pair in trace.tool_pairs(events):
+        name = pair["name"]
+        if name not in READ_ONLY_TOOLS:
+            continue
+        args = trace.parse_args(pair["arguments"])
+        entry = {"tool": name, "step": pair["step"], "phase": pair.get("phase") or "research"}
+        if pair.get("field"):
+            entry["field"], entry["attempt"] = pair["field"], pair.get("attempt")
+        for key in ("document_id", "key", "query", "url", "domain", "domains", "offset", "scope", "start_table"):
+            if args.get(key) not in (None, "", []):
+                entry[key] = args[key]
+        entry.update(_operation_outcome(name, pair["result"] if isinstance(pair["result"], dict) else None))
+        signature = json.dumps({k: v for k, v in entry.items() if k not in OUTCOME_KEYS}, sort_keys=True,
+                               ensure_ascii=False, default=str)
+        by_op.pop(signature, None)
+        by_op[signature] = entry
+    ops = list(by_op.values())
+    field_name = spec["name"] if spec else None
+
+    def related(op: dict) -> bool:
+        return bool(keys & _tokens(op.get("query"))) or op.get("field") == field_name
+
+    if len(ops) > limit:
+        keep = [op for op in ops if related(op)][-limit:]
+        rest = [op for op in ops if op not in keep][-(limit - len(keep)):] if len(keep) < limit else []
+        ops = sorted(keep + rest, key=lambda op: (op.get("step") or 0))
+    return ops
+
+
 def vehicle_identity(payload: dict, target_market: str) -> dict:
     identity = payload.get("identity") or {}
     engine = payload.get("engine_drivetrain") or {}
@@ -239,6 +314,7 @@ def retry_packet(*, spec: dict, evaluation: dict, events: list[dict], payload: d
         "existing_evidence": field_evidence,
         "relevant_documents": related_documents(events, field_evidence, doc_metas),
         "previous_queries_for_this_field": related_searches(events, spec),
+        "already_attempted_operations": attempted_operations(events, spec),
         "previous_attempts": previous_attempts,
         "attempt": attempt,
         "max_attempts": max_attempts,
