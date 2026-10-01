@@ -180,6 +180,7 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
         "requested_fields": started.get("requested_fields"),
         "target_market": started.get("target_market"),
         "field_recovery": trace.field_recovery_summary(events),
+        "research_tracking": trace.reuse_counts(events),
         "api_stats": stats,
         "finalization": finalization,
         "search_api_calls": counters.get("search_api_calls", 0),

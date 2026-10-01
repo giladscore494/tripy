@@ -37,7 +37,8 @@ from typing import Any, Callable
 
 from .bundle import BUNDLE_VERSION, build_research_bundle
 from .glm_client import GLMError
-from .context import ResearchTracker, compact_stub, model_view
+from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
+from .storage.trace import FETCH_TOOLS
 from .field_recovery import evaluate_fields, parse_retry_reply, retry_packet, retry_queue
 from .fields import grouped, parse_field_list, propulsion_of, resolve_requested_fields
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
@@ -168,10 +169,14 @@ Reply with ONLY one JSON object shaped like:
 FIELD_RECOVERY_SYSTEM_PROMPT = """You are performing a focused recovery attempt for ONE enrichment field on ONE exact
 vehicle variant. Earlier research did not obtain a usable result for this field.
 
-Do not research the vehicle generally. Your only objective is to obtain the requested field if possible.
+Do not research the vehicle generally. Your only research objective is the requested field.
 
 - First inspect the relevant documents already in the cache (listed in the task) with find_in_document,
   extract_tables, get_structured_data or extract_html, before issuing broad web searches.
+- The task includes already_attempted_operations. Do not repeat an operation listed there when the exact
+  same operation has already produced a result. Use a different query, another document, another
+  extraction method, or a targeted web search instead. If an exact duplicate tool call is emitted anyway,
+  the runtime may reuse the previous result without executing it again.
 - If cached material is insufficient, run highly targeted searches using the strongest identifiers you
   have (model code, exact trim, model year, market, the field's own wording) rather than repeating the
   earlier queries listed in the task.
@@ -179,6 +184,9 @@ Do not research the vehicle generally. Your only objective is to obtain the requ
   stored with their market / variant / variant_match so they are not mistaken for the target variant.
 - Call store_evidence for any value you rely on (field = the requested field name, exact value, source
   URL or document_id, short verbatim quote, market, variant, variant_match).
+- While reading the same source, if you encounter a clearly stated value for ANOTHER requested enrichment
+  field (listed in other_requested_fields), you may store that evidence too, as a by-product. Do not
+  branch into research for that other field.
 - If the field does not exist for this vehicle, say not_applicable. If you cannot resolve it within the
   budget, say unresolved. Never invent a value.
 
@@ -400,7 +408,9 @@ class ModelCaller:
         self.last_content: str | None = None
 
     def __call__(self, messages: list[dict], *, phase: str, tools: list[dict] | None = None,
-                 model: str | None = None) -> dict:
+                 model: str | None = None, meta: dict | None = None) -> dict:
+        """`meta` adds explicit context to the logged model_response (e.g. the field and attempt of a
+        field-recovery turn). It never changes `phase`, which usage accounting groups by."""
         kwargs: dict[str, Any] = {"tools": tools, "temperature": self.config.temperature,
                                   "max_tokens": self.config.max_tokens, "extra": self.extra or None}
         if model:
@@ -417,7 +427,7 @@ class ModelCaller:
                            latency_ms=getattr(response, "latency_ms", None),
                            response_meta={k: raw.get(k) for k in ("id", "request_id", "model", "created") if k in raw},
                            content=content, reasoning_content=response.message.get("reasoning_content"),
-                           tool_calls=response.message.get("tool_calls"))
+                           tool_calls=response.message.get("tool_calls"), **(meta or {}))
         return response.message
 
 
@@ -489,7 +499,14 @@ def trace_events(run_log: RunLog) -> list[dict]:
 
 class ToolSession:
     """Executes tool calls for any phase (research or field recovery) with one shared context:
-    one evidence store, one document list, one duplicate/novelty tracker, one tool-call log."""
+    one evidence store, one document list, one duplicate/novelty tracker, one tool-call log.
+
+    An exact repeat of a read-only call already completed in this vehicle run (same canonical
+    signature, see context.call_signature) is answered from the earlier result BEFORE dispatch:
+    no HTTP request, no extraction, no billable search, no new document, no novelty. The model
+    still gets a `role=tool` response, annotated as reused. The run logs a `tool_reused` event
+    instead of tool_call/tool_result, so counters and cost only count real executions.
+    """
 
     def __init__(self, ctx: ToolContext, run_log: RunLog, config: AgentConfig):
         self.ctx, self.run_log, self.config = ctx, run_log, config
@@ -505,6 +522,27 @@ class ToolSession:
         for call in calls:
             fn = call.get("function") or {}
             name, raw_args = fn.get("name", ""), fn.get("arguments")
+            call_id = call.get("id") or f"call_{len(self.tool_calls) + 1}"
+            signature = call_signature(name, raw_args)
+            prior = self.tracker.lookup(signature)
+            if prior is not None:
+                result = replay_result(prior)
+                self.tracker.note_reused(name)
+                self.run_log.event("tool_reused", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                   arguments=raw_args, **tags, original_step=prior["step"],
+                                   original_phase=prior["phase"], original_field=prior.get("field"),
+                                   original_attempt=prior.get("attempt"), signature=signature)
+                self.tool_calls.append({
+                    "step": step, "phase": phase, **tags, "name": name, "arguments": raw_args, "duration_ms": 0,
+                    "cache_hit": None, "error": None, "document_id": result.get("document_id"),
+                    "duplicate": True, "reused": True, "reused_from_step": prior["step"],
+                })
+                messages.append({
+                    "role": "tool", "tool_call_id": call_id,
+                    "content": model_view(result, self.config.max_tool_output_chars, duplicate=name in FETCH_TOOLS),
+                    "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
+                })
+                continue
             self.run_log.event("tool_call", step=step, phase=phase, call_id=call.get("id"), name=name,
                                arguments=raw_args, **tags)
             t_tool = time.monotonic()
@@ -512,10 +550,11 @@ class ToolSession:
             elapsed = int((time.monotonic() - t_tool) * 1000)
             self.run_log.event("tool_result", step=step, phase=phase, call_id=call.get("id"), name=name,
                                result=result, **tags)
-            duplicate, note = self.tracker.observe(name, raw_args, result)
-            if duplicate:
+            duplicate, note = self.tracker.observe(name, raw_args, result, phase=phase)
+            if duplicate:  # a near repeat that is not the same canonical operation (historical behavior)
                 self.run_log.event("duplicate_work", step=step, phase=phase, name=name, arguments=raw_args,
-                                   note=note, **tags)
+                                   note=note, detected="after_execution", **tags)
+            self.tracker.remember(signature, {"step": step, "phase": phase, **tags, "result": result})
             self.tool_calls.append({
                 "step": step, "phase": phase, **tags, "name": name, "arguments": raw_args, "duration_ms": elapsed,
                 "cache_hit": result.get("cache_hit") if isinstance(result, dict) else None,
@@ -524,7 +563,7 @@ class ToolSession:
                 "duplicate": duplicate,
             })
             messages.append({
-                "role": "tool", "tool_call_id": call.get("id") or f"call_{len(self.tool_calls)}",
+                "role": "tool", "tool_call_id": call_id,
                 "content": model_view(result, self.config.max_tool_output_chars, duplicate=duplicate, note=note),
                 "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
             })
@@ -543,8 +582,10 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                        operator_notes: dict | None, phase_ref: dict) -> dict:
     """Detect failed requested fields from the research state, then run focused retries for them only.
 
-    Generic over whatever fields were requested. KeyboardInterrupt propagates; an API failure stops
-    further retries (the run still finalizes with what it has).
+    Generic over whatever fields were requested. The queue is dynamic: after EVERY attempt all
+    requested fields are re-evaluated, and a queued field that another field's recovery resolved
+    (e.g. by-product evidence from the same spec table) is skipped without its own model call.
+    KeyboardInterrupt propagates; an API failure stops further retries (the run still finalizes).
     """
     events = trace_events(run_log)
     primary = evaluate_fields(specs, events, config.target_market)
@@ -554,11 +595,31 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     run_log.event("field_retry_queue", fields=[q["field"] for q in queue], queue=queue,
                   enabled=config.field_recovery_enabled)
     by_name = {s["name"]: s for s in specs}
+    queued = [q["field"] for q in queue]
     current = {e["field"]: e for e in primary}
     attempts_log: list[dict] = []
+    resolved_directly: list[str] = []
+    resolved_indirectly: dict[str, dict] = {}
     total_steps, stopped = 0, None
+
+    def reevaluate(during_field: str, attempt: int) -> None:
+        """Refresh the state of every requested field; record queued fields another recovery resolved."""
+        latest = evaluate_fields(specs, trace_events(run_log), config.target_market)
+        for entry in latest:
+            name = entry["field"]
+            was = current[name]
+            current[name] = entry
+            if (name in queued and name != during_field and name not in resolved_indirectly
+                    and name not in resolved_directly and was["retry_eligible"] and not entry["retry_eligible"]):
+                resolved_indirectly[name] = {"resolved_during_field": during_field, "attempt": attempt,
+                                             "state": entry["state"]}
+                run_log.event("field_recovery_queue_resolved_indirectly", field=name,
+                              resolved_during_field=during_field, attempt=attempt, state=entry["state"])
+
     for item in queue:
         name, previous = item["field"], []
+        if not current[name]["retry_eligible"]:
+            continue  # resolved by an earlier field's recovery: no retry for it
         for attempt in range(1, item["max_attempts"] + 1):
             if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
                 stopped = "max_total_steps"
@@ -570,22 +631,28 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                                   max_attempts=item["max_attempts"], max_steps=config.field_recovery_max_steps,
                                   target_market=config.target_market, previous_attempts=previous,
                                   operator_notes=operator_notes)
+            packet["other_requested_fields"] = {s["name"]: s.get("description") for s in specs
+                                                if s["name"] != name and s.get("applicable", True)}
             run_log.event("field_recovery_started", field=name, attempt=attempt, max_attempts=item["max_attempts"],
-                          failure_reason=before["state"], packet_chars=len(json.dumps(packet, ensure_ascii=False,
-                                                                                         default=str)))
+                          failure_reason=before["state"], turn_budget=config.field_recovery_max_steps,
+                          already_attempted_operations=len(packet["already_attempted_operations"]),
+                          packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)))
             phase_ref["name"] = "field_recovery"
             messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
                         {"role": "user", "content": "Field recovery task (JSON):\n"
                                                     + json.dumps(packet, ensure_ascii=False, default=str)}]
             reply_text, turns, error = None, 0, None
             idle = 0
+            budget = max(1, config.field_recovery_max_steps)
             try:
-                for _ in range(max(1, config.field_recovery_max_steps)):
+                for turn_index in range(1, budget + 1):
                     if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
                         stopped = "max_total_steps"
                         break
+                    meta = {"field": name, "attempt": attempt, "max_attempts": item["max_attempts"],
+                            "turn": turn_index, "turn_budget": budget}
                     message = caller(outgoing_messages(messages, config), phase="field_recovery",
-                                     tools=tool_specs())
+                                     tools=tool_specs(), meta=meta)
                     turns += 1
                     total_steps += 1
                     messages.append(_assistant_echo(message))
@@ -593,6 +660,8 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                     if not calls:
                         reply_text = message.get("content") or ""
                         break
+                    # A turn whose calls were all replayed (or found nothing new) is idle, so a model that
+                    # keeps re-emitting the same call ends within AGENT_NO_NEW_RESEARCH_TURNS.
                     novelty = session.execute(calls, messages, phase="field_recovery", field=name, attempt=attempt)
                     idle = 0 if novelty.total else idle + 1
                     if config.no_new_research_turns and idle >= config.no_new_research_turns:
@@ -606,8 +675,10 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
             if reply and reply.get("status"):
                 run_log.event("field_status", field=name, status=str(reply["status"]).lower(),
                               note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}")
-            after = evaluate_fields([by_name[name]], trace_events(run_log), config.target_market)[0]
-            current[name] = after
+            reevaluate(name, attempt)
+            after = current[name]
+            if not after["retry_eligible"] and name not in resolved_directly:
+                resolved_directly.append(name)
             record = {"field": name, "attempt": attempt, "state_before": before["state"],
                       "state_after": after["state"], "turns": turns, "reply": reply,
                       "reply_text": None if reply else reply_text, "error": error}
@@ -626,10 +697,13 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "requested": len(specs),
         "primary_states": _state_counts(primary),
         "final_states": _state_counts(final),
-        "queue": [q["field"] for q in queue],
+        "queue": queued,
         "fields_retried": retried,
         "fields_recovered": [f for f in retried if not current[f]["retry_eligible"]],
         "fields_still_failed": [f for f in retried if current[f]["retry_eligible"]],
+        "fields_resolved_directly": [f for f in resolved_directly if not current[f]["retry_eligible"]],
+        "fields_resolved_indirectly": resolved_indirectly,
+        "fields_not_attempted": [f for f in queued if f not in retried and current[f]["retry_eligible"]],
         "attempts": attempts_log,
         "attempt_count": len(attempts_log),
         "turns": total_steps,

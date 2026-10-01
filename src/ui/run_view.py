@@ -64,7 +64,19 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
 
     def listen(kind: str, event: dict) -> None:
         if kind == "tool_call":
-            lines.append(f"🔧 step {event.get('step')} · {event.get('name')}({_short(event.get('arguments'), 140)})")
+            lines.append(tool_call_line(event))
+        elif kind == "tool_reused":
+            lines.append(f"   ↺ reused result of step {event.get('original_step')} (not executed again): "
+                         f"{event.get('name')}({_short(event.get('arguments'), 100)})")
+        elif kind == "field_recovery_started":
+            lines.append(f"🎯 field recovery · {event.get('field')} · attempt {event.get('attempt')}/"
+                         f"{event.get('max_attempts')} · reason {event.get('failure_reason')}")
+        elif kind == "field_recovery_finished":
+            lines.append(f"   ↳ {event.get('field')} attempt {event.get('attempt')}: {event.get('state_before')} → "
+                         f"{event.get('state_after')}")
+        elif kind == "field_recovery_queue_resolved_indirectly":
+            lines.append(f"✅ {event.get('field')} resolved while recovering {event.get('resolved_during_field')}; "
+                         "its own retry is skipped")
         elif kind == "tool_result":
             result = event.get("result") or {}
             if isinstance(result, dict) and result.get("error"):
@@ -81,10 +93,7 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
             ev = event.get("evidence", {})
             lines.append(f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}")
         elif kind == "model_response":
-            usage = event.get("usage") or {}
-            calls = event.get("tool_calls") or []
-            lines.append(f"🧠 {event.get('phase', 'research')} turn · {len(calls)} tool call(s) · "
-                         f"tokens {usage.get('total_tokens', '?')}")
+            lines.append(model_turn_line(event))
         elif kind == "research_stopped":
             lines.append(f"🛑 research stopped: {event.get('reason')} after {event.get('steps')} step(s)")
         elif kind == "finalization_started":
@@ -100,6 +109,27 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
         placeholder.code("\n".join(lines[-max_lines:]), language=None)
 
     return listen
+
+
+def tool_call_line(event: dict) -> str:
+    """Live-feed line for a tool call; field-recovery calls name their field and attempt."""
+    call = f"{event.get('name')}({_short(event.get('arguments'), 140)})"
+    if event.get("field"):
+        return f"🔧 {event['field']} · attempt {event.get('attempt')} · step {event.get('step')}\n   {call}"
+    return f"🔧 step {event.get('step')} · {call}"
+
+
+def model_turn_line(event: dict) -> str:
+    """Live-feed line for a model turn, e.g.
+    🧠 field_recovery · battery_usable_kwh · attempt 1/2 · turn 2/4 · tokens 7263"""
+    usage = event.get("usage") or {}
+    calls = event.get("tool_calls") or []
+    tokens = usage.get("total_tokens", "?")
+    if event.get("field"):
+        return (f"🧠 {event.get('phase', 'field_recovery')} · {event['field']} · attempt {event.get('attempt')}/"
+                f"{event.get('max_attempts')} · turn {event.get('turn')}/{event.get('turn_budget')} · "
+                f"{len(calls)} tool call(s) · tokens {tokens}")
+    return f"🧠 {event.get('phase', 'research')} turn · {len(calls)} tool call(s) · tokens {tokens}"
 
 
 def _human_view(output) -> None:

@@ -188,10 +188,14 @@ def test_no_new_research_trigger_and_duplicate_warnings(make_ctx, tmp_path):
                          tool_config=ctx.config, session=ctx.session)
     assert result["stop_reason"] == "no_new_research" and result["status"] == "no_new_research_finalized"
     assert result["research_steps"] == 3 and result["output"]["summary"] == "compiled"
-    assert result["research_tracking"]["duplicate_fetches"] == 2
+    # Exact repeats are now answered before dispatch (not detected after a second execution).
+    tracking = result["research_tracking"]
+    assert (tracking["duplicate_fetches_suppressed"], tracking["duplicate_fetches"]) == (2, 0)
     assert [c["duplicate"] for c in result["tool_calls"]] == [False, True, True]
+    assert [c.get("reused_from_step") for c in result["tool_calls"]] == [None, 1, 1]
     second = json.loads(client.requests[2]["messages"][-1]["content"].split("\n[operational note]")[0])
-    assert "Already fetched in this run at step 1" in second["operational_note"] and "text_preview" not in second
+    assert "Exact operation already completed in this run at step 1" in second["operational_note"]
+    assert second["reused_from_step"] == 1 and "text_preview" not in second
     assert "[operational note]" in client.requests[2]["messages"][-1]["content"]
     assert client.requests[-1]["tools"] is None and len(client.requests[-1]["messages"]) == 2
     assert len(ctx.session.calls) == 1  # duplicate fetches were served from the cache
