@@ -13,21 +13,22 @@ from ..storage.run_log import list_batches, load_results
 
 PER_VEHICLE_COLS = ["vehicle", "status", "coverage_pct", "target_filled", "target_fields", "fields_with_value",
                     "extra_fields", "evidence_items", "unique_sources", "unique_domains", "documents_opened",
-                    "tool_calls", "tool_errors", "document_cache_hits", "search_cache_hits", "conflicts_reported",
-                    "additional_findings", "level3_topics", "duration_s", "model_calls", "prompt_tokens",
-                    "completion_tokens", "cost_usd"]
+                    "tool_calls", "tool_errors", "document_cache_hits", "search_cache_hits", "search_api_calls",
+                    "api_errors", "conflicts_reported", "additional_findings", "level3_topics", "duration_s",
+                    "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "cached_tokens",
+                    "cost_tokens_usd", "cost_search_usd", "cost_usd"]
 
 
-def metrics_for(results: list[dict], vehicles_by_id: dict[str, dict], cache: DocumentCache,
-                price_in: float, price_out: float) -> list[dict]:
-    return [compute_metrics(r, vehicles_by_id.get(r["record_id"]), cache, price_in, price_out) for r in results]
+def metrics_for(results: list[dict], vehicles_by_id: dict[str, dict], cache: DocumentCache) -> list[dict]:
+    """Each run's cost uses the pricing recorded with that run."""
+    return [compute_metrics(r, vehicles_by_id.get(r["record_id"]), cache) for r in results]
 
 
 def render_benchmark(results: list[dict], vehicles_by_id: dict[str, dict], labels: dict[str, str],
-                     cache: DocumentCache, runs_dir: Path, price_in: float, price_out: float) -> None:
+                     cache: DocumentCache, runs_dir: Path) -> None:
     st.caption("Observation metrics only: what the model and tools did. Not a correctness score; human "
                "fact-checking happens outside this demo.")
-    metrics = metrics_for(results, vehicles_by_id, cache, price_in, price_out)
+    metrics = metrics_for(results, vehicles_by_id, cache)
     if metrics:
         agg = aggregate(metrics)
         cols = st.columns(6)
@@ -54,7 +55,7 @@ def render_benchmark(results: list[dict], vehicles_by_id: dict[str, dict], label
         batch_results = load_results(runs_dir, info["batch_id"])
         if not batch_results:
             continue
-        agg = aggregate(metrics_for(batch_results, vehicles_by_id, cache, price_in, price_out))
+        agg = aggregate(metrics_for(batch_results, vehicles_by_id, cache))
         rows.append({
             "batch": info["batch_id"], "model": info.get("model"), "prompt": info.get("prompt_version"),
             "search": info.get("search_backend"), "data": info.get("level15_source"), "vehicles": agg["vehicles"],
@@ -63,7 +64,8 @@ def render_benchmark(results: list[dict], vehicles_by_id: dict[str, dict], label
             "docs_mean": agg["documents_opened_mean"], "tool_calls_mean": agg["tool_calls_mean"],
             "cache_hit_%": agg["document_cache_hit_rate_pct"], "conflicts_total": agg["conflicts_reported_total"],
             "findings_total": agg["additional_findings_total"], "time_mean_s": agg["duration_s_mean"],
-            "tokens_total": agg["total_tokens_total"], "cost_usd": agg["cost_usd_total"],
+            "searches_total": agg["search_api_calls_total"], "tokens_total": agg["total_tokens_total"],
+            "cost_usd": agg["cost_usd_total"],
         })
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")

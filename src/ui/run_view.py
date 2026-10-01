@@ -45,6 +45,9 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
             usage = event.get("usage") or {}
             calls = event.get("tool_calls") or []
             lines.append(f"🧠 model turn · {len(calls)} tool call(s) · tokens {usage.get('total_tokens', '?')}")
+        elif kind == "api_error":
+            lines.append(f"⚠️ API {event.get('endpoint')} attempt {event.get('attempt')}: "
+                         f"{event.get('status') or event.get('error')} {_short(event.get('body') or '', 160)}")
         elif kind == "error":
             lines.append(f"❌ {event.get('message')}")
         placeholder.code("\n".join(lines[-max_lines:]), language=None)
@@ -95,7 +98,8 @@ def _human_view(output) -> None:
 def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCache) -> None:
     icon = STATUS_ICON.get(result.get("status"), "•")
     with st.expander(f"{icon} {label} · {result.get('status')} · {result.get('duration_s')}s", expanded=False):
-        tabs = st.tabs(["Human view", "JSON", "Evidence", "Tool calls", "Documents", "Level 1.5 input", "Events"])
+        tabs = st.tabs(["Human view", "JSON", "Evidence", "Tool calls", "Documents", "Level 1.5 input",
+                        "Run config & cost", "Events"])
         with tabs[0]:
             if result.get("error"):
                 st.error(result["error"])
@@ -125,6 +129,17 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             payload = load_input(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.json(payload or {}, expanded=False)
         with tabs[6]:
+            if result.get("api_error"):
+                st.error("Raw GLM API error")
+                st.json(result["api_error"], expanded=True)
+            st.markdown("**Effective GLM configuration**")
+            st.json(result.get("glm_config") or {}, expanded=True)
+            st.markdown("**Usage, search calls and cost**")
+            st.json({"usage": result.get("usage"), "search_api_calls": result.get("search_api_calls"),
+                     "pricing": result.get("pricing"), "cost": result.get("cost"),
+                     "api_errors": result.get("api_errors"), "documents_dir": result.get("documents_dir")},
+                    expanded=False)
+        with tabs[7]:
             events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.caption(f"{len(events)} events in events.jsonl")
             kinds = sorted({e["kind"] for e in events})

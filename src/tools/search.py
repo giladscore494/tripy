@@ -80,7 +80,12 @@ def _run_search(ctx, query: str, count: int, domain: str | None) -> tuple[list[d
     if backend == "glm":
         if ctx.glm is None:
             raise RuntimeError("GLM search backend selected but no GLM client is configured")
-        results = ctx.glm.web_search(query, count=count, domain=domain)
+        try:
+            results = ctx.glm.web_search(query, count=count, domain=domain)
+        except Exception:
+            ctx.counters["search_api_errors"] += 1
+            raise
+        ctx.counters["search_api_calls"] += 1  # billable GLM web_search calls (cache hits excluded)
     elif backend == "duckduckgo":
         results = _duckduckgo(ctx, query, count, domain)
     else:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,15 @@ class DocumentCache:
         folder = self._dir(document_id)
         if folder.is_dir():
             (folder / f"derived_{name}.json").write_text(json.dumps(value, ensure_ascii=False), "utf-8")
+
+    def export(self, document_id: str, dest_dir: Path | str) -> Path | None:
+        """Copy one cached document (meta, body, text, derived) into a run folder."""
+        source = self._dir(document_id)
+        if not source.is_dir():
+            return None
+        target = Path(dest_dir) / document_id
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        return target
 
     def list_documents(self) -> list[dict]:
         out = []

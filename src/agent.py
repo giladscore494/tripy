@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from .pricing import compute_cost
 from .schemas import LEVEL2_TARGET_FIELDS, LEVEL3_TOPICS, parse_model_output
 from .storage.cache import DocumentCache
 from .storage.run_log import RunLog, utc_now
@@ -73,7 +74,32 @@ class AgentConfig:
     temperature: float | None = None
     max_tokens: int | None = None
     include_level3: bool = True
+    thinking: str = ""                   # "" = provider default (not sent), "enabled", "disabled"
     extra_body: dict = field(default_factory=dict)
+
+
+def request_extra(config: AgentConfig) -> dict:
+    """Extra fields merged into every chat request. The explicit thinking setting wins over extra_body."""
+    extra = dict(config.extra_body or {})
+    if config.thinking:
+        extra["thinking"] = {"type": config.thinking}
+    return extra
+
+
+def effective_glm_config(client, config: AgentConfig, tool_config: ToolConfig) -> dict:
+    """The complete GLM configuration a run used (never includes the API key)."""
+    settings = client.settings.public() if hasattr(client, "settings") else {"model": client.model}
+    extra = request_extra(config)
+    return {
+        **settings,
+        "thinking": extra.get("thinking", "provider_default"),
+        "max_tokens": config.max_tokens if config.max_tokens else "provider_default",
+        "temperature": config.temperature if config.temperature is not None else "provider_default",
+        "tool_choice": "auto",
+        "extra_request_body": extra,
+        "search_backend": tool_config.search_backend,
+        "recorded_at": utc_now(),
+    }
 
 
 def build_user_message(payload: dict, include_level3: bool) -> str:
@@ -129,7 +155,8 @@ def _assistant_echo(message: dict) -> dict:
 
 def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_log: RunLog,
                 config: AgentConfig, tool_config: ToolConfig, vehicle_meta: dict | None = None,
-                batch_id: str = "", ordinal: int | None = None, session=None) -> dict:
+                batch_id: str = "", ordinal: int | None = None, session=None,
+                pricing: dict | None = None) -> dict:
     """Research one vehicle and return the result record (also written to result.json)."""
     record_id = str(row.get("upstream_record_id"))
     started_at, t0 = utc_now(), time.monotonic()
@@ -139,7 +166,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                       log=lambda kind, **data: run_log.event(kind, **data))
     if session is not None:
         ctx.session = session
-    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "model_calls": 0}
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0,
+             "model_calls": 0, "model_latency_ms": 0}
+    glm_config = effective_glm_config(client, config, tool_config)
+    extra = request_extra(config)
+    api_errors: list[dict] = []
+
+    def api_hook(kind: str, **data: Any) -> None:
+        if kind == "api_error":
+            ctx.counters["api_errors"] += 1
+            api_errors.append(data)
+        run_log.event(kind, **data)
+
+    previous_hook = getattr(client, "hook", None)
+    client.hook = api_hook
     tool_calls: list[dict] = []
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -147,22 +187,29 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     ]
     run_log.write_input(payload)
     run_log.event("run_started", model=client.model, record_id=record_id, prompt_version=PROMPT_VERSION,
-                  max_steps=config.max_steps, search_backend=tool_config.search_backend)
+                  max_steps=config.max_steps, search_backend=tool_config.search_backend, glm_config=glm_config,
+                  pricing=pricing)
 
     def call_model(with_tools: bool) -> dict:
         response = client.chat(_compact_history(messages, config), tools=tool_specs() if with_tools else None,
                                temperature=config.temperature, max_tokens=config.max_tokens,
-                               extra=config.extra_body or None)
+                               extra=extra or None)
         usage["model_calls"] += 1
+        usage["model_latency_ms"] += int(getattr(response, "latency_ms", 0) or 0)
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             usage[key] += int(response.usage.get(key) or 0)
+        details = response.usage.get("prompt_tokens_details") or {}
+        usage["cached_tokens"] += int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
+        raw = getattr(response, "raw", {}) or {}
         run_log.event("model_response", finish_reason=response.finish_reason, usage=response.usage,
+                      latency_ms=getattr(response, "latency_ms", None),
+                      response_meta={k: raw.get(k) for k in ("id", "request_id", "model", "created") if k in raw},
                       content=response.message.get("content"),
                       reasoning_content=response.message.get("reasoning_content"),
                       tool_calls=response.message.get("tool_calls"))
         return response.message
 
-    status, final_text, error = "completed", None, None
+    status, final_text, error, api_error = "completed", None, None, None
     try:
         for step in range(1, config.max_steps + 1):
             message = call_model(with_tools=True)
@@ -205,17 +252,27 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 status = "completed_unparsed" if status == "completed" else status
     except Exception as exc:  # the run log keeps whatever happened before the failure
         status, error, output, parse_note = "error", f"{type(exc).__name__}: {str(exc)[:500]}", None, "error"
-        run_log.event("error", message=error)
+        api_error = exc.as_dict() if hasattr(exc, "as_dict") else None
+        run_log.event("error", message=error, api_error=api_error)
+    finally:
+        client.hook = previous_hook
 
     duration = round(time.monotonic() - t0, 2)
+    documents_dir = run_log.dir / "documents"
+    for document_id in ctx.documents_opened:
+        cache.export(document_id, documents_dir)
+    counters = dict(ctx.counters)
     result = {
         "record_id": record_id,
         "ordinal": ordinal,
         "batch_id": batch_id,
         "model": client.model,
+        "glm_config": glm_config,
         "prompt_version": PROMPT_VERSION,
         "status": status,
         "error": error,
+        "api_error": api_error,
+        "api_errors": api_errors,
         "started_at": started_at,
         "finished_at": utc_now(),
         "duration_s": duration,
@@ -225,8 +282,13 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         "evidence": evidence.items,
         "documents": list(ctx.documents_opened),
         "tool_calls": tool_calls,
-        "counters": dict(ctx.counters),
+        "counters": counters,
         "usage": usage,
+        "search_api_calls": counters.get("search_api_calls", 0),
+        "pricing": pricing,
+        "cost": compute_cost(usage, counters.get("search_api_calls", 0), pricing),
+        "documents_dir": str(documents_dir) if ctx.documents_opened else None,
     }
-    run_log.event("run_finished", status=status, duration_s=duration, usage=usage)
+    run_log.event("run_finished", status=status, duration_s=duration, usage=usage,
+                  search_api_calls=result["search_api_calls"], cost=result["cost"])
     return result

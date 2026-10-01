@@ -218,12 +218,12 @@ def test_agent_loop_end_to_end(make_ctx, tmp_path):
     last_request = client.requests[-1]["messages"]
     assert [m["role"] for m in last_request].count("tool") == 3
 
-    metrics = compute_metrics(result, {"propulsion": "hybrid"}, ctx.cache, price_in_per_mtok=1.0,
-                              price_out_per_mtok=2.0)
+    metrics = compute_metrics(result, {"propulsion": "hybrid"}, ctx.cache,
+                              pricing={"input_per_mtok": 1.0, "output_per_mtok": 2.0, "web_search_per_call": 0.01})
     assert metrics["fields_returned"] == 4 and metrics["fields_with_value"] == 3
     assert metrics["target_filled"] == 2 and metrics["extra_field_names"] == ["boot_floor_height_mm"]
     assert metrics["conflicts_reported"] == 1 and metrics["level3_topics"] == 1
-    assert metrics["unique_sources"] == 1 and metrics["cost_usd"] == round((300 + 60 * 2) / 1e6, 4)
+    assert metrics["unique_sources"] == 1 and metrics["cost_usd"] == round((300 + 60 * 2) / 1e6, 6)
     events = (tmp_path / "runs" / "b1" / "38626" / "events.jsonl").read_text("utf-8").splitlines()
     kinds = [json.loads(e)["kind"] for e in events]
     assert kinds[0] == "run_started" and kinds[-1] == "run_finished" and "evidence" in kinds

@@ -12,14 +12,15 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.agent import PROMPT_VERSION, AgentConfig, run_vehicle
-from src.benchmark import (benchmark_vehicles, compute_metrics, manufacturers, run_batch, select_vehicles,
-                           vehicle_label)
-from src.db import Level15Error, build_level15_payload, database_url, load_level15
+from src.agent import PROMPT_VERSION, AgentConfig
+from src.benchmark import (HANDSHAKE_RECORD_ID, benchmark_vehicles, manufacturers, research_one, run_batch,
+                           select_vehicles, start_batch, vehicle_label)
+from src.db import Level15Error, database_url, load_level15
 from src.glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_PATH, DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_PATH,
                             GLMClient, GLMError, GLMSettings)
 from src.storage.cache import DocumentCache
-from src.storage.run_log import RunLog, list_batches, load_results, new_batch_id, write_batch
+from src.pricing import default_pricing
+from src.storage.run_log import list_batches, load_results, new_batch_id
 from src.tools import ToolConfig
 from src.ui import benchmark_view, run_view
 
@@ -38,11 +39,19 @@ def secret(name: str, default: str = "") -> str:
         return default
 
 
-def float_secret(name: str) -> float:
-    try:
-        return float(secret(name, "0") or 0)
-    except ValueError:
-        return 0.0
+def pricing_defaults(model: str) -> dict:
+    """Official defaults for the model id, then env / Streamlit-secrets overrides."""
+    pricing = default_pricing(model)
+    for name, key in (("GLM_PRICE_INPUT_PER_MTOK", "input_per_mtok"), ("GLM_PRICE_OUTPUT_PER_MTOK", "output_per_mtok"),
+                      ("GLM_PRICE_WEB_SEARCH_PER_CALL", "web_search_per_call")):
+        raw = secret(name).strip()
+        if raw:
+            try:
+                pricing[key] = float(raw)
+                pricing["source"] = "environment override"
+            except ValueError:
+                pass
+    return pricing
 
 
 @st.cache_resource
@@ -83,14 +92,29 @@ with st.sidebar:
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
     max_tokens = st.number_input("max_tokens per model turn (0 = provider default)", 0, 131072, 0, step=1024)
+    thinking_options = ["provider default", "enabled", "disabled"]
+    thinking_env = secret("GLM_THINKING").strip().lower()
+    thinking_choice = st.selectbox("Thinking / reasoning", thinking_options,
+                                   index=thinking_options.index(thinking_env) if thinking_env in thinking_options else 0,
+                                   help='Sends {"thinking": {"type": ...}}; "provider default" sends nothing.')
+    thinking = "" if thinking_choice == "provider default" else thinking_choice
     extra_raw = st.text_area("Extra request JSON (merged into every chat payload)", value=secret("GLM_EXTRA_BODY", ""),
                              placeholder='{"thinking": {"type": "enabled"}}', height=80)
 
     st.header("Cost")
-    price_in = st.number_input("USD per 1M input tokens", 0.0, 100.0, float_secret("GLM_PRICE_INPUT_PER_MTOK"),
-                               step=0.05, format="%.3f")
-    price_out = st.number_input("USD per 1M output tokens", 0.0, 100.0, float_secret("GLM_PRICE_OUTPUT_PER_MTOK"),
-                                step=0.05, format="%.3f")
+    price_defaults = pricing_defaults(model_id)
+    st.caption(f"Defaults: {price_defaults['source']}")
+    price_in = st.number_input("USD per 1M input tokens", 0.0, 100.0, price_defaults["input_per_mtok"],
+                               step=0.05, format="%.3f", key=f"price_in_{model_id}")
+    price_out = st.number_input("USD per 1M output tokens", 0.0, 100.0, price_defaults["output_per_mtok"],
+                                step=0.05, format="%.3f", key=f"price_out_{model_id}")
+    price_search = st.number_input("USD per GLM web_search call", 0.0, 10.0, price_defaults["web_search_per_call"],
+                                   step=0.005, format="%.3f", key="price_search")
+    edited = (price_in, price_out, price_search) != (price_defaults["input_per_mtok"],
+                                                     price_defaults["output_per_mtok"],
+                                                     price_defaults["web_search_per_call"])
+    pricing = {"input_per_mtok": price_in, "output_per_mtok": price_out, "web_search_per_call": price_search,
+               "source": "edited in UI" if edited else price_defaults["source"]}
 
     st.header("Level 1.5 data")
     dsn = secret("DATABASE_URL") or database_url()
@@ -115,7 +139,8 @@ st.caption("How far can GLM get with the full Level 1.5 record and strong web to
 
 mode_label = st.radio("Scope", ["One vehicle", "Manufacturer", "All 50"], horizontal=True)
 if mode_label == "One vehicle":
-    chosen_id = st.selectbox("Vehicle", list(labels), format_func=labels.get)
+    chosen_id = st.selectbox("Vehicle", list(labels), format_func=labels.get,
+                             index=list(labels).index(HANDSHAKE_RECORD_ID))
     selection = select_vehicles(vehicles, "one", chosen_id)
 elif mode_label == "Manufacturer":
     maker = st.selectbox("Manufacturer", manufacturers(vehicles))
@@ -163,17 +188,11 @@ if run_clicked:
     batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}")
     agent_cfg = AgentConfig(max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
                             temperature=temperature, max_tokens=int(max_tokens) or None,
-                            include_level3=include_level3, extra_body=extra_body)
+                            include_level3=include_level3, thinking=thinking, extra_body=extra_body)
     tool_cfg = ToolConfig(search_backend=search_backend)
-    write_batch(RUNS_DIR, batch_id, {
-        "batch_id": batch_id, "model": model_id, "base_url": base_url, "chat_path": chat_path,
-        "prompt_version": PROMPT_VERSION,
-        "search_backend": search_backend, "search_engine": search_engine if search_backend == "glm" else None,
-        "search_path": search_path if search_backend == "glm" else None,
-        "level15_source": load.source, "level15_note": load.note, "selection": mode_label,
-        "record_ids": [v["upstream_record_id"] for v in selection],
-        "agent_config": agent_cfg.__dict__, "tool_config": tool_cfg.__dict__,
-    })
+    start_batch(RUNS_DIR, batch_id, client=client, agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing,
+                vehicles=selection, level15_source=load.source, level15_note=load.note, selection=mode_label,
+                prompt_version=PROMPT_VERSION)
     st.session_state["batch_id"] = batch_id
     rows_by_id = {str(r["upstream_record_id"]): r for r in load.rows}
     progress = st.progress(0.0, text=f"Batch {batch_id} · Level 1.5 from {load.source}")
@@ -182,18 +201,15 @@ if run_clicked:
     def run_one(vehicle: dict, row: dict) -> dict:
         with st.status(labels[vehicle["upstream_record_id"]], expanded=True) as status_box:
             feed = st.empty()
-            log = RunLog(RUNS_DIR, batch_id, vehicle["upstream_record_id"],
-                         listener=run_view.live_listener(feed))
-            result = run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
-                                 config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle,
-                                 batch_id=batch_id, ordinal=vehicle["ordinal"])
-            result["metrics"] = compute_metrics(result, vehicle, cache, price_in, price_out)
-            result["level15_source"] = load.source
-            log.write_result(result)
+            result = research_one(vehicle, row, client=client, cache=cache, runs_dir=RUNS_DIR, batch_id=batch_id,
+                                  agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing,
+                                  level15_source=load.source, listener=run_view.live_listener(feed))
             m = result["metrics"]
+            if result.get("api_error"):
+                st.error(f"GLM API error: {result['api_error']}")
             status_box.update(
                 label=f"{labels[vehicle['upstream_record_id']]} · {result['status']} · {m['fields_with_value']} fields"
-                      f" · {m['tool_calls']} tools · {result['duration_s']}s",
+                      f" · {m['tool_calls']} tools · {m['search_api_calls']} searches · {result['duration_s']}s",
                 state="error" if result["status"] == "error" else "complete", expanded=False)
         return result
 
@@ -221,4 +237,4 @@ with tab_docs:
 with tab_results:
     run_view.render_results_tab(results, labels)
 with tab_bench:
-    benchmark_view.render_benchmark(results, vehicles_by_id, labels, cache, RUNS_DIR, price_in, price_out)
+    benchmark_view.render_benchmark(results, vehicles_by_id, labels, cache, RUNS_DIR)

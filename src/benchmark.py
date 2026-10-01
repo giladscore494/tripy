@@ -12,10 +12,17 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
+from .agent import AgentConfig, effective_glm_config, run_vehicle
+from .db import build_level15_payload
+from .pricing import compute_cost
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
+from .storage.run_log import RunLog, utc_now, write_batch
+from .tools import ToolConfig
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 IDS_PATH = DATA_DIR / "benchmark_v1_ids.json"
+# Vehicle #44 (XPeng G6 2026 MAX, NSGHA): the first real-API handshake vehicle.
+HANDSHAKE_RECORD_ID = "101122"
 
 
 def load_benchmark(path: Path = IDS_PATH) -> dict:
@@ -56,8 +63,8 @@ def _domain(url: str | None) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def compute_metrics(result: dict, vehicle: dict | None = None, cache=None,
-                    price_in_per_mtok: float = 0.0, price_out_per_mtok: float = 0.0) -> dict:
+def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, pricing: dict | None = None) -> dict:
+    """Observational metrics. Cost uses the pricing stored with the run unless `pricing` is given."""
     output = result.get("output")
     is_electrified = (vehicle or {}).get("propulsion", "") != "conventional"
     targets = target_field_names(include_electric=is_electrified)
@@ -81,8 +88,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None,
     findings = output.get("additional_findings") if isinstance(output, dict) else None
     level3 = output.get("level3") if isinstance(output, dict) else None
     level3_topics = [k for k in (level3 or {}) if k in LEVEL3_TOPICS] if isinstance(level3, dict) else []
-    cost = (usage.get("prompt_tokens", 0) * price_in_per_mtok
-            + usage.get("completion_tokens", 0) * price_out_per_mtok) / 1_000_000
+    search_api_calls = counters.get("search_api_calls", 0)
+    cost = compute_cost(usage, search_api_calls, pricing if pricing is not None else result.get("pricing"))
     return {
         "record_id": result.get("record_id"),
         "status": result.get("status"),
@@ -103,6 +110,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None,
         "document_cache_hits": counters.get("cache_hits", 0),
         "document_cache_misses": counters.get("cache_misses", 0),
         "search_cache_hits": counters.get("search_cache_hits", 0),
+        "search_api_calls": search_api_calls,
+        "api_errors": counters.get("api_errors", 0),
         "conflicts_reported": len(conflicts) if isinstance(conflicts, list) else 0,
         "additional_findings": len(findings) if isinstance(findings, list) else 0,
         "level3_topics": len(level3_topics),
@@ -111,14 +120,18 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None,
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
         "total_tokens": usage.get("total_tokens", 0),
-        "cost_usd": round(cost, 4) if (price_in_per_mtok or price_out_per_mtok) else None,
+        "cached_tokens": usage.get("cached_tokens", 0),
+        "model_latency_s": round(usage.get("model_latency_ms", 0) / 1000, 2),
+        "cost_tokens_usd": cost["tokens_usd"],
+        "cost_search_usd": cost["web_search_usd"],
+        "cost_usd": cost["total_usd"],
     }
 
 
 SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_items", "documents_opened", "tool_calls",
             "tool_errors", "document_cache_hits", "document_cache_misses", "search_cache_hits",
-            "conflicts_reported", "additional_findings", "duration_s", "model_calls", "prompt_tokens",
-            "completion_tokens", "total_tokens")
+            "search_api_calls", "api_errors", "conflicts_reported", "additional_findings", "duration_s",
+            "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
 
 
 def aggregate(metrics: list[dict]) -> dict:
@@ -154,3 +167,40 @@ def run_batch(vehicles: list[dict], rows_by_id: dict[str, dict], run_one: Callab
         if on_done:
             on_done(vehicle, result)
     return results
+
+
+def start_batch(runs_dir: Path | str, batch_id: str, *, client, agent_cfg: AgentConfig, tool_cfg: ToolConfig,
+                pricing: dict, vehicles: list[dict], level15_source: str, level15_note: str, selection: str,
+                prompt_version: str) -> dict:
+    """Write batch.json with the complete effective configuration (no secrets)."""
+    info = {
+        "batch_id": batch_id,
+        "created_at": utc_now(),
+        "model": client.model,
+        "glm_config": effective_glm_config(client, agent_cfg, tool_cfg),
+        "prompt_version": prompt_version,
+        "search_backend": tool_cfg.search_backend,
+        "pricing": pricing,
+        "level15_source": level15_source,
+        "level15_note": level15_note,
+        "selection": selection,
+        "record_ids": [v["upstream_record_id"] for v in vehicles],
+        "agent_config": {k: v for k, v in agent_cfg.__dict__.items()},
+        "tool_config": dict(tool_cfg.__dict__),
+    }
+    write_batch(runs_dir, batch_id, info)
+    return info
+
+
+def research_one(vehicle: dict, row: dict, *, client, cache, runs_dir: Path | str, batch_id: str,
+                 agent_cfg: AgentConfig, tool_cfg: ToolConfig, pricing: dict, level15_source: str,
+                 listener: Callable[[str, dict], None] | None = None, session=None) -> dict:
+    """Research exactly one vehicle, write result.json, and return the result. Never moves on by itself."""
+    log = RunLog(runs_dir, batch_id, vehicle["upstream_record_id"], listener=listener)
+    result = run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
+                         config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle, batch_id=batch_id,
+                         ordinal=vehicle.get("ordinal"), session=session, pricing=pricing)
+    result["level15_source"] = level15_source
+    result["metrics"] = compute_metrics(result, vehicle, cache)
+    log.write_result(result)
+    return result
