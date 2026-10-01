@@ -288,6 +288,31 @@ def last_completed_tool_step(events: Iterable[dict]) -> int | None:
     return max(steps) if steps else None
 
 
+def apply_current_states(summary: dict | None, field_states: dict | None) -> dict | None:
+    """Attach the CURRENT state of every field (recomputed from all events) to a recovery summary.
+
+    Attempt history (state_before/state_after, replies) is left as it was; `current_states` is the
+    authoritative view. For summaries rebuilt from events (interrupted runs), the recovered /
+    still-failed lists and final counts are derived from the current states, so evidence stored
+    mid-attempt or as a by-product is never reverted to a stale snapshot.
+    """
+    if not summary or not field_states:
+        return summary
+    current = {name: (state or {}).get("state") for name, state in field_states.items()}
+    summary["current_states"] = current
+    if summary.get("reconstructed"):
+        done = ("ok", "not_applicable")
+        retried = summary.get("fields_retried") or []
+        summary["fields_recovered"] = [f for f in retried if current.get(f) in done]
+        summary["fields_still_failed"] = [f for f in retried if current.get(f) not in done]
+        summary["fields_resolved_after_queue"] = [f for f in summary.get("queue") or [] if current.get(f) in done]
+        counts: dict[str, int] = {}
+        for state in current.values():
+            counts[state] = counts.get(state, 0) + 1
+        summary["final_states"] = counts
+    return summary
+
+
 def field_recovery_summary(events: list[dict]) -> dict | None:
     """Field detection / retry outcome recovered from events (None when the stage never ran)."""
     evaluations = [e for e in events if e.get("kind") == "field_evaluation"]

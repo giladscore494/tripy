@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .schemas import LEVEL3_TOPICS
+from .fields import normalize_field_name
 from .storage import trace
 from .variant_notes import record_id_of, variant_notes
 
@@ -223,6 +224,19 @@ def _primary_output(events: list[dict]) -> Any:
     return output if output is None or _size(output) <= 20000 else {"_truncated": _short(output, 20000)}
 
 
+def current_field_states(events: list[dict], specs: list[dict], target_market: str | None = None) -> dict:
+    """The authoritative CURRENT state of every requested field, recomputed from ALL events (evidence,
+    field_status declarations, primary output) with the same evaluator live field recovery uses. Never a
+    stale snapshot: evidence stored mid-attempt, as a by-product or after the last finished attempt counts."""
+    from .field_recovery import DEFAULT_TARGET_MARKET, evaluate_fields
+
+    started = trace.first_event(events, "run_started") or {}
+    market = target_market or started.get("target_market") or DEFAULT_TARGET_MARKET
+    return {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets", "conflict_evidence_ids")
+                         if f.get(k) not in (None, [], {})}
+            for f in evaluate_fields(specs, events, market)}
+
+
 def build_research_bundle(events: list[dict], payload: dict | None, *, cache=None,
                           documents_dir: Path | str | None = None, include_level3: bool = True,
                           max_chars: int = 60000, stop_reason: str | None = None,
@@ -243,20 +257,15 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
     specs = _requested(events, payload, include_electric)
     requested = {s["name"]: s.get("description") or s["name"] for s in specs if s.get("applicable", True)}
     targets = {"requested_fields": requested, "level3": dict(LEVEL3_TOPICS) if include_level3 else None}
-    recovery = trace.field_recovery_summary(events)
-    field_states = None
-    if recovery and recovery.get("evaluation_final"):
-        field_states = {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets",
-                                                            "conflict_evidence_ids")
-                                     if f.get(k) not in (None, [], {})}
-                        for f in recovery["evaluation_final"]}
-        unresolved = [n for n, f in field_states.items() if f.get("state") not in ("ok", "not_applicable")]
-    else:
-        with_evidence = {str(item.get("field")) for item in evidence}
-        unresolved = [name for name in requested if name not in with_evidence]
-    if include_level3:
-        with_evidence = {str(item.get("field")) for item in evidence}
-        unresolved += [f"level3:{key}" for key in LEVEL3_TOPICS if key not in with_evidence]
+    recovery = trace.field_recovery_summary(events)   # attempt HISTORY (state_before/after, replies)
+    field_states = current_field_states(events, specs, target_market)  # CURRENT state, from all events
+    with_evidence = {normalize_field_name(item.get("field")) for item in evidence}
+    # Strict: requested applicable fields with zero evidence records (no state interpretation).
+    no_evidence = [name for name in requested if name not in with_evidence]
+    # Operational: current state is anything but ok / not_applicable (may well have evidence).
+    unresolved = [name for name in requested if (field_states.get(name) or {}).get("state")
+                  not in ("ok", "not_applicable")]
+    level3_pending = [key for key in LEVEL3_TOPICS if key not in with_evidence] if include_level3 else []
     queries = []
     for pair in pairs:
         if pair["name"] in trace.SEARCH_TOOLS:
@@ -300,7 +309,9 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
         "documents": documents,
         "search_queries": queries,
         "research_actions": actions[-MAX_ACTIONS:],
+        "targets_without_stored_evidence": no_evidence,
         "unresolved_targets": unresolved,
+        "level3_topics_without_evidence": level3_pending,
         "model_notes": notes,
         "last_model_content": _short(responses[-1]["content"], 4000)
         if responses and (responses[-1].get("content") or "").strip() else (notes[-1]["text"] if notes else None),

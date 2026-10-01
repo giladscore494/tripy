@@ -241,7 +241,9 @@ def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path
         run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                     config=AgentConfig(requested_fields=FUTURE_FIELDS), tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
-    assert saved["status"] == "interrupted" and "field_recovery" in saved["error"]
+    assert saved["status"] == "interrupted" and saved["error"] is None   # an interruption is not an error
+    assert (saved["partial"], saved["interrupted"], saved["interrupted_phase"], saved["interruption_type"]) == \
+        (True, True, "field_recovery", "KeyboardInterrupt")
     assert saved["stop_reason"] == "model_finished"  # research itself had finished
     (log.dir / "result.json").unlink()  # as if the process had been killed instead
     run = load_runs(tmp_path / "runs", "b")[0]

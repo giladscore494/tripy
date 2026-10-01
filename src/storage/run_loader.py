@@ -53,10 +53,12 @@ def _derive_status(events: list[dict]) -> tuple[str, str | None]:
     """(status, error) for a run without result.json."""
     finished = trace.last_event(events, "run_finished")
     if finished:
-        return finished.get("status") or "incomplete", "run_finished was logged but result.json is missing"
+        status = finished.get("status") or "incomplete"
+        # An interruption is never reported as an error; otherwise note the missing result file.
+        return status, None if status == "interrupted" else "run_finished was logged but result.json is missing"
     interrupted = trace.last_event(events, "interrupted")
     if interrupted:
-        return "interrupted", f"{interrupted.get('exception') or 'interrupt'} during {interrupted.get('phase')}"
+        return "interrupted", None   # a script-control interruption is not an error
     failed = trace.last_event(events, "finalization_failed")
     if failed:
         return "finalization_failed", failed.get("error")
@@ -64,6 +66,17 @@ def _derive_status(events: list[dict]) -> tuple[str, str | None]:
     if error:
         return "research_failed", error.get("message")
     return "incomplete", None
+
+
+def _interruption(events: list[dict]) -> dict:
+    from ..agent import interruption_message
+
+    event = trace.last_event(events, "interrupted")
+    if not event:
+        return {"interrupted": False, "interrupted_phase": None, "interruption_type": None,
+                "interruption_message": None}
+    return {"interrupted": True, "interrupted_phase": event.get("phase"),
+            "interruption_type": event.get("exception"), "interruption_message": interruption_message(event.get("phase"))}
 
 
 def _stop_reason(events: list[dict], max_steps: int | None) -> str | None:
@@ -179,7 +192,8 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
         "usage_finalizer": usage["finalization"],
         "requested_fields": started.get("requested_fields"),
         "target_market": started.get("target_market"),
-        "field_recovery": trace.field_recovery_summary(events),
+        "field_recovery": trace.apply_current_states(trace.field_recovery_summary(events),
+                                                     research_bundle.get("field_states")),
         "research_tracking": trace.reuse_counts(events),
         "api_stats": stats,
         "finalization": finalization,
@@ -197,6 +211,8 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
         "result_source": "events.jsonl",
         "synthesized": True,
         "banner": INCOMPLETE_BANNER,
+        "partial": True,
+        **_interruption(events),
         "recovered": False,
     }
 

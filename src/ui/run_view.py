@@ -254,8 +254,7 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
     if metas:
         st.markdown(f"**Documents** ({len(metas)})")
         render_documents_table(metas)
-    if bundle.get("unresolved_targets"):
-        st.markdown("**Targets with no stored evidence:** " + ", ".join(bundle["unresolved_targets"]))
+    render_target_status(bundle)
     errors = [e for e in (result.get("api_errors") or [])]
     if result.get("error") or errors:
         st.markdown("**Errors**")
@@ -269,11 +268,43 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
             st.json(bundle, expanded=False)
 
 
+def target_status_lines(bundle: dict) -> dict[str, list[str]]:
+    """Display lines for the three distinct pending-work lists of a research bundle.
+
+    "without stored evidence" is strict (zero evidence records); "still unresolved" is the current
+    evaluated state (it may well have evidence); Level 3 topics are listed apart from Level 2 fields.
+    """
+    states = bundle.get("field_states") or {}
+    unresolved = bundle.get("unresolved_targets") or []
+    legacy = [t for t in unresolved if str(t).startswith("level3:")]   # bundles written before the split
+    return {
+        "no_evidence": list(bundle.get("targets_without_stored_evidence") or []),
+        "unresolved": [f"{name} — {(states.get(name) or {}).get('state', 'unresolved')}"
+                       for name in unresolved if not str(name).startswith("level3:")],
+        "level3": list(bundle.get("level3_topics_without_evidence") or [t.split(":", 1)[1] for t in legacy]),
+    }
+
+
+def render_target_status(bundle: dict) -> None:
+    lines = target_status_lines(bundle)
+    if lines["no_evidence"]:
+        st.markdown("**Level 2 targets with no stored evidence:** " + ", ".join(lines["no_evidence"]))
+    if lines["unresolved"]:
+        st.markdown("**Level 2 targets still unresolved** (current state; evidence may exist):")
+        st.markdown("\n".join(f"- {line}" for line in lines["unresolved"]))
+    if lines["level3"]:
+        st.markdown("**Level 3 topics not researched / without evidence:** " + ", ".join(lines["level3"]))
+
+
 def _responses_from_events(result: dict, runs_dir: Path) -> list[dict]:
     return trace.model_responses(load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", "")))
 
 
 def _status_banner(result: dict) -> None:
+    if result.get("interrupted"):
+        # A script-control interruption (Stop / rerun / Ctrl+C), not a research, API or tool failure.
+        st.info(result.get("interruption_message") or "Run interrupted. All completed research/evidence was "
+                "preserved. The result below is partial.")
     if result.get("synthesized"):
         st.warning(result.get("banner") or "This run did not produce a final result.json.")
         facts = [f"status **{result.get('status')}**", f"started {result.get('started_at')}",
@@ -431,8 +462,10 @@ def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
     attempts: dict[str, int] = {}
     for a in recovery.get("attempts") or []:
         attempts[a.get("field")] = attempts.get(a.get("field"), 0) + 1
+    current = recovery.get("current_states") or {}
     rows = [{"field": name, "primary_state": (primary.get(name) or {}).get("state"),
-             "retry_attempts": attempts.get(name, 0), "final_state": (final.get(name) or {}).get("state"),
+             "retry_attempts": attempts.get(name, 0), "last_attempt_state": (final.get(name) or {}).get("state"),
+             "current_state": current.get(name, (final.get(name) or {}).get("state")),
              "evidence": ", ".join(str(i) for i in (final.get(name) or primary.get(name) or {}).get("evidence_ids") or []),
              "markets": ", ".join((final.get(name) or {}).get("markets") or []),
              "info": ", ".join((final.get(name) or {}).get("info") or [])}

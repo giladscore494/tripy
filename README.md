@@ -358,6 +358,38 @@ Each attempt records `packet_chars`, `prior_excerpt_items`, `prior_excerpt_chars
 `recovery_prior_excerpt_chars`, `recovery_attempts_with_prior_excerpts`,
 `recovery_document_rereads_after_prior_excerpt`. The Field recovery tab shows each attempt's excerpts.
 
+### Interrupted runs and current field state
+
+**A Streamlit stop or rerun (or Ctrl+C) is a script-control interruption, not an error.** The run:
+
+1. stops issuing model and tool calls (no finalizer);
+2. mutes further UI callbacks, without swallowing anything;
+3. persists everything already completed, including a partial bundle rebuilt from events;
+4. re-raises the original exception.
+
+The result keeps `status: "interrupted"` with `error: null`, and adds `partial`, `interrupted`,
+`interrupted_phase`, `interruption_type` and `interruption_message`. The UI shows "Run interrupted during
+Field Recovery. All completed research/evidence was preserved. The result below is partial." Real API,
+tool and runtime failures stay under Errors.
+
+**Current field states are recomputed from all events.** The bundle's `field_states` run
+`evaluate_fields()` over the requested specs, every evidence event, every `field_status` declaration and
+the primary output. It is the same evaluator live recovery uses, so it never relies on a stale snapshot.
+Evidence stored mid-attempt, as a by-product, or after the last `field_recovery_finished` always counts.
+Attempt history (`state_before`/`state_after`, replies) is kept separately. The recovery summary gains
+`current_states`, which are authoritative.
+
+**Three distinct lists:**
+
+- `targets_without_stored_evidence`: requested applicable fields with zero evidence records (strict,
+  no interpretation).
+- `unresolved_targets`: current state is not `ok` or `not_applicable`. Evidence may exist, for example
+  `cargo_volume_l — foreign_market_only` or `torque_nm — conflicting`.
+- `level3_topics_without_evidence`: Level 3 topics, listed apart from Level 2 fields.
+
+Invariant: a requested field with any evidence record never appears in
+`targets_without_stored_evidence`. There is no automatic resume yet.
+
 ### Retries, timeouts and cost
 
 `GLM_CHAT_MAX_ATTEMPTS` and `GLM_SEARCH_MAX_ATTEMPTS` count **total** HTTP attempts: 2 means one

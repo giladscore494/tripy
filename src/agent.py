@@ -219,6 +219,15 @@ STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "user_cancelle
 STATUSES = ("completed", "max_steps_finalized", "no_new_research_finalized", "completed_unparsed",
             "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized")
 FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized"}
+PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete")
+PHASE_LABELS = {"research": "Research", "field_detection": "Field Detection", "field_recovery": "Field Recovery",
+                "finalization": "Finalization"}
+
+
+def interruption_message(phase: str | None) -> str:
+    label = PHASE_LABELS.get(phase or "", phase or "the run")
+    return (f"Run interrupted during {label}. All completed research/evidence was preserved. "
+            "The result below is partial.")
 
 
 @dataclass
@@ -936,17 +945,17 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                         status = "completed" if output is not None else "completed_unparsed"
                     else:
                         status = FINALIZED_STATUS[stop_reason]
-    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop, SystemExit: persist, then re-raise
+    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop/rerun, SystemExit: persist, then re-raise
+        # A script-control interruption, not a research/API/tool error: stop all model and tool calls (no
+        # finalizer), persist everything already completed, rebuild current state from events, re-raise.
         interrupted = exc
+        run_log.listener_muted = True
         status = "interrupted"
         stop_reason = stop_reason or "user_cancelled"
-        error = f"{type(exc).__name__}: run interrupted during {phase['name']}"
+        error = None
         if research_seconds is None:
             research_seconds = round(time.monotonic() - t0, 2)
-        try:
-            run_log.event("interrupted", phase=phase["name"], step=steps_done, exception=type(exc).__name__)
-        except BaseException:
-            pass
+        run_log.event("interrupted", phase=phase["name"], step=steps_done, exception=type(exc).__name__)
     finally:
         client.hook = previous_hook
 
@@ -958,6 +967,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         except OSError:
             pass
     events = trace_events(run_log)
+    if recovery is None and status == "interrupted":
+        recovery = trace.field_recovery_summary(events)   # interrupted mid-recovery: history from events
     if bundle is None:
         # Not sent anywhere: the partial research bundle is stored for the UI and for later recovery.
         bundle = build_research_bundle(events, payload, cache=cache, documents_dir=documents_dir,
@@ -1022,16 +1033,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         "documents_dir": str(documents_dir) if ctx.documents_opened else None,
         "result_source": "result.json",
         "recovered": False,
+        "partial": status in PARTIAL_STATUSES,
+        "interrupted": interrupted is not None,
+        "interrupted_phase": phase["name"] if interrupted is not None else None,
+        "interruption_type": type(interrupted).__name__ if interrupted is not None else None,
+        "interruption_message": interruption_message(phase["name"]) if interrupted is not None else None,
     }
-    try:
-        run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration, usage=usage,
-                      search_api_calls=search_calls, cost=cost, api_stats=stats)
-    except BaseException:
-        pass
+    trace.apply_current_states(recovery, (bundle or {}).get("field_states"))
+    # Persist first, then announce: a UI stop raised by the run_finished callback cannot lose the result.
     try:
         persist(result)
     except Exception as exc:  # disk problems must not hide the in-memory result from the caller
         run_log.event("result_write_failed", error=_error_text(exc))
+    run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration, usage=usage,
+                  search_api_calls=search_calls, cost=cost, api_stats=stats)
     if interrupted is not None:
         raise interrupted
     return result
