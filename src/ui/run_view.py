@@ -43,6 +43,16 @@ def _key(result: dict, name: str) -> str:
     return f"{name}_{result.get('batch_id')}_{result.get('record_id')}"
 
 
+def _frame(records: list[dict]) -> pd.DataFrame:
+    """DataFrame whose object columns are text, so mixed values (2295 vs "229,990 ILS") render cleanly."""
+    df = pd.DataFrame(records)
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].map(lambda v: v if v is None or isinstance(v, str)
+                                  else json.dumps(v, ensure_ascii=False, default=str))
+    return df
+
+
 def has_research(result: dict) -> bool:
     return bool(result.get("tool_calls") or result.get("evidence") or result.get("documents")
                 or (result.get("usage") or {}).get("model_calls"))
@@ -172,7 +182,7 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
                "from them by code.")
     if result.get("evidence"):
         st.markdown(f"**Stored evidence** ({len(result['evidence'])})")
-        st.dataframe(pd.DataFrame(result["evidence"]), hide_index=True, width="stretch")
+        st.dataframe(_frame(result["evidence"]), hide_index=True, width="stretch")
     else:
         st.caption("No evidence stored.")
     facts = bundle.get("candidate_facts") or {}
@@ -251,7 +261,8 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
     with st.expander(f"{icon} {label} · {status} · {duration}s{suffix}", expanded=bool(result.get("synthesized"))):
         _status_banner(result)
         tabs = st.tabs(["Human view", "JSON", "Partial research", "Evidence", "Tool calls", "Documents",
-                        "Model responses", "Level 1.5 input", "Run config & cost", "API attempts", "Events"])
+                        "Model responses", "Level 1.5 input", "Run config & cost", "API attempts", "Events",
+                        "Field recovery"])
         with tabs[0]:
             if result.get("output") is not None:
                 if result.get("error"):
@@ -273,12 +284,12 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             render_partial_research(result, runs_dir, cache, key=_key(result, "partial"))
         with tabs[3]:
             if result.get("evidence"):
-                st.dataframe(pd.DataFrame(result["evidence"]), hide_index=True, width="stretch")
+                st.dataframe(_frame(result["evidence"]), hide_index=True, width="stretch")
             else:
                 st.caption("No evidence stored.")
         with tabs[4]:
             if result.get("tool_calls"):
-                df = pd.DataFrame(result["tool_calls"])
+                df = _frame(result["tool_calls"])
                 df["arguments"] = df["arguments"].map(lambda a: _short(a, 300))
                 st.dataframe(df, hide_index=True, width="stretch")
             else:
@@ -335,6 +346,8 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
                                            for e in errors]), hide_index=True, width="stretch")
             else:
                 st.caption("No failed API attempts.")
+        with tabs[11]:
+            render_field_recovery(result)
         with tabs[10]:
             events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.caption(f"{len(events)} events in events.jsonl")
@@ -344,6 +357,47 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             for event in events:
                 if event["kind"] in chosen:
                     st.json(event, expanded=False)
+
+
+def render_field_recovery(result: dict) -> None:
+    """Requested-field states after primary research and after targeted retries."""
+    recovery = result.get("field_recovery")
+    requested = result.get("requested_fields") or {}
+    st.caption(f"{len(requested)} requested enrichment field(s). Fields with a usable candidate after primary "
+               "research, or marked not applicable, are never retried. States come from the model's own evidence "
+               "and declarations; this is not a fact check.")
+    if not recovery:
+        st.caption("Field detection did not run for this run (older run, or research did not finish).")
+        return
+    if recovery.get("error"):
+        st.error(recovery["error"])
+    cols = st.columns(4)
+    cols[0].metric("Failed after primary", len(recovery.get("queue") or []))
+    cols[1].metric("Retried", len(recovery.get("fields_retried") or []))
+    cols[2].metric("Recovered", len(recovery.get("fields_recovered") or []))
+    cols[3].metric("Retry attempts", recovery.get("attempt_count") or 0)
+    if recovery.get("stopped"):
+        st.caption(f"Retries stopped early: {recovery['stopped']}")
+    primary = {f["field"]: f for f in recovery.get("evaluation_primary") or []}
+    final = {f["field"]: f for f in recovery.get("evaluation_final") or []}
+    attempts: dict[str, int] = {}
+    for a in recovery.get("attempts") or []:
+        attempts[a.get("field")] = attempts.get(a.get("field"), 0) + 1
+    rows = [{"field": name, "primary_state": (primary.get(name) or {}).get("state"),
+             "retry_attempts": attempts.get(name, 0), "final_state": (final.get(name) or {}).get("state"),
+             "evidence": ", ".join(str(i) for i in (final.get(name) or primary.get(name) or {}).get("evidence_ids") or []),
+             "markets": ", ".join((final.get(name) or {}).get("markets") or []),
+             "info": ", ".join((final.get(name) or {}).get("info") or [])}
+            for name in (primary or final)]
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    if recovery.get("attempts"):
+        st.markdown("**Retry attempts**")
+        st.dataframe(pd.DataFrame([{"field": a.get("field"), "attempt": a.get("attempt"),
+                                    "before": a.get("state_before"), "after": a.get("state_after"),
+                                    "turns": a.get("turns"), "reply": _short(a.get("reply") or a.get("reply_text"), 300),
+                                    "error": a.get("error")} for a in recovery["attempts"]]),
+                     hide_index=True, width="stretch")
 
 
 def render_documents_table(metas: list[dict]) -> None:

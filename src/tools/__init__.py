@@ -74,6 +74,7 @@ def _registry() -> dict[str, Callable[..., dict]]:
         "get_structured_data": extract.get_structured_data,
         "get_cached_document": cache.get_cached_document,
         "store_evidence": evidence.store_evidence,
+        "report_field_status": evidence.report_field_status,
     }
 
 

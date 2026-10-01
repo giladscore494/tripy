@@ -107,6 +107,14 @@ with st.sidebar:
                                  int(env_agent.no_new_research_turns), help="AGENT_NO_NEW_RESEARCH_TURNS")
     tool_chars = st.number_input("Max chars per tool result sent to model", 1000, 60000,
                                  int(env_agent.max_tool_output_chars), step=500)
+    recovery_on = st.checkbox("Targeted retry of failed requested fields", value=env_agent.field_recovery_enabled,
+                              help="FIELD_RECOVERY_ENABLED. After primary research, each requested enrichment field "
+                                   "without a usable candidate gets a focused retry before finalization.")
+    recovery_attempts = st.number_input("Retry attempts per failed field", 0, 5,
+                                        int(env_agent.field_recovery_max_attempts), disabled=not recovery_on,
+                                        help="FIELD_RECOVERY_MAX_ATTEMPTS (a field's own recovery_attempts wins)")
+    recovery_steps = st.number_input("Model turns per retry attempt", 1, 20, int(env_agent.field_recovery_max_steps),
+                                     disabled=not recovery_on, help="FIELD_RECOVERY_MAX_STEPS")
     include_level3 = st.checkbox("Include Level 3 open research", value=True)
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
@@ -210,6 +218,9 @@ if run_clicked:
     batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}", RUNS_DIR)
     agent_cfg = agent_config_from_env(env=secret, max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
                                       no_new_research_turns=int(idle_turns), temperature=temperature,
+                                      field_recovery_enabled=bool(recovery_on),
+                                      field_recovery_max_attempts=int(recovery_attempts),
+                                      field_recovery_max_steps=int(recovery_steps),
                                       max_tokens=int(max_tokens) or None, include_level3=include_level3,
                                       thinking=thinking, extra_body=extra_body)
     tool_cfg = tool_config_from_env(env=secret, search_backend=search_backend)

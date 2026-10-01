@@ -11,72 +11,23 @@ import json
 import re
 from typing import Any
 
-# Level 2 targets, grouped as in the spec (section 7). Keys are suggested names;
-# the model may return other keys and those are kept as additional fields.
-LEVEL2_TARGET_FIELDS: dict[str, dict[str, str]] = {
-    "performance": {
-        "torque_nm": "Maximum torque (Nm)",
-        "acceleration_0_100_s": "0-100 km/h (s)",
-        "top_speed_kmh": "Top speed (km/h)",
-        "fuel_consumption_combined_l_100km": "Combined FUEL consumption in l/100km (combustion/hybrid only; "
-                                             "never put kWh/100km here)",
-    },
-    "electric_hybrid": {
-        "energy_consumption_kwh_100km": "EV energy consumption (kWh/100km, with test standard)",
-        "battery_gross_kwh": "Battery capacity gross (kWh)",
-        "battery_usable_kwh": "Battery capacity usable (kWh)",
-        "electric_range_km": "Electric range (km)",
-        "electric_range_standard": "Range test standard (WLTP/EPA/CLTC/...)",
-        "ac_charging_time": "AC charging time (with % window)",
-        "dc_charging_time": "DC charging time (with % window)",
-        "dc_charging_window_pct": "DC charging percentage window",
-        "ac_max_charging_power_kw": "Max AC charging power (kW)",
-        "dc_max_charging_power_kw": "Max DC charging power (kW)",
-    },
-    "dimensions": {
-        "length_mm": "Length (mm)",
-        "width_mm": "Width (mm)",
-        "height_mm": "Height (mm)",
-        "wheelbase_mm": "Wheelbase (mm)",
-        "curb_weight_kg": "Curb weight (kg)",
-        "ground_clearance_mm": "Ground clearance (mm)",
-        "cargo_volume_l": "Cargo volume (l)",
-        "fuel_tank_l": "Fuel tank (l)",
-    },
-    "transmission": {
-        "gearbox_type": "Gearbox type",
-        "gear_count": "Number of gears",
-    },
-    "multimedia": {
-        "screen_size_in": "Main screen size (in)",
-        "apple_carplay": "Apple CarPlay",
-        "android_auto": "Android Auto",
-        "wireless_phone_projection": "Wireless CarPlay / Android Auto",
-    },
-    "comfort": {
-        "power_seats": "Power seats",
-        "heated_seats": "Heated seats",
-        "ventilated_seats": "Ventilated seats",
-        "climate_zones": "Climate control zones",
-        "sunroof_panoramic": "Sunroof / panoramic roof",
-        "other_comfort_features": "Other comfort features",
-    },
-    "tires_wheels": {
-        "rim_diameter_in": "Rim diameter (in)",
-        "tire_size_front": "Front tire size",
-        "tire_size_rear": "Rear tire size",
-        "alternative_tire_sizes": "Alternative tire sizes",
-    },
-    "commercial": {
-        "local_trim_name": "Local commercial trim name of this exact variant",
-        "list_price": "List price (with currency)",
-        "registration_licence_fee": "Registration / annual licence fee (with currency)",
-        "vehicle_warranty": "Vehicle warranty",
-        "battery_hybrid_warranty": "Battery / hybrid system warranty",
-        "warranty_km": "Warranty km",
-        "warranty_years": "Warranty years",
-    },
-}
+# Level 2 targets come from the enrichment field schema (data/enrichment_fields.json, see
+# src/fields.py). Keys are suggested names; the model may return other keys and those are
+# kept as additional fields. LEVEL2_TARGET_FIELDS is the grouped view of the default schema.
+FIELD_STATUSES = ("found", "not_applicable", "unresolved", "conflicting", "foreign_market_only",
+                  "variant_not_exact", "weak_provenance")
+
+
+def _default_groups() -> dict[str, dict[str, str]]:
+    from .fields import load_schema
+
+    groups: dict[str, dict[str, str]] = {}
+    for spec in load_schema():
+        groups.setdefault(spec["group"], {})[spec["name"]] = spec["description"]
+    return groups
+
+
+LEVEL2_TARGET_FIELDS: dict[str, dict[str, str]] = _default_groups()
 
 LEVEL3_TOPICS: dict[str, str] = {
     "known_issues_reliability": "Known issues and reliability by model/year",
@@ -88,13 +39,13 @@ LEVEL3_TOPICS: dict[str, str] = {
 }
 
 
-def target_field_names(include_electric: bool = True) -> list[str]:
-    names: list[str] = []
-    for group, fields in LEVEL2_TARGET_FIELDS.items():
-        if group == "electric_hybrid" and not include_electric:
-            continue
-        names.extend(fields)
-    return names
+def target_field_names(include_electric: bool = True, propulsion: str | None = None) -> list[str]:
+    """Default-schema field names that apply to a vehicle (by `applies_to`, never by field name)."""
+    from .fields import applicable_names, resolve_requested_fields
+
+    if propulsion is None and not include_electric:
+        propulsion = "conventional"
+    return applicable_names(resolve_requested_fields(None, propulsion=propulsion))
 
 
 # --- Tool definitions handed to GLM (OpenAI-compatible function format) -------
@@ -221,11 +172,27 @@ TOOL_SPECS: list[dict] = [
             "market": {"type": "string",
                        "description": "Market the source describes, e.g. IL, MY, UK, EU, DK, CN, global, unknown."},
             "variant": {"type": "string", "description": "Trim/variant the source describes, as written there."},
+            "variant_match": {"type": "string",
+                              "description": "Your judgement: exact | different | unclear (does the source "
+                                             "describe this exact variant?)"},
             "note": {"type": "string", "description": "E.g. why a different market or trim is still relevant."},
         },
         ["field", "value"],
     ),
 ]
+
+TOOL_SPECS.append(_fn(
+    "report_field_status",
+    "Declare the status of one requested field when it is not simply found: not_applicable (does not exist for "
+    "this vehicle), unresolved, conflicting, foreign_market_only, variant_not_exact or weak_provenance; or "
+    "found. Used to decide which fields get a focused follow-up; it never changes stored evidence.",
+    {
+        "field": {"type": "string"},
+        "status": {"type": "string", "description": " | ".join(FIELD_STATUSES)},
+        "note": {"type": "string"},
+    },
+    ["field", "status"],
+))
 
 TOOL_NAMES = [spec["function"]["name"] for spec in TOOL_SPECS]
 

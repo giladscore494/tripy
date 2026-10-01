@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .schemas import LEVEL2_TARGET_FIELDS, LEVEL3_TOPICS, target_field_names
+from .schemas import LEVEL3_TOPICS
 from .storage import trace
 from .variant_notes import record_id_of, variant_notes
 
@@ -77,11 +77,6 @@ def _identity(payload: dict) -> dict:
         out["structure"] = {k: structure.get(k) for k in ("body", "doors", "seats", "country_of_manufacture")
                             if structure.get(k) is not None}
     return out
-
-
-def _targets(include_level3: bool, include_electric: bool) -> dict:
-    groups = {g: dict(f) for g, f in LEVEL2_TARGET_FIELDS.items() if include_electric or g != "electric_hybrid"}
-    return {"level2": groups, "level3": dict(LEVEL3_TOPICS) if include_level3 else None}
 
 
 def _is_electrified(payload: dict) -> bool:
@@ -208,9 +203,30 @@ def _excerpts(pairs: list[dict]) -> list[dict]:
     return found
 
 
+def _requested(events: list[dict], payload: dict, include_electric: bool) -> list[dict]:
+    """The run's requested field specs (from run_started), else the default schema."""
+    from .fields import propulsion_of, resolve_requested_fields
+
+    started = trace.first_event(events, "run_started") or {}
+    if started.get("requested_field_specs"):
+        return list(started["requested_field_specs"])
+    if started.get("requested_fields"):
+        return [{"name": k, "description": v, "applicable": True} for k, v in started["requested_fields"].items()]
+    propulsion = propulsion_of(payload) or (None if include_electric else "conventional")
+    return resolve_requested_fields(None, propulsion=propulsion)
+
+
+def _primary_output(events: list[dict]) -> Any:
+    from .field_recovery import primary_output
+
+    output = primary_output(events)
+    return output if output is None or _size(output) <= 20000 else {"_truncated": _short(output, 20000)}
+
+
 def build_research_bundle(events: list[dict], payload: dict | None, *, cache=None,
                           documents_dir: Path | str | None = None, include_level3: bool = True,
-                          max_chars: int = 60000, stop_reason: str | None = None) -> dict:
+                          max_chars: int = 60000, stop_reason: str | None = None,
+                          target_market: str | None = None) -> dict:
     payload = payload or {}
     documents_dir = Path(documents_dir) if documents_dir else None
     pairs = trace.tool_pairs(events)
@@ -224,10 +240,21 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
         meta = document_meta(doc_id, cache, documents_dir, event_meta)
         documents.append({k: meta.get(k) for k in DOC_META_KEYS if meta.get(k) not in (None, "", [], {})})
     include_electric = _is_electrified(payload)
-    targets = _targets(include_level3, include_electric)
-    with_evidence = {str(item.get("field")) for item in evidence}
-    unresolved = [name for name in target_field_names(include_electric) if name not in with_evidence]
+    specs = _requested(events, payload, include_electric)
+    requested = {s["name"]: s.get("description") or s["name"] for s in specs if s.get("applicable", True)}
+    targets = {"requested_fields": requested, "level3": dict(LEVEL3_TOPICS) if include_level3 else None}
+    recovery = trace.field_recovery_summary(events)
+    field_states = None
+    if recovery and recovery.get("evaluation_final"):
+        field_states = {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets")
+                                     if f.get(k) not in (None, [], {})}
+                        for f in recovery["evaluation_final"]}
+        unresolved = [n for n, f in field_states.items() if f.get("state") not in ("ok", "not_applicable")]
+    else:
+        with_evidence = {str(item.get("field")) for item in evidence}
+        unresolved = [name for name in requested if name not in with_evidence]
     if include_level3:
+        with_evidence = {str(item.get("field")) for item in evidence}
         unresolved += [f"level3:{key}" for key in LEVEL3_TOPICS if key not in with_evidence]
     queries = []
     for pair in pairs:
@@ -259,6 +286,11 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
             "documents_touched": len(doc_ids),
             "evidence_items": len(evidence),
         },
+        "target_market": target_market,
+        "field_states": field_states,
+        "field_recovery": [{k: a.get(k) for k in ("field", "attempt", "state_before", "state_after", "reply", "error")
+                            if a.get(k) is not None} for a in (recovery or {}).get("attempts") or []],
+        "primary_output": _primary_output(events),
         "evidence": evidence,
         "evidence_by_market": markets,
         "candidate_facts": facts,

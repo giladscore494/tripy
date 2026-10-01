@@ -19,6 +19,8 @@ from ..storage.run_loader import load_runs
 from ..storage.run_log import list_batches
 
 PER_VEHICLE_COLS = ["vehicle", "status", "result_source", "final_output", "finalization_status", "stop_reason",
+                    "requested_fields", "fields_failed_primary", "fields_retried", "fields_recovered",
+                    "fields_still_failed", "field_retry_attempts", "field_recovery_model_calls",
                     "coverage_pct", "target_filled", "target_fields", "fields_with_value", "extra_fields",
                     "evidence_items", "evidence_with_market", "fields_israel_direct", "fields_foreign_direct",
                     "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "unique_sources", "unique_domains", "documents_opened", "research_steps",

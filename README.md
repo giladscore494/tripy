@@ -9,7 +9,8 @@ promote anything to production.
 
 ```
 Supabase Level 1.5 → benchmark loader → GLM research phase → research tools → evidence store / document cache
-                                        → compact research bundle → GLM finalization phase → structured result → Streamlit UI
+  → failed requested-field detection → targeted field retries → compact research bundle
+  → GLM finalization phase → structured result → Streamlit UI
 ```
 
 ## No epistemic gate in code
@@ -49,6 +50,8 @@ and every one of them stays configurable.
 | `GLM_SEARCH_MAX_ATTEMPTS` | Total web_search HTTP attempts per request (default **3**). |
 | `GLM_CHAT_TIMEOUT_S` | Read timeout per attempt in seconds (default 240). |
 | `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
+| `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
+| `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
 | `AGENT_NO_NEW_RESEARCH_TURNS` | Finalize after N consecutive turns with no new research artifact (default 2; 0 = off). |
 | `AGENT_MAX_TOOL_OUTPUT_CHARS`, `AGENT_KEEP_RECENT_TOOL_RESULTS`, `AGENT_COMPACT_TOOL_OUTPUT_CHARS`, `AGENT_FINALIZER_BUNDLE_MAX_CHARS` | Context limits (see [Research and finalization](#research-and-finalization)). |
 | `TOOL_PREVIEW_CHARS`, `TOOL_MAX_TEXT_CHARS`, `TOOL_MAX_LINKS`, `TOOL_MAX_TABLE_ROWS`, `TOOL_MAX_TABLES` | Tool output caps. The full document always stays in the cache. |
@@ -128,6 +131,69 @@ Ctrl+C. It holds the status, the errors, all tool calls, evidence, documents, co
 phase, API attempt statistics, the partial research bundle and the last model content, and never any
 fabricated structured fields. Ctrl+C makes no further model call. The CLI saves the partial result
 and exits with code 130.
+
+### Targeted field recovery
+
+Between research and finalization, the requested enrichment fields that primary research did not obtain
+get focused retries:
+
+```
+PRIMARY RESEARCH → FAILED REQUESTED-FIELD DETECTION → TARGETED FIELD RETRIES → UPDATED EVENTS / EVIDENCE
+                 → COMPACT RESEARCH BUNDLE → FINALIZER
+```
+
+**The requested fields drive everything.** At run start the exact list is resolved and saved as
+`requested_fields` (in `run_started` and `result.json`). It comes from `data/enrichment_fields.json`, or
+from `ENRICHMENT_FIELDS` / `--fields` (any names, including ones the schema doesn't know), or from
+`ENRICHMENT_SCHEMA_PATH`. A spec has a `name`, and optionally a `description`, `group`, `unit`,
+`applies_to` (Level 1.5 `propulsion_normalized` values) and `recovery_attempts`. The engine
+(`src/field_recovery.py`) contains no field names, and a test enforces that. A new field gets the same
+recovery with no code change.
+
+**Detection uses the model's own research state.** It is not a fact check. A field is **not** retried when
+the research produced a candidate value backed by a `store_evidence` record, or when the field is
+`not_applicable` (by the schema's `applies_to`, by `report_field_status`, or in the model's own answer).
+A field **is** retried when:
+
+- `missing`: there is no candidate value and no evidence record;
+- `weak_provenance`: a value exists only in the model's answer, with no evidence record;
+- `unresolved`: the model said unresolved;
+- `foreign_market_only`: every candidate is explicitly marked as another market and the model has not
+  declared the field found;
+- `variant_not_exact`: every candidate is explicitly marked as another trim (`variant_match=different`)
+  and the model has not declared it found;
+- `conflicting`: the model reported an unresolved conflict.
+
+Several stored values for one field are recorded as info only. Nothing is removed, changed or ranked.
+
+**Each failed field gets its own focused task.** It is a fresh conversation with a dedicated
+field-recovery prompt and a compact packet:
+
+- `vehicle_identity` and the `requested_field` spec;
+- `failure_reason`;
+- `existing_candidates` / `existing_evidence`;
+- `relevant_documents` (the cache, documents behind the field's evidence first);
+- `previous_queries_for_this_field`;
+- earlier attempts.
+
+The primary conversation is never sent. The task can use every tool, exploiting cached documents first.
+It stores evidence into the same store and ends with a JSON status for the field. The field is then
+re-evaluated; a still-failed field gets attempt #2.
+
+Settings: `FIELD_RECOVERY_ENABLED=true`, `FIELD_RECOVERY_MAX_ATTEMPTS=2` (per field; a spec's
+`recovery_attempts` overrides it, and 0 means never), `FIELD_RECOVERY_MAX_STEPS=4` turns per attempt, and
+an optional `FIELD_RECOVERY_MAX_TOTAL_STEPS` cost cap per vehicle (0 = none). The CLI `--dry-run` prints
+`field_recovery_worst_case_model_turns`.
+
+The finalizer runs after the retries. Its bundle carries the requested fields, every field's final state,
+the retry replies and the research model's own primary JSON. If no field needed a retry and the research
+model already returned valid JSON, no finalizer call is made.
+
+Results record `field_recovery`: the queue, attempts, states before and after, and recovered vs still
+failed fields. Usage is booked separately as `usage_field_recovery`. The UI has a **Field recovery** tab,
+and Benchmark shows `fields_failed_primary`, `fields_retried`, `fields_recovered`, `fields_still_failed`,
+`field_retry_attempts` and `field_recovery_model_calls`. `--finalize-existing` never retries fields (it
+makes no new research).
 
 ### Retries, timeouts and cost
 

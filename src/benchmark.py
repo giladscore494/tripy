@@ -17,6 +17,7 @@ from .db import build_level15_payload
 from .pricing import run_cost
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
 from .storage.run_log import RunLog, utc_now, write_batch
+from .storage.trace import sum_usage
 from .tools import ToolConfig
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -70,12 +71,14 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     work is always counted; coverage is simply zero when no structured output exists.
     """
     output = result.get("output")
-    is_electrified = (vehicle or {}).get("propulsion", "") != "conventional"
-    targets = target_field_names(include_electric=is_electrified)
+    # Coverage is measured against the fields this run actually requested (schema-driven).
+    requested = result.get("requested_fields")
+    targets = list(requested) if requested else target_field_names(propulsion=(vehicle or {}).get("propulsion"))
     fields = iter_fields(output)
     filled_names = {name for name, entry in fields if has_value(entry)}
     target_filled = [name for name in targets if name in filled_names]
-    extra = sorted(filled_names - set(target_field_names(include_electric=True)))
+    extra = sorted(filled_names - set(targets) - set(target_field_names(include_electric=True)))
+    recovery = result.get("field_recovery") or {}
 
     urls = set()
     for item in result.get("evidence", []):
@@ -98,7 +101,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     usage_finalizer = result.get("usage_finalizer") or {}
     if usage_research is None:  # results written before the research/finalization split
         usage_research, usage_finalizer = usage, {}
-    cost, _ = run_cost(usage_research, usage_finalizer, search_api_calls,
+    usage_recovery = result.get("usage_field_recovery") or {}
+    cost, _ = run_cost(sum_usage(usage_research, usage_recovery), usage_finalizer, search_api_calls,
                        pricing if pricing is not None else result.get("pricing"),
                        pricing if pricing is not None else (result.get("pricing_finalizer") or result.get("pricing")),
                        stats.get("unknown_usage_attempts", 0))
@@ -150,6 +154,13 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "duration_s": result.get("duration_s") or 0,
         "model_calls": usage.get("model_calls", 0),
         "research_model_calls": usage_research.get("model_calls", 0),
+        "field_recovery_model_calls": usage_recovery.get("model_calls", 0),
+        "requested_fields": len(targets),
+        "fields_failed_primary": len(recovery.get("queue") or []),
+        "fields_retried": len(recovery.get("fields_retried") or []),
+        "fields_recovered": len(recovery.get("fields_recovered") or []),
+        "fields_still_failed": len(recovery.get("fields_still_failed") or []),
+        "field_retry_attempts": recovery.get("attempt_count") or 0,
         "finalizer_model_calls": usage_finalizer.get("model_calls", 0),
         "finalizer_input_chars": finalization.get("finalizer_input_chars") or 0,
         "finalizer_prompt_tokens": usage_finalizer.get("prompt_tokens", 0),
@@ -177,7 +188,8 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "tool_errors", "document_cache_hits", "document_cache_misses", "search_cache_hits",
             "search_api_calls", "api_errors", "conflicts_reported", "additional_findings", "duration_s",
             "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
-            "research_steps", "research_model_calls", "evidence_with_market", "fields_israel_direct",
+            "research_steps", "research_model_calls", "field_recovery_model_calls", "fields_failed_primary",
+            "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts", "evidence_with_market", "fields_israel_direct",
             "fields_foreign_direct", "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "finalizer_model_calls", "finalizer_input_chars",
             "finalizer_prompt_tokens", "finalizer_completion_tokens", "api_attempts", "chat_attempts",
             "search_attempts", "timeout_count", "unknown_usage_attempts", "duplicate_searches", "duplicate_fetches")

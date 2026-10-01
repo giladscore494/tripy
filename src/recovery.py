@@ -160,12 +160,13 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     events = read_events(run_dir / "events.jsonl")
     chat_path = glm_config.get("chat_path") or "chat/completions"
     stats = trace.api_stats(events, chat_path)
-    usage_research = base.get("usage_research") or trace.usage_by_phase(
-        [e for e in events if e.get("kind") == "model_response" and e.get("phase") != phase])["research"]
+    phases = trace.usage_by_phase([e for e in events if e.get("kind") == "model_response" and e.get("phase") != phase])
+    usage_research = base.get("usage_research") or phases["research"]
+    usage_recovery = base.get("usage_field_recovery") or phases["field_recovery"]
     usage_finalizer = trace.sum_usage(base.get("usage_finalizer"), caller.usage["finalization"])
     search_calls = base.get("search_api_calls") or 0
-    cost, cost_details = run_cost(usage_research, usage_finalizer, search_calls, research_pricing,
-                                  pricing_finalizer, stats["unknown_usage_attempts"])
+    cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_recovery), usage_finalizer, search_calls,
+                                  research_pricing, pricing_finalizer, stats["unknown_usage_attempts"])
     if fin["error"]:
         status = "finalization_failed"
     elif fin["output"] is None:
@@ -193,7 +194,8 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
         "finalization": fin["info"],
         "usage_research": usage_research,
         "usage_finalizer": usage_finalizer,
-        "usage": trace.sum_usage(usage_research, usage_finalizer),
+        "usage_field_recovery": usage_recovery,
+        "usage": trace.sum_usage(usage_research, usage_recovery, usage_finalizer),
         "api_stats": stats,
         "api_errors": list(base.get("api_errors") or []) + api_errors,
         "pricing": research_pricing,

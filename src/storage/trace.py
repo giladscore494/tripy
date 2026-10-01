@@ -20,6 +20,8 @@ SEARCH_TOOLS = ("search_web", "search_official_domains")
 USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "model_calls",
               "model_latency_ms")
 RESEARCH_PHASE = "research"
+RECOVERY_PHASE = "field_recovery"
+PHASE_GROUPS = (RESEARCH_PHASE, RECOVERY_PHASE, "finalization")
 
 
 def empty_usage() -> dict:
@@ -46,13 +48,15 @@ def sum_usage(*usages: dict | None) -> dict:
 
 
 def phase_group(phase: str | None) -> str:
-    """'research' or 'finalization' (finalization, its repair turn and recovery finalization)."""
-    return RESEARCH_PHASE if not phase or phase == RESEARCH_PHASE else "finalization"
+    """'research', 'field_recovery' or 'finalization' (finalization, its repair turn, recovery finalization)."""
+    if not phase or phase == RESEARCH_PHASE:
+        return RESEARCH_PHASE
+    return RECOVERY_PHASE if phase == RECOVERY_PHASE else "finalization"
 
 
 def usage_by_phase(events: Iterable[dict]) -> dict[str, dict]:
-    """Token usage confirmed by successful model responses, split research / finalization."""
-    out = {RESEARCH_PHASE: empty_usage(), "finalization": empty_usage()}
+    """Token usage confirmed by successful model responses, split research / field_recovery / finalization."""
+    out = {group: empty_usage() for group in PHASE_GROUPS}
     for event in events:
         if event.get("kind") == "model_response":
             add_usage(out[phase_group(event.get("phase"))], event.get("usage"), event.get("latency_ms"))
@@ -261,6 +265,42 @@ def research_steps(events: Iterable[dict]) -> int:
 def last_completed_tool_step(events: Iterable[dict]) -> int | None:
     steps = [p["step"] for p in tool_pairs(events) if p["result"] is not None and isinstance(p["step"], int)]
     return max(steps) if steps else None
+
+
+def field_recovery_summary(events: list[dict]) -> dict | None:
+    """Field detection / retry outcome recovered from events (None when the stage never ran)."""
+    evaluations = [e for e in events if e.get("kind") == "field_evaluation"]
+    attempts = [{k: v for k, v in e.items() if k not in ("seq", "ts", "kind")}
+                for e in events if e.get("kind") == "field_recovery_finished"]
+    if not evaluations and not attempts:
+        return None
+    primary = next((e for e in evaluations if e.get("stage") == "primary"), None)
+    final = next((e for e in reversed(evaluations) if e.get("stage") == "after_recovery"), None)
+    queue = last_event(events, "field_retry_queue") or {}
+    states = {f["field"]: f for f in (final or primary or {}).get("fields") or []}
+    for attempt in attempts:  # a run cut off mid-retry has no after_recovery evaluation yet
+        if attempt.get("field") in states and not final:
+            states[attempt["field"]] = {**states[attempt["field"]], "state": attempt.get("state_after"),
+                                        "retry_eligible": attempt.get("state_after") in (
+                                            "unresolved", "missing", "conflicting", "foreign_market_only",
+                                            "variant_not_exact", "weak_provenance")}
+    retried = sorted({a.get("field") for a in attempts if a.get("field")})
+    return {
+        "enabled": queue.get("enabled"),
+        "requested": len((primary or {}).get("fields") or []),
+        "primary_states": (primary or {}).get("summary"),
+        "final_states": (final or {}).get("summary"),
+        "queue": queue.get("fields") or [],
+        "fields_retried": retried,
+        "fields_recovered": [f for f in retried if not (states.get(f) or {}).get("retry_eligible")],
+        "fields_still_failed": [f for f in retried if (states.get(f) or {}).get("retry_eligible")],
+        "attempts": attempts,
+        "attempt_count": len(attempts),
+        "turns": sum(int(a.get("turns") or 0) for a in attempts),
+        "evaluation_primary": (primary or {}).get("fields"),
+        "evaluation_final": list(states.values()) if states else None,
+        "reconstructed": True,
+    }
 
 
 def parse_ts(value: str | None) -> datetime | None:

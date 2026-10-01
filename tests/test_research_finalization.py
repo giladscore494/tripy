@@ -79,7 +79,7 @@ def test_glm_model_flash_is_sent_unchanged(monkeypatch, tmp_path):
     ]})
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash")
     assert client.model == "glm-5.3-flash" and client.finalizer_model == "glm-5.3-flash"
-    result, _, _ = run_one(client, tmp_path, AgentConfig(max_steps=4),
+    result, _, _ = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=4),
                            {BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")})
     assert [p["model"] for p in chat_payloads(session)] == ["glm-5.3-flash", "glm-5.3-flash"]
     assert result["status"] == "completed" and result["research_model"] == "glm-5.3-flash"
@@ -98,7 +98,7 @@ def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp
         chat_reply({"role": "assistant", "content": json.dumps(FINAL_JSON)}),
     ]})
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash", GLM_FINALIZER_MODEL="glm-5.3")
-    result, runs, cache = run_one(client, tmp_path, AgentConfig(max_steps=3, no_new_research_turns=0),
+    result, runs, cache = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=3, no_new_research_turns=0),
                                   {BIG_PAGE: FakeResponse(big_page_body())})
     payloads = chat_payloads(session)
     research, final = payloads[:3], payloads[3]
@@ -155,7 +155,7 @@ def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
         _call(f"c{i}", "store_evidence", {"field": f"f{i}", "value": i, "document_id": doc_id})]} for i in range(3, 9)]
     turns.append({"role": "assistant", "content": json.dumps(FINAL_JSON)})
     client = ScriptedGLM(turns)
-    cfg = AgentConfig(max_steps=12, keep_recent_tool_results=2, max_tool_output_chars=5000, compact_tool_output_chars=600)
+    cfg = AgentConfig(field_recovery_enabled=False, max_steps=12, keep_recent_tool_results=2, max_tool_output_chars=5000, compact_tool_output_chars=600)
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path, "b", "1"), config=cfg, tool_config=ctx.config, session=ctx.session)
     assert result["status"] == "completed"
@@ -184,7 +184,7 @@ def test_no_new_research_trigger_and_duplicate_warnings(make_ctx, tmp_path):
     fetch = {"role": "assistant", "content": "", "tool_calls": [_call("c", "fetch_url", {"url": BIG_PAGE})]}
     client = ScriptedGLM([fetch, fetch, fetch, {"role": "assistant", "content": json.dumps(FINAL_JSON)}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
-                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(max_steps=10, no_new_research_turns=2),
+                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=10, no_new_research_turns=2),
                          tool_config=ctx.config, session=ctx.session)
     assert result["stop_reason"] == "no_new_research" and result["status"] == "no_new_research_finalized"
     assert result["research_steps"] == 3 and result["output"]["summary"] == "compiled"
@@ -271,7 +271,7 @@ def test_finalizer_timeout_still_writes_durable_partial_result(monkeypatch, tmp_
         "web_search": [PostResponse(200, {"search_result": [{"title": "G6", "link": BIG_PAGE, "content": "s"}]})],
     })
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash")
-    result, runs, _ = run_one(client, tmp_path, AgentConfig(max_steps=2),
+    result, runs, _ = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=2),
                               {BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")})
     saved = json.loads((runs / "b" / HANDSHAKE_RECORD_ID / "result.json").read_text("utf-8"))
     for r in (result, saved):
@@ -297,7 +297,7 @@ def test_research_exception_still_writes_durable_partial_result(monkeypatch, tmp
         PostResponse(500, text="upstream"), PostResponse(503, text="busy"),
     ]})
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash")
-    result, runs, _ = run_one(client, tmp_path, AgentConfig(max_steps=5),
+    result, runs, _ = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=5),
                               {BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")})
     saved = json.loads((runs / "b" / HANDSHAKE_RECORD_ID / "result.json").read_text("utf-8"))
     assert saved["status"] == "research_failed" and saved["stop_reason"] == "api_failure"
@@ -312,7 +312,7 @@ def test_research_exception_still_writes_durable_partial_result(monkeypatch, tmp
             raise ValueError("unexpected")
 
     other = run_vehicle({"upstream_record_id": "2"}, {}, client=Boom([]), cache=DocumentCache(tmp_path / "c2"),
-                        run_log=RunLog(tmp_path / "r2", "b", "2"), config=AgentConfig(), tool_config=ToolConfig())
+                        run_log=RunLog(tmp_path / "r2", "b", "2"), config=AgentConfig(field_recovery_enabled=False), tool_config=ToolConfig())
     assert other["status"] == "research_failed" and other["stop_reason"] == "research_exception"
     assert json.loads((tmp_path / "r2" / "b" / "2" / "result.json").read_text("utf-8"))["status"] == "research_failed"
 
@@ -333,7 +333,7 @@ def test_keyboard_interrupt_preserves_partial_artifacts(tmp_path):
     runs = tmp_path / "runs"
     with pytest.raises(KeyboardInterrupt):
         research_one(vehicle44(), {"upstream_record_id": HANDSHAKE_RECORD_ID}, client=client,
-                     cache=DocumentCache(runs / "_cache"), runs_dir=runs, batch_id="b", agent_cfg=AgentConfig(),
+                     cache=DocumentCache(runs / "_cache"), runs_dir=runs, batch_id="b", agent_cfg=AgentConfig(field_recovery_enabled=False),
                      tool_cfg=ToolConfig(), pricing=default_pricing("glm-5.3"), level15_source="snapshot",
                      session=FakeSession({BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")}))
     run_dir = runs / "b" / HANDSHAKE_RECORD_ID
@@ -452,7 +452,7 @@ def test_finalize_existing_run_makes_one_call_and_no_research(baseline, monkeypa
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash", GLM_FINALIZER_MODEL="glm-5.3")
     cache = DocumentCache(baseline / "_cache")
     result = finalize_existing_run(baseline, BASELINE_BATCH, HANDSHAKE_RECORD_ID, client=client, cache=cache,
-                                   config=AgentConfig(),
+                                   config=AgentConfig(field_recovery_enabled=False),
                                    metrics_fn=lambda r: compute_metrics(r, vehicle44(), cache))
     assert [r["url"].rsplit("/", 1)[-1] for r in session.requests] == ["completions"]  # one call, no search
     sent = session.requests[0]["payload"]
@@ -482,11 +482,11 @@ def test_finalize_existing_run_makes_one_call_and_no_research(baseline, monkeypa
     # A second recovery is refused unless forced; when forced, the previous result.json is preserved.
     with pytest.raises(RecoveryError):
         finalize_existing_run(baseline, BASELINE_BATCH, HANDSHAKE_RECORD_ID, client=client, cache=cache,
-                              config=AgentConfig())
+                              config=AgentConfig(field_recovery_enabled=False))
     session.routes["chat/completions"].append(chat_reply({"role": "assistant", "content": "not json"}))
     session.routes["chat/completions"].append(chat_reply({"role": "assistant", "content": "still not json"}))
     again = finalize_existing_run(baseline, BASELINE_BATCH, HANDSHAKE_RECORD_ID, client=client, cache=cache,
-                                  config=AgentConfig(), force=True)
+                                  config=AgentConfig(field_recovery_enabled=False), force=True)
     assert again["status"] == "completed_unparsed"
     preserved = Path(again["recovery"]["prior_result_preserved_as"])
     assert json.loads(preserved.read_text("utf-8"))["status"] == "recovered_finalized"
@@ -562,10 +562,10 @@ def test_stub_batch_e2e_successful_run_unchanged(monkeypatch, tmp_path):
     })
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash")
     runs = tmp_path / "runs"
-    start_batch(runs, "b", client=client, agent_cfg=AgentConfig(), tool_cfg=ToolConfig(), pricing={},
+    start_batch(runs, "b", client=client, agent_cfg=AgentConfig(field_recovery_enabled=False), tool_cfg=ToolConfig(), pricing={},
                 vehicles=[vehicle44()], level15_source="snapshot", level15_note="", selection="one",
                 prompt_version="pv")
-    result, runs, cache = run_one(client, tmp_path, AgentConfig(),
+    result, runs, cache = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False),
                                   {BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")})
     assert result["status"] == "completed" and result["stop_reason"] == "model_finished"
     assert result["finalization"] is None and result["usage_finalizer"]["model_calls"] == 0

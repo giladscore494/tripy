@@ -31,7 +31,8 @@ SPEC_PAGE = """<html><head><title>Corolla Hybrid specs</title>
 def test_tool_specs_cover_every_tool():
     assert set(TOOL_NAMES) == {
         "search_web", "search_official_domains", "fetch_url", "fetch_pdf", "render_page", "extract_html",
-        "extract_tables", "find_in_document", "get_structured_data", "get_cached_document", "store_evidence"}
+        "extract_tables", "find_in_document", "get_structured_data", "get_cached_document", "store_evidence",
+        "report_field_status"}
     assert all(spec["type"] == "function" for spec in tool_specs())
 
 
@@ -206,7 +207,7 @@ def test_agent_loop_end_to_end(make_ctx, tmp_path):
     log = RunLog(tmp_path / "runs", "b1", "38626")
     row = {"upstream_record_id": "38626", "tozar": "טויוטה"}
     result = run_vehicle(row, {"identity": {"manufacturer": "טויוטה"}}, client=client, cache=ctx.cache,
-                         run_log=log, config=AgentConfig(max_steps=5), tool_config=ToolConfig(),
+                         run_log=log, config=AgentConfig(field_recovery_enabled=False, max_steps=5), tool_config=ToolConfig(),
                          vehicle_meta={"manufacturer": "טויוטה", "propulsion": "hybrid"}, batch_id="b1", ordinal=1,
                          session=ctx.session)
     assert result["status"] == "completed" and result["output"]["summary"] == "found specs"
@@ -236,7 +237,7 @@ def test_agent_finalizes_at_step_budget_and_keeps_unparsed_text(make_ctx, tmp_pa
     client = ScriptedGLM([loop_call, loop_call, {"role": "assistant", "content": "plain text answer"},
                           {"role": "assistant", "content": "still not json"}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
-                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(max_steps=2),
+                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=2),
                          tool_config=ctx.config, batch_id="b", session=ctx.session)
     assert result["status"] == "max_steps_finalized"
     assert result["output"] is None and result["raw_final_text"] == "plain text answer"

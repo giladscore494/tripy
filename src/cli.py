@@ -29,6 +29,7 @@ from .agent import PROMPT_VERSION, agent_config_from_env, effective_config, tool
 from .benchmark import (HANDSHAKE_RECORD_ID, benchmark_vehicles, compute_metrics, research_one, start_batch,
                         vehicle_label)
 from .db import Level15Error, build_level15_payload, load_level15
+from .fields import parse_field_list, propulsion_of, resolve_requested_fields
 from .glm_client import GLMClient, GLMError, GLMSettings
 from .pricing import default_pricing
 from .recovery import RecoveryError, finalize_existing_run, plan_recovery
@@ -53,6 +54,15 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--no-new-research-turns", type=int, default=None,
                    help="Finalize after N consecutive turns with no new research artifact; 0 = off "
                         "(AGENT_NO_NEW_RESEARCH_TURNS, default 2)")
+    p.add_argument("--fields", default=None,
+                   help="Requested enrichment fields for this run: comma list or JSON list of names/specs "
+                        "(ENRICHMENT_FIELDS; default: every field in the enrichment schema)")
+    p.add_argument("--no-field-recovery", action="store_true",
+                   help="Skip targeted retries of failed requested fields (FIELD_RECOVERY_ENABLED=false)")
+    p.add_argument("--field-recovery-max-attempts", type=int, default=None,
+                   help="Retry attempts per failed field (FIELD_RECOVERY_MAX_ATTEMPTS, default 2)")
+    p.add_argument("--field-recovery-max-steps", type=int, default=None,
+                   help="Model turns per retry attempt (FIELD_RECOVERY_MAX_STEPS, default 4)")
     p.add_argument("--max-tokens", type=int, default=0, help="0 = provider default")
     p.add_argument("--search-backend", choices=["glm", "duckduckgo"], default=env("SEARCH_BACKEND") or "glm")
     p.add_argument("--data-source", choices=["auto", "database", "snapshot"], default="auto")
@@ -71,6 +81,14 @@ def _agent_cfg(args: argparse.Namespace, extra_body: dict):
                      include_level3=not args.no_level3, thinking=args.thinking, extra_body=extra_body)
     if args.no_new_research_turns is not None:
         overrides["no_new_research_turns"] = args.no_new_research_turns
+    if args.fields:
+        overrides["requested_fields"] = parse_field_list(args.fields)
+    if args.no_field_recovery:
+        overrides["field_recovery_enabled"] = False
+    if args.field_recovery_max_attempts is not None:
+        overrides["field_recovery_max_attempts"] = args.field_recovery_max_attempts
+    if args.field_recovery_max_steps is not None:
+        overrides["field_recovery_max_steps"] = args.field_recovery_max_steps
     return agent_config_from_env(**overrides)
 
 
@@ -88,15 +106,30 @@ def _cache(runs_dir: Path) -> DocumentCache:
 def _listener(kind: str, event: dict) -> None:
     if kind in ("tool_call", "api_error", "error", "research_stopped", "finalization_started",
                 "finalization_failed", "finalization_finished", "interrupted", "run_finished",
-                "recovery_started", "recovery_finished", "duplicate_work"):
+                "recovery_started", "recovery_finished", "duplicate_work", "field_retry_queue",
+                "field_recovery_started", "field_recovery_finished"):
         brief = {k: v for k, v in event.items()
-                 if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking")}
+                 if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking", "queue",
+                              "reply_text")}
         if kind == "api_error":
             brief = {"request": brief.get("request_kind"), "attempt": f"{brief.get('attempt')}/{brief.get('max_attempts')}",
                      "status": brief.get("status"), "timeout": brief.get("timeout"),
                      "usage_unknown": brief.get("usage_unknown"), "will_retry": brief.get("will_retry"),
                      "error": str(brief.get("error"))[:160]}
         print(f"[{kind}] {json.dumps(brief, ensure_ascii=False, default=str)[:300]}", flush=True)
+
+
+def _worst_case_recovery_turns(agent_cfg, payload: dict, vehicle: dict) -> int:
+    """Upper bound on extra model turns if every requested field failed primary research."""
+    from .field_recovery import max_attempts_for
+
+    if not agent_cfg.field_recovery_enabled:
+        return 0
+    specs = resolve_requested_fields(agent_cfg.requested_fields or None, propulsion=propulsion_of(payload, vehicle))
+    turns = sum(max_attempts_for(s, agent_cfg.field_recovery_max_attempts) * agent_cfg.field_recovery_max_steps
+                for s in specs if s.get("applicable", True))
+    cap = agent_cfg.field_recovery_max_total_steps
+    return min(turns, cap) if cap else turns
 
 
 def _summary(result: dict, extra: dict | None = None) -> str:
@@ -106,7 +139,10 @@ def _summary(result: dict, extra: dict | None = None) -> str:
            "research_steps": result.get("research_steps"), "error": result.get("error"),
            "research_model": result.get("research_model"), "finalizer_model": result.get("finalizer_model"),
            "duration_s": result.get("duration_s"), "usage_research": result.get("usage_research"),
+           "usage_field_recovery": result.get("usage_field_recovery"),
            "usage_finalizer": result.get("usage_finalizer"), "api_stats": result.get("api_stats"),
+           "field_recovery": {k: (result.get("field_recovery") or {}).get(k) for k in (
+               "queue", "fields_retried", "fields_recovered", "fields_still_failed", "attempt_count", "turns")},
            "search_api_calls": result.get("search_api_calls"), "tool_calls": m.get("tool_calls"),
            "documents_opened": m.get("documents_opened"), "evidence_items": m.get("evidence_items"),
            "fields_with_value": m.get("fields_with_value"),
@@ -202,6 +238,10 @@ def main(argv: list[str] | None = None) -> int:
             "research_model": settings.model or None,
             "finalizer_model": settings.effective_finalizer_model or None,
             "agent_config": config["agent"],
+            "requested_fields": {s["name"]: s.get("description") for s in resolve_requested_fields(
+                agent_cfg.requested_fields or None, propulsion=propulsion_of(payload, vehicle))
+                                 if s.get("applicable", True)},
+            "field_recovery_worst_case_model_turns": _worst_case_recovery_turns(agent_cfg, payload, vehicle),
             "tool_config": config["tools"],
             "api_key_present": bool(settings.api_key),
             "model_id_present": bool(settings.model),

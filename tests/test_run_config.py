@@ -125,7 +125,7 @@ def test_run_records_effective_config_trace_and_cost(tmp_path):
     client = make_client(glm_session)
     vehicle = next(v for v in benchmark_vehicles() if v["upstream_record_id"] == HANDSHAKE_RECORD_ID)
     row = {"upstream_record_id": HANDSHAKE_RECORD_ID, "tozar": vehicle["manufacturer"]}
-    agent_cfg = AgentConfig(max_steps=6, max_tokens=2048, thinking="enabled", extra_body={"custom_flag": True})
+    agent_cfg = AgentConfig(field_recovery_enabled=False, max_steps=6, max_tokens=2048, thinking="enabled", extra_body={"custom_flag": True})
     tool_cfg = ToolConfig(search_backend="glm")
     pricing = default_pricing("glm-5.3")
     runs = tmp_path / "runs"
@@ -179,7 +179,7 @@ def test_run_preserves_raw_api_error(tmp_path):
     vehicle = next(v for v in benchmark_vehicles() if v["upstream_record_id"] == HANDSHAKE_RECORD_ID)
     result = research_one(vehicle, {"upstream_record_id": HANDSHAKE_RECORD_ID}, client=client,
                           cache=DocumentCache(tmp_path / "c"), runs_dir=tmp_path, batch_id="b",
-                          agent_cfg=AgentConfig(), tool_cfg=ToolConfig(), pricing=default_pricing("glm-5.3"),
+                          agent_cfg=AgentConfig(field_recovery_enabled=False), tool_cfg=ToolConfig(), pricing=default_pricing("glm-5.3"),
                           level15_source="snapshot")
     assert result["status"] == "research_failed" and result["stop_reason"] == "api_failure"
     assert result["api_error"]["status"] == 401 and "1000" in result["api_error"]["body"]
