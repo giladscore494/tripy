@@ -18,9 +18,11 @@ LEVEL2_TARGET_FIELDS: dict[str, dict[str, str]] = {
         "torque_nm": "Maximum torque (Nm)",
         "acceleration_0_100_s": "0-100 km/h (s)",
         "top_speed_kmh": "Top speed (km/h)",
-        "fuel_consumption_combined_l_100km": "Combined consumption (l/100km, or kWh/100km for EV)",
+        "fuel_consumption_combined_l_100km": "Combined FUEL consumption in l/100km (combustion/hybrid only; "
+                                             "never put kWh/100km here)",
     },
     "electric_hybrid": {
+        "energy_consumption_kwh_100km": "EV energy consumption (kWh/100km, with test standard)",
         "battery_gross_kwh": "Battery capacity gross (kWh)",
         "battery_usable_kwh": "Battery capacity usable (kWh)",
         "electric_range_km": "Electric range (km)",
@@ -36,6 +38,7 @@ LEVEL2_TARGET_FIELDS: dict[str, dict[str, str]] = {
         "width_mm": "Width (mm)",
         "height_mm": "Height (mm)",
         "wheelbase_mm": "Wheelbase (mm)",
+        "curb_weight_kg": "Curb weight (kg)",
         "ground_clearance_mm": "Ground clearance (mm)",
         "cargo_volume_l": "Cargo volume (l)",
         "fuel_tank_l": "Fuel tank (l)",
@@ -65,7 +68,9 @@ LEVEL2_TARGET_FIELDS: dict[str, dict[str, str]] = {
         "alternative_tire_sizes": "Alternative tire sizes",
     },
     "commercial": {
+        "local_trim_name": "Local commercial trim name of this exact variant",
         "list_price": "List price (with currency)",
+        "registration_licence_fee": "Registration / annual licence fee (with currency)",
         "vehicle_warranty": "Vehicle warranty",
         "battery_hybrid_warranty": "Battery / hybrid system warranty",
         "warranty_km": "Warranty km",
@@ -130,13 +135,15 @@ TOOL_SPECS: list[dict] = [
     _fn(
         "fetch_url",
         "Download a URL (HTML, JSON, text or PDF). Stores status, headers, content-type, final URL "
-        "and body; returns a document_id plus a text preview.",
+        "and body in the document cache; returns a document_id plus a short preview. Query the stored "
+        "document with find_in_document / extract_tables / get_structured_data / extract_html.",
         {"url": {"type": "string"}},
         ["url"],
     ),
     _fn(
         "fetch_pdf",
-        "Download a PDF; stores bytes, extracted text and metadata. Returns a document_id.",
+        "Download a PDF; stores bytes, extracted text and metadata in the document cache. Returns a "
+        "document_id and a short preview; query it with find_in_document / extract_tables.",
         {"url": {"type": "string"}},
         ["url"],
     ),
@@ -156,7 +163,7 @@ TOOL_SPECS: list[dict] = [
         {
             "document_id": {"type": "string"},
             "offset": {"type": "integer", "description": "Text offset to continue from, default 0."},
-            "max_chars": {"type": "integer", "description": "Default 10000."},
+            "max_chars": {"type": "integer", "description": "Page size; capped by the run configuration."},
         },
         ["document_id"],
     ),
@@ -165,7 +172,8 @@ TOOL_SPECS: list[dict] = [
         "Extract tables (and definition-list spec grids) from a stored HTML or PDF document as rows/columns.",
         {
             "document_id": {"type": "string"},
-            "max_tables": {"type": "integer", "description": "Default 15."},
+            "max_tables": {"type": "integer", "description": "Tables per call; capped by the run configuration."},
+            "start_table": {"type": "integer", "description": "Index of the first table to return (paging)."},
         },
         ["document_id"],
     ),
@@ -200,8 +208,9 @@ TOOL_SPECS: list[dict] = [
     ),
     _fn(
         "store_evidence",
-        "Record what you consider evidence for a value: field, value, source URL, quote/fragment "
-        "and your note. This is a log, not a verifier. Returns an evidence_id to cite in your answer.",
+        "Record what you consider evidence for a value: field, exact value, source URL / document_id, a short "
+        "verbatim quote, the market and trim the source describes, and your note. This is a log, not a verifier. "
+        "Returns an evidence_id (e1, e2, ...) to cite in evidence_ids; document_ids are not evidence ids.",
         {
             "field": {"type": "string"},
             "value": {"type": "string", "description": "Value as found (numbers may be given as numbers)."},
@@ -209,7 +218,10 @@ TOOL_SPECS: list[dict] = [
             "source_url": {"type": "string"},
             "document_id": {"type": "string"},
             "quote": {"type": "string", "description": "Verbatim fragment from the source."},
-            "note": {"type": "string"},
+            "market": {"type": "string",
+                       "description": "Market the source describes, e.g. IL, MY, UK, EU, DK, CN, global, unknown."},
+            "variant": {"type": "string", "description": "Trim/variant the source describes, as written there."},
+            "note": {"type": "string", "description": "E.g. why a different market or trim is still relevant."},
         },
         ["field", "value"],
     ),

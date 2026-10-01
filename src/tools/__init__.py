@@ -26,6 +26,13 @@ class ToolConfig:
     connect_timeout_s: float = 10.0
     read_timeout_s: float = 40.0
     render_timeout_s: float = 45.0
+    # Conservative output caps. They limit what a tool returns to the model; the full
+    # document always stays in the document cache and can be paged / searched.
+    preview_chars: int = 1200            # fetch_url / fetch_pdf / render_page text preview
+    max_text_chars: int = 4000           # upper bound for extract_html / get_cached_document pages
+    max_links: int = 40                  # links returned by extract_html / render_page
+    max_table_rows: int = 40             # rows per table returned by extract_tables
+    max_tables: int = 8                  # tables returned by extract_tables per call
 
 
 @dataclass

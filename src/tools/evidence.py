@@ -23,9 +23,10 @@ class EvidenceStore:
 
 
 def store_evidence(ctx, field: str, value: Any, unit: str | None = None, source_url: str | None = None,
-                   document_id: str | None = None, quote: str | None = None, note: str | None = None) -> dict:
+                   document_id: str | None = None, quote: str | None = None, market: str | None = None,
+                   variant: str | None = None, note: str | None = None) -> dict:
     payload = {"field": field, "value": value, "unit": unit, "source_url": source_url,
-               "document_id": document_id, "quote": quote, "note": note}
+               "document_id": document_id, "quote": quote, "market": market, "variant": variant, "note": note}
     if document_id and not source_url:
         meta = ctx.cache.get(document_id)
         if meta:

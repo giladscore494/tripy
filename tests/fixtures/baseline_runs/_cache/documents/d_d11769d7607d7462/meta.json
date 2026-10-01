@@ -1,0 +1,20 @@
+{
+ "document_id": "d_d11769d7607d7462",
+ "kind": "fetch",
+ "url": "https://www.xpeng.com/g6",
+ "fetched_at": "2026-10-01T18:56:00+00:00",
+ "bytes": 184,
+ "sha256": "969dfc89bcf338ef277ec7747e9057fee2fff71a4f5bbad5cfdd316dc41acab9",
+ "text_chars": 135,
+ "status": 200,
+ "final_url": "https://www.xpeng.com/g6",
+ "redirects": [],
+ "headers": {
+  "content-type": "text/html"
+ },
+ "content_type": "text/html",
+ "truncated": false,
+ "doc_type": "html",
+ "extraction_path": "html.visible_text",
+ "title": "XPENG G6"
+}

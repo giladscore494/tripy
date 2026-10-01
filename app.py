@@ -12,16 +12,17 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.agent import PROMPT_VERSION, AgentConfig
+from src.agent import PROMPT_VERSION, agent_config_from_env, tool_config_from_env
 from src.benchmark import (HANDSHAKE_RECORD_ID, benchmark_vehicles, manufacturers, research_one, run_batch,
                            select_vehicles, start_batch, vehicle_label)
 from src.db import Level15Error, database_url, load_level15
-from src.glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_PATH, DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_PATH,
-                            GLMClient, GLMError, GLMSettings)
+from src.glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_MAX_ATTEMPTS, DEFAULT_CHAT_PATH, DEFAULT_CHAT_TIMEOUT_S,
+                            DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_MAX_ATTEMPTS, DEFAULT_SEARCH_PATH, GLMClient,
+                            GLMError, GLMSettings)
 from src.storage.cache import DocumentCache
 from src.pricing import default_pricing
-from src.storage.run_log import list_batches, load_results, new_batch_id
-from src.tools import ToolConfig
+from src.storage.run_loader import load_runs
+from src.storage.run_log import list_batches, load_batch, new_batch_id
 from src.ui import benchmark_view, run_view
 
 ROOT = Path(__file__).resolve().parent
@@ -69,8 +70,12 @@ labels = {v["upstream_record_id"]: vehicle_label(v) for v in vehicles}
 
 with st.sidebar:
     st.header("GLM")
-    model_id = st.text_input("Model id", value=secret("GLM_MODEL"),
-                             help="Any GLM chat model id. Nothing in the code assumes a specific model.")
+    model_id = st.text_input("Research model id", value=secret("GLM_MODEL"),
+                             help="GLM_MODEL, e.g. glm-5.3-flash. Used for every research/tool turn and sent "
+                                  "unchanged as the API `model`.")
+    finalizer_model_id = st.text_input("Finalizer model id (optional)", value=secret("GLM_FINALIZER_MODEL"),
+                                       help="GLM_FINALIZER_MODEL. Used only for the compact finalization call; "
+                                            "empty = the research model.")
     base_url = st.text_input("API base URL", value=secret("GLM_BASE_URL", DEFAULT_BASE_URL))
     chat_path = st.text_input("Chat endpoint", value=secret("GLM_CHAT_PATH", DEFAULT_CHAT_PATH),
                               help="Path relative to the base URL, or a full URL.")
@@ -85,9 +90,23 @@ with st.sidebar:
     search_engine = st.text_input("GLM search engine", value=secret("GLM_SEARCH_ENGINE", DEFAULT_SEARCH_ENGINE),
                                   disabled=search_backend != "glm")
 
+    chat_attempts = st.number_input("Chat max attempts (total, 1 = no retry)", 1, 6,
+                                    int(secret("GLM_CHAT_MAX_ATTEMPTS") or DEFAULT_CHAT_MAX_ATTEMPTS),
+                                    help="GLM_CHAT_MAX_ATTEMPTS. Each attempt is logged; a timed-out attempt may "
+                                         "still be billed by the provider.")
+    search_attempts = st.number_input("Search max attempts (total)", 1, 6,
+                                      int(secret("GLM_SEARCH_MAX_ATTEMPTS") or DEFAULT_SEARCH_MAX_ATTEMPTS))
+    chat_timeout = st.number_input("Chat read timeout per attempt (s)", 30, 1800,
+                                   int(float(secret("GLM_CHAT_TIMEOUT_S") or DEFAULT_CHAT_TIMEOUT_S)), step=30)
+
     st.header("Agent")
-    max_steps = st.slider("Max model steps per vehicle", 5, 80, int(secret("AGENT_MAX_STEPS", "30") or 30))
-    tool_chars = st.number_input("Max chars per tool result sent to model", 2000, 60000, 12000, step=1000)
+    env_agent = agent_config_from_env(env=secret)
+    max_steps = st.slider("Research budget (model turns per vehicle)", 3, 80, int(env_agent.max_steps),
+                          help="AGENT_MAX_STEPS. When reached, research stops and a compact finalization runs.")
+    idle_turns = st.number_input("Finalize after N turns with no new research artifact (0 = off)", 0, 20,
+                                 int(env_agent.no_new_research_turns), help="AGENT_NO_NEW_RESEARCH_TURNS")
+    tool_chars = st.number_input("Max chars per tool result sent to model", 1000, 60000,
+                                 int(env_agent.max_tool_output_chars), step=500)
     include_level3 = st.checkbox("Include Level 3 open research", value=True)
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
@@ -178,18 +197,22 @@ if run_clicked:
         st.warning(f"Level 1.5 rows not found for: {', '.join(load.missing)}")
     try:
         client = GLMClient(GLMSettings(api_key=api_key, base_url=base_url, model=model_id,
+                                       finalizer_model=finalizer_model_id.strip(),
                                        chat_path=chat_path or DEFAULT_CHAT_PATH,
                                        search_path=search_path or DEFAULT_SEARCH_PATH,
-                                       search_engine=search_engine or DEFAULT_SEARCH_ENGINE))
+                                       search_engine=search_engine or DEFAULT_SEARCH_ENGINE,
+                                       timeout_s=float(chat_timeout), chat_max_attempts=int(chat_attempts),
+                                       search_max_attempts=int(search_attempts)))
     except GLMError as exc:
         st.error(str(exc))
         st.stop()
 
-    batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}")
-    agent_cfg = AgentConfig(max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
-                            temperature=temperature, max_tokens=int(max_tokens) or None,
-                            include_level3=include_level3, thinking=thinking, extra_body=extra_body)
-    tool_cfg = ToolConfig(search_backend=search_backend)
+    batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}", RUNS_DIR)
+    agent_cfg = agent_config_from_env(env=secret, max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
+                                      no_new_research_turns=int(idle_turns), temperature=temperature,
+                                      max_tokens=int(max_tokens) or None, include_level3=include_level3,
+                                      thinking=thinking, extra_body=extra_body)
+    tool_cfg = tool_config_from_env(env=secret, search_backend=search_backend)
     start_batch(RUNS_DIR, batch_id, client=client, agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing,
                 vehicles=selection, level15_source=load.source, level15_note=load.note, selection=mode_label,
                 prompt_version=PROMPT_VERSION)
@@ -210,7 +233,7 @@ if run_clicked:
             status_box.update(
                 label=f"{labels[vehicle['upstream_record_id']]} · {result['status']} · {m['fields_with_value']} fields"
                       f" · {m['tool_calls']} tools · {m['search_api_calls']} searches · {result['duration_s']}s",
-                state="error" if result["status"] == "error" else "complete", expanded=False)
+                state="error" if result["status"] in run_view.FAILED_STATUSES else "complete", expanded=False)
         return result
 
     def on_done(vehicle: dict, result: dict) -> None:
@@ -222,19 +245,28 @@ if run_clicked:
 
 # --- Views ---------------------------------------------------------------------------
 
-results = load_results(RUNS_DIR, view_batch) if view_batch else []
+# Every started run of the batch: result.json when present, otherwise reconstructed from events.jsonl.
+results = load_runs(RUNS_DIR, view_batch, cache=cache) if view_batch else []
 if view_batch:
     st.divider()
     st.subheader(f"Batch {view_batch}")
 tab_run, tab_docs, tab_results, tab_bench = st.tabs(["Run", "Documents", "Results", "Benchmark"])
 with tab_run:
-    if not results:
+    if not view_batch:
         st.caption("No results to show yet. Choose a scope and press Run Research.")
+    elif not results:
+        declared = (load_batch(RUNS_DIR, view_batch) or {}).get("record_ids") or []
+        st.caption(f"Batch {view_batch} lists {len(declared)} vehicle(s), but no run folder has input.json, "
+                   "events.jsonl or result.json yet.")
+    incomplete = [r for r in results if r.get("synthesized")]
+    if incomplete:
+        st.warning(f"{len(incomplete)} run(s) in this batch did not produce a final result.json; they are shown "
+                   "from their recovered research trace.")
     for result in results:
         run_view.render_vehicle(result, labels.get(result["record_id"], result["record_id"]), RUNS_DIR, cache)
 with tab_docs:
-    run_view.render_documents_tab(cache, results)
+    run_view.render_documents_tab(cache, results, RUNS_DIR)
 with tab_results:
-    run_view.render_results_tab(results, labels)
+    run_view.render_results_tab(results, labels, RUNS_DIR, cache)
 with tab_bench:
     benchmark_view.render_benchmark(results, vehicles_by_id, labels, cache, RUNS_DIR)

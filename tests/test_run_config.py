@@ -181,7 +181,7 @@ def test_run_preserves_raw_api_error(tmp_path):
                           cache=DocumentCache(tmp_path / "c"), runs_dir=tmp_path, batch_id="b",
                           agent_cfg=AgentConfig(), tool_cfg=ToolConfig(), pricing=default_pricing("glm-5.3"),
                           level15_source="snapshot")
-    assert result["status"] == "error"
+    assert result["status"] == "research_failed" and result["stop_reason"] == "api_failure"
     assert result["api_error"]["status"] == 401 and "1000" in result["api_error"]["body"]
     assert result["api_errors"][0]["status"] == 401
     saved = json.loads((tmp_path / "b" / HANDSHAKE_RECORD_ID / "result.json").read_text("utf-8"))

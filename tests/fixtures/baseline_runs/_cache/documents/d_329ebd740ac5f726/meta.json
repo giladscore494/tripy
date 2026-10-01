@@ -1,0 +1,20 @@
+{
+ "document_id": "d_329ebd740ac5f726",
+ "kind": "fetch",
+ "url": "https://www.carsales.example/xpeng-g6-review",
+ "fetched_at": "2026-10-01T18:56:00+00:00",
+ "bytes": 215,
+ "sha256": "4c678a817acf0d057782377137c919cb687afb79b51090e1134249fa940a7fdc",
+ "text_chars": 159,
+ "status": 200,
+ "final_url": "https://www.carsales.example/xpeng-g6-review",
+ "redirects": [],
+ "headers": {
+  "content-type": "text/html"
+ },
+ "content_type": "text/html",
+ "truncated": false,
+ "doc_type": "html",
+ "extraction_path": "html.visible_text",
+ "title": "XPeng G6 review"
+}

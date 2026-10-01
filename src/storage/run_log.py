@@ -5,7 +5,12 @@ Layout::
     runs/<batch_id>/batch.json                 configuration of the batch
     runs/<batch_id>/<record_id>/input.json     Level 1.5 payload given to GLM
     runs/<batch_id>/<record_id>/events.jsonl   every model turn, tool call, document, evidence
-    runs/<batch_id>/<record_id>/result.json    final structured result + metrics
+    runs/<batch_id>/<record_id>/result.json    final (or partial) result + metrics; written on every exit path
+    runs/<batch_id>/<record_id>/finalizer_request.json   exact compact messages sent to the finalizer
+    runs/<batch_id>/<record_id>/recovery/<stamp>/        artifacts of a later --finalize-existing run
+
+events.jsonl is append-only. A RunLog opened on an existing folder continues the
+sequence numbers instead of rewriting anything.
 """
 
 from __future__ import annotations
@@ -21,10 +26,19 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def new_batch_id(label: str = "") -> str:
+def new_batch_id(label: str = "", runs_root: Path | str | None = None) -> str:
+    """Timestamped batch id. With `runs_root`, a suffix (-2, -3, ...) keeps it unique there, so two runs
+    started within the same second never share (and overwrite) a batch folder."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in label)[:40].strip("-")
-    return f"{stamp}-{safe}" if safe else stamp
+    base = f"{stamp}-{safe}" if safe else stamp
+    if runs_root is None:
+        return base
+    candidate, n = base, 1
+    while (Path(runs_root) / candidate).exists():
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -41,7 +55,7 @@ class RunLog:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.events_path = self.dir / "events.jsonl"
         self.listener = listener
-        self._seq = 0
+        self._seq = last_seq(self.events_path)
         self._lock = threading.Lock()
 
     def event(self, kind: str, **data: Any) -> dict:
@@ -64,8 +78,46 @@ class RunLog:
         _write_json(self.dir / "result.json", result)
 
 
+def read_events(path: Path | str) -> list[dict]:
+    path = Path(path)
+    if not path.is_file():
+        return []
+    events = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue  # a line cut off by a hard kill is skipped, not fatal
+    return events
+
+
+def last_seq(path: Path | str) -> int:
+    seq = 0
+    for event in read_events(path):
+        if isinstance(event.get("seq"), int):
+            seq = max(seq, event["seq"])
+    return seq
+
+
+def load_batch(runs_root: Path | str, batch_id: str) -> dict | None:
+    path = Path(runs_root) / batch_id / "batch.json"
+    if not path.is_file():
+        return None
+    try:
+        info = json.loads(path.read_text("utf-8"))
+    except ValueError:
+        return None
+    info.setdefault("batch_id", batch_id)
+    return info
+
+
 def write_batch(runs_root: Path | str, batch_id: str, info: dict) -> None:
-    _write_json(Path(runs_root) / batch_id / "batch.json", info)
+    path = Path(runs_root) / batch_id / "batch.json"
+    if path.exists():
+        raise FileExistsError(f"{path} already exists; refusing to overwrite an existing batch")
+    _write_json(path, info)
 
 
 def list_batches(runs_root: Path | str) -> list[dict]:
@@ -84,6 +136,7 @@ def list_batches(runs_root: Path | str) -> list[dict]:
 
 
 def load_results(runs_root: Path | str, batch_id: str) -> list[dict]:
+    """Only runs that wrote result.json. The UI uses run_loader.load_runs, which also shows incomplete runs."""
     folder = Path(runs_root) / batch_id
     results = []
     for path in folder.glob("*/result.json"):
@@ -96,17 +149,7 @@ def load_results(runs_root: Path | str, batch_id: str) -> list[dict]:
 
 
 def load_events(runs_root: Path | str, batch_id: str, record_id: str) -> list[dict]:
-    path = Path(runs_root) / batch_id / str(record_id) / "events.jsonl"
-    if not path.is_file():
-        return []
-    events = []
-    for line in path.read_text("utf-8").splitlines():
-        if line.strip():
-            try:
-                events.append(json.loads(line))
-            except ValueError:
-                continue
-    return events
+    return read_events(Path(runs_root) / batch_id / str(record_id) / "events.jsonl")
 
 
 def load_input(runs_root: Path | str, batch_id: str, record_id: str) -> dict | None:

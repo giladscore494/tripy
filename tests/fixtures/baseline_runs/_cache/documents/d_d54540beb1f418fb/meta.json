@@ -1,0 +1,21 @@
+{
+ "document_id": "d_d54540beb1f418fb",
+ "kind": "pdf",
+ "url": "https://www.xpeng.com/eu/g6/warranty.pdf",
+ "fetched_at": "2026-10-01T18:56:00+00:00",
+ "bytes": 18,
+ "sha256": "105156e58646c5274f4f7420d8cd21020fc3cca3eeffb8453fbd3b5859675a7c",
+ "text_chars": 77,
+ "status": 200,
+ "final_url": "https://www.xpeng.com/eu/g6/warranty.pdf",
+ "redirects": [],
+ "headers": {
+  "content-type": "application/pdf"
+ },
+ "content_type": "application/pdf",
+ "truncated": false,
+ "doc_type": "pdf",
+ "extraction_path": "pdfplumber",
+ "pages": 1,
+ "pdf_metadata": {}
+}

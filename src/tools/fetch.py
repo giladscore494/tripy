@@ -85,7 +85,12 @@ def pdf_text_and_meta(body: bytes, max_pages: int = 300) -> tuple[str, dict]:
     return "\n\n".join(pages_text), meta
 
 
-def _summary(record: dict, text: str, cache_hit: bool) -> dict:
+QUERY_HINT = ("The full text is stored in the document cache. Query it with find_in_document(document_id, query), "
+              "extract_tables(document_id), get_structured_data(document_id) or extract_html(document_id, offset) "
+              "instead of fetching it again.")
+
+
+def _summary(record: dict, text: str, cache_hit: bool, preview_chars: int = PREVIEW_CHARS) -> dict:
     return {
         "document_id": record["document_id"],
         "cache_hit": cache_hit,
@@ -99,8 +104,8 @@ def _summary(record: dict, text: str, cache_hit: bool) -> dict:
         "title": record.get("title", ""),
         "pages": record.get("pages"),
         "extraction_path": record.get("extraction_path"),
-        "text_preview": text[:PREVIEW_CHARS],
-        "hint": "Use extract_html / extract_tables / find_in_document / get_structured_data with this document_id.",
+        "text_preview": text[:preview_chars],
+        "hint": QUERY_HINT,
     }
 
 
@@ -132,7 +137,8 @@ def _fetch(ctx, kind: str, url: str) -> dict:
     cached = ctx.cache.lookup(kind, url)
     if cached:
         ctx.note_document(cached["document_id"], cache_hit=True)
-        result = _summary(cached, ctx.cache.read_text(cached["document_id"]), cache_hit=True)
+        result = _summary(cached, ctx.cache.read_text(cached["document_id"]), cache_hit=True,
+                          preview_chars=ctx.config.preview_chars)
     else:
         try:
             fetched = http_get(ctx, url)
@@ -140,7 +146,7 @@ def _fetch(ctx, kind: str, url: str) -> dict:
             return {"error": type(exc).__name__, "message": str(exc)[:300], "url": url}
         record, text = _store(ctx, kind, url, fetched)
         ctx.note_document(record["document_id"], cache_hit=False)
-        result = _summary(record, text, cache_hit=False)
+        result = _summary(record, text, cache_hit=False, preview_chars=ctx.config.preview_chars)
     ctx.emit("document", document={k: v for k, v in result.items() if k != "text_preview"})
     return result
 

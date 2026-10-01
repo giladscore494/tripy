@@ -1,0 +1,6 @@
+[page 1]
+G6 2026 price list
+MAX AWD NSGHA 229,990
+MAX RWD 199,990
+[page 2]
+Tires 255/45 R20

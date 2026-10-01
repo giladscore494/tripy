@@ -1,0 +1,21 @@
+{
+ "document_id": "d_401af5a4ea8ec5ef",
+ "kind": "pdf",
+ "url": "https://www.xpeng.com/au/g6/brochure.pdf",
+ "fetched_at": "2026-10-01T18:56:00+00:00",
+ "bytes": 18,
+ "sha256": "105156e58646c5274f4f7420d8cd21020fc3cca3eeffb8453fbd3b5859675a7c",
+ "text_chars": 98,
+ "status": 200,
+ "final_url": "https://www.xpeng.com/au/g6/brochure.pdf",
+ "redirects": [],
+ "headers": {
+  "content-type": "application/pdf"
+ },
+ "content_type": "application/pdf",
+ "truncated": false,
+ "doc_type": "pdf",
+ "extraction_path": "pdfplumber",
+ "pages": 1,
+ "pdf_metadata": {}
+}
