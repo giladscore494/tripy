@@ -115,6 +115,10 @@ with st.sidebar:
                                         help="FIELD_RECOVERY_MAX_ATTEMPTS (a field's own recovery_attempts wins)")
     recovery_steps = st.number_input("Model turns per retry attempt", 1, 20, int(env_agent.field_recovery_max_steps),
                                      disabled=not recovery_on, help="FIELD_RECOVERY_MAX_STEPS")
+    recovery_total = st.number_input("Total recovery turns per vehicle (0 = no cap)", 0, 400,
+                                     int(env_agent.field_recovery_max_total_steps), disabled=not recovery_on,
+                                     help="FIELD_RECOVERY_MAX_TOTAL_STEPS (default 24): hard cap across all fields, "
+                                          "attempts and turns; the run still finalizes when it is reached.")
     include_level3 = st.checkbox("Include Level 3 open research", value=True)
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
@@ -221,6 +225,7 @@ if run_clicked:
                                       field_recovery_enabled=bool(recovery_on),
                                       field_recovery_max_attempts=int(recovery_attempts),
                                       field_recovery_max_steps=int(recovery_steps),
+                                      field_recovery_max_total_steps=int(recovery_total),
                                       max_tokens=int(max_tokens) or None, include_level3=include_level3,
                                       thinking=thinking, extra_body=extra_body)
     tool_cfg = tool_config_from_env(env=secret, search_backend=search_backend)

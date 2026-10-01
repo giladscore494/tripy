@@ -180,7 +180,20 @@ def tool_call_rows(events: Iterable[dict]) -> list[dict]:
 
 
 def evidence_items(events: Iterable[dict]) -> list[dict]:
-    return [e["evidence"] for e in events if e.get("kind") == "evidence" and isinstance(e.get("evidence"), dict)]
+    """Canonical evidence items. Supplementary quote/note values carried by `evidence_reused` events are
+    folded back into their original item (exactly as the live EvidenceStore does); no item is added."""
+    items: list[dict] = []
+    by_id: dict[str, dict] = {}
+    for event in events:
+        if event.get("kind") == "evidence" and isinstance(event.get("evidence"), dict):
+            item = dict(event["evidence"])
+            items.append(item)
+            by_id.setdefault(str(item.get("evidence_id")), item)
+        elif event.get("kind") == "evidence_reused" and event.get("supplementary"):
+            item = by_id.get(str(event.get("evidence_id")))
+            if item is not None:
+                item["supplementary"] = list(item.get("supplementary") or []) + [dict(event["supplementary"])]
+    return items
 
 
 def document_ids(events: Iterable[dict]) -> list[str]:
@@ -238,6 +251,8 @@ def tool_counters(events: Iterable[dict], chat_path: str = "chat/completions") -
         if event.get("kind") == "tool_reused":
             counters["duplicate_calls_suppressed"] += 1
             counters[f"reused:{event.get('name')}"] += 1
+        elif event.get("kind") == "evidence_reused":
+            counters["duplicate_evidence_suppressed"] += 1
     return counters
 
 
@@ -286,6 +301,31 @@ def last_completed_tool_step(events: Iterable[dict]) -> int | None:
     return max(steps) if steps else None
 
 
+def apply_current_states(summary: dict | None, field_states: dict | None) -> dict | None:
+    """Attach the CURRENT state of every field (recomputed from all events) to a recovery summary.
+
+    Attempt history (state_before/state_after, replies) is left as it was; `current_states` is the
+    authoritative view. For summaries rebuilt from events (interrupted runs), the recovered /
+    still-failed lists and final counts are derived from the current states, so evidence stored
+    mid-attempt or as a by-product is never reverted to a stale snapshot.
+    """
+    if not summary or not field_states:
+        return summary
+    current = {name: (state or {}).get("state") for name, state in field_states.items()}
+    summary["current_states"] = current
+    if summary.get("reconstructed"):
+        done = ("ok", "not_applicable")
+        retried = summary.get("fields_retried") or []
+        summary["fields_recovered"] = [f for f in retried if current.get(f) in done]
+        summary["fields_still_failed"] = [f for f in retried if current.get(f) not in done]
+        summary["fields_resolved_after_queue"] = [f for f in summary.get("queue") or [] if current.get(f) in done]
+        counts: dict[str, int] = {}
+        for state in current.values():
+            counts[state] = counts.get(state, 0) + 1
+        summary["final_states"] = counts
+    return summary
+
+
 def field_recovery_summary(events: list[dict]) -> dict | None:
     """Field detection / retry outcome recovered from events (None when the stage never ran)."""
     evaluations = [e for e in events if e.get("kind") == "field_evaluation"]
@@ -296,14 +336,12 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
     primary = next((e for e in evaluations if e.get("stage") == "primary"), None)
     final = next((e for e in reversed(evaluations) if e.get("stage") == "after_recovery"), None)
     queue = last_event(events, "field_retry_queue") or {}
-    states = {f["field"]: f for f in (final or primary or {}).get("fields") or []}
-    for attempt in attempts:  # a run cut off mid-retry has no after_recovery evaluation yet
-        if attempt.get("field") in states and not final:
-            states[attempt["field"]] = {**states[attempt["field"]], "state": attempt.get("state_after"),
-                                        "retry_eligible": attempt.get("state_after") in (
-                                            "unresolved", "missing", "conflicting", "foreign_market_only",
-                                            "variant_not_exact", "weak_provenance")}
+    budget = last_event(events, "field_recovery_budget_exhausted")
+    # HISTORY only. Current states are never patched from attempt snapshots here: callers attach them
+    # with apply_current_states(), computed by the shared evaluator over ALL events.
+    states = {f["field"]: f for f in (final or {}).get("fields") or []}
     retried = sorted({a.get("field") for a in attempts if a.get("field")})
+    early = [e for e in events if e.get("kind") == "field_recovery_early_resolved"]
     return {
         "enabled": queue.get("enabled"),
         "requested": len((primary or {}).get("fields") or []),
@@ -311,16 +349,27 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
         "final_states": (final or {}).get("summary"),
         "queue": queue.get("fields") or [],
         "fields_retried": retried,
-        "fields_recovered": [f for f in retried if not (states.get(f) or {}).get("retry_eligible")],
-        "fields_still_failed": [f for f in retried if (states.get(f) or {}).get("retry_eligible")],
+        "fields_recovered": [f for f in retried if states and not (states.get(f) or {}).get("retry_eligible")],
+        "fields_still_failed": [f for f in retried if states and (states.get(f) or {}).get("retry_eligible")],
         "fields_resolved_indirectly": {e.get("field"): {"resolved_during_field": e.get("resolved_during_field"),
                                                         "attempt": e.get("attempt"), "state": e.get("state")}
                                        for e in events if e.get("kind") == "field_recovery_queue_resolved_indirectly"},
         "attempts": attempts,
         "attempt_count": len(attempts),
+        "prior_excerpt_items": sum(int(a.get("prior_excerpt_items") or 0) for a in attempts),
+        "prior_excerpt_chars": sum(int(a.get("prior_excerpt_chars") or 0) for a in attempts),
+        "attempts_with_prior_excerpts": sum(1 for a in attempts if a.get("prior_excerpt_items")),
         "turns": sum(int(a.get("turns") or 0) for a in attempts),
+        "field_recovery_turns_used": sum(int(a.get("turns") or 0) for a in attempts),
+        "field_recovery_turn_budget": (budget or {}).get("turn_budget"),
+        "fields_not_attempted_due_to_budget": (budget or {}).get("fields_not_attempted") or [],
+        "field_cut_short_by_budget": (budget or {}).get("field_cut_short"),
+        "stopped": "max_total_steps" if budget else None,
         "evaluation_primary": (primary or {}).get("fields"),
         "evaluation_final": list(states.values()) if states else None,
+        "early_resolution_count": len(early),
+        "turn_budget_skipped_by_early_resolution": sum(int(e.get("turn_budget_skipped") or 0) for e in early),
+        "turns_saved_by_early_resolution": len(early),
         "reconstructed": True,
     }
 

@@ -92,6 +92,11 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
         elif kind == "evidence":
             ev = event.get("evidence", {})
             lines.append(f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}")
+        elif kind == "evidence_reused":
+            lines.append(evidence_reused_line(event))
+        elif kind == "field_recovery_early_resolved":
+            lines.append(f"✅ {event.get('field')} resolved by stored evidence after turn {event.get('after_turn')}; "
+                         "attempt ended without another model call")
         elif kind == "model_response":
             lines.append(model_turn_line(event))
         elif kind == "research_stopped":
@@ -109,6 +114,10 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
         placeholder.code("\n".join(lines[-max_lines:]), language=None)
 
     return listen
+
+
+def evidence_reused_line(event: dict) -> str:
+    return f"↺ evidence reused: {event.get('evidence_id')} {event.get('field')} = {_short(event.get('value'), 60)}"
 
 
 def tool_call_line(event: dict) -> str:
@@ -245,8 +254,7 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
     if metas:
         st.markdown(f"**Documents** ({len(metas)})")
         render_documents_table(metas)
-    if bundle.get("unresolved_targets"):
-        st.markdown("**Targets with no stored evidence:** " + ", ".join(bundle["unresolved_targets"]))
+    render_target_status(bundle)
     errors = [e for e in (result.get("api_errors") or [])]
     if result.get("error") or errors:
         st.markdown("**Errors**")
@@ -260,11 +268,44 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
             st.json(bundle, expanded=False)
 
 
+def target_status_lines(bundle: dict) -> dict[str, list[str]]:
+    """Display lines for the three distinct pending-work lists of a research bundle.
+
+    "without stored evidence" is strict (zero evidence records); "still unresolved" is the current
+    evaluated state (it may well have evidence); Level 3 topics are listed apart from Level 2 fields.
+    """
+    states = bundle.get("field_states") or {}
+    unresolved = bundle.get("unresolved_targets") or []
+    legacy = [t for t in unresolved if str(t).startswith("level3:")]   # bundles written before the split
+    explicit = {u.get("field"): u.get("state") for u in bundle.get("unresolved_target_states") or []}
+    return {
+        "no_evidence": list(bundle.get("targets_without_stored_evidence") or []),
+        "unresolved": [f"{name} — {explicit.get(name) or (states.get(name) or {}).get('state', 'unresolved')}"
+                       for name in unresolved if not str(name).startswith("level3:")],
+        "level3": list(bundle.get("level3_topics_without_evidence") or [t.split(":", 1)[1] for t in legacy]),
+    }
+
+
+def render_target_status(bundle: dict) -> None:
+    lines = target_status_lines(bundle)
+    if lines["no_evidence"]:
+        st.markdown("**Targets with no stored evidence** (Level 2): " + ", ".join(lines["no_evidence"]))
+    if lines["unresolved"]:
+        st.markdown("**Targets still unresolved** (Level 2, current state; evidence may exist):")
+        st.markdown("\n".join(f"- {line}" for line in lines["unresolved"]))
+    if lines["level3"]:
+        st.markdown("**Level 3 topics not researched / without evidence:** " + ", ".join(lines["level3"]))
+
+
 def _responses_from_events(result: dict, runs_dir: Path) -> list[dict]:
     return trace.model_responses(load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", "")))
 
 
 def _status_banner(result: dict) -> None:
+    if result.get("interrupted"):
+        # A script-control interruption (Stop / rerun / Ctrl+C), not a research, API or tool failure.
+        st.info(result.get("interruption_message") or "Run interrupted. All completed research/evidence was "
+                "preserved. The result below is partial.")
     if result.get("synthesized"):
         st.warning(result.get("banner") or "This run did not produce a final result.json.")
         facts = [f"status **{result.get('status')}**", f"started {result.get('started_at')}",
@@ -377,7 +418,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             else:
                 st.caption("No failed API attempts.")
         with tabs[11]:
-            render_field_recovery(result)
+            render_field_recovery(result, runs_dir)
         with tabs[10]:
             events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.caption(f"{len(events)} events in events.jsonl")
@@ -389,7 +430,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
                     st.json(event, expanded=False)
 
 
-def render_field_recovery(result: dict) -> None:
+def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
     """Requested-field states after primary research and after targeted retries."""
     recovery = result.get("field_recovery")
     requested = result.get("requested_fields") or {}
@@ -406,15 +447,26 @@ def render_field_recovery(result: dict) -> None:
     cols[1].metric("Retried", len(recovery.get("fields_retried") or []))
     cols[2].metric("Recovered", len(recovery.get("fields_recovered") or []))
     cols[3].metric("Retry attempts", recovery.get("attempt_count") or 0)
+    budget = recovery.get("field_recovery_turn_budget")
+    st.caption(f"Recovery turns used: {recovery.get('field_recovery_turns_used', recovery.get('turns', 0))}"
+               + (f" of {budget} (remaining {recovery.get('field_recovery_turns_remaining')})" if budget
+                  else " (no cap)"))
     if recovery.get("stopped"):
         st.caption(f"Retries stopped early: {recovery['stopped']}")
+    if recovery.get("fields_not_attempted_due_to_budget"):
+        st.warning("Not attempted because the recovery turn budget was exhausted: "
+                   + ", ".join(recovery["fields_not_attempted_due_to_budget"])
+                   + (f" (cut short: {recovery['field_cut_short_by_budget']})"
+                      if recovery.get("field_cut_short_by_budget") else ""))
     primary = {f["field"]: f for f in recovery.get("evaluation_primary") or []}
     final = {f["field"]: f for f in recovery.get("evaluation_final") or []}
     attempts: dict[str, int] = {}
     for a in recovery.get("attempts") or []:
         attempts[a.get("field")] = attempts.get(a.get("field"), 0) + 1
+    current = recovery.get("current_states") or {}
     rows = [{"field": name, "primary_state": (primary.get(name) or {}).get("state"),
-             "retry_attempts": attempts.get(name, 0), "final_state": (final.get(name) or {}).get("state"),
+             "retry_attempts": attempts.get(name, 0), "last_attempt_state": (final.get(name) or {}).get("state"),
+             "current_state": current.get(name, (final.get(name) or {}).get("state")),
              "evidence": ", ".join(str(i) for i in (final.get(name) or primary.get(name) or {}).get("evidence_ids") or []),
              "markets": ", ".join((final.get(name) or {}).get("markets") or []),
              "info": ", ".join((final.get(name) or {}).get("info") or [])}
@@ -425,9 +477,24 @@ def render_field_recovery(result: dict) -> None:
         st.markdown("**Retry attempts**")
         st.dataframe(pd.DataFrame([{"field": a.get("field"), "attempt": a.get("attempt"),
                                     "before": a.get("state_before"), "after": a.get("state_after"),
-                                    "turns": a.get("turns"), "reply": _short(a.get("reply") or a.get("reply_text"), 300),
+                                    "turns": a.get("turns"), "early_resolved": a.get("early_resolved"),
+                                    "prior_excerpts": a.get("prior_excerpt_items"),
+                                    "prior_excerpt_chars": a.get("prior_excerpt_chars"),
+                                    "packet_chars": a.get("packet_chars"),
+                                    "rereads_after_excerpt": a.get("document_rereads_after_prior_excerpt"),
+                                    "reply": _short(a.get("reply") or a.get("reply_text"), 300),
                                     "error": a.get("error")} for a in recovery["attempts"]]),
                      hide_index=True, width="stretch")
+        st.caption(f"prior excerpts supplied: {recovery.get('prior_excerpt_items', 0)} · "
+                   f"prior excerpt chars: {recovery.get('prior_excerpt_chars', 0):,} · "
+                   f"attempts with prior excerpts: {recovery.get('attempts_with_prior_excerpts', 0)}")
+    if runs_dir is not None:
+        started = [e for e in load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
+                   if e.get("kind") == "field_recovery_started" and e.get("prior_excerpts")]
+        for event in started:
+            with st.expander(f"Prior excerpts · {event.get('field')} · attempt {event.get('attempt')} · "
+                             f"{event.get('prior_excerpt_items')} item(s), {event.get('prior_excerpt_chars')} chars"):
+                st.json(event["prior_excerpts"], expanded=False)
 
 
 def render_documents_table(metas: list[dict]) -> None:

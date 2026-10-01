@@ -39,7 +39,8 @@ from .bundle import BUNDLE_VERSION, build_research_bundle
 from .glm_client import GLMError
 from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
 from .storage.trace import FETCH_TOOLS
-from .field_recovery import evaluate_fields, parse_retry_reply, retry_packet, retry_queue
+from .field_recovery import (current_evaluation, early_resolution_check, parse_retry_reply, retry_packet,
+                             retry_queue)
 from .fields import grouped, parse_field_list, propulsion_of, resolve_requested_fields
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
@@ -173,6 +174,12 @@ Do not research the vehicle generally. Your only research objective is the reque
 
 - First inspect the relevant documents already in the cache (listed in the task) with find_in_document,
   extract_tables, get_structured_data or extract_html, before issuing broad web searches.
+- The task may contain prior_relevant_excerpts: excerpts already exposed during earlier research/recovery
+  turns. Use them as working memory before re-reading the same documents. If they already answer the
+  requested field, store the appropriate evidence (excerpts are not evidence by themselves) and finish.
+  If they show that a document was already inspected but do not answer the field, prefer a new targeted
+  query or search strategy rather than reopening the same broad text. Re-read a cached document only
+  when you have a concrete reason that the provided excerpts are insufficient.
 - The task includes already_attempted_operations. Do not repeat an operation listed there when the exact
   same operation has already produced a result. Use a different query, another document, another
   extraction method, or a targeted web search instead. If an exact duplicate tool call is emitted anyway,
@@ -187,12 +194,20 @@ Do not research the vehicle generally. Your only research objective is the reque
 - While reading the same source, if you encounter a clearly stated value for ANOTHER requested enrichment
   field (listed in other_requested_fields), you may store that evidence too, as a by-product. Do not
   branch into research for that other field.
+- If failure_reason is "conflicting", this is conflict-resolution research: do not search the field from
+  scratch. Follow the task in `conflict`: investigate why the candidates differ (trim, model year,
+  drivetrain, normal vs boost/performance mode, nominal vs peak, unit conversion, source wording,
+  manufacturer documentation). Keep every candidate. Reply conflict_resolved only if evidence establishes
+  which value applies to the exact target variant: store that evidence first and cite its evidence_ids in
+  the reply (a conflict_resolved without valid evidence_ids leaves the field conflicting); otherwise
+  reply conflicting.
+  A reply of "found" does not resolve a conflict.
 - If the field does not exist for this vehicle, say not_applicable. If you cannot resolve it within the
   budget, say unresolved. Never invent a value.
 
 When done, reply with ONLY one JSON object (no tool call):
 {"field": "<the requested field name>",
- "status": "found | not_applicable | unresolved | conflicting | foreign_market_only | variant_not_exact",
+ "status": "found | conflict_resolved | not_applicable | unresolved | conflicting | foreign_market_only | variant_not_exact",
  "value": <any or null>, "unit": "<unit or null>", "market": "<market or null>",
  "evidence_ids": ["e12"], "notes": "..."}"""
 
@@ -207,6 +222,15 @@ STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "user_cancelle
 STATUSES = ("completed", "max_steps_finalized", "no_new_research_finalized", "completed_unparsed",
             "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized")
 FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized"}
+PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete")
+PHASE_LABELS = {"research": "Research", "field_detection": "Field Detection", "field_recovery": "Field Recovery",
+                "finalization": "Finalization"}
+
+
+def interruption_message(phase: str | None) -> str:
+    label = PHASE_LABELS.get(phase or "", phase or "the run")
+    return (f"Run interrupted during {label}. All completed research/evidence was preserved. "
+            "The result below is partial.")
 
 
 @dataclass
@@ -229,7 +253,11 @@ class AgentConfig:
     field_recovery_enabled: bool = True
     field_recovery_max_attempts: int = 2      # per field; a field spec's `recovery_attempts` overrides it
     field_recovery_max_steps: int = 4         # model turns per retry attempt
-    field_recovery_max_total_steps: int = 0   # cap on retry turns for the whole vehicle; 0 = no cap
+    field_recovery_max_total_steps: int = 24  # hard cap on retry turns per vehicle (all fields/attempts); 0 = none
+    # Bounded working memory of already-exposed excerpts handed to each retry (src/excerpts.py).
+    field_recovery_prior_excerpts_max_items: int = 8
+    field_recovery_prior_excerpts_max_chars: int = 8000
+    field_recovery_prior_excerpt_max_chars: int = 1500
 
 
 AGENT_ENV = {
@@ -242,6 +270,9 @@ AGENT_ENV = {
     "field_recovery_max_attempts": "FIELD_RECOVERY_MAX_ATTEMPTS",
     "field_recovery_max_steps": "FIELD_RECOVERY_MAX_STEPS",
     "field_recovery_max_total_steps": "FIELD_RECOVERY_MAX_TOTAL_STEPS",
+    "field_recovery_prior_excerpts_max_items": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_ITEMS",
+    "field_recovery_prior_excerpts_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS",
+    "field_recovery_prior_excerpt_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS",
 }
 TOOL_ENV = {
     "preview_chars": "TOOL_PREVIEW_CHARS",
@@ -588,7 +619,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     KeyboardInterrupt propagates; an API failure stops further retries (the run still finalizes).
     """
     events = trace_events(run_log)
-    primary = evaluate_fields(specs, events, config.target_market)
+    primary = current_evaluation(events, specs, config.target_market)
     run_log.event("field_evaluation", stage="primary", fields=primary,
                   summary=_state_counts(primary))
     queue = retry_queue(primary, specs, config.field_recovery_max_attempts) if config.field_recovery_enabled else []
@@ -600,11 +631,12 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     attempts_log: list[dict] = []
     resolved_directly: list[str] = []
     resolved_indirectly: dict[str, dict] = {}
-    total_steps, stopped = 0, None
+    total_steps, stopped, cut_short = 0, None, None
+    early_count, budget_skipped = 0, 0
 
     def reevaluate(during_field: str, attempt: int) -> None:
         """Refresh the state of every requested field; record queued fields another recovery resolved."""
-        latest = evaluate_fields(specs, trace_events(run_log), config.target_market)
+        latest = current_evaluation(trace_events(run_log), specs, config.target_market)
         for entry in latest:
             name = entry["field"]
             was = current[name]
@@ -622,32 +654,39 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
             continue  # resolved by an earlier field's recovery: no retry for it
         for attempt in range(1, item["max_attempts"] + 1):
             if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                stopped = "max_total_steps"
-                break
+                stopped = "max_total_steps"   # hard per-vehicle cap: no further attempt is started
+                break                         # (not "cut short": no attempt of this field was running)
             events = trace_events(run_log)
             before = current[name]
             packet = retry_packet(spec=by_name[name], evaluation=before, events=events, payload=payload,
                                   doc_metas=_doc_metas(events, cache, documents_dir), attempt=attempt,
                                   max_attempts=item["max_attempts"], max_steps=config.field_recovery_max_steps,
                                   target_market=config.target_market, previous_attempts=previous,
-                                  operator_notes=operator_notes)
+                                  operator_notes=operator_notes,
+                                  excerpt_limits={"max_items": config.field_recovery_prior_excerpts_max_items,
+                                                  "max_chars": config.field_recovery_prior_excerpts_max_chars,
+                                                  "max_excerpt_chars": config.field_recovery_prior_excerpt_max_chars})
             packet["other_requested_fields"] = {s["name"]: s.get("description") for s in specs
                                                 if s["name"] != name and s.get("applicable", True)}
             run_log.event("field_recovery_started", field=name, attempt=attempt, max_attempts=item["max_attempts"],
                           failure_reason=before["state"], turn_budget=config.field_recovery_max_steps,
                           already_attempted_operations=len(packet["already_attempted_operations"]),
+                          prior_excerpt_items=packet["prior_excerpt_stats"]["items"],
+                          prior_excerpt_chars=packet["prior_excerpt_stats"]["chars"],
+                          prior_excerpts=packet["prior_relevant_excerpts"],
                           packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)))
             phase_ref["name"] = "field_recovery"
             messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
                         {"role": "user", "content": "Field recovery task (JSON):\n"
                                                     + json.dumps(packet, ensure_ascii=False, default=str)}]
-            reply_text, turns, error = None, 0, None
+            reply_text, turns, error, early = None, 0, None, False
             idle = 0
             budget = max(1, config.field_recovery_max_steps)
             try:
                 for turn_index in range(1, budget + 1):
                     if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                        stopped = "max_total_steps"
+                        stopped = "max_total_steps"   # hard per-vehicle cap: no further model turn
+                        cut_short = name
                         break
                     meta = {"field": name, "attempt": attempt, "max_attempts": item["max_attempts"],
                             "turn": turn_index, "turn_budget": budget}
@@ -663,6 +702,19 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                     # A turn whose calls were all replayed (or found nothing new) is idle, so a model that
                     # keeps re-emitting the same call ends within AGENT_NO_NEW_RESEARCH_TURNS.
                     novelty = session.execute(calls, messages, phase="field_recovery", field=name, attempt=attempt)
+                    # Early success: if the evidence stored by this turn already makes the target field `ok`,
+                    # end the attempt now instead of paying for a model turn that only says "found".
+                    # Only `ok` short-circuits; every other state still needs model work or an explicit reply.
+                    may_stop, now = early_resolution_check(by_name[name], trace_events(run_log),
+                                                           config.target_market)
+                    if may_stop:
+                        early = True
+                        early_count += 1
+                        budget_skipped += budget - turn_index
+                        run_log.event("field_recovery_early_resolved", field=name, attempt=attempt,
+                                      after_turn=turn_index, state="ok", turn_budget=budget,
+                                      turn_budget_skipped=budget - turn_index, evidence_ids=now["evidence_ids"])
+                        break
                     idle = 0 if novelty.total else idle + 1
                     if config.no_new_research_turns and idle >= config.no_new_research_turns:
                         break
@@ -673,15 +725,26 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                               api_error=exc.as_dict())
             reply = parse_retry_reply(reply_text, name)
             if reply and reply.get("status"):
+                cited = reply.get("evidence_ids")
                 run_log.event("field_status", field=name, status=str(reply["status"]).lower(),
-                              note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}")
+                              note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}",
+                              evidence_ids=[str(i) for i in cited] if isinstance(cited, list) else [])
             reevaluate(name, attempt)
             after = current[name]
             if not after["retry_eligible"] and name not in resolved_directly:
                 resolved_directly.append(name)
+            excerpt_docs = {e.get("document_id") for e in packet["prior_relevant_excerpts"] if e.get("document_id")}
+            rereads = sum(1 for c in session.tool_calls
+                          if c.get("phase") == "field_recovery" and c.get("field") == name
+                          and c.get("attempt") == attempt and c["name"] in ("get_cached_document", "extract_html")
+                          and _call_document(c) in excerpt_docs)
             record = {"field": name, "attempt": attempt, "state_before": before["state"],
                       "state_after": after["state"], "turns": turns, "reply": reply,
-                      "reply_text": None if reply else reply_text, "error": error}
+                      "reply_text": None if reply else reply_text, "error": error, "early_resolved": early,
+                      "packet_chars": len(json.dumps(packet, ensure_ascii=False, default=str)),
+                      "prior_excerpt_items": packet["prior_excerpt_stats"]["items"],
+                      "prior_excerpt_chars": packet["prior_excerpt_stats"]["chars"],
+                      "document_rereads_after_prior_excerpt": rereads}
             attempts_log.append(record)
             previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
             run_log.event("field_recovery_finished", **record)
@@ -692,8 +755,20 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
     retried = sorted({a["field"] for a in attempts_log})
+    cap = config.field_recovery_max_total_steps
+    not_attempted = [f for f in queued if f not in retried and current[f]["retry_eligible"]]
+    if cut_short and not current[cut_short]["retry_eligible"]:
+        cut_short = None
+    if stopped == "max_total_steps":
+        run_log.event("field_recovery_budget_exhausted", turn_budget=cap, turns_used=total_steps,
+                      fields_not_attempted=not_attempted, field_cut_short=cut_short)
     return {
         "enabled": config.field_recovery_enabled,
+        "field_recovery_turn_budget": cap or None,
+        "field_recovery_turns_used": total_steps,
+        "field_recovery_turns_remaining": max(0, cap - total_steps) if cap else None,
+        "fields_not_attempted_due_to_budget": not_attempted if stopped == "max_total_steps" else [],
+        "field_cut_short_by_budget": cut_short,
         "requested": len(specs),
         "primary_states": _state_counts(primary),
         "final_states": _state_counts(final),
@@ -703,14 +778,27 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "fields_still_failed": [f for f in retried if current[f]["retry_eligible"]],
         "fields_resolved_directly": [f for f in resolved_directly if not current[f]["retry_eligible"]],
         "fields_resolved_indirectly": resolved_indirectly,
-        "fields_not_attempted": [f for f in queued if f not in retried and current[f]["retry_eligible"]],
+        "fields_not_attempted": not_attempted,
         "attempts": attempts_log,
         "attempt_count": len(attempts_log),
         "turns": total_steps,
+        "early_resolution_count": early_count,
+        "turn_budget_skipped_by_early_resolution": budget_skipped,
+        "turns_saved_by_early_resolution": early_count,   # deprecated alias of early_resolution_count
+        "prior_excerpt_items": sum(a.get("prior_excerpt_items") or 0 for a in attempts_log),
+        "prior_excerpt_chars": sum(a.get("prior_excerpt_chars") or 0 for a in attempts_log),
+        "attempts_with_prior_excerpts": sum(1 for a in attempts_log if a.get("prior_excerpt_items")),
+        "document_rereads_after_prior_excerpt": sum(a.get("document_rereads_after_prior_excerpt") or 0
+                                                    for a in attempts_log),
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
+
+
+def _call_document(call: dict) -> str | None:
+    args = trace.parse_args(call.get("arguments"))
+    return call.get("document_id") or args.get("document_id") or args.get("key")
 
 
 def _state_counts(evaluation: list[dict]) -> dict:
@@ -865,17 +953,17 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                         status = "completed" if output is not None else "completed_unparsed"
                     else:
                         status = FINALIZED_STATUS[stop_reason]
-    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop, SystemExit: persist, then re-raise
+    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop/rerun, SystemExit: persist, then re-raise
+        # A script-control interruption, not a research/API/tool error: stop all model and tool calls (no
+        # finalizer), persist everything already completed, rebuild current state from events, re-raise.
         interrupted = exc
+        run_log.listener_muted = True
         status = "interrupted"
         stop_reason = stop_reason or "user_cancelled"
-        error = f"{type(exc).__name__}: run interrupted during {phase['name']}"
+        error = None
         if research_seconds is None:
             research_seconds = round(time.monotonic() - t0, 2)
-        try:
-            run_log.event("interrupted", phase=phase["name"], step=steps_done, exception=type(exc).__name__)
-        except BaseException:
-            pass
+        run_log.event("interrupted", phase=phase["name"], step=steps_done, exception=type(exc).__name__)
     finally:
         client.hook = previous_hook
 
@@ -887,6 +975,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         except OSError:
             pass
     events = trace_events(run_log)
+    if recovery is None and status == "interrupted":
+        recovery = trace.field_recovery_summary(events)   # interrupted mid-recovery: history from events
     if bundle is None:
         # Not sent anywhere: the partial research bundle is stored for the UI and for later recovery.
         bundle = build_research_bundle(events, payload, cache=cache, documents_dir=documents_dir,
@@ -951,16 +1041,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         "documents_dir": str(documents_dir) if ctx.documents_opened else None,
         "result_source": "result.json",
         "recovered": False,
+        "partial": status in PARTIAL_STATUSES,
+        "interrupted": interrupted is not None,
+        "interrupted_phase": phase["name"] if interrupted is not None else None,
+        "interruption_type": type(interrupted).__name__ if interrupted is not None else None,
+        "interruption_message": interruption_message(phase["name"]) if interrupted is not None else None,
     }
-    try:
-        run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration, usage=usage,
-                      search_api_calls=search_calls, cost=cost, api_stats=stats)
-    except BaseException:
-        pass
+    trace.apply_current_states(recovery, (bundle or {}).get("field_states"))
+    # Persist first, then announce: a UI stop raised by the run_finished callback cannot lose the result.
     try:
         persist(result)
     except Exception as exc:  # disk problems must not hide the in-memory result from the caller
         run_log.event("result_write_failed", error=_error_text(exc))
+    run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration, usage=usage,
+                  search_api_calls=search_calls, cost=cost, api_stats=stats)
     if interrupted is not None:
         raise interrupted
     return result

@@ -162,7 +162,8 @@ def test_store_evidence_and_failed_calls_are_not_replayed(tmp_path, make_ctx, co
     result, _, events = run(tmp_path, ctx, [turn(_call("c1", "store_evidence", ev), _call("c2", "find_in_document", missing)),
                                             turn(_call("c3", "store_evidence", ev), _call("c4", "find_in_document", missing)),
                                             say({"summary": "s", "fields": {}})])
-    assert counted["store_evidence"] == 2 and len(result["evidence"]) == 2
+    # Both store_evidence calls are dispatched (never generic replay); the evidence layer keeps one fact.
+    assert counted["store_evidence"] == 2 and len(result["evidence"]) == 1
     assert counted["find_in_document"] == 2  # an error is never replayed: it may succeed later
     assert not [e for e in events if e["kind"] == "tool_reused"]
     assert call_signature("store_evidence", ev) is None and call_signature("report_field_status", {}) is None

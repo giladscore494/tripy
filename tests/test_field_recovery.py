@@ -51,7 +51,9 @@ def test_detection_uses_only_the_models_research_state():
     state = lambda evidence, declared=None, out=None: evaluate_field(s, evidence, declared, out, "IL")["state"]
     assert state([ev("paint_code", "X1")]) == "ok"                                   # candidate + evidence record
     assert state([ev("paint_code", "X1", market=None)]) == "ok"                      # unrecorded market is fine
-    assert state([ev("paint_code", "X1"), ev("paint_code", "X2")]) == "ok"           # several values: info only
+    # Two different target-market values that may apply to the target: an unresolved same-scope conflict.
+    assert state([ev("paint_code", "X1"), ev("paint_code", "X2")]) == "conflicting"
+    assert state([ev("paint_code", "X1"), ev("paint_code", "X2", market="MY")]) == "ok"   # other market: info only
     assert "multiple_values" in evaluate_field(s, [ev("paint_code", 1), ev("paint_code", 2)], None, None, "IL")["info"]
     assert state([]) == "missing"
     assert state([ev("paint_code", None)]) == "missing"                              # null: could not locate
@@ -119,7 +121,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
         # retry service_interval_km #1: inspects cached doc, stores evidence, reports found
         turn(_call("r1", "find_in_document", {"document_id": "PLACEHOLDER", "query": "service"}),
              _call("r2", "store_evidence", ev("service_interval_km", 20000))),
-        say({"field": "service_interval_km", "status": "found", "value": 20000, "evidence_ids": ["e4"]}),
+        # (no "found" reply turn: the stored evidence already makes the field ok, so the attempt ends early)
         # retry rear_legroom_mm #1 and #2: unresolved both times
         say({"field": "rear_legroom_mm", "status": "unresolved", "value": None, "notes": "not published"}),
         say({"field": "rear_legroom_mm", "status": "unresolved", "value": None}),
@@ -140,7 +142,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
 
     # Each retry is a fresh compact conversation about ONE field, never the primary conversation.
     retries = [r for r in client.requests if r["messages"][0]["content"] == FIELD_RECOVERY_SYSTEM_PROMPT]
-    assert len(retries) == 4
+    assert len(retries) == 3
     first = json.loads(retries[0]["messages"][1]["content"].split("\n", 1)[1])
     assert first["requested_field"]["name"] == "service_interval_km" and first["failure_reason"] == "missing"
     assert first["vehicle_identity"] == {"manufacturer": "אקספנג", "model": "G6", "year": 2026,
@@ -152,7 +154,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     for request in retries:
         sent = json.dumps(request["messages"], ensure_ascii=False)
         assert SYSTEM_PROMPT not in sent and "Nebula White" not in sent and request["tools"]
-    second_attempt = json.loads(retries[3]["messages"][1]["content"].split("\n", 1)[1])
+    second_attempt = json.loads(retries[2]["messages"][1]["content"].split("\n", 1)[1])
     assert second_attempt["requested_field"]["name"] == "rear_legroom_mm" and second_attempt["attempt"] == 2
     assert second_attempt["failure_reason"] == "unresolved"
     assert second_attempt["previous_attempts"][0]["reply"]["notes"] == "not published"
@@ -167,13 +169,14 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     assert {a["field"] for a in bundle["field_recovery"]} == {"service_interval_km", "rear_legroom_mm"}
     assert bundle["primary_output"]["summary"] == "primary"
     assert result["status"] == "completed" and result["output"]["summary"] == "final"
-    assert result["usage_field_recovery"]["model_calls"] == 4 and result["usage_research"]["model_calls"] == 3
+    assert result["usage_field_recovery"]["model_calls"] == 3 and result["usage_research"]["model_calls"] == 3
+    assert rec["attempts"][0]["early_resolved"] and rec["turns_saved_by_early_resolution"] == 1
     assert [c["phase"] for c in result["tool_calls"]].count("field_recovery") == 2
     assert result["tool_calls"][-1]["field"] == "service_interval_km"
 
     m = compute_metrics(result)
     assert (m["requested_fields"], m["fields_failed_primary"], m["fields_retried"], m["fields_recovered"],
-            m["fields_still_failed"], m["field_retry_attempts"], m["field_recovery_model_calls"]) == (5, 2, 2, 1, 1, 3, 4)
+            m["fields_still_failed"], m["field_retry_attempts"], m["field_recovery_model_calls"]) == (5, 2, 2, 1, 1, 3, 3)
 
 
 def test_no_retry_for_success_or_not_applicable(tmp_path, make_ctx):
@@ -238,7 +241,9 @@ def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path
         run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                     config=AgentConfig(requested_fields=FUTURE_FIELDS), tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
-    assert saved["status"] == "interrupted" and "field_recovery" in saved["error"]
+    assert saved["status"] == "interrupted" and saved["error"] is None   # an interruption is not an error
+    assert (saved["partial"], saved["interrupted"], saved["interrupted_phase"], saved["interruption_type"]) == \
+        (True, True, "field_recovery", "KeyboardInterrupt")
     assert saved["stop_reason"] == "model_finished"  # research itself had finished
     (log.dir / "result.json").unlink()  # as if the process had been killed instead
     run = load_runs(tmp_path / "runs", "b")[0]
