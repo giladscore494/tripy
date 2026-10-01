@@ -238,6 +238,8 @@ def tool_counters(events: Iterable[dict], chat_path: str = "chat/completions") -
         if event.get("kind") == "tool_reused":
             counters["duplicate_calls_suppressed"] += 1
             counters[f"reused:{event.get('name')}"] += 1
+        elif event.get("kind") == "evidence_reused":
+            counters["duplicate_evidence_suppressed"] += 1
     return counters
 
 
@@ -296,6 +298,7 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
     primary = next((e for e in evaluations if e.get("stage") == "primary"), None)
     final = next((e for e in reversed(evaluations) if e.get("stage") == "after_recovery"), None)
     queue = last_event(events, "field_retry_queue") or {}
+    budget = last_event(events, "field_recovery_budget_exhausted")
     states = {f["field"]: f for f in (final or primary or {}).get("fields") or []}
     for attempt in attempts:  # a run cut off mid-retry has no after_recovery evaluation yet
         if attempt.get("field") in states and not final:
@@ -319,6 +322,11 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
         "attempts": attempts,
         "attempt_count": len(attempts),
         "turns": sum(int(a.get("turns") or 0) for a in attempts),
+        "field_recovery_turns_used": sum(int(a.get("turns") or 0) for a in attempts),
+        "field_recovery_turn_budget": (budget or {}).get("turn_budget"),
+        "fields_not_attempted_due_to_budget": (budget or {}).get("fields_not_attempted") or [],
+        "field_cut_short_by_budget": (budget or {}).get("field_cut_short"),
+        "stopped": "max_total_steps" if budget else None,
         "evaluation_primary": (primary or {}).get("fields"),
         "evaluation_final": list(states.values()) if states else None,
         "reconstructed": True,

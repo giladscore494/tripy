@@ -108,7 +108,8 @@ def _listener(kind: str, event: dict) -> None:
                 "finalization_failed", "finalization_finished", "interrupted", "run_finished",
                 "recovery_started", "recovery_finished", "duplicate_work", "field_retry_queue",
                 "field_recovery_started", "field_recovery_finished", "tool_reused",
-                "field_recovery_queue_resolved_indirectly"):
+                "field_recovery_queue_resolved_indirectly", "evidence_reused", "field_recovery_early_resolved",
+                "field_recovery_budget_exhausted"):
         brief = {k: v for k, v in event.items()
                  if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking", "queue",
                               "reply_text")}

@@ -62,13 +62,46 @@ def _has_value(value: Any) -> bool:
     return not (isinstance(value, (list, dict)) and not value)
 
 
+_NUMERIC = re.compile(r"^\s*(-?\d[\d,]*(?:\.\d+)?)\s*([^\d]*)$")
+RESOLVED_STATUSES = ("found", "conflict_resolved")
+
+
+def material_key(value: Any) -> str:
+    """Comparison key for 'materially different' values. A number with an optional unit word is compared
+    as a number ("1,066 Nm" == 1066 != 1080); anything else as normalized text. Never picks a value."""
+    if isinstance(value, bool):
+        return f"txt:{str(value).lower()}"
+    if isinstance(value, (int, float)):
+        return f"num:{float(value)!r}"
+    if isinstance(value, str):
+        match = _NUMERIC.match(value)
+        if match:
+            try:
+                return f"num:{float(match.group(1).replace(',', ''))!r}"
+            except ValueError:
+                pass
+    return "txt:" + _value_key(value)
+
+
 def declarations(events: Iterable[dict]) -> dict[str, dict]:
     """Latest field-status declaration per field (report_field_status tool or a field-retry reply)."""
     out: dict[str, dict] = {}
     for event in events:
         if event.get("kind") == "field_status" and event.get("field"):
-            out[normalize_field_name(event["field"])] = {k: event.get(k) for k in ("status", "note", "source")}
+            out[normalize_field_name(event["field"])] = {
+                **{k: event.get(k) for k in ("status", "note", "source")}, "seq": event.get("seq")}
     return out
+
+
+def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
+    """Target-market candidates (not explicitly another variant) whose values materially differ.
+
+    Returns those candidates when there are at least two different values, else []. A candidate from
+    another market, or marked variant_match=different, never makes a same-scope conflict on its own.
+    """
+    scope = [e for e in evidence if _has_value(e.get("value")) and is_target_market(e.get("market"), target_market)
+             and str(e.get("variant_match") or "").lower() != "different"]
+    return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
 
 def primary_output(events: Iterable[dict]) -> Any:
@@ -84,7 +117,7 @@ def primary_output(events: Iterable[dict]) -> Any:
 
 
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
-                   target_market: str) -> dict:
+                   target_market: str, last_evidence_seq: int | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -96,14 +129,18 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     * missing         - no candidate value and no evidence record;
     * weak_provenance - a value only in the model's answer, with no evidence record behind it
                         (or the model itself reported weak provenance);
-    * conflicting     - the model reported an unresolved conflict;
+    * conflicting     - the model reported an unresolved conflict, OR at least two target-market
+                        candidates that may apply to the target variant (not variant_match=different)
+                        have materially different values and the model has not explicitly resolved
+                        them (a `conflict_resolved` declaration newer than the latest evidence). A plain
+                        `found` does not resolve it. Both candidates are always kept; no value is chosen;
     * foreign_market_only - every candidate is explicitly marked as another market and the model
                         has not declared the field found for the target;
     * variant_not_exact   - every candidate is explicitly marked as another trim/variant
                         (variant_match=different) and the model has not declared it found.
 
-    Several stored values for one field are recorded as info (`multiple_values`), not a trigger:
-    the model decides how to handle them.
+    Different values across markets, or with a candidate explicitly marked as another variant, are
+    recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
     """
     name = spec["name"]
     info: list[str] = []
@@ -112,19 +149,27 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     out_value = (output_entry or {}).get("value", (output_entry or {}).get("values")) if output_entry else None
     with_value = [e for e in evidence if _has_value(e.get("value"))]
     target_items = [e for e in with_value if is_target_market(e.get("market"), target_market)]
-    if len({_value_key(e.get("value")) for e in (target_items or with_value)}) > 1:
+    if len({material_key(e.get("value")) for e in (target_items or with_value)}) > 1:
         info.append("multiple_values")
+    conflict = same_scope_conflict(evidence, target_market)
+    declared_seq = (declared or {}).get("seq")
+    resolved = declared_status == "conflict_resolved" and (
+        last_evidence_seq is None or declared_seq is None or declared_seq > last_evidence_seq)
+    if conflict and resolved:
+        info.append("conflict_resolved_by_model")
 
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
             or out_provenance == "not_applicable"):
         state = "not_applicable"
     elif declared_status in RETRY_STATES:
         state = declared_status                       # the model's own report wins
-    elif out_provenance == "unresolved" and declared_status != "found":
+    elif out_provenance == "unresolved" and declared_status not in RESOLVED_STATUSES:
         state = "unresolved"
     elif not with_value:
         state = "weak_provenance" if _has_value(out_value) else "missing"
-    elif declared_status == "found":
+    elif conflict and not resolved:
+        state = "conflicting"                         # same scope, different values, not explicitly resolved
+    elif declared_status in RESOLVED_STATUSES:
         state = "ok"                                  # the model resolved applicability itself
     elif not target_items and all(_market_key(e.get("market")) not in UNKNOWN_MARKETS for e in with_value):
         state = "foreign_market_only"
@@ -142,17 +187,24 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         "markets": sorted({str(e.get("market")) for e in with_value if e.get("market")}),
         "declared": declared,
         "primary_output": output_entry,
+        "conflict_evidence_ids": [e.get("evidence_id") for e in conflict],
     }
 
 
 def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = DEFAULT_TARGET_MARKET) -> list[dict]:
     evidence_by_field: dict[str, list[dict]] = {}
-    for item in trace.evidence_items(events):
-        evidence_by_field.setdefault(normalize_field_name(item.get("field")), []).append(item)
+    last_seq: dict[str, int] = {}
+    for event in events:
+        item = event.get("evidence") if event.get("kind") == "evidence" else None
+        if isinstance(item, dict):
+            name = normalize_field_name(item.get("field"))
+            evidence_by_field.setdefault(name, []).append(item)
+            if isinstance(event.get("seq"), int):
+                last_seq[name] = event["seq"]
     declared = declarations(events)
     output = {normalize_field_name(name): entry for name, entry in iter_fields(primary_output(events))}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
-                           output.get(spec["name"]), target_market) for spec in specs]
+                           output.get(spec["name"]), target_market, last_seq.get(spec["name"])) for spec in specs]
 
 
 def max_attempts_for(spec: dict, default: int) -> int:
@@ -278,6 +330,15 @@ def attempted_operations(events: list[dict], spec: dict | None = None,
     return ops
 
 
+CONFLICT_TASK = (
+    "This is conflict-resolution research, not a search from scratch. Investigate why {values} differ. "
+    "Check exact trim, model year, drivetrain, normal vs temporary boost/performance mode, nominal vs peak "
+    "figure, unit conversion, source wording and manufacturer documentation. Preserve every candidate. If "
+    "evidence establishes which scope/value applies to the exact target variant, store that evidence and "
+    "reply status=conflict_resolved with the applicable value and evidence_ids. Otherwise reply "
+    "status=conflicting.")
+
+
 def vehicle_identity(payload: dict, target_market: str) -> dict:
     identity = payload.get("identity") or {}
     engine = payload.get("engine_drivetrain") or {}
@@ -320,6 +381,15 @@ def retry_packet(*, spec: dict, evaluation: dict, events: list[dict], payload: d
         "max_attempts": max_attempts,
         "turn_budget": max_steps,
     }
+    if evaluation["state"] == "conflicting":
+        ids = set(evaluation.get("conflict_evidence_ids") or [])
+        candidates = [e for e in field_evidence if e.get("evidence_id") in ids] or field_evidence
+        packet["conflict"] = {
+            "candidates": [{k: e.get(k) for k in ("evidence_id", "value", "unit", "market", "variant",
+                                                   "variant_match", "source_url", "document_id", "quote", "note")
+                            if e.get(k) is not None} for e in candidates],
+            "task": CONFLICT_TASK.format(values=" vs ".join(str(e.get("value")) for e in candidates)),
+        }
     if operator_notes:
         packet["operator_variant_notes"] = operator_notes
     return packet

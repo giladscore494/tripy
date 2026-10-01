@@ -246,7 +246,8 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
     recovery = trace.field_recovery_summary(events)
     field_states = None
     if recovery and recovery.get("evaluation_final"):
-        field_states = {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets")
+        field_states = {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets",
+                                                            "conflict_evidence_ids")
                                      if f.get(k) not in (None, [], {})}
                         for f in recovery["evaluation_final"]}
         unresolved = [n for n, f in field_states.items() if f.get("state") not in ("ok", "not_applicable")]

@@ -187,12 +187,18 @@ Do not research the vehicle generally. Your only research objective is the reque
 - While reading the same source, if you encounter a clearly stated value for ANOTHER requested enrichment
   field (listed in other_requested_fields), you may store that evidence too, as a by-product. Do not
   branch into research for that other field.
+- If failure_reason is "conflicting", this is conflict-resolution research: do not search the field from
+  scratch. Follow the task in `conflict`: investigate why the candidates differ (trim, model year,
+  drivetrain, normal vs boost/performance mode, nominal vs peak, unit conversion, source wording,
+  manufacturer documentation). Keep every candidate. Reply conflict_resolved only if evidence establishes
+  which value applies to the exact target variant (store that evidence first); otherwise conflicting.
+  A reply of "found" does not resolve a conflict.
 - If the field does not exist for this vehicle, say not_applicable. If you cannot resolve it within the
   budget, say unresolved. Never invent a value.
 
 When done, reply with ONLY one JSON object (no tool call):
 {"field": "<the requested field name>",
- "status": "found | not_applicable | unresolved | conflicting | foreign_market_only | variant_not_exact",
+ "status": "found | conflict_resolved | not_applicable | unresolved | conflicting | foreign_market_only | variant_not_exact",
  "value": <any or null>, "unit": "<unit or null>", "market": "<market or null>",
  "evidence_ids": ["e12"], "notes": "..."}"""
 
@@ -229,7 +235,7 @@ class AgentConfig:
     field_recovery_enabled: bool = True
     field_recovery_max_attempts: int = 2      # per field; a field spec's `recovery_attempts` overrides it
     field_recovery_max_steps: int = 4         # model turns per retry attempt
-    field_recovery_max_total_steps: int = 0   # cap on retry turns for the whole vehicle; 0 = no cap
+    field_recovery_max_total_steps: int = 24  # hard cap on retry turns per vehicle (all fields/attempts); 0 = none
 
 
 AGENT_ENV = {
@@ -600,7 +606,8 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     attempts_log: list[dict] = []
     resolved_directly: list[str] = []
     resolved_indirectly: dict[str, dict] = {}
-    total_steps, stopped = 0, None
+    total_steps, stopped, cut_short = 0, None, None
+    turns_saved = 0
 
     def reevaluate(during_field: str, attempt: int) -> None:
         """Refresh the state of every requested field; record queued fields another recovery resolved."""
@@ -622,7 +629,8 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
             continue  # resolved by an earlier field's recovery: no retry for it
         for attempt in range(1, item["max_attempts"] + 1):
             if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                stopped = "max_total_steps"
+                stopped = "max_total_steps"   # hard per-vehicle cap: no further attempt is started
+                cut_short = name if attempt > 1 else None
                 break
             events = trace_events(run_log)
             before = current[name]
@@ -641,13 +649,14 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
             messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
                         {"role": "user", "content": "Field recovery task (JSON):\n"
                                                     + json.dumps(packet, ensure_ascii=False, default=str)}]
-            reply_text, turns, error = None, 0, None
+            reply_text, turns, error, early = None, 0, None, False
             idle = 0
             budget = max(1, config.field_recovery_max_steps)
             try:
                 for turn_index in range(1, budget + 1):
                     if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                        stopped = "max_total_steps"
+                        stopped = "max_total_steps"   # hard per-vehicle cap: no further model turn
+                        cut_short = name
                         break
                     meta = {"field": name, "attempt": attempt, "max_attempts": item["max_attempts"],
                             "turn": turn_index, "turn_budget": budget}
@@ -663,6 +672,17 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                     # A turn whose calls were all replayed (or found nothing new) is idle, so a model that
                     # keeps re-emitting the same call ends within AGENT_NO_NEW_RESEARCH_TURNS.
                     novelty = session.execute(calls, messages, phase="field_recovery", field=name, attempt=attempt)
+                    # Early success: if the evidence stored by this turn already makes the target field `ok`,
+                    # end the attempt now instead of paying for a model turn that only says "found".
+                    # Only `ok` short-circuits; every other state still needs model work or an explicit reply.
+                    now = evaluate_fields([by_name[name]], trace_events(run_log), config.target_market)[0]
+                    if now["state"] == "ok":
+                        early = True
+                        turns_saved += 1
+                        run_log.event("field_recovery_early_resolved", field=name, attempt=attempt,
+                                      after_turn=turn_index, state="ok", turn_budget=budget,
+                                      evidence_ids=now["evidence_ids"])
+                        break
                     idle = 0 if novelty.total else idle + 1
                     if config.no_new_research_turns and idle >= config.no_new_research_turns:
                         break
@@ -681,7 +701,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                 resolved_directly.append(name)
             record = {"field": name, "attempt": attempt, "state_before": before["state"],
                       "state_after": after["state"], "turns": turns, "reply": reply,
-                      "reply_text": None if reply else reply_text, "error": error}
+                      "reply_text": None if reply else reply_text, "error": error, "early_resolved": early}
             attempts_log.append(record)
             previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
             run_log.event("field_recovery_finished", **record)
@@ -692,8 +712,20 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
     retried = sorted({a["field"] for a in attempts_log})
+    cap = config.field_recovery_max_total_steps
+    not_attempted = [f for f in queued if f not in retried and current[f]["retry_eligible"]]
+    if cut_short and not current[cut_short]["retry_eligible"]:
+        cut_short = None
+    if stopped == "max_total_steps":
+        run_log.event("field_recovery_budget_exhausted", turn_budget=cap, turns_used=total_steps,
+                      fields_not_attempted=not_attempted, field_cut_short=cut_short)
     return {
         "enabled": config.field_recovery_enabled,
+        "field_recovery_turn_budget": cap or None,
+        "field_recovery_turns_used": total_steps,
+        "field_recovery_turns_remaining": max(0, cap - total_steps) if cap else None,
+        "fields_not_attempted_due_to_budget": not_attempted if stopped == "max_total_steps" else [],
+        "field_cut_short_by_budget": cut_short,
         "requested": len(specs),
         "primary_states": _state_counts(primary),
         "final_states": _state_counts(final),
@@ -703,10 +735,11 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "fields_still_failed": [f for f in retried if current[f]["retry_eligible"]],
         "fields_resolved_directly": [f for f in resolved_directly if not current[f]["retry_eligible"]],
         "fields_resolved_indirectly": resolved_indirectly,
-        "fields_not_attempted": [f for f in queued if f not in retried and current[f]["retry_eligible"]],
+        "fields_not_attempted": not_attempted,
         "attempts": attempts_log,
         "attempt_count": len(attempts_log),
         "turns": total_steps,
+        "turns_saved_by_early_resolution": turns_saved,
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,

@@ -51,7 +51,7 @@ and every one of them stays configurable.
 | `GLM_CHAT_TIMEOUT_S` | Read timeout per attempt in seconds (default 240). |
 | `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
-| `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
+| `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
 | `AGENT_NO_NEW_RESEARCH_TURNS` | Finalize after N consecutive turns with no new research artifact (default 2; 0 = off). |
 | `AGENT_MAX_TOOL_OUTPUT_CHARS`, `AGENT_KEEP_RECENT_TOOL_RESULTS`, `AGENT_COMPACT_TOOL_OUTPUT_CHARS`, `AGENT_FINALIZER_BUNDLE_MAX_CHARS` | Context limits (see [Research and finalization](#research-and-finalization)). |
 | `TOOL_PREVIEW_CHARS`, `TOOL_MAX_TEXT_CHARS`, `TOOL_MAX_LINKS`, `TOOL_MAX_TABLE_ROWS`, `TOOL_MAX_TABLES` | Tool output caps. The full document always stays in the cache. |
@@ -180,10 +180,42 @@ The primary conversation is never sent. The task can use every tool, exploiting 
 It stores evidence into the same store and ends with a JSON status for the field. The field is then
 re-evaluated; a still-failed field gets attempt #2.
 
-Settings: `FIELD_RECOVERY_ENABLED=true`, `FIELD_RECOVERY_MAX_ATTEMPTS=2` (per field; a spec's
-`recovery_attempts` overrides it, and 0 means never), `FIELD_RECOVERY_MAX_STEPS=4` turns per attempt, and
-an optional `FIELD_RECOVERY_MAX_TOTAL_STEPS` cost cap per vehicle (0 = none). The CLI `--dry-run` prints
-`field_recovery_worst_case_model_turns`.
+Settings:
+
+- `FIELD_RECOVERY_ENABLED=true`.
+- `FIELD_RECOVERY_MAX_ATTEMPTS=2` per field. A spec's `recovery_attempts` overrides it; 0 means never.
+- `FIELD_RECOVERY_MAX_STEPS=4` turns per attempt.
+- `FIELD_RECOVERY_MAX_TOTAL_STEPS=24` is a hard cap on recovery model turns per vehicle, across all fields,
+  attempts and turns (0 = no cap). At the cap no further recovery turn or attempt starts. Evidence and
+  unresolved or conflicting states are kept, and the run continues to the compact finalizer; it does not
+  fail.
+- Results report `field_recovery_turn_budget`, `field_recovery_turns_used`,
+  `field_recovery_turns_remaining`, `fields_not_attempted_due_to_budget`, `field_cut_short_by_budget` and
+  `stopped = "max_total_steps"`.
+
+The CLI `--dry-run` prints `field_recovery_worst_case_model_turns`, which is bounded by the cap.
+
+**Same-scope conflicts.** A field is `conflicting` (and retried) when:
+
+- at least two candidates come from the target market;
+- none of them is marked `variant_match=different`;
+- their values are materially different (numbers compared as numbers, so `"1,066 Nm"` equals `1066`;
+  anything else compared as normalized text);
+- the model has not explicitly resolved them.
+
+An explicit resolution is a `conflict_resolved` declaration (`report_field_status` or a retry reply)
+newer than the field's latest evidence. A plain `found` does not resolve a conflict.
+
+The following are info only, not conflicts:
+
+- an IL candidate against another market's value;
+- a candidate explicitly marked as another variant.
+
+Code never picks a value and never removes a candidate. A conflicting field's retry packet carries both
+candidates and a conflict-resolution task: trim, model year, drivetrain, boost or performance mode,
+nominal vs peak, unit conversion, source wording and manufacturer documentation. A conflict still
+unresolved after the last attempt, or when the cap is reached, reaches the finalizer as `conflicting`,
+with every candidate.
 
 The finalizer runs after the retries. Its bundle carries the requested fields, every field's final state,
 the retry replies and the research model's own primary JSON. If no field needed a retry and the research
@@ -255,6 +287,37 @@ This applies within one vehicle run; the document cache still handles reuse acro
 - Recovery outcomes: `fields_resolved_directly_by_recovery`, `fields_resolved_indirectly_by_other_recovery`,
   `recovery_operations_with_new_material` and `recovery_operations_without_new_material`.
 - `tool_calls` now counts real executions only.
+
+### Idempotent evidence and early recovery exit
+
+**Evidence facts are stored once.** `store_evidence` is never deduplicated by the read-only replay
+mechanism; it has its own fact identity (`src/tools/evidence.py: evidence_fact_key`). Two writes are the
+same fact when all of these match:
+
+- the normalized field;
+- the value (`205`, `"205"` and `"205.0"` are the same; `"1,066"` equals `1066`; anything else is compared
+  as normalized text, so `"205 kWh"` stays different from `205`);
+- the unit;
+- the source (`document_id`, or else the URL without its fragment);
+- the market, variant and `variant_match`.
+
+Quote and note are not part of the identity.
+
+A repeat creates no new item. It returns `{"evidence_id": <original>, "stored": false, "reused": true}`,
+logs `evidence_reused`, and keeps a different quote or note only as `supplementary` metadata of the
+original item. It is not new evidence, so it never resets the idle streak and never looks like
+independent corroboration; the finalizer bundle holds the fact once. Metric:
+`duplicate_evidence_suppressed`.
+
+**Early success exit.** Within a recovery attempt, after every tool turn the target field is
+re-evaluated from the stored evidence. If it is `ok`, the attempt ends at once and no further model turn
+is sent just to say "found" (`field_recovery_early_resolved`; metric
+`field_recovery_turns_saved_by_early_resolution`).
+
+Every other state continues the attempt, and the final-reply path is unchanged: `conflicting`,
+`foreign_market_only`, `variant_not_exact`, `weak_provenance`, `missing`, `unresolved`, and
+`not_applicable` without an explicit declaration. The all-fields re-evaluation still runs after the
+attempt, so by-product evidence still resolves other queued fields.
 
 ### Retries, timeouts and cost
 

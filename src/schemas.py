@@ -14,8 +14,8 @@ from typing import Any
 # Level 2 targets come from the enrichment field schema (data/enrichment_fields.json, see
 # src/fields.py). Keys are suggested names; the model may return other keys and those are
 # kept as additional fields. LEVEL2_TARGET_FIELDS is the grouped view of the default schema.
-FIELD_STATUSES = ("found", "not_applicable", "unresolved", "conflicting", "foreign_market_only",
-                  "variant_not_exact", "weak_provenance")
+FIELD_STATUSES = ("found", "conflict_resolved", "not_applicable", "unresolved", "conflicting",
+                  "foreign_market_only", "variant_not_exact", "weak_provenance")
 
 
 def _default_groups() -> dict[str, dict[str, str]]:
@@ -184,8 +184,10 @@ TOOL_SPECS: list[dict] = [
 TOOL_SPECS.append(_fn(
     "report_field_status",
     "Declare the status of one requested field when it is not simply found: not_applicable (does not exist for "
-    "this vehicle), unresolved, conflicting, foreign_market_only, variant_not_exact or weak_provenance; or "
-    "found. Used to decide which fields get a focused follow-up; it never changes stored evidence.",
+    "this vehicle), unresolved, conflicting, foreign_market_only, variant_not_exact or weak_provenance; "
+    "found; or conflict_resolved (you established which of several different stored values applies to the "
+    "exact target variant). Used to decide which fields get a focused follow-up; it never changes stored "
+    "evidence.",
     {
         "field": {"type": "string"},
         "status": {"type": "string", "description": " | ".join(FIELD_STATUSES)},

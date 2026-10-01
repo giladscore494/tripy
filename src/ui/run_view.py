@@ -92,6 +92,11 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
         elif kind == "evidence":
             ev = event.get("evidence", {})
             lines.append(f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}")
+        elif kind == "evidence_reused":
+            lines.append(evidence_reused_line(event))
+        elif kind == "field_recovery_early_resolved":
+            lines.append(f"✅ {event.get('field')} resolved by stored evidence after turn {event.get('after_turn')}; "
+                         "attempt ended without another model call")
         elif kind == "model_response":
             lines.append(model_turn_line(event))
         elif kind == "research_stopped":
@@ -109,6 +114,10 @@ def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], Non
         placeholder.code("\n".join(lines[-max_lines:]), language=None)
 
     return listen
+
+
+def evidence_reused_line(event: dict) -> str:
+    return f"↺ evidence reused: {event.get('evidence_id')} {event.get('field')} = {_short(event.get('value'), 60)}"
 
 
 def tool_call_line(event: dict) -> str:
@@ -406,8 +415,17 @@ def render_field_recovery(result: dict) -> None:
     cols[1].metric("Retried", len(recovery.get("fields_retried") or []))
     cols[2].metric("Recovered", len(recovery.get("fields_recovered") or []))
     cols[3].metric("Retry attempts", recovery.get("attempt_count") or 0)
+    budget = recovery.get("field_recovery_turn_budget")
+    st.caption(f"Recovery turns used: {recovery.get('field_recovery_turns_used', recovery.get('turns', 0))}"
+               + (f" of {budget} (remaining {recovery.get('field_recovery_turns_remaining')})" if budget
+                  else " (no cap)"))
     if recovery.get("stopped"):
         st.caption(f"Retries stopped early: {recovery['stopped']}")
+    if recovery.get("fields_not_attempted_due_to_budget"):
+        st.warning("Not attempted because the recovery turn budget was exhausted: "
+                   + ", ".join(recovery["fields_not_attempted_due_to_budget"])
+                   + (f" (cut short: {recovery['field_cut_short_by_budget']})"
+                      if recovery.get("field_cut_short_by_budget") else ""))
     primary = {f["field"]: f for f in recovery.get("evaluation_primary") or []}
     final = {f["field"]: f for f in recovery.get("evaluation_final") or []}
     attempts: dict[str, int] = {}
