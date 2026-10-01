@@ -1,0 +1,9 @@
+[page 1]
+XPENG G6 Technical specifications (EU)
+AWD Performance 87.5 kWh
+WLTP range 550 km
+DC 10-80% 20 min
+AC on-board charger 11 kW
+Boot 571 l
+[page 2]
+Ground clearance 160 mm

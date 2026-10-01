@@ -1,0 +1,291 @@
+{
+ "_about": "Enrichment fields requested from the model. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle and coverage metrics are all driven by this list: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment, with no code change. Keys: name (required), description, group, unit, applies_to (list of Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS for this field; 0 = never retried).",
+ "version": "enrichment-v1",
+ "fields": [
+  {
+   "name": "torque_nm",
+   "description": "Maximum torque (Nm)",
+   "group": "performance"
+  },
+  {
+   "name": "acceleration_0_100_s",
+   "description": "0-100 km/h (s)",
+   "group": "performance"
+  },
+  {
+   "name": "top_speed_kmh",
+   "description": "Top speed (km/h)",
+   "group": "performance"
+  },
+  {
+   "name": "fuel_consumption_combined_l_100km",
+   "description": "Combined FUEL consumption in l/100km (combustion/hybrid only; never put kWh/100km here)",
+   "group": "performance",
+   "applies_to": [
+    "conventional",
+    "hybrid",
+    "plug_in"
+   ]
+  },
+  {
+   "name": "energy_consumption_kwh_100km",
+   "description": "EV energy consumption (kWh/100km, with test standard)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "battery_gross_kwh",
+   "description": "Battery capacity gross (kWh)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "battery_usable_kwh",
+   "description": "Battery capacity usable (kWh)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "electric_range_km",
+   "description": "Electric range (km)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "electric_range_standard",
+   "description": "Range test standard (WLTP/EPA/CLTC/...)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "ac_charging_time",
+   "description": "AC charging time (with % window)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "dc_charging_time",
+   "description": "DC charging time (with % window)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "dc_charging_window_pct",
+   "description": "DC charging percentage window",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "ac_max_charging_power_kw",
+   "description": "Max AC charging power (kW)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "dc_max_charging_power_kw",
+   "description": "Max DC charging power (kW)",
+   "group": "electric_hybrid",
+   "applies_to": [
+    "hybrid",
+    "plug_in",
+    "battery_electric"
+   ]
+  },
+  {
+   "name": "length_mm",
+   "description": "Length (mm)",
+   "group": "dimensions"
+  },
+  {
+   "name": "width_mm",
+   "description": "Width (mm)",
+   "group": "dimensions"
+  },
+  {
+   "name": "height_mm",
+   "description": "Height (mm)",
+   "group": "dimensions"
+  },
+  {
+   "name": "wheelbase_mm",
+   "description": "Wheelbase (mm)",
+   "group": "dimensions"
+  },
+  {
+   "name": "curb_weight_kg",
+   "description": "Curb weight (kg)",
+   "group": "dimensions"
+  },
+  {
+   "name": "ground_clearance_mm",
+   "description": "Ground clearance (mm)",
+   "group": "dimensions"
+  },
+  {
+   "name": "cargo_volume_l",
+   "description": "Cargo volume (l)",
+   "group": "dimensions"
+  },
+  {
+   "name": "fuel_tank_l",
+   "description": "Fuel tank (l)",
+   "group": "dimensions",
+   "applies_to": [
+    "conventional",
+    "hybrid",
+    "plug_in"
+   ]
+  },
+  {
+   "name": "gearbox_type",
+   "description": "Gearbox type",
+   "group": "transmission"
+  },
+  {
+   "name": "gear_count",
+   "description": "Number of gears",
+   "group": "transmission"
+  },
+  {
+   "name": "screen_size_in",
+   "description": "Main screen size (in)",
+   "group": "multimedia"
+  },
+  {
+   "name": "apple_carplay",
+   "description": "Apple CarPlay",
+   "group": "multimedia"
+  },
+  {
+   "name": "android_auto",
+   "description": "Android Auto",
+   "group": "multimedia"
+  },
+  {
+   "name": "wireless_phone_projection",
+   "description": "Wireless CarPlay / Android Auto",
+   "group": "multimedia"
+  },
+  {
+   "name": "power_seats",
+   "description": "Power seats",
+   "group": "comfort"
+  },
+  {
+   "name": "heated_seats",
+   "description": "Heated seats",
+   "group": "comfort"
+  },
+  {
+   "name": "ventilated_seats",
+   "description": "Ventilated seats",
+   "group": "comfort"
+  },
+  {
+   "name": "climate_zones",
+   "description": "Climate control zones",
+   "group": "comfort"
+  },
+  {
+   "name": "sunroof_panoramic",
+   "description": "Sunroof / panoramic roof",
+   "group": "comfort"
+  },
+  {
+   "name": "other_comfort_features",
+   "description": "Other comfort features",
+   "group": "comfort"
+  },
+  {
+   "name": "rim_diameter_in",
+   "description": "Rim diameter (in)",
+   "group": "tires_wheels"
+  },
+  {
+   "name": "tire_size_front",
+   "description": "Front tire size",
+   "group": "tires_wheels"
+  },
+  {
+   "name": "tire_size_rear",
+   "description": "Rear tire size",
+   "group": "tires_wheels"
+  },
+  {
+   "name": "alternative_tire_sizes",
+   "description": "Alternative tire sizes",
+   "group": "tires_wheels"
+  },
+  {
+   "name": "local_trim_name",
+   "description": "Local commercial trim name of this exact variant",
+   "group": "commercial"
+  },
+  {
+   "name": "list_price",
+   "description": "List price (with currency)",
+   "group": "commercial"
+  },
+  {
+   "name": "registration_licence_fee",
+   "description": "Registration / annual licence fee (with currency)",
+   "group": "commercial"
+  },
+  {
+   "name": "vehicle_warranty",
+   "description": "Vehicle warranty",
+   "group": "commercial"
+  },
+  {
+   "name": "battery_hybrid_warranty",
+   "description": "Battery / hybrid system warranty",
+   "group": "commercial"
+  },
+  {
+   "name": "warranty_km",
+   "description": "Warranty km",
+   "group": "commercial"
+  },
+  {
+   "name": "warranty_years",
+   "description": "Warranty years",
+   "group": "commercial"
+  }
+ ]
+}

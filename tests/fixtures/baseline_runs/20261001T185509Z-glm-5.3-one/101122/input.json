@@ -1,0 +1,23 @@
+{
+ "identity": {
+  "manufacturer": "אקספנג",
+  "manufacturer_entity": "אקספנג סין",
+  "commercial_name": "G6",
+  "year": 2026,
+  "trim": "MAX",
+  "model_code": "NSGHA",
+  "segment": "private",
+  "government_record_id": "101122"
+ },
+ "engine_drivetrain": {
+  "power_hp": 486,
+  "fuel": "חשמל",
+  "fuel_normalized": "electric",
+  "propulsion_normalized": "battery_electric",
+  "drivetrain_normalized": "awd"
+ },
+ "raw_row": {
+  "upstream_record_id": "101122",
+  "degem_nm": "NSGHA"
+ }
+}

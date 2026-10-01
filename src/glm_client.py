@@ -1,7 +1,15 @@
 """Minimal GLM (Z.ai) client: chat completions with tools, and the standalone web search API.
 
 The model id is always supplied by the caller (env var or UI) so the same code
-can compare different GLM models. No other provider is supported.
+can compare different GLM models. No other provider is supported. An optional
+finalizer model id (GLM_FINALIZER_MODEL) is used only for the compact
+finalization call; research turns always use the main model id.
+
+Attempt semantics are explicit: GLM_CHAT_MAX_ATTEMPTS / GLM_SEARCH_MAX_ATTEMPTS
+are the TOTAL number of HTTP attempts per request (1 = no retry). Every attempt
+is reported separately. A timed-out or dropped chat request has an unknown
+billing outcome (the provider may have processed it), so such attempts are
+flagged `usage_unknown`.
 
 Defaults match the official Z.ai documentation (base URL, POST /chat/completions,
 POST /web_search, engine "search-prime"); every one of them stays configurable.
@@ -22,6 +30,9 @@ DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 DEFAULT_CHAT_PATH = "chat/completions"
 DEFAULT_SEARCH_PATH = "web_search"
 DEFAULT_SEARCH_ENGINE = "search-prime"
+DEFAULT_CHAT_MAX_ATTEMPTS = 2       # expensive: at most two full chat/completions attempts by default
+DEFAULT_SEARCH_MAX_ATTEMPTS = 3
+DEFAULT_CHAT_TIMEOUT_S = 240.0
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 RAW_ERROR_BODY_LIMIT = 64 * 1024
 # Response headers worth keeping on errors (request ids, rate limits). Never request headers.
@@ -35,9 +46,13 @@ class GLMError(RuntimeError):
         self.status = status
         self.body = body
         self.endpoint = endpoint
+        self.timeout = False
+        self.usage_unknown = False
+        self.attempts: int | None = None
 
     def as_dict(self) -> dict:
-        return {"message": str(self), "status": self.status, "endpoint": self.endpoint, "body": self.body}
+        return {"message": str(self), "status": self.status, "endpoint": self.endpoint, "body": self.body,
+                "timeout": self.timeout, "usage_unknown": self.usage_unknown, "attempts": self.attempts}
 
 
 @dataclass
@@ -49,6 +64,22 @@ class ChatResponse:
     latency_ms: int = 0
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return max(minimum, int(raw)) if raw else default
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        return default
+
+
 @dataclass
 class GLMSettings:
     api_key: str = ""
@@ -57,7 +88,10 @@ class GLMSettings:
     chat_path: str = DEFAULT_CHAT_PATH
     search_path: str = DEFAULT_SEARCH_PATH
     search_engine: str = DEFAULT_SEARCH_ENGINE
-    timeout_s: float = 240.0
+    timeout_s: float = DEFAULT_CHAT_TIMEOUT_S        # read timeout per HTTP attempt
+    finalizer_model: str = ""                         # "" = use `model` for finalization too
+    chat_max_attempts: int = DEFAULT_CHAT_MAX_ATTEMPTS
+    search_max_attempts: int = DEFAULT_SEARCH_MAX_ATTEMPTS
 
     @classmethod
     def from_env(cls) -> "GLMSettings":
@@ -68,33 +102,52 @@ class GLMSettings:
             chat_path=os.environ.get("GLM_CHAT_PATH") or DEFAULT_CHAT_PATH,
             search_path=os.environ.get("GLM_SEARCH_PATH") or DEFAULT_SEARCH_PATH,
             search_engine=os.environ.get("GLM_SEARCH_ENGINE") or DEFAULT_SEARCH_ENGINE,
+            timeout_s=_env_float("GLM_CHAT_TIMEOUT_S", DEFAULT_CHAT_TIMEOUT_S),
+            finalizer_model=(os.environ.get("GLM_FINALIZER_MODEL") or "").strip(),
+            chat_max_attempts=_env_int("GLM_CHAT_MAX_ATTEMPTS", DEFAULT_CHAT_MAX_ATTEMPTS),
+            search_max_attempts=_env_int("GLM_SEARCH_MAX_ATTEMPTS", DEFAULT_SEARCH_MAX_ATTEMPTS),
         )
+
+    @property
+    def effective_finalizer_model(self) -> str:
+        return self.finalizer_model or self.model
 
     def public(self) -> dict:
         """Everything except the API key."""
-        return {"model": self.model, "base_url": self.base_url, "chat_path": self.chat_path,
-                "search_path": self.search_path, "search_engine": self.search_engine, "timeout_s": self.timeout_s}
+        return {"model": self.model, "research_model": self.model,
+                "finalizer_model": self.effective_finalizer_model,
+                "finalizer_model_source": "GLM_FINALIZER_MODEL" if self.finalizer_model else "GLM_MODEL",
+                "base_url": self.base_url, "chat_path": self.chat_path,
+                "search_path": self.search_path, "search_engine": self.search_engine, "timeout_s": self.timeout_s,
+                "chat_max_attempts": self.chat_max_attempts, "search_max_attempts": self.search_max_attempts,
+                "attempt_semantics": "max_attempts = total HTTP attempts per request (1 = no retry)"}
 
 
 class GLMClient:
-    """`hook(kind, **data)` receives one `api_call` or `api_error` event per HTTP attempt."""
+    """`hook(kind, **data)` receives one `api_call` or `api_error` event per HTTP attempt.
+
+    Every event carries `request_kind` ("chat" | "search"), `attempt` and
+    `max_attempts`. `api_error` events also carry `timeout` and `usage_unknown`.
+    """
 
     def __init__(self, settings: GLMSettings, session: requests.Session | None = None,
-                 max_retries: int = 3, sleeper: Callable[[float], None] = time.sleep,
-                 hook: Callable[..., Any] | None = None):
+                 sleeper: Callable[[float], None] = time.sleep, hook: Callable[..., Any] | None = None):
         if not settings.api_key:
             raise GLMError("GLM_API_KEY is not set")
         if not settings.model:
             raise GLMError("No GLM model id selected")
         self.settings = settings
         self.session = session or requests.Session()
-        self.max_retries = max_retries
         self.sleeper = sleeper
         self.hook = hook
 
     @property
     def model(self) -> str:
         return self.settings.model
+
+    @property
+    def finalizer_model(self) -> str:
+        return self.settings.effective_finalizer_model
 
     def _emit(self, kind: str, **data: Any) -> None:
         if self.hook:
@@ -109,20 +162,31 @@ class GLMClient:
             return path
         return self.settings.base_url.rstrip("/") + "/" + path.lstrip("/")
 
-    def _post(self, path: str, payload: dict) -> tuple[dict, int]:
+    def _post(self, path: str, payload: dict, request_kind: str) -> tuple[dict, int]:
         url = self._url(path)
         headers = {"Authorization": f"Bearer {self.settings.api_key}", "Content-Type": "application/json"}
+        max_attempts = max(1, int(self.settings.chat_max_attempts if request_kind == "chat"
+                                  else self.settings.search_max_attempts))
+        common = {"endpoint": path, "request_kind": request_kind, "max_attempts": max_attempts}
+        if request_kind == "chat":
+            common["model"] = payload.get("model")
         last: GLMError | None = None
-        for attempt in range(1, self.max_retries + 2):
+        for attempt in range(1, max_attempts + 1):
+            will_retry = attempt < max_attempts
             started = time.monotonic()
             try:
                 resp = self.session.post(url, headers=headers, data=json.dumps(payload),
                                          timeout=(15, self.settings.timeout_s))
             except requests.RequestException as exc:
                 latency = int((time.monotonic() - started) * 1000)
+                timeout = isinstance(exc, requests.Timeout)
+                # A connect timeout never reached the provider; anything else may have been processed.
+                usage_unknown = not isinstance(exc, requests.ConnectTimeout)
                 last = GLMError(f"{type(exc).__name__}: {exc}", endpoint=path)
-                self._emit("api_error", endpoint=path, attempt=attempt, latency_ms=latency, status=None,
-                           error=str(last), body=None, headers={})
+                last.timeout, last.usage_unknown = timeout, usage_unknown
+                self._emit("api_error", **common, attempt=attempt, latency_ms=latency, status=None,
+                           error=str(last), error_type=type(exc).__name__, timeout=timeout,
+                           usage_unknown=usage_unknown, will_retry=will_retry, body=None, headers={})
             else:
                 latency = int((time.monotonic() - started) * 1000)
                 if resp.status_code == 200:
@@ -130,21 +194,27 @@ class GLMClient:
                         data = resp.json()
                     except ValueError:
                         body = resp.text[:RAW_ERROR_BODY_LIMIT]
-                        self._emit("api_error", endpoint=path, attempt=attempt, latency_ms=latency, status=200,
-                                   error="invalid_json", body=body, headers=self._error_headers(resp))
+                        self._emit("api_error", **common, attempt=attempt, latency_ms=latency, status=200,
+                                   error="invalid_json", error_type="invalid_json", timeout=False,
+                                   usage_unknown=True, will_retry=False, body=body,
+                                   headers=self._error_headers(resp))
                         raise GLMError("Invalid JSON from GLM", status=200, body=body, endpoint=path)
-                    self._emit("api_call", endpoint=path, attempt=attempt, latency_ms=latency, status=200)
+                    self._emit("api_call", **common, attempt=attempt, latency_ms=latency, status=200)
                     return data, latency
                 body = resp.text[:RAW_ERROR_BODY_LIMIT]
+                retryable = resp.status_code in RETRY_STATUSES
                 last = GLMError(f"HTTP {resp.status_code} from {path}", status=resp.status_code, body=body,
                                 endpoint=path)
-                self._emit("api_error", endpoint=path, attempt=attempt, latency_ms=latency,
-                           status=resp.status_code, error=str(last), body=body, headers=self._error_headers(resp))
-                if resp.status_code not in RETRY_STATUSES:
+                self._emit("api_error", **common, attempt=attempt, latency_ms=latency, status=resp.status_code,
+                           error=str(last), error_type=f"http_{resp.status_code}", timeout=False,
+                           usage_unknown=False, will_retry=will_retry and retryable, body=body,
+                           headers=self._error_headers(resp))
+                if not retryable:
                     raise last
-            if attempt <= self.max_retries:
+            if will_retry:
                 self.sleeper(min(2 ** attempt, 20))
         assert last is not None
+        last.attempts = max_attempts
         raise last
 
     @staticmethod
@@ -154,8 +224,9 @@ class GLMClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              temperature: float | None = None, max_tokens: int | None = None,
-             extra: dict | None = None) -> ChatResponse:
-        payload: dict[str, Any] = {"model": self.settings.model, "messages": messages}
+             extra: dict | None = None, model: str | None = None) -> ChatResponse:
+        """`model` overrides the configured model id for this one call (used by the finalizer)."""
+        payload: dict[str, Any] = {"model": model or self.settings.model, "messages": messages}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -166,7 +237,7 @@ class GLMClient:
         if extra:
             payload.update(extra)
         path = self.settings.chat_path or DEFAULT_CHAT_PATH
-        data, latency = self._post(path, payload)
+        data, latency = self._post(path, payload, "chat")
         choices = data.get("choices") or []
         if not choices:
             raise GLMError("GLM returned no choices", status=200, body=json.dumps(data)[:RAW_ERROR_BODY_LIMIT],
@@ -190,7 +261,7 @@ class GLMClient:
         }
         if domain:
             payload["search_domain_filter"] = domain
-        data, _ = self._post(self.settings.search_path or DEFAULT_SEARCH_PATH, payload)
+        data, _ = self._post(self.settings.search_path or DEFAULT_SEARCH_PATH, payload, "search")
         results = []
         for item in data.get("search_result") or []:
             results.append({

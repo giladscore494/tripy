@@ -10,9 +10,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 from .extract import html_title, visible_text
-from .fetch import PREVIEW_CHARS, USER_AGENT, check_url
-
-MAX_LINKS = 150
+from .fetch import QUERY_HINT, USER_AGENT, check_url
 
 
 def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
@@ -50,7 +48,8 @@ def render_page(ctx, url: str, wait_ms: int = 2500) -> dict:
         result = {"document_id": cached["document_id"], "cache_hit": True, "url": url,
                   "final_url": cached.get("final_url"), "status": cached.get("status"),
                   "title": cached.get("title", ""), "text_chars": len(text),
-                  "text_preview": text[:PREVIEW_CHARS], "links": links[:MAX_LINKS]}
+                  "text_preview": text[:ctx.config.preview_chars], "links": links[:ctx.config.max_links],
+                  "links_total": len(links), "hint": QUERY_HINT}
         ctx.emit("document", document={k: v for k, v in result.items() if k not in ("text_preview", "links")})
         return result
     try:
@@ -78,7 +77,7 @@ def render_page(ctx, url: str, wait_ms: int = 2500) -> dict:
     ctx.note_document(record["document_id"], cache_hit=False)
     result = {"document_id": record["document_id"], "cache_hit": False, "url": url,
               "final_url": rendered["final_url"], "status": rendered["status"], "title": record["title"],
-              "text_chars": len(text), "text_preview": text[:PREVIEW_CHARS], "links": links[:MAX_LINKS],
-              "links_total": len(links)}
+              "text_chars": len(text), "text_preview": text[:ctx.config.preview_chars],
+              "links": links[:ctx.config.max_links], "links_total": len(links), "hint": QUERY_HINT}
     ctx.emit("document", document={k: v for k, v in result.items() if k not in ("text_preview", "links")})
     return result

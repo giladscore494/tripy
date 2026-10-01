@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
-from .agent import AgentConfig, effective_glm_config, run_vehicle
+from .agent import AgentConfig, effective_glm_config, finalizer_model_of, research_model_of, run_vehicle
 from .db import build_level15_payload
-from .pricing import compute_cost
+from .pricing import run_cost
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
 from .storage.run_log import RunLog, utc_now, write_batch
+from .storage.trace import sum_usage
 from .tools import ToolConfig
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -64,14 +65,20 @@ def _domain(url: str | None) -> str:
 
 
 def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, pricing: dict | None = None) -> dict:
-    """Observational metrics. Cost uses the pricing stored with the run unless `pricing` is given."""
+    """Observational metrics. Cost uses the pricing stored with the run unless `pricing` is given.
+
+    Works for completed runs and for failed / interrupted / reconstructed ones: research
+    work is always counted; coverage is simply zero when no structured output exists.
+    """
     output = result.get("output")
-    is_electrified = (vehicle or {}).get("propulsion", "") != "conventional"
-    targets = target_field_names(include_electric=is_electrified)
+    # Coverage is measured against the fields this run actually requested (schema-driven).
+    requested = result.get("requested_fields")
+    targets = list(requested) if requested else target_field_names(propulsion=(vehicle or {}).get("propulsion"))
     fields = iter_fields(output)
     filled_names = {name for name, entry in fields if has_value(entry)}
     target_filled = [name for name in targets if name in filled_names]
-    extra = sorted(filled_names - set(target_field_names(include_electric=True)))
+    extra = sorted(filled_names - set(targets) - set(target_field_names(include_electric=True)))
+    recovery = result.get("field_recovery") or {}
 
     urls = set()
     for item in result.get("evidence", []):
@@ -89,10 +96,31 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     level3 = output.get("level3") if isinstance(output, dict) else None
     level3_topics = [k for k in (level3 or {}) if k in LEVEL3_TOPICS] if isinstance(level3, dict) else []
     search_api_calls = counters.get("search_api_calls", 0)
-    cost = compute_cost(usage, search_api_calls, pricing if pricing is not None else result.get("pricing"))
+    stats = result.get("api_stats") or {}
+    usage_research = result.get("usage_research")
+    usage_finalizer = result.get("usage_finalizer") or {}
+    if usage_research is None:  # results written before the research/finalization split
+        usage_research, usage_finalizer = usage, {}
+    usage_recovery = result.get("usage_field_recovery") or {}
+    cost, _ = run_cost(sum_usage(usage_research, usage_recovery), usage_finalizer, search_api_calls,
+                       pricing if pricing is not None else result.get("pricing"),
+                       pricing if pricing is not None else (result.get("pricing_finalizer") or result.get("pricing")),
+                       stats.get("unknown_usage_attempts", 0))
+    finalization = result.get("finalization") or {}
+    tracking = result.get("research_tracking") or {}
+    provenance = Counter(str(entry.get("provenance") or "not_stated") for _, entry in fields)
+    stored_ids = {str(item.get("evidence_id")) for item in result.get("evidence", [])}
+    cited = [str(i) for _, entry in fields for i in (entry.get("evidence_ids") or []) if i is not None]
     return {
         "record_id": result.get("record_id"),
         "status": result.get("status"),
+        "result_source": result.get("result_source", "result.json"),
+        "final_output": output is not None,
+        "stop_reason": result.get("stop_reason"),
+        "finalization_status": finalization.get("status") or ("not_needed" if output is not None else "not_run"),
+        "research_model": result.get("research_model") or result.get("model"),
+        "finalizer_model": finalization.get("model") or result.get("finalizer_model"),
+        "research_steps": result.get("research_steps") or 0,
         "target_fields": len(targets),
         "target_filled": len(target_filled),
         "coverage_pct": round(100 * len(target_filled) / len(targets), 1) if targets else 0.0,
@@ -101,6 +129,14 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "extra_fields": len(extra),
         "extra_field_names": extra,
         "evidence_items": len(result.get("evidence", [])),
+        "evidence_with_market": sum(1 for item in result.get("evidence", []) if item.get("market")),
+        "fields_israel_direct": provenance.get("israel_direct", 0),
+        "fields_foreign_direct": provenance.get("foreign_direct", 0),
+        "fields_inferred": provenance.get("inferred", 0),
+        "fields_unresolved": provenance.get("unresolved", 0),
+        "fields_provenance_not_stated": provenance.get("not_stated", 0),
+        "cited_evidence_ids": len(cited),
+        "cited_ids_not_in_evidence": sum(1 for i in cited if i not in stored_ids),
         "unique_sources": len(urls),
         "unique_domains": len({_domain(u) for u in urls if u}),
         "documents_opened": len(result.get("documents", [])),
@@ -115,8 +151,28 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "conflicts_reported": len(conflicts) if isinstance(conflicts, list) else 0,
         "additional_findings": len(findings) if isinstance(findings, list) else 0,
         "level3_topics": len(level3_topics),
-        "duration_s": result.get("duration_s", 0),
+        "duration_s": result.get("duration_s") or 0,
         "model_calls": usage.get("model_calls", 0),
+        "research_model_calls": usage_research.get("model_calls", 0),
+        "field_recovery_model_calls": usage_recovery.get("model_calls", 0),
+        "requested_fields": len(targets),
+        "fields_failed_primary": len(recovery.get("queue") or []),
+        "fields_retried": len(recovery.get("fields_retried") or []),
+        "fields_recovered": len(recovery.get("fields_recovered") or []),
+        "fields_still_failed": len(recovery.get("fields_still_failed") or []),
+        "field_retry_attempts": recovery.get("attempt_count") or 0,
+        "finalizer_model_calls": usage_finalizer.get("model_calls", 0),
+        "finalizer_input_chars": finalization.get("finalizer_input_chars") or 0,
+        "finalizer_prompt_tokens": usage_finalizer.get("prompt_tokens", 0),
+        "finalizer_completion_tokens": usage_finalizer.get("completion_tokens", 0),
+        "finalizer_latency_s": round((finalization.get("latency_ms") or 0) / 1000, 2),
+        "api_attempts": stats.get("api_attempts", 0),
+        "chat_attempts": stats.get("chat_attempts", 0),
+        "search_attempts": stats.get("search_attempts", 0),
+        "timeout_count": stats.get("timeout_count", 0),
+        "unknown_usage_attempts": stats.get("unknown_usage_attempts", 0),
+        "duplicate_searches": tracking.get("duplicate_searches", 0),
+        "duplicate_fetches": tracking.get("duplicate_fetches", 0),
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
         "total_tokens": usage.get("total_tokens", 0),
@@ -131,7 +187,12 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
 SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_items", "documents_opened", "tool_calls",
             "tool_errors", "document_cache_hits", "document_cache_misses", "search_cache_hits",
             "search_api_calls", "api_errors", "conflicts_reported", "additional_findings", "duration_s",
-            "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+            "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
+            "research_steps", "research_model_calls", "field_recovery_model_calls", "fields_failed_primary",
+            "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts", "evidence_with_market", "fields_israel_direct",
+            "fields_foreign_direct", "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "finalizer_model_calls", "finalizer_input_chars",
+            "finalizer_prompt_tokens", "finalizer_completion_tokens", "api_attempts", "chat_attempts",
+            "search_attempts", "timeout_count", "unknown_usage_attempts", "duplicate_searches", "duplicate_fetches")
 
 
 def aggregate(metrics: list[dict]) -> dict:
@@ -144,10 +205,13 @@ def aggregate(metrics: list[dict]) -> dict:
         out[f"{key}_total"] = round(total, 2)
         out[f"{key}_mean"] = round(total / n, 2)
     out["coverage_pct_mean"] = round(sum(m["coverage_pct"] for m in metrics) / n, 1)
+    out["runs_with_final_output"] = sum(1 for m in metrics if m.get("final_output", True))
+    out["runs_without_final_output"] = n - out["runs_with_final_output"]
     hits, misses = out["document_cache_hits_total"], out["document_cache_misses_total"]
     out["document_cache_hit_rate_pct"] = round(100 * hits / (hits + misses), 1) if hits + misses else 0.0
     costs = [m["cost_usd"] for m in metrics if m.get("cost_usd") is not None]
     out["cost_usd_total"] = round(sum(costs), 4) if costs else None
+    out["cost_complete"] = out.get("unknown_usage_attempts_total", 0) == 0
     return out
 
 
@@ -177,6 +241,8 @@ def start_batch(runs_dir: Path | str, batch_id: str, *, client, agent_cfg: Agent
         "batch_id": batch_id,
         "created_at": utc_now(),
         "model": client.model,
+        "research_model": research_model_of(client),
+        "finalizer_model": finalizer_model_of(client),
         "glm_config": effective_glm_config(client, agent_cfg, tool_cfg),
         "prompt_version": prompt_version,
         "search_backend": tool_cfg.search_backend,
@@ -195,12 +261,18 @@ def start_batch(runs_dir: Path | str, batch_id: str, *, client, agent_cfg: Agent
 def research_one(vehicle: dict, row: dict, *, client, cache, runs_dir: Path | str, batch_id: str,
                  agent_cfg: AgentConfig, tool_cfg: ToolConfig, pricing: dict, level15_source: str,
                  listener: Callable[[str, dict], None] | None = None, session=None) -> dict:
-    """Research exactly one vehicle, write result.json, and return the result. Never moves on by itself."""
+    """Research exactly one vehicle, write result.json, and return the result. Never moves on by itself.
+
+    result.json is written on every exit path, including research failures,
+    finalization failures and KeyboardInterrupt (which is re-raised afterwards).
+    """
     log = RunLog(runs_dir, batch_id, vehicle["upstream_record_id"], listener=listener)
-    result = run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
-                         config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle, batch_id=batch_id,
-                         ordinal=vehicle.get("ordinal"), session=session, pricing=pricing)
-    result["level15_source"] = level15_source
-    result["metrics"] = compute_metrics(result, vehicle, cache)
-    log.write_result(result)
-    return result
+
+    def persist(result: dict) -> None:
+        result["level15_source"] = level15_source
+        result["metrics"] = compute_metrics(result, vehicle, cache)
+        log.write_result(result)
+
+    return run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
+                       config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle, batch_id=batch_id,
+                       ordinal=vehicle.get("ordinal"), session=session, pricing=pricing, persist=persist)

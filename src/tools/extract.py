@@ -69,8 +69,13 @@ def _chunk(text: str, offset: int, max_chars: int) -> dict:
             "next_offset": end if end < len(text) else None}
 
 
-def extract_html(ctx, document_id: str, offset: int = 0, max_chars: int = 10000) -> dict:
+def _text_cap(ctx, max_chars) -> int:
+    return max(200, min(int(max_chars or ctx.config.max_text_chars), ctx.config.max_text_chars))
+
+
+def extract_html(ctx, document_id: str, offset: int = 0, max_chars: int | None = None) -> dict:
     meta, html = _load(ctx, document_id)
+    max_chars = _text_cap(ctx, max_chars)
     text = ctx.cache.read_text(document_id)
     result = {"document_id": document_id, "url": meta.get("final_url") or meta.get("url"),
               "title": meta.get("title", "")}
@@ -92,7 +97,7 @@ def extract_html(ctx, document_id: str, offset: int = 0, max_chars: int = 10000)
             if href.startswith(("http://", "https://")) and href not in seen:
                 seen.add(href)
                 links.append({"text": a.get_text(" ", strip=True)[:120], "url": href})
-        result["links"] = links[:150]
+        result["links"] = links[:ctx.config.max_links]
         result["links_total"] = len(links)
     result.update(_chunk(text, offset, max_chars))
     return result
@@ -134,8 +139,12 @@ def _pdf_tables(body: bytes, max_pages: int = 200) -> list[dict]:
     return tables
 
 
-def extract_tables(ctx, document_id: str, max_tables: int = 15, max_rows: int = 80) -> dict:
+def extract_tables(ctx, document_id: str, max_tables: int | None = None, max_rows: int | None = None,
+                   start_table: int = 0) -> dict:
     meta, html = _load(ctx, document_id)
+    max_tables = max(1, min(int(max_tables or ctx.config.max_tables), ctx.config.max_tables))
+    max_rows = max(1, min(int(max_rows or ctx.config.max_table_rows), ctx.config.max_table_rows))
+    start_table = max(0, int(start_table or 0))
     tables = ctx.cache.get_derived(document_id, "tables")
     if tables is None:
         if html is not None:
@@ -146,12 +155,17 @@ def extract_tables(ctx, document_id: str, max_tables: int = 15, max_rows: int = 
             tables = []
         ctx.cache.put_derived(document_id, "tables", tables)
     out = []
-    for index, table in enumerate(tables[: max(1, int(max_tables))]):
+    for index, table in enumerate(tables[start_table : start_table + max_tables], start=start_table):
         rows = table["rows"]
         out.append({**table, "index": index, "n_rows": len(rows),
                     "n_cols": max((len(r) for r in rows), default=0),
                     "rows": rows[:max_rows], "rows_truncated": len(rows) > max_rows})
-    return {"document_id": document_id, "tables_total": len(tables), "tables": out}
+    end = start_table + len(out)
+    result = {"document_id": document_id, "tables_total": len(tables), "tables": out,
+              "next_start_table": end if end < len(tables) else None}
+    if any(t["rows_truncated"] for t in out):
+        result["hint"] = "Long tables are cut; use find_in_document to locate specific rows."
+    return result
 
 
 def _structured(html: str) -> dict:
@@ -202,8 +216,9 @@ def _structured(html: str) -> dict:
     return data
 
 
-def get_structured_data(ctx, document_id: str, max_chars: int = 20000) -> dict:
+def get_structured_data(ctx, document_id: str, max_chars: int | None = None) -> dict:
     meta, html = _load(ctx, document_id)
+    max_chars = _text_cap(ctx, max_chars)
     if html is None:
         return {"document_id": document_id, "error": "not_html",
                 "message": f"Document is {meta.get('doc_type')}; use extract_html or extract_tables."}

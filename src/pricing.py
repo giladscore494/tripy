@@ -65,3 +65,39 @@ def compute_cost(usage: dict, search_api_calls: int, pricing: dict | None) -> di
     search = round(search_api_calls * per_call, 6) if per_call is not None else None
     parts = [x for x in (tokens, search) if x is not None]
     return {"tokens_usd": tokens, "web_search_usd": search, "total_usd": round(sum(parts), 6) if parts else None}
+
+
+UNKNOWN_USAGE_NOTE = ("Recorded API cost from returned usage; provider billing may be higher for timed-out "
+                      "requests.")
+
+
+def run_cost(usage_research: dict | None, usage_finalizer: dict | None, search_api_calls: int,
+             pricing: dict | None, pricing_finalizer: dict | None = None,
+             unknown_usage_attempts: int = 0) -> tuple[dict, dict]:
+    """(cost, details). `cost` keeps the {tokens_usd, web_search_usd, total_usd} shape.
+
+    Only usage returned by successful responses is priced. Attempts whose outcome
+    at the provider is unknown (timeouts, dropped connections) cannot be priced, so
+    the figure is then a lower bound, flagged in `details`.
+    """
+    research = compute_cost(usage_research or {}, search_api_calls, pricing)
+    final_usage = usage_finalizer or {}
+    finalizer = compute_cost(final_usage, 0, pricing_finalizer or pricing)
+    has_final = bool(final_usage.get("prompt_tokens") or final_usage.get("completion_tokens"))
+    if research["tokens_usd"] is None or (has_final and finalizer["tokens_usd"] is None):
+        tokens = None
+    else:
+        tokens = round(research["tokens_usd"] + (finalizer["tokens_usd"] or 0.0), 6)
+    search = research["web_search_usd"]
+    parts = [x for x in (tokens, search) if x is not None]
+    cost = {"tokens_usd": tokens, "web_search_usd": search, "total_usd": round(sum(parts), 6) if parts else None}
+    details = {
+        "basis": "returned_usage_only",
+        "research_tokens_usd": research["tokens_usd"],
+        "finalizer_tokens_usd": finalizer["tokens_usd"] if has_final else 0.0,
+        "web_search_usd": search,
+        "unknown_usage_attempts": unknown_usage_attempts,
+        "complete": unknown_usage_attempts == 0,
+        "note": UNKNOWN_USAGE_NOTE if unknown_usage_attempts else "Recorded API cost from returned usage.",
+    }
+    return cost, details

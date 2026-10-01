@@ -1,0 +1,12 @@
+{
+ "_about": "Operator context handed to the model for specific benchmark variants. These are notes and inferences, NOT verified facts and NOT validation rules: nothing in code checks values against them.",
+ "notes": {
+  "101122": {
+   "target": "Israeli government catalog variant: XPeng G6, model year 2026, government trim MAX, model code NSGHA, 486 hp, AWD (upstream_record_id 101122).",
+   "target_market": "IL",
+   "inferred_local_name": "The likely Israeli commercial equivalent is 'Core Performance AWD'. Treat this mapping as an inference unless a source explicitly proves it, and report it as an inferred variant mapping.",
+   "trim_caution": "Do not mix values of Black Edition, Core+ and Core Performance AWD (or RWD versions). Keep each value tied to the trim its source describes.",
+   "recheck_locally": ["list price", "registration/licence fee", "warranty", "trim naming", "curb weight", "charging specifications", "equipment claims"]
+  }
+ }
+}

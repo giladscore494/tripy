@@ -1,0 +1,20 @@
+{
+ "document_id": "d_6bd92e045262712e",
+ "kind": "fetch",
+ "url": "https://forbidden.example/g6",
+ "fetched_at": "2026-10-01T18:56:00+00:00",
+ "bytes": 67,
+ "sha256": "f17a303598fb7689b2b233e1a61b98e9ea72e9146a5f3d60e960739e566c6f10",
+ "text_chars": 13,
+ "status": 403,
+ "final_url": "https://forbidden.example/g6",
+ "redirects": [],
+ "headers": {
+  "content-type": "text/html"
+ },
+ "content_type": "text/html",
+ "truncated": false,
+ "doc_type": "html",
+ "extraction_path": "html.visible_text",
+ "title": "403 Forbidden"
+}

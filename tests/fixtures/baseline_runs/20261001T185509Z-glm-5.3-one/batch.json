@@ -1,0 +1,52 @@
+{
+ "batch_id": "20261001T185509Z-glm-5.3-one",
+ "created_at": "2026-10-01T18:55:09.000+00:00",
+ "model": "glm-5.3",
+ "glm_config": {
+  "model": "glm-5.3",
+  "base_url": "https://api.z.ai/api/paas/v4",
+  "chat_path": "chat/completions",
+  "search_path": "web_search",
+  "search_engine": "search-prime",
+  "timeout_s": 240.0,
+  "thinking": "provider_default",
+  "max_tokens": "provider_default",
+  "temperature": "provider_default",
+  "tool_choice": "auto",
+  "extra_request_body": {},
+  "search_backend": "glm",
+  "recorded_at": "2026-10-01T18:55:09.000+00:00"
+ },
+ "prompt_version": "baseline-pv",
+ "search_backend": "glm",
+ "pricing": {
+  "input_per_mtok": 1.4,
+  "output_per_mtok": 4.4,
+  "web_search_per_call": 0.01,
+  "source": "Z.ai official pricing (as provided 2026-10-01)"
+ },
+ "level15_source": "snapshot",
+ "level15_note": "Frozen snapshot",
+ "selection": "One vehicle",
+ "record_ids": [
+  "101122"
+ ],
+ "agent_config": {
+  "max_steps": 30,
+  "max_tool_output_chars": 12000,
+  "keep_recent_tool_results": 8,
+  "compact_tool_output_chars": 1200,
+  "temperature": null,
+  "max_tokens": null,
+  "include_level3": true,
+  "thinking": "",
+  "extra_body": {}
+ },
+ "tool_config": {
+  "search_backend": "glm",
+  "max_response_bytes": 15728640,
+  "connect_timeout_s": 10.0,
+  "read_timeout_s": 40.0,
+  "render_timeout_s": 45.0
+ }
+}
