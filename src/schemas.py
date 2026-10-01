@@ -192,6 +192,9 @@ TOOL_SPECS.append(_fn(
         "field": {"type": "string"},
         "status": {"type": "string", "description": " | ".join(FIELD_STATUSES)},
         "note": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"},
+                         "description": "Evidence records (e1, e2, ...) behind this status; required for "
+                                        "conflict_resolved."},
     },
     ["field", "status"],
 ))

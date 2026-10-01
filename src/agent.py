@@ -39,7 +39,8 @@ from .bundle import BUNDLE_VERSION, build_research_bundle
 from .glm_client import GLMError
 from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
 from .storage.trace import FETCH_TOOLS
-from .field_recovery import evaluate_fields, parse_retry_reply, retry_packet, retry_queue
+from .field_recovery import (current_evaluation, early_resolution_check, parse_retry_reply, retry_packet,
+                             retry_queue)
 from .fields import grouped, parse_field_list, propulsion_of, resolve_requested_fields
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
@@ -197,7 +198,9 @@ Do not research the vehicle generally. Your only research objective is the reque
   scratch. Follow the task in `conflict`: investigate why the candidates differ (trim, model year,
   drivetrain, normal vs boost/performance mode, nominal vs peak, unit conversion, source wording,
   manufacturer documentation). Keep every candidate. Reply conflict_resolved only if evidence establishes
-  which value applies to the exact target variant (store that evidence first); otherwise conflicting.
+  which value applies to the exact target variant: store that evidence first and cite its evidence_ids in
+  the reply (a conflict_resolved without valid evidence_ids leaves the field conflicting); otherwise
+  reply conflicting.
   A reply of "found" does not resolve a conflict.
 - If the field does not exist for this vehicle, say not_applicable. If you cannot resolve it within the
   budget, say unresolved. Never invent a value.
@@ -616,7 +619,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     KeyboardInterrupt propagates; an API failure stops further retries (the run still finalizes).
     """
     events = trace_events(run_log)
-    primary = evaluate_fields(specs, events, config.target_market)
+    primary = current_evaluation(events, specs, config.target_market)
     run_log.event("field_evaluation", stage="primary", fields=primary,
                   summary=_state_counts(primary))
     queue = retry_queue(primary, specs, config.field_recovery_max_attempts) if config.field_recovery_enabled else []
@@ -629,11 +632,11 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     resolved_directly: list[str] = []
     resolved_indirectly: dict[str, dict] = {}
     total_steps, stopped, cut_short = 0, None, None
-    turns_saved = 0
+    early_count, budget_skipped = 0, 0
 
     def reevaluate(during_field: str, attempt: int) -> None:
         """Refresh the state of every requested field; record queued fields another recovery resolved."""
-        latest = evaluate_fields(specs, trace_events(run_log), config.target_market)
+        latest = current_evaluation(trace_events(run_log), specs, config.target_market)
         for entry in latest:
             name = entry["field"]
             was = current[name]
@@ -652,8 +655,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         for attempt in range(1, item["max_attempts"] + 1):
             if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
                 stopped = "max_total_steps"   # hard per-vehicle cap: no further attempt is started
-                cut_short = name if attempt > 1 else None
-                break
+                break                         # (not "cut short": no attempt of this field was running)
             events = trace_events(run_log)
             before = current[name]
             packet = retry_packet(spec=by_name[name], evaluation=before, events=events, payload=payload,
@@ -703,13 +705,15 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                     # Early success: if the evidence stored by this turn already makes the target field `ok`,
                     # end the attempt now instead of paying for a model turn that only says "found".
                     # Only `ok` short-circuits; every other state still needs model work or an explicit reply.
-                    now = evaluate_fields([by_name[name]], trace_events(run_log), config.target_market)[0]
-                    if now["state"] == "ok":
+                    may_stop, now = early_resolution_check(by_name[name], trace_events(run_log),
+                                                           config.target_market)
+                    if may_stop:
                         early = True
-                        turns_saved += 1
+                        early_count += 1
+                        budget_skipped += budget - turn_index
                         run_log.event("field_recovery_early_resolved", field=name, attempt=attempt,
                                       after_turn=turn_index, state="ok", turn_budget=budget,
-                                      evidence_ids=now["evidence_ids"])
+                                      turn_budget_skipped=budget - turn_index, evidence_ids=now["evidence_ids"])
                         break
                     idle = 0 if novelty.total else idle + 1
                     if config.no_new_research_turns and idle >= config.no_new_research_turns:
@@ -721,8 +725,10 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                               api_error=exc.as_dict())
             reply = parse_retry_reply(reply_text, name)
             if reply and reply.get("status"):
+                cited = reply.get("evidence_ids")
                 run_log.event("field_status", field=name, status=str(reply["status"]).lower(),
-                              note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}")
+                              note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}",
+                              evidence_ids=[str(i) for i in cited] if isinstance(cited, list) else [])
             reevaluate(name, attempt)
             after = current[name]
             if not after["retry_eligible"] and name not in resolved_directly:
@@ -776,7 +782,9 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "attempts": attempts_log,
         "attempt_count": len(attempts_log),
         "turns": total_steps,
-        "turns_saved_by_early_resolution": turns_saved,
+        "early_resolution_count": early_count,
+        "turn_budget_skipped_by_early_resolution": budget_skipped,
+        "turns_saved_by_early_resolution": early_count,   # deprecated alias of early_resolution_count
         "prior_excerpt_items": sum(a.get("prior_excerpt_items") or 0 for a in attempts_log),
         "prior_excerpt_chars": sum(a.get("prior_excerpt_chars") or 0 for a in attempts_log),
         "attempts_with_prior_excerpts": sum(1 for a in attempts_log if a.get("prior_excerpt_items")),

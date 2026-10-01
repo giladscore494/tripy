@@ -90,7 +90,8 @@ def declarations(events: Iterable[dict]) -> dict[str, dict]:
     for event in events:
         if event.get("kind") == "field_status" and event.get("field"):
             out[normalize_field_name(event["field"])] = {
-                **{k: event.get(k) for k in ("status", "note", "source")}, "seq": event.get("seq")}
+                **{k: event.get(k) for k in ("status", "note", "source")}, "seq": event.get("seq"),
+                "evidence_ids": [str(i) for i in event.get("evidence_ids") or [] if i not in (None, "")]}
     return out
 
 
@@ -118,8 +119,42 @@ def primary_output(events: Iterable[dict], with_seq: bool = False) -> Any:
     return (found, seq) if with_seq else found
 
 
+def declaration_is_current(statement_seq: int | None, last_evidence_seq: int | None) -> bool:
+    """A model statement about a field (any field_status declaration, or its primary JSON) is authoritative
+    only while no evidence for that field was stored AFTER it. Unknown ordering: it stays authoritative."""
+    return statement_seq is None or last_evidence_seq is None or statement_seq > last_evidence_seq
+
+
+def conflict_start_seq(conflict: list[dict], evidence_seq: dict) -> int | None:
+    """Seq of the evidence item that first made the in-scope values differ (None if unknown)."""
+    seen: set[str] = set()
+    for item in sorted(conflict, key=lambda e: evidence_seq.get(e.get("evidence_id"), 0)):
+        seen.add(material_key(item.get("value")))
+        if len(seen) > 1:
+            return evidence_seq.get(item.get("evidence_id"))
+    return None
+
+
+def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
+                         evidence_seq: dict | None) -> bool:
+    """A conflict_resolved declaration closes a conflict only if it cites real evidence for this field:
+    evidence_ids non-empty, every id stored for this field, and (when ordering is known) at least one
+    cited item stored at or after the moment the conflict became active (citing only candidates that
+    predate the conflict is not a resolution). Code never decides which value is true."""
+    cited = [str(i) for i in (declared or {}).get("evidence_ids") or []]
+    field_ids = {str(e.get("evidence_id")) for e in evidence}
+    if not cited or not set(cited) <= field_ids:
+        return False
+    seqs = evidence_seq or {}
+    start = conflict_start_seq(conflict, seqs)
+    if start is None:
+        return True
+    return any(seqs.get(c) is not None and seqs[c] >= start for c in cited)
+
+
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
-                   target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None) -> dict:
+                   target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
+                   evidence_seq: dict | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -154,25 +189,30 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if len({material_key(e.get("value")) for e in (target_items or with_value)}) > 1:
         info.append("multiple_values")
     conflict = same_scope_conflict(evidence, target_market)
-    declared_seq = (declared or {}).get("seq")
+    # Freshness: every declaration (and the primary JSON) only counts while no newer evidence exists.
+    declared_current = declaration_is_current((declared or {}).get("seq"), last_evidence_seq)
+    if declared_status and not declared_current:
+        info.append(f"stale_declaration:{declared_status}")
+    declared_status = declared_status if declared_current else None
+    if not declaration_is_current(output_seq, last_evidence_seq):
+        out_provenance = ""
     resolved = declared_status == "conflict_resolved" and (
-        last_evidence_seq is None or declared_seq is None or declared_seq > last_evidence_seq)
-    if conflict and resolved:
-        info.append("conflict_resolved_by_model")
+        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq))
+    if conflict and declared_status == "conflict_resolved":
+        info.append("conflict_resolved_by_model" if resolved else "conflict_resolution_not_evidence_backed")
 
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
             or out_provenance == "not_applicable"):
         state = "not_applicable"
-    elif declared_status in RETRY_STATES and _newer(declared_seq, last_evidence_seq):
+    elif declared_status in RETRY_STATES:
         state = declared_status                       # the model's own (current) report wins
-    elif (out_provenance == "unresolved" and declared_status not in RESOLVED_STATUSES
-          and _newer(output_seq, last_evidence_seq)):
+    elif out_provenance == "unresolved" and declared_status not in RESOLVED_STATUSES:
         state = "unresolved"
     elif not with_value:
         state = "weak_provenance" if _has_value(out_value) else "missing"
     elif conflict and not resolved:
         state = "conflicting"                         # same scope, different values, not explicitly resolved
-    elif declared_status in RESOLVED_STATUSES:
+    elif declared_status in RESOLVED_STATUSES and (declared_status == "found" or resolved):
         state = "ok"                                  # the model resolved applicability itself
     elif not target_items and all(_market_key(e.get("market")) not in UNKNOWN_MARKETS for e in with_value):
         state = "foreign_market_only"
@@ -189,20 +229,16 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         "values": [e.get("value") for e in with_value][:10],
         "markets": sorted({str(e.get("market")) for e in with_value if e.get("market")}),
         "declared": declared,
+        "declared_current": declared_current,
         "primary_output": output_entry,
         "conflict_evidence_ids": [e.get("evidence_id") for e in conflict],
     }
 
 
-def _newer(statement_seq: int | None, last_evidence_seq: int | None) -> bool:
-    """A model statement about a field holds unless evidence for that field was stored AFTER it
-    (e.g. attempt 1 said "unresolved", attempt 2 then stored evidence). Unknown order: it holds."""
-    return statement_seq is None or last_evidence_seq is None or statement_seq > last_evidence_seq
-
-
 def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = DEFAULT_TARGET_MARKET) -> list[dict]:
     evidence_by_field: dict[str, list[dict]] = {}
     last_seq: dict[str, int] = {}
+    evidence_seq: dict[str, int] = {}
     for event in events:
         item = event.get("evidence") if event.get("kind") == "evidence" else None
         if isinstance(item, dict):
@@ -210,12 +246,43 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
             evidence_by_field.setdefault(name, []).append(item)
             if isinstance(event.get("seq"), int):
                 last_seq[name] = event["seq"]
+                evidence_seq[str(item.get("evidence_id"))] = event["seq"]
     declared = declarations(events)
     parsed, output_seq = primary_output(events, with_seq=True)
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
-                           output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq)
+                           output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
+                           evidence_seq)
             for spec in specs]
+
+
+def current_evaluation(events: list[dict], specs: list[dict], target_market: str | None = None) -> list[dict]:
+    """THE operational state of requested fields: evaluate_fields over ALL current events. Shared by live
+    recovery, the research bundle and run reconstruction, so there is one evaluator and no stale snapshot."""
+    started = trace.first_event(events, "run_started") or {}
+    market = target_market or started.get("target_market") or DEFAULT_TARGET_MARKET
+    return evaluate_fields(specs, events, market)
+
+
+UNSPECIFIC_VARIANT = {"unclear", "unknown", "different"}
+
+
+def early_resolution_check(spec: dict, events: list[dict], target_market: str) -> tuple[bool, dict]:
+    """(may end the attempt early, current evaluation) for one field.
+
+    Stricter than "state is ok": stopping research needs state ok (so no unresolved same-scope conflict)
+    AND at least one target-market evidence item whose variant_match is `exact` or absent (fields
+    without a variant distinction). A candidate whose variant scope is explicitly unclear / unknown /
+    different never ends an attempt early, even when the evaluator accepts it as usable."""
+    evaluation = current_evaluation(events, [spec], target_market)[0]
+    if evaluation["state"] != "ok":
+        return False, evaluation
+    for item in trace.evidence_items(events):
+        if (normalize_field_name(item.get("field")) == spec["name"] and _has_value(item.get("value"))
+                and is_target_market(item.get("market"), target_market)
+                and str(item.get("variant_match") or "").strip().lower() not in UNSPECIFIC_VARIANT):
+            return True, evaluation
+    return False, evaluation
 
 
 def max_attempts_for(spec: dict, default: int) -> int:

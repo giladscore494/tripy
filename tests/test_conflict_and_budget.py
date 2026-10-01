@@ -81,11 +81,14 @@ def test_other_market_or_other_variant_is_not_a_same_scope_conflict():
 def test_only_an_explicit_newer_resolution_clears_a_conflict():
     both = [ev(1066), ev(1080)]
     assert state(both, {"status": "found", "seq": 9}, last_seq=5)["state"] == "conflicting"
-    resolved = state(both, {"status": "conflict_resolved", "seq": 9}, last_seq=5)      # 6
+    backed = {"status": "conflict_resolved", "seq": 9, "evidence_ids": ["e1066"]}
+    resolved = state(both, backed, last_seq=5)                                            # 6
     assert resolved["state"] == "ok" and "conflict_resolved_by_model" in resolved["info"]
     assert resolved["values"] == [1066, 1080]                                           # nothing removed
     # A newer conflicting value after the resolution re-opens the conflict.
-    assert state(both + [ev(1100)], {"status": "conflict_resolved", "seq": 9}, last_seq=12)["state"] == "conflicting"
+    assert state(both + [ev(1100)], backed, last_seq=12)["state"] == "conflicting"
+    # Without evidence references the resolution does not close the conflict.
+    assert state(both, {"status": "conflict_resolved", "seq": 9}, last_seq=5)["state"] == "conflicting"
     assert state(both, {"status": "conflicting", "seq": 9}, last_seq=5)["state"] == "conflicting"
 
 

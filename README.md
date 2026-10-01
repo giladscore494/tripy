@@ -390,6 +390,41 @@ Attempt history (`state_before`/`state_after`, replies) is kept separately. The 
 Invariant: a requested field with any evidence record never appears in
 `targets_without_stored_evidence`. There is no automatic resume yet.
 
+**Declaration freshness.** Every field-status declaration counts only while no evidence for that field
+was stored after it. This covers `found`, `conflict_resolved`, `not_applicable`, `unresolved`,
+`conflicting`, `foreign_market_only`, `variant_not_exact`, `weak_provenance`, and the primary JSON's
+provenance. A stale declaration is ignored and noted as `stale_declaration:<status>`. With unknown
+ordering, the declaration still holds.
+
+**Evidence-backed conflict resolution.** `conflict_resolved` closes a same-scope conflict only if:
+
+- its `evidence_ids` are non-empty;
+- every id is stored evidence for this same field;
+- at least one cited item was stored at or after the moment the conflict became active.
+
+`report_field_status` refuses a `conflict_resolved` without such ids. A recovery reply without them
+leaves the field `conflicting`. Code never decides which value is true.
+
+**Early exit is stricter than "usable".** A recovery attempt ends early only when the field is `ok` and
+at least one target-market evidence item has `variant_match` `exact` or no `variant_match` at all (for
+fields without a variant distinction). `unclear`, `unknown` and `different` never end an attempt early,
+though the evaluator may still call such a field usable.
+
+Metrics:
+
+- `early_resolution_count`: the number of early exits.
+- `turn_budget_skipped_by_early_resolution`: the sum of turn budget left when exiting.
+- `turns_saved_by_early_resolution`: deprecated alias of the count.
+
+**Budget.** `field_cut_short_by_budget` names a field only when one of its attempts had started and was
+stopped by the global cap. If attempt 1 completed and attempt 2 never started, only
+`stopped = "max_total_steps"` reports it.
+
+**One evaluator.** `field_recovery.current_evaluation()` (`evaluate_fields` over all events) is used by
+live recovery, the research bundle and run reconstruction. Reconstructed recovery summaries are history
+only, and their current states come from that evaluator. Supplementary quote/note values carried by
+`evidence_reused` events are folded back into the canonical evidence item on reconstruction.
+
 ### Retries, timeouts and cost
 
 `GLM_CHAT_MAX_ATTEMPTS` and `GLM_SEARCH_MAX_ATTEMPTS` count **total** HTTP attempts: 2 means one

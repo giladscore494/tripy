@@ -104,14 +104,28 @@ def store_evidence(ctx, field: str, value: Any, unit: str | None = None, source_
     return {"evidence_id": item["evidence_id"], "stored": True}
 
 
-def report_field_status(ctx, field: str, status: str, note: str | None = None) -> dict:
-    """The model's own declaration about a requested field. Logged as a `field_status` event."""
+def report_field_status(ctx, field: str, status: str, note: str | None = None,
+                        evidence_ids: list | None = None) -> dict:
+    """The model's own declaration about a requested field. Logged as a `field_status` event.
+
+    `evidence_ids` is optional, except for conflict_resolved, which must cite the evidence records that
+    establish the resolution (technical check only: ids must exist and belong to this field)."""
     from ..fields import normalize_field_name
     from ..schemas import FIELD_STATUSES
 
     status = (status or "").strip().lower()
     if status not in FIELD_STATUSES:
         return {"error": "invalid_arguments", "message": f"status must be one of {', '.join(FIELD_STATUSES)}"}
-    declaration = {"field": normalize_field_name(field), "status": status, "note": note, "source": "tool"}
+    name = normalize_field_name(field)
+    cited = [str(i) for i in evidence_ids or [] if i not in (None, "")]
+    if status == "conflict_resolved":
+        known = {str(e.get("evidence_id")) for e in ctx.evidence.items if normalize_field_name(e.get("field")) == name}
+        bad = [i for i in cited if i not in known]
+        if not cited or bad:
+            return {"error": "invalid_arguments",
+                    "message": "conflict_resolved needs evidence_ids of stored evidence for this field"
+                               + (f"; unknown for {name}: {', '.join(bad)}" if bad else "")
+                               + ". Store the supporting evidence first, then cite it."}
+    declaration = {"field": name, "status": status, "note": note, "source": "tool", "evidence_ids": cited}
     ctx.emit("field_status", **declaration)
     return {"recorded": True, **declaration}

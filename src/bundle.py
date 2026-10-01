@@ -228,13 +228,11 @@ def current_field_states(events: list[dict], specs: list[dict], target_market: s
     """The authoritative CURRENT state of every requested field, recomputed from ALL events (evidence,
     field_status declarations, primary output) with the same evaluator live field recovery uses. Never a
     stale snapshot: evidence stored mid-attempt, as a by-product or after the last finished attempt counts."""
-    from .field_recovery import DEFAULT_TARGET_MARKET, evaluate_fields
+    from .field_recovery import current_evaluation
 
-    started = trace.first_event(events, "run_started") or {}
-    market = target_market or started.get("target_market") or DEFAULT_TARGET_MARKET
     return {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets", "conflict_evidence_ids")
                          if f.get(k) not in (None, [], {})}
-            for f in evaluate_fields(specs, events, market)}
+            for f in current_evaluation(events, specs, target_market)}
 
 
 def build_research_bundle(events: list[dict], payload: dict | None, *, cache=None,
@@ -311,6 +309,10 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
         "research_actions": actions[-MAX_ACTIONS:],
         "targets_without_stored_evidence": no_evidence,
         "unresolved_targets": unresolved,
+        "unresolved_target_states": [{"field": name, "state": (field_states.get(name) or {}).get("state")}
+                                     for name in unresolved],
+        "level2_targets_without_evidence": no_evidence,
+        "level2_unresolved_targets": unresolved,
         "level3_topics_without_evidence": level3_pending,
         "model_notes": notes,
         "last_model_content": _short(responses[-1]["content"], 4000)

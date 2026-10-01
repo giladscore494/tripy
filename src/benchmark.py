@@ -145,6 +145,11 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "tool_calls_by_name": dict(by_tool),
         "tool_errors": sum(1 for call in executed if call.get("error")),
         "duplicate_evidence_suppressed": counters.get("duplicate_evidence_suppressed", 0),
+        "field_recovery_early_resolutions": recovery.get("early_resolution_count",
+                                                         recovery.get("turns_saved_by_early_resolution")) or 0,
+        "field_recovery_turn_budget_skipped_by_early_resolution":
+            recovery.get("turn_budget_skipped_by_early_resolution") or 0,
+        # deprecated alias (it always counted early-resolution events, not turns)
         "field_recovery_turns_saved_by_early_resolution": recovery.get("turns_saved_by_early_resolution") or 0,
         "recovery_prior_excerpt_items": recovery.get("prior_excerpt_items") or 0,
         "recovery_prior_excerpt_chars": recovery.get("prior_excerpt_chars") or 0,
@@ -214,6 +219,7 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "fields_resolved_directly_by_recovery", "fields_resolved_indirectly_by_other_recovery",
             "field_recovery_turns_used", "fields_not_attempted_due_to_budget", "fields_conflicting_final",
             "duplicate_evidence_suppressed", "field_recovery_turns_saved_by_early_resolution",
+            "field_recovery_early_resolutions", "field_recovery_turn_budget_skipped_by_early_resolution",
             "recovery_prior_excerpt_items", "recovery_prior_excerpt_chars", "recovery_attempts_with_prior_excerpts",
             "recovery_document_rereads_after_prior_excerpt",
             "duplicate_calls_suppressed", "duplicate_searches_suppressed", "duplicate_fetches_suppressed",

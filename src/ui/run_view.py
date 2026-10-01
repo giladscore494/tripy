@@ -277,9 +277,10 @@ def target_status_lines(bundle: dict) -> dict[str, list[str]]:
     states = bundle.get("field_states") or {}
     unresolved = bundle.get("unresolved_targets") or []
     legacy = [t for t in unresolved if str(t).startswith("level3:")]   # bundles written before the split
+    explicit = {u.get("field"): u.get("state") for u in bundle.get("unresolved_target_states") or []}
     return {
         "no_evidence": list(bundle.get("targets_without_stored_evidence") or []),
-        "unresolved": [f"{name} — {(states.get(name) or {}).get('state', 'unresolved')}"
+        "unresolved": [f"{name} — {explicit.get(name) or (states.get(name) or {}).get('state', 'unresolved')}"
                        for name in unresolved if not str(name).startswith("level3:")],
         "level3": list(bundle.get("level3_topics_without_evidence") or [t.split(":", 1)[1] for t in legacy]),
     }
@@ -288,9 +289,9 @@ def target_status_lines(bundle: dict) -> dict[str, list[str]]:
 def render_target_status(bundle: dict) -> None:
     lines = target_status_lines(bundle)
     if lines["no_evidence"]:
-        st.markdown("**Level 2 targets with no stored evidence:** " + ", ".join(lines["no_evidence"]))
+        st.markdown("**Targets with no stored evidence** (Level 2): " + ", ".join(lines["no_evidence"]))
     if lines["unresolved"]:
-        st.markdown("**Level 2 targets still unresolved** (current state; evidence may exist):")
+        st.markdown("**Targets still unresolved** (Level 2, current state; evidence may exist):")
         st.markdown("\n".join(f"- {line}" for line in lines["unresolved"]))
     if lines["level3"]:
         st.markdown("**Level 3 topics not researched / without evidence:** " + ", ".join(lines["level3"]))
