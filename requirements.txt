@@ -1,4 +1,8 @@
-# Pinned to the exact versions this application is tested against.
-# Python 3.11 (compatible with Streamlit Community Cloud).
-streamlit==1.63.0
-requests==2.33.1
+# Python 3.11+
+streamlit>=1.40
+requests>=2.32
+beautifulsoup4>=4.12
+pdfplumber>=0.11
+psycopg[binary]>=3.2
+# Optional, enables render_page (also run `playwright install chromium` where allowed):
+# playwright>=1.47

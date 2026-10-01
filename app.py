@@ -1,310 +1,224 @@
-# -*- coding: utf-8 -*-
-"""MILO R5 Source Capture - Streamlit entrypoint (Hebrew RTL interface).
+"""MILO — GLM Web Research Benchmark v1 (Streamlit shell).
 
-All networking lives in capture.py, which is importable without Streamlit.
-This module renders the interface only.
-
-There is deliberately no URL input, no database, no persistent server storage,
-no authentication, no user account, no analytics and no model provider.
+Supabase Level 1.5 -> benchmark loader -> GLM agent loop -> research tools ->
+evidence store -> structured result -> this UI. One process, no backend.
 """
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
 
 import streamlit as st
 
-import capture
+from src.agent import PROMPT_VERSION, AgentConfig, run_vehicle
+from src.benchmark import (benchmark_vehicles, compute_metrics, manufacturers, run_batch, select_vehicles,
+                           vehicle_label)
+from src.db import Level15Error, build_level15_payload, database_url, load_level15
+from src.glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_PATH, DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_PATH,
+                            GLMClient, GLMError, GLMSettings)
+from src.storage.cache import DocumentCache
+from src.storage.run_log import RunLog, list_batches, load_results, new_batch_id, write_batch
+from src.tools import ToolConfig
+from src.ui import benchmark_view, run_view
 
-STATE_KEY = "milo_r5_capture_result"
-
-RTL_STYLE = """
-<style>
-  .stApp, .main, section.main { direction: rtl; }
-  .stApp h1, .stApp h2, .stApp h3, .stApp p, .stApp li, .stApp label,
-  .stApp .stMarkdown, .stApp .stAlert { direction: rtl; text-align: right; }
-  .stApp code, .stApp pre, .ltr { direction: ltr; text-align: left;
-      unicode-bidi: embed; display: inline-block; }
-  .stApp [data-testid="stDataFrame"] { direction: ltr; text-align: left; }
-  .stApp .stButton > button { direction: rtl; }
-</style>
-"""
-
-STATUS_PRESENTATION = {
-    capture.STATUS_READY: (
-        "success",
-        "מוכן לבדיקת חבילת R5",
-        "כל מקורות הממשלה "
-        "עברו אימות, נמצאו "
-        "רשומות מועמדות, "
-        "ושני דפי טויוטה "
-        "הרשמיים עברו אימות.",
-    ),
-    capture.STATUS_NO_RECORDS: (
-        "warning",
-        "לא נמצאו רשומות "
-        "ממשלתיות תואמות",
-        "הקריאות לממשלה "
-        "היו תקפות, אך החיפוש "
-        "הממוקד לא החזיר "
-        "מועמדי RAV4.",
-    ),
-    capture.STATUS_INCOMPLETE_WEB: (
-        "warning",
-        "מקור אינטרנט "
-        "רשמי חסר",
-        "לכידת נתוני הממשלה "
-        "הצליחה, אך אחד מדפי "
-        "טויוטה אינו זמין "
-        "או נכשל באימות.",
-    ),
-    capture.STATUS_FAILED: (
-        "error",
-        "הלכידה נכשלה",
-        "כשל רשת, HTTP, הפניה, "
-        "גודל, JSON, דפדוף או "
-        "שלמות מנע לכידה "
-        "תקפה.",
-    ),
-}
-
-H = {
-    "title": "MILO R5 – לכידת מקורות",
-    "run": "התחל לכידה",
-    "reset": "איפוס לכידה",
-    "purpose_h": "מטרה",
-    "sources_h": "מקורות קבועים",
-    "results_h": "תוצאות לפי מקור",
-    "download_h": "הורדה",
-    "trouble_h": "איתור תקלות",
-    "no_run": "עדיין לא בוצעה "
-              "לכידה במושב זה.",
-    "running": "מבצע לכידה…",
-    "done": "הלכידה הושלמה",
-    "requesting": "שולח בקשה",
-}
-
-COLUMNS_HE = {
-    "source_id": "מזהה מקור",
-    "http": "HTTP",
-    "validation": "אימות",
-    "final_url": "כתובת סופית",
-    "records": "רשומות",
-    "bytes": "באייטים",
-    "attempts": "ניסיונות",
-    "sha256": "SHA-256",
-    "error": "סיבת כשל",
-}
+ROOT = Path(__file__).resolve().parent
+RUNS_DIR = Path(os.environ.get("MILO_RUNS_DIR", ROOT / "runs"))
+CACHE_DIR = Path(os.environ.get("MILO_CACHE_DIR", RUNS_DIR / "_cache"))
 
 
-def _results_rows(entries):
-    rows = []
-    for entry in entries:
-        rows.append(
-            {
-                COLUMNS_HE["source_id"]: entry["source_id"],
-                COLUMNS_HE["http"]: entry["http_status"],
-                COLUMNS_HE["validation"]: entry["validation_result"],
-                COLUMNS_HE["final_url"]: entry["final_url"],
-                COLUMNS_HE["records"]: entry.get("returned_record_count"),
-                COLUMNS_HE["bytes"]: entry["byte_count"],
-                COLUMNS_HE["attempts"]: entry["attempts"],
-                COLUMNS_HE["sha256"]: entry["sha256"],
-                COLUMNS_HE["error"]: entry["error"] or "",
-            }
-        )
-    return rows
+def secret(name: str, default: str = "") -> str:
+    """Environment first, then Streamlit secrets (if any are configured)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
 
 
-def _render_purpose():
-    st.subheader(H["purpose_h"])
-    st.write(
-        "הכלי לוכד מערכת "
-        "קבועה ומוגבלת של "
-        "מקורות ציבוריים "
-        "– נתוני ממשלה (CKAN) "
-        "ושני דפים רשמיים "
-        "של טויוטה ישראל "
-        "– שומר את גוף "
-        "התגובה בדיוק "
-        "כפי שהתקבל, מאמת "
-        "אותו ומפיק קובץ ZIP "
-        "מאומת עבור MILO R5."
-    )
-    st.info(
-        "**לא נדרש מפתח API "
-        "ולא נעשה שימוש "
-        "במפתח.** כל המקורות "
-        "ציבוריים ולקריאה "
-        "בלבד. האפליקציה "
-        "שולחת בקשות `GET` "
-        "בלבד, ללא כותרת "
-        "`Authorization`, ללא עוגיות "
-        "וללא סודות. אין "
-        "שדה להזנת כתובות "
-        "– רשימת המקורות "
-        "קבועה בקוד."
-    )
+def float_secret(name: str) -> float:
+    try:
+        return float(secret(name, "0") or 0)
+    except ValueError:
+        return 0.0
 
 
-def _render_sources():
-    st.subheader(H["sources_h"])
-    for source_id, source_type, url in capture.build_plan_preview():
-        st.markdown(
-            "- `{0}` – {1}<br/><code class='ltr'>{2}</code>".format(
-                source_id, source_type, url
-            ),
-            unsafe_allow_html=True,
-        )
-    st.caption(
-        "שאילתות הממשלה "
-        "מדפדפות באמצעות "
-        "`offset`/`limit` עד לקליטת כל "
-        "התוצאות שדווחו "
-        "עבור אותה שאילתה. "
-        "הכתובת המיושנת "
-        "{0} אינה נשלחת.".format(
-            capture.TOYOTA_PREVIOUS_OBSOLETE_URL
-        )
-    )
+@st.cache_resource
+def shared_cache(path: str) -> DocumentCache:
+    return DocumentCache(path)
 
 
-def _render_status(result):
-    kind, headline, explanation = STATUS_PRESENTATION[result["overall_status"]]
-    banner = {"success": st.success, "warning": st.warning, "error": st.error}[kind]
-    banner("**{0}**\n\n`{1}`\n\n{2}".format(headline, result["overall_status"], explanation))
+st.set_page_config(page_title="MILO GLM Benchmark v1", page_icon="🔎", layout="wide")
+cache = shared_cache(str(CACHE_DIR))
+vehicles = benchmark_vehicles()
+vehicles_by_id = {v["upstream_record_id"]: v for v in vehicles}
+labels = {v["upstream_record_id"]: vehicle_label(v) for v in vehicles}
 
-    if result["overall_status"] != capture.STATUS_READY:
-        st.warning(
-            "**הארכיון חלקי "
-            "(INCOMPLETE) ואינו מוכן "
-            "ל-R5.** זוהי חבילת "
-            "אבחון בלבד. אין "
-            "להתייחס אליה "
-            "כאל עדות מאומתת "
-            "ואין לשנות את שם "
-            "הקובץ."
-        )
+# --- Sidebar: configuration ----------------------------------------------------
 
-    for failure in result["government_failures"]:
-        st.error("ממשלה: `{0}`".format(failure))
-    for failure in result["web_failures"]:
-        st.warning("טויוטה: `{0}`".format(failure))
+with st.sidebar:
+    st.header("GLM")
+    model_id = st.text_input("Model id", value=secret("GLM_MODEL"),
+                             help="Any GLM chat model id. Nothing in the code assumes a specific model.")
+    base_url = st.text_input("API base URL", value=secret("GLM_BASE_URL", DEFAULT_BASE_URL))
+    chat_path = st.text_input("Chat endpoint", value=secret("GLM_CHAT_PATH", DEFAULT_CHAT_PATH),
+                              help="Path relative to the base URL, or a full URL.")
+    env_key = secret("GLM_API_KEY")
+    api_key = env_key or st.text_input("API key", type="password", help="Or set GLM_API_KEY.")
+    st.caption("API key: " + ("from environment/secrets" if env_key else "entered here" if api_key else "missing"))
+    search_backend = st.selectbox("search_web backend", ["glm", "duckduckgo"],
+                                  index=0 if secret("SEARCH_BACKEND", "glm") == "glm" else 1,
+                                  help="glm = GLM web_search API; duckduckgo = keyless HTML search.")
+    search_path = st.text_input("GLM search endpoint", value=secret("GLM_SEARCH_PATH", DEFAULT_SEARCH_PATH),
+                                disabled=search_backend != "glm", help="Path relative to the base URL, or a full URL.")
+    search_engine = st.text_input("GLM search engine", value=secret("GLM_SEARCH_ENGINE", DEFAULT_SEARCH_ENGINE),
+                                  disabled=search_backend != "glm")
 
-    for entry in result["entries"]:
-        if entry["validation_result"] == capture.RESULT_ARCHIVED_MODEL:
-            st.info(
-                "דף הדגם הרשמי "
-                "מאשר **זהות דגם "
-                "וסטטוס ארכיון "
-                "בלבד** – לא מפרט "
-                "טכני. לא הוסק "
-                "שום נתון מהכתובת "
-                "או משם הקובץ. "
-                "נתוני CKAN הם המקור "
-                "הטכני המובנה. "
-                "נדרשת בדיקת "
-                "אנוש של ה-HTML השמור."
-            )
+    st.header("Agent")
+    max_steps = st.slider("Max model steps per vehicle", 5, 80, int(secret("AGENT_MAX_STEPS", "30") or 30))
+    tool_chars = st.number_input("Max chars per tool result sent to model", 2000, 60000, 12000, step=1000)
+    include_level3 = st.checkbox("Include Level 3 open research", value=True)
+    use_temp = st.checkbox("Set temperature")
+    temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
+    max_tokens = st.number_input("max_tokens per model turn (0 = provider default)", 0, 131072, 0, step=1024)
+    extra_raw = st.text_area("Extra request JSON (merged into every chat payload)", value=secret("GLM_EXTRA_BODY", ""),
+                             placeholder='{"thinking": {"type": "enabled"}}', height=80)
 
+    st.header("Cost")
+    price_in = st.number_input("USD per 1M input tokens", 0.0, 100.0, float_secret("GLM_PRICE_INPUT_PER_MTOK"),
+                               step=0.05, format="%.3f")
+    price_out = st.number_input("USD per 1M output tokens", 0.0, 100.0, float_secret("GLM_PRICE_OUTPUT_PER_MTOK"),
+                                step=0.05, format="%.3f")
 
-def _render_integrity(result):
-    if result["integrity_verified"]:
-        st.caption(
-            "שלמות אומתה: גדלי "
-            "הקבצים וטביעות "
-            "SHA-256 חושבו מחדש והושווו "
-            "מול manifest.json, ו-SHA256SUMS.txt אומת "
-            "לפני בניית ה-ZIP."
-        )
-    else:
-        st.error(
-            "אימות שלמות נכשל:\n\n"
-            + "\n".join("- `{0}`".format(p) for p in result["integrity_problems"])
-        )
+    st.header("Level 1.5 data")
+    dsn = secret("DATABASE_URL") or database_url()
+    data_source = st.selectbox("Source", ["auto", "database", "snapshot"],
+                               help="auto = Supabase when DATABASE_URL is set, else the frozen snapshot.")
+    st.caption("DATABASE_URL: " + ("configured" if dsn else "not set → snapshot"))
 
+    st.header("View")
+    batches = list_batches(RUNS_DIR)
+    batch_ids = [b["batch_id"] for b in batches]
+    current = st.session_state.get("batch_id")
+    if current and current not in batch_ids:
+        batch_ids.insert(0, current)
+    view_batch = st.selectbox("Batch", batch_ids, index=batch_ids.index(current) if current in batch_ids else 0,
+                              placeholder="No runs yet") if batch_ids else None
 
-def _render_troubleshooting():
-    with st.expander(H["trouble_h"]):
-        st.markdown(
-            "- `transport_error` – השרת לא "
-            "הצליח לצאת "
-            "החוצה. יש לוודא "
-            "שהסביבה מאפשרת "
-            "גישה ל-`data.gov.il` ו-`toyota.co.il`.\n"
-            "- `failed_http_status` – המקור "
-            "החזיר קוד שאינו "
-            "200. אם הכתובת הרשמית "
-            "שונתה – יש לעדכן "
-            "את הקבועים ב-`capture.py`.\n"
-            "- `failed_blocking_page` – התקבל דף "
-            "חסימה/CAPTCHA/WAF.\n"
-            "- `failed_missing_archive_indication` – הדף "
-            "נקלט אך לא נמצא "
-            "בו סימן לסיום "
-            "שיווק.\n"
-            "- `pagination_*` – דפדוף לא "
-            "התקדם או החזיר "
-            "סכומים לא עקביים; "
-            "הלכידה נכשלת "
-            "במכוון ולא "
-            "מקצצת תוצאות."
-        )
+# --- Header and selection ---------------------------------------------------------
 
+st.title("MILO — GLM Web Research Benchmark v1")
+st.caption("How far can GLM get with the full Level 1.5 record and strong web tools? "
+           "No verifier, no domain allowlist, no confidence gate: everything the model does is logged and shown.")
 
-def main():
-    st.set_page_config(page_title="MILO R5", page_icon="\U0001f4e6")
-    st.markdown(RTL_STYLE, unsafe_allow_html=True)
-    st.title(H["title"])
+mode_label = st.radio("Scope", ["One vehicle", "Manufacturer", "All 50"], horizontal=True)
+if mode_label == "One vehicle":
+    chosen_id = st.selectbox("Vehicle", list(labels), format_func=labels.get)
+    selection = select_vehicles(vehicles, "one", chosen_id)
+elif mode_label == "Manufacturer":
+    maker = st.selectbox("Manufacturer", manufacturers(vehicles))
+    selection = select_vehicles(vehicles, "manufacturer", maker)
+else:
+    selection = select_vehicles(vehicles, "all")
+st.caption(f"{len(selection)} vehicle(s) selected · prompt version {PROMPT_VERSION}")
 
-    _render_purpose()
-    _render_sources()
+extra_body: dict = {}
+extra_error = ""
+if extra_raw.strip():
+    try:
+        extra_body = json.loads(extra_raw)
+        if not isinstance(extra_body, dict):
+            extra_error, extra_body = "Extra request JSON must be an object.", {}
+    except ValueError as exc:
+        extra_error = f"Extra request JSON is invalid: {exc}"
+if extra_error:
+    st.error(extra_error)
 
-    run_clicked = st.button(H["run"], type="primary")
-    reset_clicked = st.button(H["reset"])
+missing = [name for name, ok in (("model id", model_id), ("API key", api_key)) if not ok]
+if missing:
+    st.info("To run research, provide: " + ", ".join(missing) + ".")
+run_clicked = st.button("Run Research", type="primary", disabled=bool(missing or extra_error or not selection))
 
-    if reset_clicked:
-        st.session_state.pop(STATE_KEY, None)
-        st.rerun()
+# --- Run -----------------------------------------------------------------------------
 
-    if run_clicked:
-        progress_bar = st.progress(0.0, text=H["running"])
-        planned = len(capture.build_plan_preview())
+if run_clicked:
+    try:
+        load = load_level15([v["upstream_record_id"] for v in selection], source=data_source, dsn=dsn)
+    except Level15Error as exc:
+        st.error(str(exc))
+        st.stop()
+    if load.missing:
+        st.warning(f"Level 1.5 rows not found for: {', '.join(load.missing)}")
+    try:
+        client = GLMClient(GLMSettings(api_key=api_key, base_url=base_url, model=model_id,
+                                       chat_path=chat_path or DEFAULT_CHAT_PATH,
+                                       search_path=search_path or DEFAULT_SEARCH_PATH,
+                                       search_engine=search_engine or DEFAULT_SEARCH_ENGINE))
+    except GLMError as exc:
+        st.error(str(exc))
+        st.stop()
 
-        def on_progress(source_id, completed):
-            fraction = min(completed / float(max(planned, 1)), 0.99)
-            progress_bar.progress(
-                fraction, text="{0}: {1}".format(H["requesting"], source_id)
-            )
+    batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}")
+    agent_cfg = AgentConfig(max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
+                            temperature=temperature, max_tokens=int(max_tokens) or None,
+                            include_level3=include_level3, extra_body=extra_body)
+    tool_cfg = ToolConfig(search_backend=search_backend)
+    write_batch(RUNS_DIR, batch_id, {
+        "batch_id": batch_id, "model": model_id, "base_url": base_url, "chat_path": chat_path,
+        "prompt_version": PROMPT_VERSION,
+        "search_backend": search_backend, "search_engine": search_engine if search_backend == "glm" else None,
+        "search_path": search_path if search_backend == "glm" else None,
+        "level15_source": load.source, "level15_note": load.note, "selection": mode_label,
+        "record_ids": [v["upstream_record_id"] for v in selection],
+        "agent_config": agent_cfg.__dict__, "tool_config": tool_cfg.__dict__,
+    })
+    st.session_state["batch_id"] = batch_id
+    rows_by_id = {str(r["upstream_record_id"]): r for r in load.rows}
+    progress = st.progress(0.0, text=f"Batch {batch_id} · Level 1.5 from {load.source}")
+    done = {"n": 0}
 
-        # Deliberately not cached: every run performs its own live requests.
-        result = capture.run_and_package(progress=on_progress)
-        progress_bar.progress(1.0, text=H["done"])
-        st.session_state[STATE_KEY] = result
+    def run_one(vehicle: dict, row: dict) -> dict:
+        with st.status(labels[vehicle["upstream_record_id"]], expanded=True) as status_box:
+            feed = st.empty()
+            log = RunLog(RUNS_DIR, batch_id, vehicle["upstream_record_id"],
+                         listener=run_view.live_listener(feed))
+            result = run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
+                                 config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle,
+                                 batch_id=batch_id, ordinal=vehicle["ordinal"])
+            result["metrics"] = compute_metrics(result, vehicle, cache, price_in, price_out)
+            result["level15_source"] = load.source
+            log.write_result(result)
+            m = result["metrics"]
+            status_box.update(
+                label=f"{labels[vehicle['upstream_record_id']]} · {result['status']} · {m['fields_with_value']} fields"
+                      f" · {m['tool_calls']} tools · {result['duration_s']}s",
+                state="error" if result["status"] == "error" else "complete", expanded=False)
+        return result
 
-    result = st.session_state.get(STATE_KEY)
-    if not result:
-        st.caption(H["no_run"])
-        _render_troubleshooting()
-        return
+    def on_done(vehicle: dict, result: dict) -> None:
+        done["n"] += 1
+        progress.progress(done["n"] / len(selection), text=f"{done['n']}/{len(selection)} done")
 
-    _render_status(result)
+    run_batch(selection, rows_by_id, run_one, on_done=on_done)
+    view_batch = batch_id
 
-    st.subheader(H["results_h"])
-    st.dataframe(_results_rows(result["entries"]))
-    _render_integrity(result)
+# --- Views ---------------------------------------------------------------------------
 
-    st.subheader(H["download_h"])
-    st.caption(
-        "`{0}` – {1} bytes – sha256 `{2}`".format(
-            result["archive_filename"], result["archive_byte_count"], result["archive_sha256"]
-        )
-    )
-    st.download_button(
-        label="{0} – {1}".format(H["download_h"], result["archive_filename"]),
-        data=result["archive_bytes"],
-        file_name=result["archive_filename"],
-        mime="application/zip",
-    )
-
-    _render_troubleshooting()
-
-
-if __name__ == "__main__":
-    main()
+results = load_results(RUNS_DIR, view_batch) if view_batch else []
+if view_batch:
+    st.divider()
+    st.subheader(f"Batch {view_batch}")
+tab_run, tab_docs, tab_results, tab_bench = st.tabs(["Run", "Documents", "Results", "Benchmark"])
+with tab_run:
+    if not results:
+        st.caption("No results to show yet. Choose a scope and press Run Research.")
+    for result in results:
+        run_view.render_vehicle(result, labels.get(result["record_id"], result["record_id"]), RUNS_DIR, cache)
+with tab_docs:
+    run_view.render_documents_tab(cache, results)
+with tab_results:
+    run_view.render_results_tab(results, labels)
+with tab_bench:
+    benchmark_view.render_benchmark(results, vehicles_by_id, labels, cache, RUNS_DIR, price_in, price_out)
