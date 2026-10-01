@@ -1,0 +1,271 @@
+"""Extraction tools over stored documents: text, tables, focused search, structured data."""
+
+from __future__ import annotations
+
+import io
+import json
+import re
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup
+
+NOISE_TAGS = ("script", "style", "noscript", "template", "svg", "iframe", "object", "canvas")
+STATE_PATTERNS = (
+    "__INITIAL_STATE__", "__PRELOADED_STATE__", "__APOLLO_STATE__", "__NUXT__",
+    "__DATA__", "__STATE__", "__APP_DATA__", "dataLayer",
+)
+
+
+def _soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, "html.parser")
+
+
+def _clean_lines(text: str) -> str:
+    lines = [re.sub(r"[ \t ]+", " ", line).strip() for line in text.splitlines()]
+    out, blank = [], False
+    for line in lines:
+        if line:
+            out.append(line)
+            blank = False
+        elif not blank and out:
+            out.append("")
+            blank = True
+    return "\n".join(out).strip()
+
+
+def visible_text(html: str) -> str:
+    soup = _soup(html)
+    for tag in soup(NOISE_TAGS):
+        tag.decompose()
+    return _clean_lines(soup.get_text("\n"))
+
+
+def html_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    return re.sub(r"\s+", " ", match.group(1)).strip()[:300] if match else ""
+
+
+class DocumentNotFound(LookupError):
+    pass
+
+
+def _load(ctx, document_id: str) -> tuple[dict, str | None]:
+    """Return (meta, html-or-None). Counts as a document opening for metrics."""
+    meta = ctx.cache.get(document_id)
+    if not meta:
+        raise DocumentNotFound(f"Unknown document_id {document_id!r}; fetch the URL first.")
+    ctx.note_document(document_id)
+    if meta.get("doc_type") == "html" or meta.get("kind") == "rendered":
+        body = ctx.cache.read_body(document_id)
+        return meta, body.decode("utf-8", errors="replace")
+    return meta, None
+
+
+def _chunk(text: str, offset: int, max_chars: int) -> dict:
+    offset = max(0, int(offset or 0))
+    piece = text[offset : offset + max_chars]
+    end = offset + len(piece)
+    return {"offset": offset, "text": piece, "total_chars": len(text),
+            "next_offset": end if end < len(text) else None}
+
+
+def extract_html(ctx, document_id: str, offset: int = 0, max_chars: int = 10000) -> dict:
+    meta, html = _load(ctx, document_id)
+    text = ctx.cache.read_text(document_id)
+    result = {"document_id": document_id, "url": meta.get("final_url") or meta.get("url"),
+              "title": meta.get("title", "")}
+    if html is not None and not offset:
+        soup = _soup(html)
+        base = meta.get("final_url") or meta.get("url") or ""
+        result["headings"] = [
+            {"level": int(h.name[1]), "text": h.get_text(" ", strip=True)[:200]}
+            for h in soup.find_all(re.compile(r"^h[1-6]$")) if h.get_text(strip=True)
+        ][:80]
+        result["lists"] = [
+            [li.get_text(" ", strip=True)[:200] for li in ul.find_all("li", recursive=False)][:30]
+            for ul in soup.find_all(["ul", "ol"])
+            if 1 < len(ul.find_all("li", recursive=False)) <= 60
+        ][:25]
+        links, seen = [], set()
+        for a in soup.find_all("a", href=True):
+            href = urljoin(base, a["href"])
+            if href.startswith(("http://", "https://")) and href not in seen:
+                seen.add(href)
+                links.append({"text": a.get_text(" ", strip=True)[:120], "url": href})
+        result["links"] = links[:150]
+        result["links_total"] = len(links)
+    result.update(_chunk(text, offset, max_chars))
+    return result
+
+
+def _html_tables(html: str) -> list[dict]:
+    soup = _soup(html)
+    tables = []
+    for table in soup.find_all("table"):
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+            if any(cells):
+                rows.append(cells)
+        if rows:
+            caption = table.find("caption")
+            tables.append({"source": "html_table", "caption": caption.get_text(" ", strip=True) if caption else "",
+                           "rows": rows})
+    for dl in soup.find_all("dl"):
+        rows = []
+        for dt in dl.find_all("dt"):
+            dd = dt.find_next_sibling("dd")
+            rows.append([dt.get_text(" ", strip=True), dd.get_text(" ", strip=True) if dd else ""])
+        if rows:
+            tables.append({"source": "definition_list", "caption": "", "rows": rows})
+    return tables
+
+
+def _pdf_tables(body: bytes, max_pages: int = 200) -> list[dict]:
+    import pdfplumber
+
+    tables = []
+    with pdfplumber.open(io.BytesIO(body)) as pdf:
+        for page_no, page in enumerate(pdf.pages[:max_pages], start=1):
+            for raw in page.extract_tables() or []:
+                rows = [[(cell or "").strip() for cell in row] for row in raw if row and any(row)]
+                if rows:
+                    tables.append({"source": "pdf_table", "page": page_no, "caption": "", "rows": rows})
+    return tables
+
+
+def extract_tables(ctx, document_id: str, max_tables: int = 15, max_rows: int = 80) -> dict:
+    meta, html = _load(ctx, document_id)
+    tables = ctx.cache.get_derived(document_id, "tables")
+    if tables is None:
+        if html is not None:
+            tables = _html_tables(html)
+        elif meta.get("doc_type") == "pdf":
+            tables = _pdf_tables(ctx.cache.read_body(document_id))
+        else:
+            tables = []
+        ctx.cache.put_derived(document_id, "tables", tables)
+    out = []
+    for index, table in enumerate(tables[: max(1, int(max_tables))]):
+        rows = table["rows"]
+        out.append({**table, "index": index, "n_rows": len(rows),
+                    "n_cols": max((len(r) for r in rows), default=0),
+                    "rows": rows[:max_rows], "rows_truncated": len(rows) > max_rows})
+    return {"document_id": document_id, "tables_total": len(tables), "tables": out}
+
+
+def _structured(html: str) -> dict:
+    soup = _soup(html)
+    data: dict = {"json_ld": [], "next_data": None, "application_json": [], "window_state": {}, "meta": {},
+                  "microdata": []}
+    for script in soup.find_all("script"):
+        stype = (script.get("type") or "").lower()
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        if stype == "application/ld+json":
+            try:
+                data["json_ld"].append(json.loads(raw))
+            except ValueError:
+                data["json_ld"].append({"_unparsed": raw[:2000]})
+        elif script.get("id") == "__NEXT_DATA__":
+            try:
+                data["next_data"] = json.loads(raw)
+            except ValueError:
+                data["next_data"] = {"_unparsed": raw[:2000]}
+        elif stype == "application/json":
+            try:
+                data["application_json"].append({"id": script.get("id"), "data": json.loads(raw)})
+            except ValueError:
+                pass
+        else:
+            for name in STATE_PATTERNS:
+                idx = raw.find(name)
+                if idx < 0:
+                    continue
+                brace = min((p for p in (raw.find("{", idx), raw.find("[", idx)) if p >= 0), default=-1)
+                if brace < 0:
+                    continue
+                try:
+                    value, _ = json.JSONDecoder().raw_decode(raw[brace:])
+                    data["window_state"][name] = value
+                except ValueError:
+                    continue
+    for tag in soup.find_all("meta"):
+        key = tag.get("property") or tag.get("name") or tag.get("itemprop")
+        if key and tag.get("content"):
+            data["meta"][key] = tag["content"][:500]
+    for item in soup.find_all(attrs={"itemprop": True})[:200]:
+        value = item.get("content") or item.get_text(" ", strip=True)
+        if value:
+            data["microdata"].append({"itemprop": item["itemprop"], "value": value[:300]})
+    return data
+
+
+def get_structured_data(ctx, document_id: str, max_chars: int = 20000) -> dict:
+    meta, html = _load(ctx, document_id)
+    if html is None:
+        return {"document_id": document_id, "error": "not_html",
+                "message": f"Document is {meta.get('doc_type')}; use extract_html or extract_tables."}
+    data = ctx.cache.get_derived(document_id, "structured")
+    if data is None:
+        data = _structured(html)
+        ctx.cache.put_derived(document_id, "structured", data)
+    serialized = json.dumps(data, ensure_ascii=False)
+    found = {k: bool(v) for k, v in data.items()}
+    result = {"document_id": document_id, "found": found, "total_chars": len(serialized)}
+    if len(serialized) <= max_chars:
+        result["data"] = data
+    else:
+        result["data_preview"] = serialized[:max_chars]
+        result["hint"] = "Truncated. Use find_in_document with scope='structured' to search the full data."
+    return result
+
+
+def _hits(haystack: str, query: str, context_chars: int, max_hits: int) -> list[dict]:
+    lower = haystack.lower()
+    q = query.lower().strip()
+    positions = []
+    start = 0
+    while q and len(positions) < max_hits:
+        idx = lower.find(q, start)
+        if idx < 0:
+            break
+        positions.append((idx, len(q), 1.0))
+        start = idx + len(q)
+    if not positions:
+        terms = [t for t in re.split(r"\s+", q) if len(t) > 1]
+        scored = []
+        for term in terms:
+            for m in re.finditer(re.escape(term), lower):
+                window = lower[max(0, m.start() - context_chars) : m.end() + context_chars]
+                score = sum(1 for t in terms if t in window) / len(terms)
+                scored.append((m.start(), len(term), score))
+        scored.sort(key=lambda x: (-x[2], x[0]))
+        taken: list[tuple[int, int, float]] = []
+        for pos in scored:
+            if all(abs(pos[0] - t[0]) > context_chars for t in taken):
+                taken.append(pos)
+            if len(taken) >= max_hits:
+                break
+        positions = sorted(taken)
+    return [{"offset": idx, "match_score": round(score, 2),
+             "snippet": haystack[max(0, idx - context_chars) : idx + length + context_chars]}
+            for idx, length, score in positions]
+
+
+def find_in_document(ctx, document_id: str, query: str, scope: str = "text", context_chars: int = 300,
+                     max_hits: int = 15) -> dict:
+    meta, html = _load(ctx, document_id)
+    scope = (scope or "text").lower()
+    if scope == "source":
+        haystack = html if html is not None else ctx.cache.read_body(document_id).decode("utf-8", "replace")
+    elif scope == "structured":
+        if html is None:
+            return {"document_id": document_id, "error": "not_html"}
+        data = ctx.cache.get_derived(document_id, "structured") or _structured(html)
+        haystack = json.dumps(data, ensure_ascii=False)
+    else:
+        haystack = ctx.cache.read_text(document_id)
+    hits = _hits(haystack, query, max(50, min(int(context_chars), 2000)), max(1, min(int(max_hits), 50)))
+    return {"document_id": document_id, "query": query, "scope": scope, "hits": hits, "hit_count": len(hits)}

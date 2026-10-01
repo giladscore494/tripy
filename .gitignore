@@ -1,9 +1,6 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
 .env
-.streamlit/secrets.toml
-*.zip
+runs/
+__pycache__/
+*.pyc
 .pytest_cache/
+.streamlit/secrets.toml
