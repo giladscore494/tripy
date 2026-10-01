@@ -386,7 +386,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             else:
                 st.caption("No failed API attempts.")
         with tabs[11]:
-            render_field_recovery(result)
+            render_field_recovery(result, runs_dir)
         with tabs[10]:
             events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.caption(f"{len(events)} events in events.jsonl")
@@ -398,7 +398,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
                     st.json(event, expanded=False)
 
 
-def render_field_recovery(result: dict) -> None:
+def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
     """Requested-field states after primary research and after targeted retries."""
     recovery = result.get("field_recovery")
     requested = result.get("requested_fields") or {}
@@ -443,9 +443,24 @@ def render_field_recovery(result: dict) -> None:
         st.markdown("**Retry attempts**")
         st.dataframe(pd.DataFrame([{"field": a.get("field"), "attempt": a.get("attempt"),
                                     "before": a.get("state_before"), "after": a.get("state_after"),
-                                    "turns": a.get("turns"), "reply": _short(a.get("reply") or a.get("reply_text"), 300),
+                                    "turns": a.get("turns"), "early_resolved": a.get("early_resolved"),
+                                    "prior_excerpts": a.get("prior_excerpt_items"),
+                                    "prior_excerpt_chars": a.get("prior_excerpt_chars"),
+                                    "packet_chars": a.get("packet_chars"),
+                                    "rereads_after_excerpt": a.get("document_rereads_after_prior_excerpt"),
+                                    "reply": _short(a.get("reply") or a.get("reply_text"), 300),
                                     "error": a.get("error")} for a in recovery["attempts"]]),
                      hide_index=True, width="stretch")
+        st.caption(f"prior excerpts supplied: {recovery.get('prior_excerpt_items', 0)} · "
+                   f"prior excerpt chars: {recovery.get('prior_excerpt_chars', 0):,} · "
+                   f"attempts with prior excerpts: {recovery.get('attempts_with_prior_excerpts', 0)}")
+    if runs_dir is not None:
+        started = [e for e in load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
+                   if e.get("kind") == "field_recovery_started" and e.get("prior_excerpts")]
+        for event in started:
+            with st.expander(f"Prior excerpts · {event.get('field')} · attempt {event.get('attempt')} · "
+                             f"{event.get('prior_excerpt_items')} item(s), {event.get('prior_excerpt_chars')} chars"):
+                st.json(event["prior_excerpts"], expanded=False)
 
 
 def render_documents_table(metas: list[dict]) -> None:

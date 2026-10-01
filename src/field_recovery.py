@@ -27,6 +27,7 @@ import json
 import re
 from typing import Any, Iterable
 
+from .excerpts import select_prior_excerpts
 from .fields import normalize_field_name
 from .schemas import iter_fields, parse_model_output
 from .storage import trace
@@ -104,20 +105,21 @@ def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
 
-def primary_output(events: Iterable[dict]) -> Any:
-    """The research model's own final JSON (a research turn with no tool calls), if it gave one."""
-    found = None
+def primary_output(events: Iterable[dict], with_seq: bool = False) -> Any:
+    """The research model's own final JSON (a research turn with no tool calls), if it gave one.
+    With `with_seq`, returns (output, seq of that model_response)."""
+    found, seq = None, None
     for event in events:
         if (event.get("kind") == "model_response" and trace.phase_group(event.get("phase")) == "research"
                 and not event.get("tool_calls") and (event.get("content") or "").strip()):
             parsed, _ = parse_model_output(event["content"])
             if parsed is not None:
-                found = parsed
-    return found
+                found, seq = parsed, event.get("seq")
+    return (found, seq) if with_seq else found
 
 
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
-                   target_market: str, last_evidence_seq: int | None = None) -> dict:
+                   target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -161,9 +163,10 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
             or out_provenance == "not_applicable"):
         state = "not_applicable"
-    elif declared_status in RETRY_STATES:
-        state = declared_status                       # the model's own report wins
-    elif out_provenance == "unresolved" and declared_status not in RESOLVED_STATUSES:
+    elif declared_status in RETRY_STATES and _newer(declared_seq, last_evidence_seq):
+        state = declared_status                       # the model's own (current) report wins
+    elif (out_provenance == "unresolved" and declared_status not in RESOLVED_STATUSES
+          and _newer(output_seq, last_evidence_seq)):
         state = "unresolved"
     elif not with_value:
         state = "weak_provenance" if _has_value(out_value) else "missing"
@@ -191,6 +194,12 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     }
 
 
+def _newer(statement_seq: int | None, last_evidence_seq: int | None) -> bool:
+    """A model statement about a field holds unless evidence for that field was stored AFTER it
+    (e.g. attempt 1 said "unresolved", attempt 2 then stored evidence). Unknown order: it holds."""
+    return statement_seq is None or last_evidence_seq is None or statement_seq > last_evidence_seq
+
+
 def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = DEFAULT_TARGET_MARKET) -> list[dict]:
     evidence_by_field: dict[str, list[dict]] = {}
     last_seq: dict[str, int] = {}
@@ -202,9 +211,11 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
             if isinstance(event.get("seq"), int):
                 last_seq[name] = event["seq"]
     declared = declarations(events)
-    output = {normalize_field_name(name): entry for name, entry in iter_fields(primary_output(events))}
+    parsed, output_seq = primary_output(events, with_seq=True)
+    output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
-                           output.get(spec["name"]), target_market, last_seq.get(spec["name"])) for spec in specs]
+                           output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq)
+            for spec in specs]
 
 
 def max_attempts_for(spec: dict, default: int) -> int:
@@ -359,10 +370,16 @@ def vehicle_identity(payload: dict, target_market: str) -> dict:
 
 def retry_packet(*, spec: dict, evaluation: dict, events: list[dict], payload: dict, doc_metas: list[dict],
                  attempt: int, max_attempts: int, max_steps: int, target_market: str,
-                 previous_attempts: list[dict], operator_notes: dict | None = None) -> dict:
-    """The compact context of a focused retry for ONE field. Never the primary conversation."""
+                 previous_attempts: list[dict], operator_notes: dict | None = None,
+                 excerpt_limits: dict | None = None) -> dict:
+    """The compact context of a focused retry for ONE field. Never the primary conversation.
+
+    `prior_relevant_excerpts` is bounded working memory of material already exposed in this run
+    (see src/excerpts.py); it is context, not evidence.
+    """
     field_evidence = [e for e in trace.evidence_items(events)
                       if normalize_field_name(e.get("field")) == spec["name"]]
+    excerpts, excerpt_stats = select_prior_excerpts(events, spec, field_evidence, doc_metas, **(excerpt_limits or {}))
     packet = {
         "vehicle_identity": vehicle_identity(payload, target_market),
         "requested_field": {k: v for k, v in spec.items() if k != "applicable"},
@@ -376,6 +393,8 @@ def retry_packet(*, spec: dict, evaluation: dict, events: list[dict], payload: d
         "relevant_documents": related_documents(events, field_evidence, doc_metas),
         "previous_queries_for_this_field": related_searches(events, spec),
         "already_attempted_operations": attempted_operations(events, spec),
+        "prior_relevant_excerpts": excerpts,
+        "prior_excerpt_stats": excerpt_stats,
         "previous_attempts": previous_attempts,
         "attempt": attempt,
         "max_attempts": max_attempts,

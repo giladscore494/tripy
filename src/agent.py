@@ -173,6 +173,12 @@ Do not research the vehicle generally. Your only research objective is the reque
 
 - First inspect the relevant documents already in the cache (listed in the task) with find_in_document,
   extract_tables, get_structured_data or extract_html, before issuing broad web searches.
+- The task may contain prior_relevant_excerpts: excerpts already exposed during earlier research/recovery
+  turns. Use them as working memory before re-reading the same documents. If they already answer the
+  requested field, store the appropriate evidence (excerpts are not evidence by themselves) and finish.
+  If they show that a document was already inspected but do not answer the field, prefer a new targeted
+  query or search strategy rather than reopening the same broad text. Re-read a cached document only
+  when you have a concrete reason that the provided excerpts are insufficient.
 - The task includes already_attempted_operations. Do not repeat an operation listed there when the exact
   same operation has already produced a result. Use a different query, another document, another
   extraction method, or a targeted web search instead. If an exact duplicate tool call is emitted anyway,
@@ -236,6 +242,10 @@ class AgentConfig:
     field_recovery_max_attempts: int = 2      # per field; a field spec's `recovery_attempts` overrides it
     field_recovery_max_steps: int = 4         # model turns per retry attempt
     field_recovery_max_total_steps: int = 24  # hard cap on retry turns per vehicle (all fields/attempts); 0 = none
+    # Bounded working memory of already-exposed excerpts handed to each retry (src/excerpts.py).
+    field_recovery_prior_excerpts_max_items: int = 8
+    field_recovery_prior_excerpts_max_chars: int = 8000
+    field_recovery_prior_excerpt_max_chars: int = 1500
 
 
 AGENT_ENV = {
@@ -248,6 +258,9 @@ AGENT_ENV = {
     "field_recovery_max_attempts": "FIELD_RECOVERY_MAX_ATTEMPTS",
     "field_recovery_max_steps": "FIELD_RECOVERY_MAX_STEPS",
     "field_recovery_max_total_steps": "FIELD_RECOVERY_MAX_TOTAL_STEPS",
+    "field_recovery_prior_excerpts_max_items": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_ITEMS",
+    "field_recovery_prior_excerpts_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS",
+    "field_recovery_prior_excerpt_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS",
 }
 TOOL_ENV = {
     "preview_chars": "TOOL_PREVIEW_CHARS",
@@ -638,12 +651,18 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                                   doc_metas=_doc_metas(events, cache, documents_dir), attempt=attempt,
                                   max_attempts=item["max_attempts"], max_steps=config.field_recovery_max_steps,
                                   target_market=config.target_market, previous_attempts=previous,
-                                  operator_notes=operator_notes)
+                                  operator_notes=operator_notes,
+                                  excerpt_limits={"max_items": config.field_recovery_prior_excerpts_max_items,
+                                                  "max_chars": config.field_recovery_prior_excerpts_max_chars,
+                                                  "max_excerpt_chars": config.field_recovery_prior_excerpt_max_chars})
             packet["other_requested_fields"] = {s["name"]: s.get("description") for s in specs
                                                 if s["name"] != name and s.get("applicable", True)}
             run_log.event("field_recovery_started", field=name, attempt=attempt, max_attempts=item["max_attempts"],
                           failure_reason=before["state"], turn_budget=config.field_recovery_max_steps,
                           already_attempted_operations=len(packet["already_attempted_operations"]),
+                          prior_excerpt_items=packet["prior_excerpt_stats"]["items"],
+                          prior_excerpt_chars=packet["prior_excerpt_stats"]["chars"],
+                          prior_excerpts=packet["prior_relevant_excerpts"],
                           packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)))
             phase_ref["name"] = "field_recovery"
             messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
@@ -699,9 +718,18 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
             after = current[name]
             if not after["retry_eligible"] and name not in resolved_directly:
                 resolved_directly.append(name)
+            excerpt_docs = {e.get("document_id") for e in packet["prior_relevant_excerpts"] if e.get("document_id")}
+            rereads = sum(1 for c in session.tool_calls
+                          if c.get("phase") == "field_recovery" and c.get("field") == name
+                          and c.get("attempt") == attempt and c["name"] in ("get_cached_document", "extract_html")
+                          and _call_document(c) in excerpt_docs)
             record = {"field": name, "attempt": attempt, "state_before": before["state"],
                       "state_after": after["state"], "turns": turns, "reply": reply,
-                      "reply_text": None if reply else reply_text, "error": error, "early_resolved": early}
+                      "reply_text": None if reply else reply_text, "error": error, "early_resolved": early,
+                      "packet_chars": len(json.dumps(packet, ensure_ascii=False, default=str)),
+                      "prior_excerpt_items": packet["prior_excerpt_stats"]["items"],
+                      "prior_excerpt_chars": packet["prior_excerpt_stats"]["chars"],
+                      "document_rereads_after_prior_excerpt": rereads}
             attempts_log.append(record)
             previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
             run_log.event("field_recovery_finished", **record)
@@ -740,10 +768,20 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "attempt_count": len(attempts_log),
         "turns": total_steps,
         "turns_saved_by_early_resolution": turns_saved,
+        "prior_excerpt_items": sum(a.get("prior_excerpt_items") or 0 for a in attempts_log),
+        "prior_excerpt_chars": sum(a.get("prior_excerpt_chars") or 0 for a in attempts_log),
+        "attempts_with_prior_excerpts": sum(1 for a in attempts_log if a.get("prior_excerpt_items")),
+        "document_rereads_after_prior_excerpt": sum(a.get("document_rereads_after_prior_excerpt") or 0
+                                                    for a in attempts_log),
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
+
+
+def _call_document(call: dict) -> str | None:
+    args = trace.parse_args(call.get("arguments"))
+    return call.get("document_id") or args.get("document_id") or args.get("key")
 
 
 def _state_counts(evaluation: list[dict]) -> dict:

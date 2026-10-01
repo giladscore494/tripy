@@ -319,6 +319,45 @@ Every other state continues the attempt, and the final-reply path is unchanged: 
 `not_applicable` without an explicit declaration. The all-fields re-evaluation still runs after the
 attempt, so by-product evidence still resolves other queued fields.
 
+### Prior relevant excerpts (retry working memory)
+
+Each retry is a fresh conversation, so it also gets `prior_relevant_excerpts`: a bounded set of excerpts
+already exposed earlier in this vehicle run (`src/excerpts.py`). Without them, attempt #2 knows from
+`already_attempted_operations` that a document was read, but not what it said.
+
+**Sources** (successful tool results in `events.jsonl`; the cache is never read here, and zero-hit or
+failed calls contribute nothing):
+
+- `find_in_document` hit snippets, with query and offset;
+- the `extract_html` / `get_cached_document` text slice that was returned, windowed around the first
+  field-related term;
+- `extract_tables`: only matching rows plus the header, at most 8 rows and 60 chars per cell;
+- `get_structured_data`: matching flattened `path: value` leaves, at most 12 lines.
+
+**Relevance** is generic and schema-driven. A score combines:
+
+- +100 when the excerpt came from this field's own recovery;
+- +50 when it came from a document behind this field's evidence;
+- +10 per overlap (up to 5) with the field's name, description, group and unit, its earlier queries and
+  its evidence values.
+
+Only excerpts scoring above 0 are eligible, so unrelated material is never included.
+
+**Deduplication** is deterministic. In the same document, text spans overlapping by at least half of the
+smaller span count as one; so does text contained in another excerpt's text. The more focused excerpt
+wins (hit snippet, then table, structured data, HTML slice, cached slice).
+
+**Caps:** `FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_ITEMS=8`, `FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS=8000` and
+`FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS=1500`.
+
+Excerpts are context, never evidence: no evidence record is created from them and no model call selects
+them. The finalizer bundle is unchanged; its own excerpt section stays the single excerpt store.
+
+Each attempt records `packet_chars`, `prior_excerpt_items`, `prior_excerpt_chars` and
+`document_rereads_after_prior_excerpt`. Metrics: `recovery_prior_excerpt_items`,
+`recovery_prior_excerpt_chars`, `recovery_attempts_with_prior_excerpts`,
+`recovery_document_rereads_after_prior_excerpt`. The Field recovery tab shows each attempt's excerpts.
+
 ### Retries, timeouts and cost
 
 `GLM_CHAT_MAX_ATTEMPTS` and `GLM_SEARCH_MAX_ATTEMPTS` count **total** HTTP attempts: 2 means one
