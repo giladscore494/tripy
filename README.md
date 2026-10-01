@@ -52,6 +52,8 @@ and every one of them stays configurable.
 | `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
+| `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `1`; max 2). See [Layered field harvesting](#layered-field-harvesting). |
+| `BATCH_MAX_WORKERS`, `GLM_CHAT_MAX_INFLIGHT`, `GLM_CHAT_MAX_INFLIGHT_BY_MODEL`, `GLM_SEARCH_MAX_INFLIGHT`, `GLM_UNKNOWN_MODEL_MAX_INFLIGHT` | Vehicle workers and in-flight request limits (defaults 50; Flash 48/50, FlashX 18/20, GLM-5.3 5/5; search 5; unknown model 1). See [Concurrent batches](#concurrent-batches). |
 | `AGENT_NO_NEW_RESEARCH_TURNS` | Finalize after N consecutive turns with no new research artifact (default 2; 0 = off). |
 | `AGENT_MAX_TOOL_OUTPUT_CHARS`, `AGENT_KEEP_RECENT_TOOL_RESULTS`, `AGENT_COMPACT_TOOL_OUTPUT_CHARS`, `AGENT_FINALIZER_BUNDLE_MAX_CHARS` | Context limits (see [Research and finalization](#research-and-finalization)). |
 | `TOOL_PREVIEW_CHARS`, `TOOL_MAX_TEXT_CHARS`, `TOOL_MAX_LINKS`, `TOOL_MAX_TABLE_ROWS`, `TOOL_MAX_TABLES` | Tool output caps. The full document always stays in the cache. |
@@ -123,8 +125,76 @@ repeatedly and no result was saved. Each vehicle run now has two explicit phases
    conversation is never sent. The exact request is saved as `finalizer_request.json`.
 
 Statuses: `completed`, `max_steps_finalized`, `no_new_research_finalized`, `completed_unparsed`,
-`finalization_failed`, `research_failed`, `interrupted`, `recovered_finalized`, plus `incomplete` for
-runs reconstructed from events.
+`finalization_failed`, `research_failed`, `interrupted`, `recovered_finalized`, `finalization_pending`
+(the durable checkpoint, see below), plus `incomplete` for runs reconstructed from events.
+
+### Layered field harvesting
+
+The full per-vehicle pipeline is now:
+
+```
+PRIMARY RESEARCH (source acquisition)      model turns, tools
+DETERMINISTIC HARVEST                      0 model calls: every document -> candidates for ALL fields
+MODEL DOCUMENT SWEEP                       <= DOCUMENT_SWEEP_MAX_TURNS (default 1) model turn, cached tools only
+current_evaluation()                       the one shared field evaluator
+TARGETED WEB RECOVERY                      only fields still unresolved, breadth-first
+current_evaluation()
+PRE-FINALIZATION CHECKPOINT                result.json status=finalization_pending
+FINALIZER
+```
+
+- **Candidates are not evidence.** `src/candidate_harvest.py` reads every document a run touches (in any
+  phase, including documents fetched during recovery) once, and lists label/value candidates for every
+  requested field that has dictionary metadata. A candidate carries `value`, `raw_value`, `unit`,
+  `document_id`, `source_url`, `quote`, `matched_alias`, `extraction_method`, `market_hint`,
+  `variant_hint`, `position`, `table_index`/`row_index` and `parser_confidence` (how sure the parser is
+  of the label/value pairing, never that the value belongs to the requested variant). Candidates never
+  change a field state, never resolve a conflict and are never majority-voted: only `store_evidence`
+  does that.
+- **Strategies**: structured key/value (HTML tables, `<dl>`, PDF tables, JSON-LD / page state), alias +
+  nearby value + unit within one clause, known textual forms (`9-speed automatic`, `255/45 R20`,
+  `10%-80% in 33 minutes`, `5 years / 150,000 km`), and equipment booleans only when the feature is
+  syntactically tied to a value or equipment context (a bare menu mention is not a candidate).
+  Reversed-Hebrew PDF lines are repaired only when detection is deterministic (a word starting with a
+  final letter form, or a known Hebrew label appearing only after reversal).
+- **Field dictionary**: `data/enrichment_fields.json` holds, per field, `display_name_he`, Hebrew and
+  English aliases, units and unit variants, exact conversion rules (`Wh/km ÷ 10`, `m × 1000`, ...),
+  positive / negative context terms, exclusion and ambiguity rules, enum values, patterns and broad
+  plausibility ranges (parser sanity only). Shared vocabularies (affirmative / negative cell values,
+  axle and warranty-type words, currencies) live in `harvest_vocabulary`. Python provides generic
+  matchers only (`numeric`, `boolean`, `enum`, `gearbox`, `tire_size`, `charging_time`,
+  `charging_window`, `warranty`, `price`, `text`); adding or changing an alias is a JSON edit.
+- **Candidate cache**: `documents/<id>/derived_field_candidates_<schema_hash>.json` in the shared cache.
+  Another vehicle (or worker) reusing the document and dictionary reuses the harvest; it is computed
+  once even under concurrent requests.
+- **Document sweep** (`src/document_sweep.py`): one compact packet for all applicable fields (identity,
+  current states, candidate matrix with quotes and hints, stored evidence, cached-document metadata).
+  Only `find_in_document`, `extract_tables`, `extract_html`, `get_structured_data`,
+  `get_cached_document`, `store_evidence` and `report_field_status` are offered; any other call is
+  refused without being executed (`tool_blocked`), so the stage makes zero searches and zero fetches.
+  Evidence the sweep stores for a document/value with no matching candidate is logged as
+  `candidate_missed_by_deterministic_harvest` (feedback for the dictionary). The sweep runs only when
+  field recovery is enabled, at least one field is unresolved and the run has cached documents.
+- **Recovery packets** now include the field's `deterministic_candidates`.
+- Metrics (observational, never accuracy): `documents_harvested`, `candidate_count_total`,
+  `candidate_fields_total`, `candidate_field_coverage_pct`, `candidate_cache_hits/misses`,
+  `document_sweep_model_calls`, `document_sweep_fields_promoted_to_evidence`,
+  `document_sweep_fields_resolved`, `document_sweep_deterministic_misses_found`,
+  `candidate_precision_reviewed` (share of presented candidates promoted), `fields_unresolved_before_harvest`,
+  `fields_unresolved_after_harvest_review`, `fields_entering_web_recovery`, and model calls per stage
+  (`primary_model_calls`, `document_sweep_model_calls`, `field_recovery_model_calls`,
+  `finalizer_model_calls`) next to `search_api_calls`.
+- `LAYERED_HARVEST_ENABLED=false` restores the previous pipeline; `DOCUMENT_SWEEP_MAX_TURNS=0` keeps the
+  zero-cost harvest but skips the sweep.
+
+### Durable pre-finalization checkpoint
+
+Right before the paid finalizer request, `result.json` is written with `status: finalization_pending`,
+`partial: true`, `output: null`, the evidence, field recovery, candidate summary, current field states
+and research bundle (`finalization_checkpoint_written` event, then `finalization_started`). If the
+process dies during the finalizer request, the run reloads as `finalization_pending` (never the generic
+`incomplete`) and the UI says so in Hebrew. `--finalize-existing` (or the recovery helper) then makes
+exactly one finalizer call: no research, harvest, sweep, recovery or search is repeated.
 
 **Every started run leaves a `result.json`**, including research failures, finalizer timeouts and
 Ctrl+C. It holds the status, the errors, all tool calls, evidence, documents, counters, usage per
@@ -178,7 +248,13 @@ field-recovery prompt and a compact packet:
 
 The primary conversation is never sent. The task can use every tool, exploiting cached documents first.
 It stores evidence into the same store and ends with a JSON status for the field. The field is then
-re-evaluated; a still-failed field gets attempt #2.
+re-evaluated. Scheduling is **breadth-first**: round 1 gives every queued field its first attempt
+(A1, B1, C1, ...); only then does round 2 revisit the fields still unresolved (A2, C2, ...), so a second
+attempt never starves a field that has not had its first. Packets also carry the field's
+`deterministic_candidates`. Coverage metrics: `recovery_fields_given_first_attempt`,
+`recovery_fields_never_attempted`, `recovery_second_attempts_started`, `recovery_unique_fields_touched`,
+`recovery_unique_fields_resolved`, `recovery_resolution_per_turn`, `fields_never_attempted_due_to_budget`,
+and `attempt_order`.
 
 Settings:
 
@@ -610,14 +686,63 @@ all kept and shown. Parsing only exists to render the UI. If the final reply is 
 JSON, the finalizer gets one repair request (still compact context), and the raw text is kept either
 way.
 
+## Concurrent batches
+
+`run_batch` runs the selected vehicles on a thread pool (`BATCH_MAX_WORKERS`, default 50, capped at the
+number of vehicles) and returns results in benchmark order; `max_workers=1` keeps the historical
+sequential loop. A failing vehicle becomes an `error` result and never cancels the others. A Stop /
+Ctrl+C cancels the batch: queued vehicles never start, running ones stop at their next safe point
+(before a model call, before a tool call, or while queued for a slot) and persist an `interrupted`
+partial result in their own folder; there is no automatic re-run of whole vehicles.
+
+Provider limits are guarded per HTTP attempt by a shared `ConcurrencyController` (`src/concurrency.py`):
+
+| pool | provider limit | default operational limit |
+|---|---:|---:|
+| `glm-5.3-flash` | 50 | 48 |
+| `glm-5.3-flashx` | 20 | 18 |
+| `glm-5.3` | 5 | 5 |
+| any other model id | unknown | `GLM_UNKNOWN_MODEL_MAX_INFLIGHT` (1) |
+| Search-Prime | 5 | `GLM_SEARCH_MAX_INFLIGHT` (5) |
+
+A slot is acquired right before `session.post` and released in `finally` when the response or error
+is back: never held during a retry sleep, tool execution, page fetch, PDF parsing or evaluation. The
+pool is chosen by the ACTUAL model of the request, so a `glm-5.3` finalizer draws from its own 5-slot
+pool while research uses Flash. `GLM_CHAT_MAX_INFLIGHT` / `GLM_CHAT_MAX_INFLIGHT_BY_MODEL` and the UI can
+change the operational limits, never above the provider limit.
+
+Each vehicle worker gets its own `GLMClient` and HTTP session (`vehicle_client_factory`); only the
+immutable settings and the controller are shared, so one vehicle's API events can never reach another
+vehicle's `events.jsonl` (a client already attached to a running vehicle refuses a second one). The
+shared document cache is single-flight per key (one network call per URL or search query, the other
+workers wait and reuse it, different keys run concurrently) and writes files atomically.
+
+`batch.json` records `concurrency` (workers, operational and provider limits) and, at the end,
+`concurrency_observed`: `peak_vehicle_workers`, `peak_chat_inflight_by_model`, `peak_search_inflight`,
+`chat_queue_wait_count/_ms`, `search_queue_wait_count/_ms` and the cross-vehicle single-flight reuses.
+
 ## UI
 
-- **Run**: per vehicle, a live tool-call feed while running. Afterwards:
+- **Live batch dashboard (Hebrew)**: workers only enqueue events; the script thread drains the queue
+  every ~200 ms and renders. The header shows completed / active / waiting for the model / waiting for
+  search / failed vehicles, live pool occupancy per model and Search-Prime, run time, known cost, model
+  calls, searches, 429s, timeouts and the summed Level-2 progress over applicable fields (with the note
+  that this measures research coverage, not correctness). Each vehicle card shows the stage, the model
+  and whether it is queued or in flight, the current field, *why* this step runs (derived from
+  orchestration metadata, never a model call), the current tool action, Level-2 progress over the
+  vehicle's APPLICABLE fields (43 for a BEV), with-evidence / needs-follow-up / without-evidence /
+  conflicting counts, the Recovery budget, the provider's `reasoning_content` when it was actually
+  returned ("חשיבת המודל כפי שהוחזרה מהספק"; "המודל חושב…" while a request is in flight), a Hebrew
+  field-progress table (state, values, evidence, markets, last source, recovery attempts, how it was
+  completed) and the detailed raw activity log. Field and group labels come from the schema
+  (`field_display_name`); raw/debug views keep canonical names. The dashboard makes no API call.
+- **Run**: afterwards, per vehicle:
   - human view, JSON and partial research;
   - evidence, tool calls and documents;
   - model responses with reasoning;
   - Level 1.5 input, config and cost;
-  - API attempts and the full event log.
+  - API attempts and the full event log;
+  - the Hebrew deterministic candidate matrix (מועמדים) with layered metrics and raw candidate JSON.
 
   Runs without `result.json` are shown from their events, with a banner.
 - **Documents**: the documents the batch touched (including incomplete runs) or the whole shared cache,
@@ -639,14 +764,14 @@ way.
 ## Files
 
 ```
-runs/<batch>/batch.json                configuration (model, prompt version, tools, data source)
+runs/<batch>/batch.json                configuration (model, prompt version, tools, data source, concurrency)
 runs/<batch>/<record_id>/input.json    Level 1.5 payload sent to GLM
 runs/<batch>/<record_id>/events.jsonl  every model turn, tool call/result, document and evidence
 runs/<batch>/<record_id>/result.json   final or partial output, evidence, tool calls, usage, cost, glm_config, api_error
 runs/<batch>/<record_id>/finalizer_request.json   exact compact messages sent to the finalizer
 runs/<batch>/<record_id>/recovery/<stamp>/        --finalize-existing request and bundle
 runs/<batch>/<record_id>/documents/    copies of every document the run touched
-runs/_cache/                           shared documents + search results
+runs/_cache/                           shared documents + search results (+ derived tables / candidates)
 ```
 
 ## Tests
@@ -661,5 +786,9 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 - a synthetic fixture of the GLM-5.3 baseline failure (`tests/fixtures/baseline_runs`, regenerate with
   `python tests/fixtures/make_baseline_fixture.py`): 30 research steps, then repeated finalize-call
   timeouts and no `result.json`;
-- a Streamlit `AppTest` smoke test.
+- Streamlit `AppTest` smoke tests (including a parallel live-dashboard batch);
+- concurrency (per-model and Search-Prime pools, per-attempt slots, hook isolation, failure isolation,
+  cancellation), cache single flight, the field dictionary (all 45 fields, positive and false-positive
+  phrases), deterministic harvesting, the layered pipeline (Cadillac LYRIQ-style fixture in
+  `tests/fixtures/cadillac_lyriq.py`), the finalization checkpoint and the Hebrew dashboard state.
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).

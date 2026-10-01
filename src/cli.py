@@ -109,10 +109,12 @@ def _listener(kind: str, event: dict) -> None:
                 "recovery_started", "recovery_finished", "duplicate_work", "field_retry_queue",
                 "field_recovery_started", "field_recovery_finished", "tool_reused",
                 "field_recovery_queue_resolved_indirectly", "evidence_reused", "field_recovery_early_resolved",
-                "field_recovery_budget_exhausted"):
+                "field_recovery_budget_exhausted", "deterministic_harvest_summary", "document_sweep_started",
+                "document_sweep_finished", "document_sweep_skipped", "candidate_missed_by_deterministic_harvest",
+                "finalization_checkpoint_written", "tool_blocked"):
         brief = {k: v for k, v in event.items()
                  if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking", "queue",
-                              "reply_text")}
+                              "reply_text", "candidates", "fields_with_candidates", "fields_without_candidates")}
         if kind == "api_error":
             brief = {"request": brief.get("request_kind"), "attempt": f"{brief.get('attempt')}/{brief.get('max_attempts')}",
                      "status": brief.get("status"), "timeout": brief.get("timeout"),

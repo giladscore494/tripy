@@ -26,6 +26,8 @@ from typing import Any, Callable
 
 import requests
 
+from .concurrency import ConcurrencyController, default_controller
+
 DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 DEFAULT_CHAT_PATH = "chat/completions"
 DEFAULT_SEARCH_PATH = "web_search"
@@ -128,10 +130,22 @@ class GLMClient:
 
     Every event carries `request_kind` ("chat" | "search"), `attempt` and
     `max_attempts`. `api_error` events also carry `timeout` and `usage_unknown`.
+
+    Concurrency: every HTTP attempt holds one slot of the shared ConcurrencyController
+    (src/concurrency.py) while it is in flight: the pool of the ACTUAL model id of that request
+    for chat, the Search-Prime pool for web_search. `activity_hook(kind, **data)` receives the
+    request lifecycle (`model_queue_wait_started`, `model_slot_acquired`, `model_request_started`,
+    `model_request_finished` and the `search_*` equivalents); it is separate from `hook` so the
+    per-attempt api_call / api_error accounting stays exactly as it was.
+
+    A client is cheap and holds per-run mutable state (hooks, session): create one per vehicle
+    worker from the same immutable GLMSettings and share only the controller.
     """
 
     def __init__(self, settings: GLMSettings, session: requests.Session | None = None,
-                 sleeper: Callable[[float], None] = time.sleep, hook: Callable[..., Any] | None = None):
+                 sleeper: Callable[[float], None] = time.sleep, hook: Callable[..., Any] | None = None,
+                 concurrency: ConcurrencyController | None = None,
+                 activity_hook: Callable[..., Any] | None = None, cancel_event=None):
         if not settings.api_key:
             raise GLMError("GLM_API_KEY is not set")
         if not settings.model:
@@ -140,6 +154,9 @@ class GLMClient:
         self.session = session or requests.Session()
         self.sleeper = sleeper
         self.hook = hook
+        self.activity_hook = activity_hook
+        self.concurrency = concurrency or default_controller()
+        self.cancel_event = cancel_event
 
     @property
     def model(self) -> str:
@@ -153,6 +170,13 @@ class GLMClient:
         if self.hook:
             try:
                 self.hook(kind, **data)
+            except Exception:
+                pass
+
+    def _activity(self, kind: str, **data: Any) -> None:
+        if self.activity_hook:
+            try:
+                self.activity_hook(kind, **data)
             except Exception:
                 pass
 
@@ -173,12 +197,9 @@ class GLMClient:
         last: GLMError | None = None
         for attempt in range(1, max_attempts + 1):
             will_retry = attempt < max_attempts
-            started = time.monotonic()
-            try:
-                resp = self.session.post(url, headers=headers, data=json.dumps(payload),
-                                         timeout=(15, self.settings.timeout_s))
-            except requests.RequestException as exc:
-                latency = int((time.monotonic() - started) * 1000)
+            resp, failure, latency = self._attempt(url, headers, payload, request_kind, attempt, max_attempts)
+            if failure is not None:
+                exc = failure
                 timeout = isinstance(exc, requests.Timeout)
                 # A connect timeout never reached the provider; anything else may have been processed.
                 usage_unknown = not isinstance(exc, requests.ConnectTimeout)
@@ -188,7 +209,6 @@ class GLMClient:
                            error=str(last), error_type=type(exc).__name__, timeout=timeout,
                            usage_unknown=usage_unknown, will_retry=will_retry, body=None, headers={})
             else:
-                latency = int((time.monotonic() - started) * 1000)
                 if resp.status_code == 200:
                     try:
                         data = resp.json()
@@ -216,6 +236,35 @@ class GLMClient:
         assert last is not None
         last.attempts = max_attempts
         raise last
+
+    def _attempt(self, url: str, headers: dict, payload: dict, request_kind: str, attempt: int,
+                 max_attempts: int) -> tuple[Any, requests.RequestException | None, int]:
+        """ONE HTTP attempt inside one concurrency slot. Returns (response, request exception, latency_ms).
+
+        The slot is released as soon as the response (or failure) is back: never during the retry
+        sleep, response parsing by the caller, tool execution or anything else."""
+        prefix = "model" if request_kind == "chat" else "search"
+        info = {"request_kind": request_kind, "attempt": attempt, "max_attempts": max_attempts}
+        model = payload.get("model") if request_kind == "chat" else None
+        if model:
+            info["model"] = model
+        resp, failure, latency = None, None, 0
+        with self.concurrency.slot(request_kind, model, emit=self._activity, cancel=self.cancel_event) as slot:
+            self._activity(f"{prefix}_request_started", **info, active=slot["active"], limit=slot["limit"],
+                           wait_ms=slot["wait_ms"])
+            started = time.monotonic()
+            try:
+                resp = self.session.post(url, headers=headers, data=json.dumps(payload),
+                                         timeout=(15, self.settings.timeout_s))
+            except requests.RequestException as exc:
+                failure = exc
+            finally:
+                latency = int((time.monotonic() - started) * 1000)
+        self._activity(f"{prefix}_request_finished", **info, latency_ms=latency,
+                       status=getattr(resp, "status_code", None), ok=failure is None
+                       and getattr(resp, "status_code", None) == 200,
+                       error_type=type(failure).__name__ if failure is not None else None)
+        return resp, failure, latency
 
     @staticmethod
     def _error_headers(resp) -> dict:

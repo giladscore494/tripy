@@ -271,6 +271,8 @@ def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, c
         # primary research
         turn(_call("p1", "get_cached_document", {"key": D})),
         say({"summary": "primary", "fields": {}}),
+        # layered pipeline: the document sweep (one turn) promotes nothing
+        say({"reviewed": [], "notes": "nothing to promote"}),
         # recovery: battery_gross_kwh, attempt 1
         turn(_call("r1", "get_cached_document", {"key": D}), _call("r2", "find_in_document", find_a),
              _call("r3", "find_in_document", {"document_id": B, "query": "סוללה"})),
@@ -278,11 +280,11 @@ def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, c
              _call("r6", "store_evidence", {"field": "electric_range_km", "value": 742, "market": "IL",
                                              "document_id": A, "quote": "טווח נסיעה 742 ק\"מ WLTP"})),
         say({"field": "battery_gross_kwh", "status": "unresolved", "notes": "only usable capacity stated"}),
+        # breadth-first: rear_legroom_mm, attempt 1 (still gets its normal retry) before any attempt 2
+        say({"field": "rear_legroom_mm", "status": "unresolved"}),
         # recovery: battery_gross_kwh, attempt 2
         turn(_call("r7", "find_in_document", find_a)),
         say({"field": "battery_gross_kwh", "status": "unresolved"}),
-        # recovery: rear_legroom_mm, attempt 1 (still gets its normal retry)
-        say({"field": "rear_legroom_mm", "status": "unresolved"}),
         say({"field": "rear_legroom_mm", "status": "unresolved"}),
         # finalizer
         say({"summary": "final", "fields": {}}),
@@ -302,7 +304,7 @@ def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, c
     rec = result["field_recovery"]
     assert rec["queue"] == ["battery_gross_kwh", "electric_range_km", "rear_legroom_mm"]   # fuel_tank_l: n/a
     assert [(a["field"], a["attempt"]) for a in rec["attempts"]] == [
-        ("battery_gross_kwh", 1), ("battery_gross_kwh", 2), ("rear_legroom_mm", 1), ("rear_legroom_mm", 2)]
+        ("battery_gross_kwh", 1), ("rear_legroom_mm", 1), ("battery_gross_kwh", 2), ("rear_legroom_mm", 2)]
     assert rec["fields_resolved_indirectly"] == {"electric_range_km": {"resolved_during_field": "battery_gross_kwh",
                                                                        "attempt": 1, "state": "ok"}}
     assert rec["fields_still_failed"] == ["battery_gross_kwh", "rear_legroom_mm"]

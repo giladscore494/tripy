@@ -160,11 +160,11 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
              _call("a4", "extract_html", {"document_id": US, "offset": 1500})),
         turn(_call("a5", "extract_tables", {"document_id": CM})),
         say({"field": "ac_charging_time", "status": "unresolved", "notes": "need the Israeli figure confirmed"}),
-        # attempt 2 answers from the excerpts it was given: no broad get_cached_document re-read
+        # breadth-first: rear_legroom_mm (a different field) gets its first attempt before any second attempt
+        say({"field": "rear_legroom_mm", "status": "unresolved"}),
+        # ac_charging_time attempt 2 answers from the excerpts it was given: no broad get_cached_document re-read
         turn(_call("b1", "store_evidence", {"field": "ac_charging_time", "value": "10.5 h", "document_id": CM,
                                             "market": "IL", "quote": "19.2 קילוואט, כ-10.5 שעות"})),
-        # rear_legroom_mm (a different field): two unresolved attempts
-        say({"field": "rear_legroom_mm", "status": "unresolved"}),
         say({"field": "rear_legroom_mm", "status": "unresolved"}),
         say({"summary": "final", "fields": {}}),
     ]
@@ -178,7 +178,7 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
                          tool_config=ToolConfig(), session=ctx.session)
     packets = [json.loads(r["messages"][1]["content"].split("\n", 1)[1]) for r in client.requests
                if r["messages"][0]["content"] == FIELD_RECOVERY_SYSTEM_PROMPT and len(r["messages"]) == 2]
-    first, second, legroom = packets[0], packets[1], packets[2]
+    first, legroom, second = packets[0], packets[1], packets[2]
     assert (first["requested_field"]["name"], first["attempt"]) == ("ac_charging_time", 1)
     assert first["prior_relevant_excerpts"] == []                    # nothing exposed yet
     assert (second["requested_field"]["name"], second["attempt"]) == ("ac_charging_time", 2)
@@ -198,11 +198,13 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
     assert second["existing_evidence"] == [] and second["prior_excerpt_stats"]["items"] == len(excerpts)
     assert {o["tool"] for o in second["already_attempted_operations"]} >= {"find_in_document", "extract_html",
                                                                             "extract_tables"}
-    assert all(m["role"] in ("system", "user") for m in client.requests[5]["messages"][:2])
+    assert all(m["role"] in ("system", "user") for m in client.requests[6]["messages"][:2])
 
     # attempt 2 resolved from the excerpts, without reopening any document
     rec = result["field_recovery"]
-    attempt2 = rec["attempts"][1]
+    assert rec["attempt_order"] == ["ac_charging_time#1", "rear_legroom_mm#1", "ac_charging_time#2",
+                                    "rear_legroom_mm#2"]
+    attempt2 = rec["attempts"][2]
     assert attempt2["early_resolved"] and attempt2["turns"] == 1
     assert attempt2["document_rereads_after_prior_excerpt"] == 0 and attempt2["prior_excerpt_items"] == len(excerpts)
     assert attempt2["prior_excerpt_chars"] == sum(len(e["text"]) for e in excerpts)
@@ -217,7 +219,7 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
     assert m["recovery_attempts_with_prior_excerpts"] == 1 and m["recovery_prior_excerpt_items"] == len(excerpts)
     assert m["recovery_document_rereads_after_prior_excerpt"] == 0
     started = [e for e in read_events(log.events_path) if e["kind"] == "field_recovery_started"]
-    assert started[1]["prior_excerpt_items"] == len(excerpts) and started[1]["prior_excerpts"] == excerpts
+    assert started[2]["prior_excerpt_items"] == len(excerpts) and started[2]["prior_excerpts"] == excerpts
     assert result["output"]["summary"] == "final"
 
 

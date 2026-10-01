@@ -139,21 +139,29 @@ def _pdf_tables(body: bytes, max_pages: int = 200) -> list[dict]:
     return tables
 
 
+def document_tables(cache, document_id: str, meta: dict, html: str | None) -> list[dict]:
+    """All tables of a cached document, extracted once (derived cache, single flight)."""
+    def compute() -> list[dict]:
+        if html is not None:
+            return _html_tables(html)
+        if meta.get("doc_type") == "pdf":
+            return _pdf_tables(cache.read_body(document_id))
+        return []
+
+    return cache.derived(document_id, "tables", compute)[0]
+
+
+def document_structured(cache, document_id: str, html: str) -> dict:
+    return cache.derived(document_id, "structured", lambda: _structured(html))[0]
+
+
 def extract_tables(ctx, document_id: str, max_tables: int | None = None, max_rows: int | None = None,
                    start_table: int = 0) -> dict:
     meta, html = _load(ctx, document_id)
     max_tables = max(1, min(int(max_tables or ctx.config.max_tables), ctx.config.max_tables))
     max_rows = max(1, min(int(max_rows or ctx.config.max_table_rows), ctx.config.max_table_rows))
     start_table = max(0, int(start_table or 0))
-    tables = ctx.cache.get_derived(document_id, "tables")
-    if tables is None:
-        if html is not None:
-            tables = _html_tables(html)
-        elif meta.get("doc_type") == "pdf":
-            tables = _pdf_tables(ctx.cache.read_body(document_id))
-        else:
-            tables = []
-        ctx.cache.put_derived(document_id, "tables", tables)
+    tables = document_tables(ctx.cache, document_id, meta, html)
     out = []
     for index, table in enumerate(tables[start_table : start_table + max_tables], start=start_table):
         rows = table["rows"]
@@ -222,10 +230,7 @@ def get_structured_data(ctx, document_id: str, max_chars: int | None = None) -> 
     if html is None:
         return {"document_id": document_id, "error": "not_html",
                 "message": f"Document is {meta.get('doc_type')}; use extract_html or extract_tables."}
-    data = ctx.cache.get_derived(document_id, "structured")
-    if data is None:
-        data = _structured(html)
-        ctx.cache.put_derived(document_id, "structured", data)
+    data = document_structured(ctx.cache, document_id, html)
     serialized = json.dumps(data, ensure_ascii=False)
     found = {k: bool(v) for k, v in data.items()}
     result = {"document_id": document_id, "found": found, "total_chars": len(serialized)}

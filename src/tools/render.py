@@ -40,7 +40,14 @@ def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
 
 def render_page(ctx, url: str, wait_ms: int = 2500) -> dict:
     url = check_url(url)
+    with ctx.cache.hold(f"doc:rendered:{url}") as waited:  # single flight per URL (see storage/cache.py)
+        return _render_page(ctx, url, wait_ms, waited)
+
+
+def _render_page(ctx, url: str, wait_ms: int, waited: bool) -> dict:
     cached = ctx.cache.lookup("rendered", url)
+    if cached and waited:
+        ctx.cache.count("cross_vehicle_document_singleflight_reuses")
     if cached:
         ctx.note_document(cached["document_id"], cache_hit=True)
         text = ctx.cache.read_text(cached["document_id"])

@@ -28,7 +28,7 @@ import re
 from typing import Any, Iterable
 
 from .excerpts import select_prior_excerpts
-from .fields import normalize_field_name
+from .fields import normalize_field_name, public_spec
 from .schemas import iter_fields, parse_model_output
 from .storage import trace
 
@@ -449,7 +449,7 @@ def retry_packet(*, spec: dict, evaluation: dict, events: list[dict], payload: d
     excerpts, excerpt_stats = select_prior_excerpts(events, spec, field_evidence, doc_metas, **(excerpt_limits or {}))
     packet = {
         "vehicle_identity": vehicle_identity(payload, target_market),
-        "requested_field": {k: v for k, v in spec.items() if k != "applicable"},
+        "requested_field": {k: v for k, v in public_spec(spec).items() if k != "applicable"},
         "failure_reason": evaluation["state"],
         "primary_result": {"info": evaluation.get("info"), "declared": evaluation.get("declared"),
                            "primary_output": evaluation.get("primary_output")},

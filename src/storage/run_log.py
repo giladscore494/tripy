@@ -74,6 +74,12 @@ class RunLog:
                 pass
         return record
 
+    @property
+    def seq(self) -> int:
+        """Sequence number of the last event written by this log."""
+        with self._lock:
+            return self._seq
+
     def write_input(self, payload: dict) -> None:
         _write_json(self.dir / "input.json", payload)
 
@@ -121,6 +127,21 @@ def write_batch(runs_root: Path | str, batch_id: str, info: dict) -> None:
     if path.exists():
         raise FileExistsError(f"{path} already exists; refusing to overwrite an existing batch")
     _write_json(path, info)
+
+
+_BATCH_LOCK = threading.Lock()
+
+
+def update_batch(runs_root: Path | str, batch_id: str, updates: dict) -> dict:
+    """Merge keys into an existing batch.json (e.g. end-of-batch observability), atomically."""
+    path = Path(runs_root) / batch_id / "batch.json"
+    with _BATCH_LOCK:
+        info = json.loads(path.read_text("utf-8")) if path.is_file() else {"batch_id": batch_id}
+        info.update(updates)
+        tmp = path.with_name(f".batch.json.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(info, ensure_ascii=False, indent=1, default=str), "utf-8")
+        tmp.replace(path)
+    return info
 
 
 def list_batches(runs_root: Path | str) -> list[dict]:

@@ -1,21 +1,479 @@
 {
- "_about": "Enrichment fields requested from the model. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle and coverage metrics are all driven by this list: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment, with no code change. Keys: name (required), description, group, unit, applies_to (list of Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS for this field; 0 = never retried).",
- "version": "enrichment-v1",
+ "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review.",
+ "version": "enrichment-v2",
+ "dictionary_version": "field-dictionary-v1",
+ "groups": {
+  "performance": {
+   "display_name_he": "ביצועים וצריכה"
+  },
+  "electric_hybrid": {
+   "display_name_he": "סוללה וטעינה"
+  },
+  "dimensions": {
+   "display_name_he": "מידות ומשקל"
+  },
+  "transmission": {
+   "display_name_he": "תיבת הילוכים"
+  },
+  "multimedia": {
+   "display_name_he": "מולטימדיה וקישוריות"
+  },
+  "comfort": {
+   "display_name_he": "נוחות"
+  },
+  "tires_wheels": {
+   "display_name_he": "גלגלים וצמיגים"
+  },
+  "commercial": {
+   "display_name_he": "מידע מסחרי ואחריות"
+  }
+ },
+ "harvest_vocabulary": {
+  "_about": "Shared vocabularies of the generic matchers in src/candidate_harvest.py. Field-specific wording lives on each field; these lists are reused across fields of the same kind.",
+  "affirmative_values": [
+   "✓",
+   "✔",
+   "v",
+   "yes",
+   "כן",
+   "standard",
+   "סטנדרט",
+   "סטנדרטי",
+   "●",
+   "included",
+   "כלול",
+   "קיים",
+   "יש",
+   "std",
+   "s",
+   "+"
+  ],
+  "negative_values": [
+   "-",
+   "—",
+   "–",
+   "no",
+   "לא",
+   "אין",
+   "ללא",
+   "not available",
+   "n/a",
+   "לא זמין",
+   "✗",
+   "✘",
+   "×",
+   "לא קיים",
+   "none"
+  ],
+  "optional_values": [
+   "optional",
+   "option",
+   "o",
+   "אופציה",
+   "אופציונלי",
+   "בתוספת",
+   "בתוספת תשלום",
+   "תוספת",
+   "package",
+   "חבילה",
+   "opt",
+   "available"
+  ],
+  "equipment_context_terms": [
+   "standard",
+   "equipped",
+   "equipment",
+   "features",
+   "includes",
+   "including",
+   "comes with",
+   "אבזור",
+   "כולל",
+   "מצויד",
+   "סטנדרטי",
+   "תמיכה",
+   "support",
+   "supports",
+   "compatible",
+   "תואם",
+   "multimedia",
+   "מולטימדיה",
+   "connectivity",
+   "קישוריות",
+   "comfort",
+   "נוחות",
+   "interior",
+   "פנים",
+   "infotainment",
+   "seats",
+   "מושבים",
+   "רשימת אבזור"
+  ],
+  "front_terms": [
+   "front",
+   "קדמי",
+   "קדמיים",
+   "קדמית",
+   "קדמיות"
+  ],
+  "rear_terms": [
+   "rear",
+   "אחורי",
+   "אחוריים",
+   "אחורית",
+   "אחוריות"
+  ],
+  "both_axles_terms": [
+   "front and rear",
+   "front & rear",
+   "קדמיים ואחוריים",
+   "קדמי ואחורי",
+   "all four",
+   "square setup"
+  ],
+  "alternative_terms": [
+   "optional",
+   "alternative",
+   "option",
+   "חלופי",
+   "חלופיות",
+   "חלופיים",
+   "אופציונלי",
+   "אופציונליים",
+   "אופציה",
+   "בתוספת"
+  ],
+  "tire_terms": [
+   "tire",
+   "tyre",
+   "tires",
+   "tyres",
+   "צמיג",
+   "צמיגים",
+   "wheels",
+   "גלגלים"
+  ],
+  "warranty_terms": [
+   "אחריות",
+   "warranty",
+   "guarantee"
+  ],
+  "warranty_battery_terms": [
+   "battery",
+   "high-voltage",
+   "high voltage",
+   "hv battery",
+   "hybrid system",
+   "hybrid",
+   "traction battery",
+   "סוללה",
+   "סוללת",
+   "לסוללה",
+   "מצבר מתח גבוה",
+   "מתח גבוה",
+   "מערכת היברידית",
+   "היברידית",
+   "ההיברידית",
+   "רכיבי ההנעה החשמלית"
+  ],
+  "warranty_vehicle_terms": [
+   "vehicle",
+   "basic",
+   "new vehicle",
+   "bumper",
+   "manufacturer",
+   "factory",
+   "לרכב",
+   "יצרן",
+   "כללית",
+   "יבואן",
+   "הרכב",
+   "מלאה"
+  ],
+  "warranty_excluded_terms": [
+   "paint",
+   "corrosion",
+   "rust",
+   "perforation",
+   "roadside",
+   "assistance",
+   "צבע",
+   "חלודה",
+   "קורוזיה",
+   "שירותי דרך",
+   "ניקוב",
+   "anti-perforation",
+   "powertrain",
+   "drivetrain",
+   "מערכת ההנעה",
+   "מכלולים",
+   "emissions",
+   "פליטה"
+  ],
+  "warranty_unlimited_km_terms": [
+   "unlimited mileage",
+   "unlimited km",
+   "unlimited kilometres",
+   "ללא הגבלת ק\"מ",
+   "ללא הגבלת קילומטרים",
+   "ללא הגבלת קילומטראז'"
+  ],
+  "year_units": [
+   "years",
+   "year",
+   "yrs",
+   "שנים",
+   "שנה",
+   "שנות"
+  ],
+  "km_units": [
+   "km",
+   "ק\"מ",
+   "קילומטר",
+   "קילומטרים",
+   "kms",
+   "kilometres",
+   "kilometers"
+  ],
+  "time_minute_units": [
+   "minutes",
+   "minute",
+   "mins",
+   "min",
+   "דקות",
+   "דק'",
+   "דקה"
+  ],
+  "time_hour_units": [
+   "hours",
+   "hour",
+   "hrs",
+   "h",
+   "שעות",
+   "שעה"
+  ],
+  "charging_terms": [
+   "charging",
+   "charge",
+   "charger",
+   "recharge",
+   "טעינה",
+   "טעינת",
+   "טוען",
+   "להטעין"
+  ],
+  "currencies": {
+   "ILS": [
+    "₪",
+    "ש\"ח",
+    "שח",
+    "ils",
+    "nis",
+    "שקל",
+    "שקלים",
+    "שקלים חדשים"
+   ],
+   "USD": [
+    "$",
+    "usd",
+    "us$",
+    "dollars"
+   ],
+   "EUR": [
+    "€",
+    "eur",
+    "euro",
+    "euros"
+   ],
+   "GBP": [
+    "£",
+    "gbp"
+   ]
+  },
+  "trim_header_terms": [
+   "trim",
+   "version",
+   "גרסה",
+   "רמת גימור",
+   "דגם"
+  ],
+  "starting_price_terms": [
+   "החל מ",
+   "starting from",
+   "starting at",
+   "prices from"
+  ]
+ },
  "fields": [
   {
    "name": "torque_nm",
    "description": "Maximum torque (Nm)",
-   "group": "performance"
+   "group": "performance",
+   "display_name_he": "מומנט מרבי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "מומנט",
+    "מומנט מרבי",
+    "מומנט מירבי",
+    "מומנט מקסימלי",
+    "מומנט שיא",
+    "מומנט משולב"
+   ],
+   "aliases_en": [
+    "torque",
+    "maximum torque",
+    "max torque",
+    "max. torque",
+    "peak torque",
+    "total torque",
+    "system torque",
+    "combined torque"
+   ],
+   "expected_units": [
+    "Nm"
+   ],
+   "normalized_unit": "Nm",
+   "accepted_unit_variants": [
+    "nm",
+    "n·m",
+    "n.m",
+    "n-m",
+    "נ\"מ",
+    "ניוטון מטר",
+    "ניוטון-מטר",
+    "newton metres",
+    "newton meters",
+    "newton-metres"
+   ],
+   "plausible_min": 50,
+   "plausible_max": 3000,
+   "negative_context_terms_en": [
+    "lb-ft",
+    "lb ft",
+    "lbs-ft"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "lb-ft",
+      "lb ft",
+      "lbs-ft",
+      "pound-feet"
+     ],
+     "reason": "imperial torque value"
+    }
+   ]
   },
   {
    "name": "acceleration_0_100_s",
    "description": "0-100 km/h (s)",
-   "group": "performance"
+   "group": "performance",
+   "display_name_he": "תאוצה 0–100 קמ״ש",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "תאוצה",
+    "תאוצה 0-100",
+    "0-100 קמ\"ש",
+    "0 עד 100",
+    "0 ל-100",
+    "מאפס למאה",
+    "מ-0 ל-100",
+    "מ-0 עד 100",
+    "האצה"
+   ],
+   "aliases_en": [
+    "0-100",
+    "0-100 km/h",
+    "0 to 100 km/h",
+    "0-100kmh",
+    "acceleration",
+    "acceleration 0-100",
+    "0-100 kph"
+   ],
+   "abbreviations": [
+    "0-100"
+   ],
+   "expected_units": [
+    "s"
+   ],
+   "normalized_unit": "s",
+   "accepted_unit_variants": [
+    "s",
+    "sec",
+    "secs",
+    "second",
+    "seconds",
+    "שניות",
+    "שנ'",
+    "שנייה"
+   ],
+   "plausible_min": 1,
+   "plausible_max": 30,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "0-60",
+      "0-62",
+      "mph",
+      "0-200",
+      "80-120",
+      "60-100",
+      "quarter mile"
+     ],
+     "unless": [
+      "0-100"
+     ],
+     "reason": "a different acceleration measure"
+    }
+   ]
   },
   {
    "name": "top_speed_kmh",
    "description": "Top speed (km/h)",
-   "group": "performance"
+   "group": "performance",
+   "display_name_he": "מהירות מרבית",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "מהירות מרבית",
+    "מהירות מירבית",
+    "מהירות מקסימלית",
+    "מהירות שיא"
+   ],
+   "aliases_en": [
+    "top speed",
+    "maximum speed",
+    "max speed",
+    "max. speed",
+    "v-max",
+    "vmax"
+   ],
+   "expected_units": [
+    "km/h"
+   ],
+   "normalized_unit": "km/h",
+   "accepted_unit_variants": [
+    "km/h",
+    "kmh",
+    "kph",
+    "קמ\"ש",
+    "ק\"מ/ש",
+    "ק\"מ לשעה",
+    "קילומטר לשעה",
+    "km/hr"
+   ],
+   "plausible_min": 50,
+   "plausible_max": 500,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "mph"
+     ],
+     "reason": "imperial speed"
+    }
+   ]
   },
   {
    "name": "fuel_consumption_combined_l_100km",
@@ -25,6 +483,86 @@
     "conventional",
     "hybrid",
     "plug_in"
+   ],
+   "display_name_he": "צריכת דלק משולבת",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "צריכת דלק",
+    "צריכת דלק משולבת",
+    "צריכה משולבת",
+    "צריכת דלק ממוצעת",
+    "תצרוכת דלק"
+   ],
+   "aliases_en": [
+    "fuel consumption",
+    "combined fuel consumption",
+    "combined consumption",
+    "fuel economy combined",
+    "consumption combined"
+   ],
+   "expected_units": [
+    "l/100km"
+   ],
+   "normalized_unit": "l/100km",
+   "accepted_unit_variants": [
+    "l/100km",
+    "l/100 km",
+    "lt/100km",
+    "ליטר ל-100 ק\"מ",
+    "ליטר/100 ק\"מ",
+    "ל/100 ק\"מ",
+    "litres/100km",
+    "liters/100km"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "km/l",
+     "from_unit_variants": [
+      "km/l",
+      "ק\"מ לליטר",
+      "ק\"מ/ליטר",
+      "kmpl"
+     ],
+     "to_unit": "l/100km",
+     "operation": "reciprocal_times_100",
+     "note": "exact arithmetic (100 / km-per-litre), rounded to 2 decimals"
+    }
+   ],
+   "plausible_min": 1,
+   "plausible_max": 30,
+   "negative_context_terms_he": [
+    "חשמל",
+    "קוט\"ש"
+   ],
+   "negative_context_terms_en": [
+    "kwh",
+    "electric"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "עירוני",
+      "עירונית",
+      "בינעירוני",
+      "בין עירוני",
+      "urban",
+      "city",
+      "highway",
+      "extra-urban",
+      "low",
+      "high",
+      "extra high"
+     ],
+     "unless": [
+      "משולב",
+      "משולבת",
+      "combined",
+      "ממוצע",
+      "ממוצעת"
+     ],
+     "reason": "a partial test cycle, not the combined figure"
+    }
    ]
   },
   {
@@ -35,6 +573,60 @@
     "hybrid",
     "plug_in",
     "battery_electric"
+   ],
+   "display_name_he": "צריכת חשמל",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "צריכת חשמל",
+    "צריכת אנרגיה",
+    "צריכת חשמל משולבת",
+    "צריכת אנרגיה ממוצעת",
+    "צריכה חשמלית"
+   ],
+   "aliases_en": [
+    "energy consumption",
+    "electric consumption",
+    "power consumption",
+    "electricity consumption",
+    "combined energy consumption",
+    "electrical consumption",
+    "efficiency"
+   ],
+   "expected_units": [
+    "kWh/100km"
+   ],
+   "normalized_unit": "kWh/100km",
+   "accepted_unit_variants": [
+    "kwh/100km",
+    "kwh/100 km",
+    "קוט\"ש/100 ק\"מ",
+    "קוט\"ש ל-100 ק\"מ",
+    "קילוואט שעה ל-100 ק\"מ"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "Wh/km",
+     "from_unit_variants": [
+      "wh/km",
+      "וואט שעה לק\"מ",
+      "וואט-שעה/ק\"מ",
+      "ווט\"ש/ק\"מ"
+     ],
+     "to_unit": "kWh/100km",
+     "operation": "divide_by_10"
+    }
+   ],
+   "plausible_min": 5,
+   "plausible_max": 60,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "l/100km",
+      "ליטר"
+     ],
+     "reason": "fuel consumption, not electricity"
+    }
    ]
   },
   {
@@ -45,6 +637,79 @@
     "hybrid",
     "plug_in",
     "battery_electric"
+   ],
+   "display_name_he": "קיבולת סוללה ברוטו",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "קיבולת סוללה",
+    "קיבולת סוללה ברוטו",
+    "קיבולת כוללת",
+    "קיבולת הסוללה",
+    "קיבולת מצבר",
+    "נפח סוללה",
+    "סוללה",
+    "סוללת"
+   ],
+   "aliases_en": [
+    "battery capacity",
+    "gross battery capacity",
+    "gross capacity",
+    "total battery capacity",
+    "battery size",
+    "battery",
+    "battery pack"
+   ],
+   "expected_units": [
+    "kWh"
+   ],
+   "normalized_unit": "kWh",
+   "accepted_unit_variants": [
+    "kwh",
+    "קוט\"ש",
+    "קילוואט שעה",
+    "קילו וואט שעה",
+    "קילוואט-שעה",
+    "kw h",
+    "kw-h"
+   ],
+   "plausible_min": 0.5,
+   "plausible_max": 300,
+   "positive_context_terms_he": [
+    "ברוטו",
+    "כוללת"
+   ],
+   "positive_context_terms_en": [
+    "gross",
+    "total"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "usable",
+      "net",
+      "שימושית",
+      "נטו",
+      "available"
+     ],
+     "unless": [
+      "gross",
+      "ברוטו",
+      "total",
+      "כוללת"
+     ],
+     "reason": "usable (net) capacity belongs to the usable-capacity field"
+    },
+    {
+     "terms": [
+      "/100km",
+      "/100 km",
+      "per 100",
+      "ל-100",
+      "/km"
+     ],
+     "reason": "an energy-consumption figure, not capacity"
+    }
    ]
   },
   {
@@ -55,6 +720,54 @@
     "hybrid",
     "plug_in",
     "battery_electric"
+   ],
+   "display_name_he": "קיבולת סוללה שימושית",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "קיבולת שימושית",
+    "קיבולת נטו",
+    "סוללה נטו",
+    "קיבולת סוללה שימושית",
+    "קיבולת סוללה נטו",
+    "קיבולת זמינה"
+   ],
+   "aliases_en": [
+    "usable battery capacity",
+    "usable capacity",
+    "net battery capacity",
+    "net capacity",
+    "usable energy",
+    "net energy",
+    "usable battery",
+    "available capacity"
+   ],
+   "expected_units": [
+    "kWh"
+   ],
+   "normalized_unit": "kWh",
+   "accepted_unit_variants": [
+    "kwh",
+    "קוט\"ש",
+    "קילוואט שעה",
+    "קילו וואט שעה",
+    "קילוואט-שעה",
+    "kw h",
+    "kw-h"
+   ],
+   "plausible_min": 0.5,
+   "plausible_max": 300,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "/100km",
+      "/100 km",
+      "per 100",
+      "ל-100",
+      "/km"
+     ],
+     "reason": "an energy-consumption figure, not capacity"
+    }
    ]
   },
   {
@@ -65,6 +778,67 @@
     "hybrid",
     "plug_in",
     "battery_electric"
+   ],
+   "display_name_he": "טווח נסיעה חשמלי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "טווח נסיעה",
+    "טווח חשמלי",
+    "טווח נסיעה חשמלי",
+    "טווח מרבי",
+    "טווח",
+    "טווח נסיעה משולב"
+   ],
+   "aliases_en": [
+    "electric range",
+    "driving range",
+    "maximum range",
+    "ev range",
+    "range",
+    "all-electric range",
+    "wltp range",
+    "epa range",
+    "electric driving range"
+   ],
+   "expected_units": [
+    "km"
+   ],
+   "normalized_unit": "km",
+   "accepted_unit_variants": [
+    "km",
+    "ק\"מ",
+    "קילומטר",
+    "קילומטרים",
+    "kms",
+    "kilometres",
+    "kilometers"
+   ],
+   "plausible_min": 1,
+   "plausible_max": 1500,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "minutes",
+      "דקות",
+      "דקה",
+      "added",
+      "adds",
+      "הוספת",
+      "מוסיף",
+      "in 10",
+      "תוך"
+     ],
+     "reason": "a charging-speed statement (range added), not the range"
+    },
+    {
+     "terms": [
+      "miles",
+      "mi.",
+      "mpge"
+     ],
+     "reason": "imperial range"
+    }
    ]
   },
   {
@@ -75,6 +849,93 @@
     "hybrid",
     "plug_in",
     "battery_electric"
+   ],
+   "display_name_he": "תקן טווח חשמלי",
+   "value_type": "enum",
+   "matcher": "enum",
+   "aliases_he": [
+    "תקן טווח",
+    "תקן בדיקה",
+    "מחזור בדיקה",
+    "שיטת מדידה",
+    "בדיקת EPA",
+    "בדיקת WLTP",
+    "תקן WLTP",
+    "תקן EPA"
+   ],
+   "aliases_en": [
+    "range standard",
+    "test cycle",
+    "test standard",
+    "test procedure",
+    "EPA",
+    "WLTP",
+    "CLTC",
+    "NEDC",
+    "range test"
+   ],
+   "enum_values": [
+    {
+     "value": "WLTP",
+     "variants": [
+      "wltp",
+      "wltp combined",
+      "תקן wltp",
+      "בדיקת wltp"
+     ]
+    },
+    {
+     "value": "EPA",
+     "variants": [
+      "epa",
+      "epa-estimated",
+      "epa estimated",
+      "epa est",
+      "בדיקת epa",
+      "תקן epa"
+     ]
+    },
+    {
+     "value": "CLTC",
+     "variants": [
+      "cltc"
+     ]
+    },
+    {
+     "value": "NEDC",
+     "variants": [
+      "nedc"
+     ]
+    },
+    {
+     "value": "JC08",
+     "variants": [
+      "jc08",
+      "jc-08"
+     ]
+    }
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טווח",
+    "טווח נסיעה",
+    "טווח חשמלי"
+   ],
+   "positive_context_terms_en": [
+    "range",
+    "driving range",
+    "electric range"
+   ],
+   "ambiguity_rules": [
+    {
+     "terms": [
+      "consumption",
+      "צריכת"
+     ],
+     "hint_key": "context",
+     "hint_value": "consumption_cycle",
+     "note": "the standard may refer to consumption"
+    }
    ]
   },
   {
@@ -85,7 +946,77 @@
     "hybrid",
     "plug_in",
     "battery_electric"
-   ]
+   ],
+   "display_name_he": "זמן טעינת AC",
+   "value_type": "text",
+   "matcher": "charging_time",
+   "component": "ac",
+   "aliases_he": [
+    "זמן טעינה",
+    "זמן טעינת AC",
+    "טעינת AC",
+    "טעינה ביתית",
+    "זמן טעינה ביתית",
+    "טעינה איטית"
+   ],
+   "aliases_en": [
+    "AC charging time",
+    "charging time (AC)",
+    "AC charging",
+    "home charging",
+    "wallbox charging time",
+    "charging time"
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טעינה ביתית",
+    "ביתית",
+    "מטען מובנה",
+    "AC",
+    "עמדה ביתית"
+   ],
+   "positive_context_terms_en": [
+    "AC",
+    "onboard",
+    "on-board",
+    "wallbox",
+    "home charging",
+    "level 2"
+   ],
+   "negative_context_terms_he": [
+    "טעינה מהירה",
+    "מהירה",
+    "DC",
+    "טעינה מהירה במיוחד"
+   ],
+   "negative_context_terms_en": [
+    "DC",
+    "fast",
+    "rapid",
+    "supercharg",
+    "ultra-fast",
+    "ultra fast",
+    "hpc",
+    "ccs"
+   ],
+   "expected_units": [
+    "min"
+   ],
+   "normalized_unit": "min",
+   "accepted_unit_variants": [
+    "min",
+    "mins",
+    "minutes",
+    "דקות",
+    "דק'",
+    "h",
+    "hours",
+    "hrs",
+    "שעות",
+    "שעה"
+   ],
+   "plausible_min": 30,
+   "plausible_max": 3000
   },
   {
    "name": "dc_charging_time",
@@ -95,7 +1026,71 @@
     "hybrid",
     "plug_in",
     "battery_electric"
-   ]
+   ],
+   "display_name_he": "זמן טעינת DC",
+   "value_type": "text",
+   "matcher": "charging_time",
+   "component": "dc",
+   "aliases_he": [
+    "זמן טעינה מהירה",
+    "טעינת DC",
+    "טעינה מהירה",
+    "זמן טעינת DC",
+    "זמן טעינה"
+   ],
+   "aliases_en": [
+    "DC charging time",
+    "fast charging time",
+    "DC fast charging",
+    "rapid charging",
+    "fast charging",
+    "charging time"
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טעינה מהירה",
+    "מהירה",
+    "DC",
+    "טעינה מהירה במיוחד"
+   ],
+   "positive_context_terms_en": [
+    "DC",
+    "fast",
+    "rapid",
+    "supercharg",
+    "ultra-fast",
+    "ultra fast",
+    "hpc",
+    "ccs"
+   ],
+   "negative_context_terms_he": [
+    "ביתית",
+    "מטען מובנה"
+   ],
+   "negative_context_terms_en": [
+    "AC",
+    "home",
+    "wallbox",
+    "onboard"
+   ],
+   "expected_units": [
+    "min"
+   ],
+   "normalized_unit": "min",
+   "accepted_unit_variants": [
+    "min",
+    "mins",
+    "minutes",
+    "דקות",
+    "דק'",
+    "h",
+    "hours",
+    "hrs",
+    "שעות",
+    "שעה"
+   ],
+   "plausible_min": 5,
+   "plausible_max": 300
   },
   {
    "name": "dc_charging_window_pct",
@@ -105,7 +1100,65 @@
     "hybrid",
     "plug_in",
     "battery_electric"
-   ]
+   ],
+   "display_name_he": "טווח אחוזים לטעינת DC",
+   "value_type": "text",
+   "matcher": "charging_window",
+   "component": "dc",
+   "aliases_he": [
+    "אחוזי טעינה",
+    "טווח טעינה",
+    "מ-10% עד 80%",
+    "10%-80%"
+   ],
+   "aliases_en": [
+    "charging window",
+    "10-80%",
+    "20-80%",
+    "state of charge",
+    "SOC"
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טעינה מהירה",
+    "מהירה",
+    "DC",
+    "טעינה מהירה במיוחד",
+    "טעינה",
+    "טעינת",
+    "טוען"
+   ],
+   "positive_context_terms_en": [
+    "DC",
+    "fast",
+    "rapid",
+    "supercharg",
+    "ultra-fast",
+    "ultra fast",
+    "hpc",
+    "ccs",
+    "charging"
+   ],
+   "negative_context_terms_he": [
+    "ביתית"
+   ],
+   "negative_context_terms_en": [
+    "AC",
+    "home",
+    "wallbox",
+    "onboard"
+   ],
+   "expected_units": [
+    "%"
+   ],
+   "normalized_unit": "%",
+   "accepted_unit_variants": [
+    "%",
+    "אחוז",
+    "percent"
+   ],
+   "plausible_min": 0,
+   "plausible_max": 100
   },
   {
    "name": "ac_max_charging_power_kw",
@@ -115,7 +1168,88 @@
     "hybrid",
     "plug_in",
     "battery_electric"
-   ]
+   ],
+   "display_name_he": "הספק טעינת AC מרבי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "הספק טעינת AC",
+    "הספק טעינה ביתית",
+    "הספק טעינה AC",
+    "מטען מובנה",
+    "הספק מטען",
+    "טעינה ביתית",
+    "טעינת AC"
+   ],
+   "aliases_en": [
+    "AC charging power",
+    "max AC charging",
+    "onboard charger",
+    "on-board charger",
+    "AC charging",
+    "AC charger",
+    "maximum AC charging power"
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טעינה ביתית",
+    "ביתית",
+    "מטען מובנה",
+    "AC",
+    "עמדה ביתית"
+   ],
+   "positive_context_terms_en": [
+    "AC",
+    "onboard",
+    "on-board",
+    "wallbox",
+    "home charging",
+    "level 2"
+   ],
+   "negative_context_terms_he": [
+    "טעינה מהירה",
+    "מהירה",
+    "DC",
+    "טעינה מהירה במיוחד",
+    "מנוע",
+    "הספק מנוע",
+    "הספק משולב",
+    "כ\"ס",
+    "הספק מרבי"
+   ],
+   "negative_context_terms_en": [
+    "DC",
+    "fast",
+    "rapid",
+    "supercharg",
+    "ultra-fast",
+    "ultra fast",
+    "hpc",
+    "ccs",
+    "motor",
+    "engine",
+    "horsepower",
+    "hp",
+    "output",
+    "system power",
+    "power output",
+    "bhp",
+    "ps"
+   ],
+   "expected_units": [
+    "kW"
+   ],
+   "normalized_unit": "kW",
+   "accepted_unit_variants": [
+    "kw",
+    "קילוואט",
+    "קילו וואט",
+    "קו\"ט",
+    "kilowatt",
+    "kilowatts"
+   ],
+   "plausible_min": 1,
+   "plausible_max": 30
   },
   {
    "name": "dc_max_charging_power_kw",
@@ -125,42 +1259,642 @@
     "hybrid",
     "plug_in",
     "battery_electric"
-   ]
+   ],
+   "display_name_he": "הספק טעינת DC מרבי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "הספק טעינה מהירה",
+    "הספק טעינת DC",
+    "טעינה מהירה",
+    "הספק טעינה DC",
+    "טעינת DC"
+   ],
+   "aliases_en": [
+    "DC charging power",
+    "maximum DC charging",
+    "peak charging power",
+    "fast charging power",
+    "DC fast charging",
+    "DC charging",
+    "fast charging",
+    "max DC charging power",
+    "peak DC charging",
+    "rapid charging"
+   ],
+   "require_context": true,
+   "positive_context_terms_he": [
+    "טעינה מהירה",
+    "מהירה",
+    "DC",
+    "טעינה מהירה במיוחד"
+   ],
+   "positive_context_terms_en": [
+    "DC",
+    "fast",
+    "rapid",
+    "supercharg",
+    "ultra-fast",
+    "ultra fast",
+    "hpc",
+    "ccs",
+    "peak charging"
+   ],
+   "negative_context_terms_he": [
+    "מנוע",
+    "הספק מנוע",
+    "הספק משולב",
+    "כ\"ס",
+    "הספק מרבי",
+    "ביתית"
+   ],
+   "negative_context_terms_en": [
+    "motor",
+    "engine",
+    "horsepower",
+    "hp",
+    "output",
+    "system power",
+    "power output",
+    "bhp",
+    "ps",
+    "AC",
+    "onboard",
+    "wallbox"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "motor",
+      "engine",
+      "horsepower",
+      "hp",
+      "output",
+      "system power",
+      "power output",
+      "bhp",
+      "ps",
+      "מנוע",
+      "הספק מנוע",
+      "הספק משולב",
+      "כ\"ס",
+      "הספק מרבי"
+     ],
+     "unless": [
+      "charging",
+      "charge",
+      "charger",
+      "טעינה",
+      "טעינת",
+      "טוען"
+     ],
+     "reason": "motor / system output, not charging power"
+    }
+   ],
+   "expected_units": [
+    "kW"
+   ],
+   "normalized_unit": "kW",
+   "accepted_unit_variants": [
+    "kw",
+    "קילוואט",
+    "קילו וואט",
+    "קו\"ט",
+    "kilowatt",
+    "kilowatts"
+   ],
+   "plausible_min": 3,
+   "plausible_max": 1000
   },
   {
    "name": "length_mm",
    "description": "Length (mm)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "אורך",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "אורך",
+    "אורך כללי",
+    "אורך הרכב",
+    "אורך כולל"
+   ],
+   "aliases_en": [
+    "length",
+    "overall length",
+    "total length",
+    "vehicle length"
+   ],
+   "expected_units": [
+    "mm"
+   ],
+   "normalized_unit": "mm",
+   "accepted_unit_variants": [
+    "mm",
+    "מ\"מ",
+    "ממ",
+    "מילימטר",
+    "מילימטרים",
+    "millimetres",
+    "millimeters"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "m",
+     "from_unit_variants": [
+      "m",
+      "מטר",
+      "מטרים",
+      "metres",
+      "meters"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_1000"
+    },
+    {
+     "from_unit": "cm",
+     "from_unit_variants": [
+      "cm",
+      "ס\"מ",
+      "סנטימטר"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_10"
+    }
+   ],
+   "plausible_min": 2000,
+   "plausible_max": 7000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "cargo",
+      "boot",
+      "trunk",
+      "load",
+      "floor",
+      "seat",
+      "cable",
+      "bed",
+      "מטען",
+      "רצפה",
+      "מושב",
+      "כבל",
+      "ארגז"
+     ],
+     "reason": "a measurement of a part (cargo floor, seat, cable), not the vehicle body"
+    }
+   ]
   },
   {
    "name": "width_mm",
    "description": "Width (mm)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "רוחב",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "רוחב",
+    "רוחב כללי",
+    "רוחב הרכב",
+    "רוחב כולל"
+   ],
+   "aliases_en": [
+    "width",
+    "overall width",
+    "total width",
+    "width excl. mirrors",
+    "width incl. mirrors"
+   ],
+   "expected_units": [
+    "mm"
+   ],
+   "normalized_unit": "mm",
+   "accepted_unit_variants": [
+    "mm",
+    "מ\"מ",
+    "ממ",
+    "מילימטר",
+    "מילימטרים",
+    "millimetres",
+    "millimeters"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "m",
+     "from_unit_variants": [
+      "m",
+      "מטר",
+      "מטרים",
+      "metres",
+      "meters"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_1000"
+    },
+    {
+     "from_unit": "cm",
+     "from_unit_variants": [
+      "cm",
+      "ס\"מ",
+      "סנטימטר"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_10"
+    }
+   ],
+   "plausible_min": 1200,
+   "plausible_max": 3000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "cargo",
+      "boot",
+      "trunk",
+      "load",
+      "floor",
+      "seat",
+      "cable",
+      "bed",
+      "מטען",
+      "רצפה",
+      "מושב",
+      "כבל",
+      "ארגז"
+     ],
+     "reason": "a measurement of a part (cargo floor, seat, cable), not the vehicle body"
+    },
+    {
+     "terms": [
+      "track",
+      "tread",
+      "מפשק",
+      "מפסק",
+      "רוחב מסלול"
+     ],
+     "reason": "track width, not body width"
+    }
+   ],
+   "ambiguity_rules": [
+    {
+     "terms": [
+      "mirrors",
+      "מראות"
+     ],
+     "hint_key": "mirrors",
+     "hint_value": "stated",
+     "note": "width with/without mirrors is stated in the source"
+    }
+   ]
   },
   {
    "name": "height_mm",
    "description": "Height (mm)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "גובה",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "גובה",
+    "גובה כללי",
+    "גובה הרכב",
+    "גובה כולל"
+   ],
+   "aliases_en": [
+    "height",
+    "overall height",
+    "total height",
+    "vehicle height"
+   ],
+   "expected_units": [
+    "mm"
+   ],
+   "normalized_unit": "mm",
+   "accepted_unit_variants": [
+    "mm",
+    "מ\"מ",
+    "ממ",
+    "מילימטר",
+    "מילימטרים",
+    "millimetres",
+    "millimeters"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "m",
+     "from_unit_variants": [
+      "m",
+      "מטר",
+      "מטרים",
+      "metres",
+      "meters"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_1000"
+    },
+    {
+     "from_unit": "cm",
+     "from_unit_variants": [
+      "cm",
+      "ס\"מ",
+      "סנטימטר"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_10"
+    }
+   ],
+   "plausible_min": 900,
+   "plausible_max": 3500,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "cargo",
+      "boot",
+      "trunk",
+      "load",
+      "floor",
+      "seat",
+      "cable",
+      "bed",
+      "מטען",
+      "רצפה",
+      "מושב",
+      "כבל",
+      "ארגז"
+     ],
+     "reason": "a measurement of a part (cargo floor, seat, cable), not the vehicle body"
+    },
+    {
+     "terms": [
+      "ground clearance",
+      "מרווח גחון",
+      "גובה גחון",
+      "seat height",
+      "loading height",
+      "גובה סף",
+      "sill",
+      "headroom",
+      "מרווח ראש",
+      "wading",
+      "חציית מים",
+      "גובה העמסה"
+     ],
+     "reason": "a different height measurement"
+    }
+   ]
   },
   {
    "name": "wheelbase_mm",
    "description": "Wheelbase (mm)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "בסיס גלגלים",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "בסיס גלגלים",
+    "מרחק סרנים",
+    "מרחק בין סרנים",
+    "בסיס הגלגלים",
+    "בסיס גלגלים (מ\"מ)"
+   ],
+   "aliases_en": [
+    "wheelbase",
+    "wheel base"
+   ],
+   "expected_units": [
+    "mm"
+   ],
+   "normalized_unit": "mm",
+   "accepted_unit_variants": [
+    "mm",
+    "מ\"מ",
+    "ממ",
+    "מילימטר",
+    "מילימטרים",
+    "millimetres",
+    "millimeters"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "m",
+     "from_unit_variants": [
+      "m",
+      "מטר",
+      "מטרים",
+      "metres",
+      "meters"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_1000"
+    },
+    {
+     "from_unit": "cm",
+     "from_unit_variants": [
+      "cm",
+      "ס\"מ",
+      "סנטימטר"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_10"
+    }
+   ],
+   "plausible_min": 1500,
+   "plausible_max": 5000
   },
   {
    "name": "curb_weight_kg",
    "description": "Curb weight (kg)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "משקל עצמי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "משקל עצמי",
+    "משקל ריק",
+    "משקל הרכב",
+    "משקל עצמי מינימלי",
+    "משקל"
+   ],
+   "aliases_en": [
+    "curb weight",
+    "kerb weight",
+    "unladen weight",
+    "empty weight",
+    "curb weight (din)",
+    "weight (eu)",
+    "weight"
+   ],
+   "expected_units": [
+    "kg"
+   ],
+   "normalized_unit": "kg",
+   "accepted_unit_variants": [
+    "kg",
+    "ק\"ג",
+    "קג",
+    "קילוגרם",
+    "קילו",
+    "kgs",
+    "kilograms"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "t",
+     "from_unit_variants": [
+      "t",
+      "tonnes",
+      "טון"
+     ],
+     "to_unit": "kg",
+     "operation": "multiply_by_1000"
+    }
+   ],
+   "plausible_min": 300,
+   "plausible_max": 6000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "gross",
+      "total weight",
+      "מותר",
+      "כולל מטען",
+      "towing",
+      "גרירה",
+      "payload",
+      "מטען מותר",
+      "max weight",
+      "maximum permissible",
+      "gvw",
+      "gvwr",
+      "roof load",
+      "עומס",
+      "braked",
+      "unbraked",
+      "נגרר",
+      "permissible"
+     ],
+     "reason": "gross / towing / payload weight, not the curb weight"
+    }
+   ]
   },
   {
    "name": "ground_clearance_mm",
    "description": "Ground clearance (mm)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "מרווח גחון",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "מרווח גחון",
+    "גובה גחון",
+    "מרווח קרקע",
+    "מרווח מהקרקע",
+    "מרווח גחון מינימלי"
+   ],
+   "aliases_en": [
+    "ground clearance",
+    "ride height",
+    "min. ground clearance",
+    "minimum ground clearance"
+   ],
+   "expected_units": [
+    "mm"
+   ],
+   "normalized_unit": "mm",
+   "accepted_unit_variants": [
+    "mm",
+    "מ\"מ",
+    "ממ",
+    "מילימטר",
+    "מילימטרים",
+    "millimetres",
+    "millimeters"
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "cm",
+     "from_unit_variants": [
+      "cm",
+      "ס\"מ",
+      "סנטימטר"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_10"
+    }
+   ],
+   "plausible_min": 50,
+   "plausible_max": 500
   },
   {
    "name": "cargo_volume_l",
    "description": "Cargo volume (l)",
-   "group": "dimensions"
+   "group": "dimensions",
+   "display_name_he": "נפח תא מטען",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "נפח תא מטען",
+    "תא מטען",
+    "נפח מטען",
+    "נפח תא המטען",
+    "תא המטען"
+   ],
+   "aliases_en": [
+    "cargo volume",
+    "boot volume",
+    "trunk volume",
+    "luggage capacity",
+    "cargo capacity",
+    "boot space",
+    "trunk capacity",
+    "luggage compartment volume",
+    "cargo space"
+   ],
+   "expected_units": [
+    "l"
+   ],
+   "normalized_unit": "l",
+   "accepted_unit_variants": [
+    "l",
+    "ליטר",
+    "ליטרים",
+    "litres",
+    "liters",
+    "liter",
+    "litre",
+    "lt",
+    "ltr",
+    "dm3",
+    "'ל"
+   ],
+   "plausible_min": 20,
+   "plausible_max": 5000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "cu ft",
+      "cu. ft",
+      "cubic feet"
+     ],
+     "reason": "imperial volume"
+    }
+   ],
+   "ambiguity_rules": [
+    {
+     "terms": [
+      "frunk",
+      "front trunk",
+      "תא מטען קדמי",
+      "folded",
+      "מקופלים",
+      "seats down",
+      "מושבים מקופלים",
+      "max"
+     ],
+     "hint_key": "cargo_configuration",
+     "hint_value": "front_or_seats_folded",
+     "note": "front trunk or seats-folded volume"
+    }
+   ]
   },
   {
    "name": "fuel_tank_l",
@@ -170,122 +1904,1118 @@
     "conventional",
     "hybrid",
     "plug_in"
+   ],
+   "display_name_he": "נפח מיכל דלק",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "נפח מיכל דלק",
+    "מיכל דלק",
+    "מכל דלק",
+    "נפח מכל הדלק",
+    "נפח מיכל",
+    "מיכל הדלק"
+   ],
+   "aliases_en": [
+    "fuel tank",
+    "fuel tank capacity",
+    "tank capacity",
+    "fuel capacity"
+   ],
+   "expected_units": [
+    "l"
+   ],
+   "normalized_unit": "l",
+   "accepted_unit_variants": [
+    "l",
+    "ליטר",
+    "ליטרים",
+    "litres",
+    "liters",
+    "liter",
+    "litre",
+    "lt",
+    "ltr",
+    "dm3",
+    "'ל"
+   ],
+   "plausible_min": 10,
+   "plausible_max": 200,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "adblue",
+      "washer",
+      "מים",
+      "שמשות"
+     ],
+     "reason": "a different tank"
+    }
    ]
   },
   {
    "name": "gearbox_type",
    "description": "Gearbox type",
-   "group": "transmission"
+   "group": "transmission",
+   "display_name_he": "סוג תיבת הילוכים",
+   "value_type": "enum",
+   "matcher": "gearbox",
+   "component": "type",
+   "aliases_he": [
+    "תיבת הילוכים",
+    "גיר",
+    "סוג תיבה",
+    "סוג תיבת הילוכים",
+    "תיבה",
+    "תמסורת"
+   ],
+   "aliases_en": [
+    "transmission",
+    "gearbox",
+    "transmission type",
+    "gear box"
+   ],
+   "enum_values": [
+    {
+     "value": "automatic",
+     "variants": [
+      "automatic",
+      "auto",
+      "אוטומטית",
+      "אוטומטי",
+      "אוטומט"
+     ]
+    },
+    {
+     "value": "manual",
+     "variants": [
+      "manual",
+      "ידנית",
+      "ידני"
+     ]
+    },
+    {
+     "value": "dct",
+     "variants": [
+      "dct",
+      "dual-clutch",
+      "dual clutch",
+      "double clutch",
+      "כפולת מצמד",
+      "כפול מצמד",
+      "dsg",
+      "edct",
+      "tct",
+      "g-dct"
+     ]
+    },
+    {
+     "value": "cvt",
+     "variants": [
+      "cvt",
+      "רציפה",
+      "continuously variable"
+     ]
+    },
+    {
+     "value": "e-cvt",
+     "variants": [
+      "e-cvt",
+      "ecvt"
+     ]
+    },
+    {
+     "value": "single-speed",
+     "variants": [
+      "single-speed",
+      "single speed",
+      "1-speed",
+      "חד-הילוכית",
+      "חד הילוכית",
+      "הילוך יחיד",
+      "reduction gear",
+      "single-gear"
+     ]
+    },
+    {
+     "value": "amt",
+     "variants": [
+      "amt",
+      "robotized",
+      "רובוטית"
+     ]
+    }
+   ]
   },
   {
    "name": "gear_count",
    "description": "Number of gears",
-   "group": "transmission"
+   "group": "transmission",
+   "display_name_he": "מספר הילוכים",
+   "value_type": "number",
+   "matcher": "gearbox",
+   "component": "count",
+   "aliases_he": [
+    "מספר הילוכים",
+    "הילוכים",
+    "מס' הילוכים"
+   ],
+   "aliases_en": [
+    "gear count",
+    "number of gears",
+    "speeds",
+    "-speed",
+    "gears"
+   ],
+   "plausible_min": 1,
+   "plausible_max": 12
   },
   {
    "name": "screen_size_in",
    "description": "Main screen size (in)",
-   "group": "multimedia"
+   "group": "multimedia",
+   "display_name_he": "גודל המסך המרכזי",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "מסך",
+    "מסך מרכזי",
+    "גודל מסך",
+    "מסך מגע",
+    "מסך מולטימדיה",
+    "מסך מגע מרכזי"
+   ],
+   "aliases_en": [
+    "display",
+    "touchscreen",
+    "touch screen",
+    "infotainment screen",
+    "screen size",
+    "center display",
+    "central display",
+    "screen",
+    "main display",
+    "infotainment display"
+   ],
+   "expected_units": [
+    "in"
+   ],
+   "normalized_unit": "in",
+   "accepted_unit_variants": [
+    "inch",
+    "inches",
+    "in",
+    "\"",
+    "''",
+    "אינץ'",
+    "אינץ",
+    "אינטש",
+    "-inch"
+   ],
+   "plausible_min": 3,
+   "plausible_max": 60,
+   "negative_context_terms_he": [
+    "חישוק",
+    "חישוקים",
+    "חישוקי",
+    "גלגל",
+    "גלגלי",
+    "גלגלים",
+    "צמיג",
+    "צמיגים"
+   ],
+   "negative_context_terms_en": [
+    "wheel",
+    "wheels",
+    "rim",
+    "rims",
+    "tire",
+    "tyre",
+    "tires",
+    "tyres",
+    "alloy",
+    "alloys"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "wheel",
+      "wheels",
+      "rim",
+      "rims",
+      "alloy",
+      "alloys",
+      "tire",
+      "tyre",
+      "חישוק",
+      "חישוקים",
+      "חישוקי",
+      "גלגלי",
+      "צמיג"
+     ],
+     "unless": [
+      "display",
+      "screen",
+      "touchscreen",
+      "מסך"
+     ],
+     "reason": "a wheel/tire size, not a screen size"
+    }
+   ],
+   "ambiguity_rules": [
+    {
+     "terms": [
+      "instrument",
+      "cluster",
+      "לוח שעונים",
+      "head-up",
+      "hud",
+      "rear",
+      "אחורי",
+      "driver display",
+      "passenger"
+     ],
+     "hint_key": "display_role",
+     "hint_value": "maybe_not_main_screen",
+     "note": "instrument cluster / rear / passenger display"
+    }
+   ]
   },
   {
    "name": "apple_carplay",
    "description": "Apple CarPlay",
-   "group": "multimedia"
+   "group": "multimedia",
+   "display_name_he": "תמיכה ב־Apple CarPlay",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "אפל קארפליי",
+    "קארפליי",
+    "אפל קאר פליי",
+    "Apple CarPlay"
+   ],
+   "aliases_en": [
+    "Apple CarPlay",
+    "CarPlay"
+   ],
+   "negative_context_terms_he": [
+    "ללא Apple CarPlay",
+    "ללא CarPlay",
+    "אין CarPlay",
+    "לא כולל CarPlay"
+   ],
+   "negative_context_terms_en": [
+    "without apple carplay",
+    "no apple carplay",
+    "carplay not available",
+    "without carplay",
+    "carplay is not available"
+   ]
   },
   {
    "name": "android_auto",
    "description": "Android Auto",
-   "group": "multimedia"
+   "group": "multimedia",
+   "display_name_he": "תמיכה ב־Android Auto",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "אנדרואיד אוטו",
+    "אנדרואיד-אוטו",
+    "Android Auto"
+   ],
+   "aliases_en": [
+    "Android Auto"
+   ],
+   "negative_context_terms_he": [
+    "ללא Android Auto",
+    "אין Android Auto",
+    "לא כולל Android Auto"
+   ],
+   "negative_context_terms_en": [
+    "without android auto",
+    "no android auto",
+    "android auto not available",
+    "android auto is not available"
+   ]
   },
   {
    "name": "wireless_phone_projection",
    "description": "Wireless CarPlay / Android Auto",
-   "group": "multimedia"
+   "group": "multimedia",
+   "display_name_he": "קישוריות אלחוטית לטלפון",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "CarPlay אלחוטי",
+    "Android Auto אלחוטי",
+    "קארפליי אלחוטי",
+    "אנדרואיד אוטו אלחוטי",
+    "קישוריות אלחוטית לטלפון",
+    "חיבור אלחוטי לטלפון",
+    "שיקוף טלפון אלחוטי"
+   ],
+   "aliases_en": [
+    "wireless CarPlay",
+    "wireless Android Auto",
+    "wireless Apple CarPlay",
+    "wireless smartphone integration",
+    "wireless phone projection",
+    "wireless smartphone mirroring",
+    "wireless smartphone connectivity"
+   ],
+   "negative_context_terms_he": [
+    "ללא חיבור אלחוטי",
+    "חיבור בכבל בלבד"
+   ],
+   "negative_context_terms_en": [
+    "wired only",
+    "wired carplay only",
+    "without wireless"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "charging",
+      "charger",
+      "טעינה",
+      "משטח טעינה",
+      "pad"
+     ],
+     "unless": [
+      "carplay",
+      "android auto",
+      "קארפליי",
+      "אנדרואיד",
+      "projection",
+      "mirroring"
+     ],
+     "reason": "wireless phone charging, not phone projection"
+    }
+   ]
   },
   {
    "name": "power_seats",
    "description": "Power seats",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "מושבים חשמליים",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "מושבים חשמליים",
+    "כוונון חשמלי",
+    "מושב נהג חשמלי",
+    "כוונון חשמלי למושבים",
+    "מושבים מתכווננים חשמלית",
+    "כיוונון חשמלי",
+    "מושבים בכיוונון חשמלי",
+    "מושב חשמלי"
+   ],
+   "aliases_en": [
+    "power seats",
+    "power adjustable seats",
+    "power-adjustable seats",
+    "electric seats",
+    "electrically adjustable seats",
+    "power driver seat",
+    "power front seats",
+    "power-adjustable front seats",
+    "power seat"
+   ],
+   "negative_context_terms_he": [
+    "כוונון ידני",
+    "ללא כוונון חשמלי"
+   ],
+   "negative_context_terms_en": [
+    "manual seats",
+    "manually adjustable",
+    "without power seats"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "steering",
+      "הגה",
+      "mirror",
+      "מראות",
+      "מראה",
+      "tailgate",
+      "תא מטען",
+      "windows",
+      "חלונות"
+     ],
+     "unless": [
+      "מושב",
+      "seat"
+     ],
+     "reason": "another power-adjusted component"
+    }
+   ]
   },
   {
    "name": "heated_seats",
    "description": "Heated seats",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "חימום מושבים",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "חימום מושבים",
+    "מושבים מחוממים",
+    "מושבים עם חימום",
+    "חימום למושבים",
+    "חימום מושב",
+    "מושבים קדמיים מחוממים"
+   ],
+   "aliases_en": [
+    "heated seats",
+    "seat heating",
+    "heated front seats",
+    "heated rear seats",
+    "heated seat",
+    "heated and ventilated seats",
+    "heated and ventilated front seats"
+   ],
+   "negative_context_terms_he": [
+    "ללא חימום מושבים",
+    "אין חימום מושבים"
+   ],
+   "negative_context_terms_en": [
+    "without heated seats",
+    "no heated seats",
+    "heated seats not available"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "steering",
+      "הגה",
+      "windshield",
+      "שמשה",
+      "mirror",
+      "מראות"
+     ],
+     "unless": [
+      "מושב",
+      "seat"
+     ],
+     "reason": "another heated component"
+    }
+   ]
   },
   {
    "name": "ventilated_seats",
    "description": "Ventilated seats",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "אוורור מושבים",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "אוורור מושבים",
+    "מושבים מאווררים",
+    "מושבים מאוורים",
+    "קירור מושבים",
+    "מושבים מקוררים",
+    "אוורור למושבים",
+    "אוורור מושב"
+   ],
+   "aliases_en": [
+    "ventilated seats",
+    "cooled seats",
+    "seat ventilation",
+    "ventilated front seats",
+    "seat cooling",
+    "heated and ventilated seats",
+    "heated and ventilated front seats"
+   ],
+   "negative_context_terms_he": [
+    "ללא אוורור מושבים",
+    "אין אוורור מושבים"
+   ],
+   "negative_context_terms_en": [
+    "without ventilated seats",
+    "no ventilated seats"
+   ]
   },
   {
    "name": "climate_zones",
    "description": "Climate control zones",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "מספר אזורי בקרת אקלים",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "בקרת אקלים",
+    "אזורי אקלים",
+    "מיזוג אוויר",
+    "מערכת מיזוג",
+    "בקרת אקלים מפוצלת",
+    "מזגן"
+   ],
+   "aliases_en": [
+    "climate control",
+    "climate zones",
+    "automatic climate control",
+    "air conditioning",
+    "zone climate",
+    "climate"
+   ],
+   "expected_units": [
+    "zones"
+   ],
+   "normalized_unit": "zones",
+   "accepted_unit_variants": [
+    "zones",
+    "zone",
+    "אזורים",
+    "אזורי"
+   ],
+   "patterns": [
+    {
+     "regex": "\\b(dual|two|2)[- ]?zone",
+     "value": 2
+    },
+    {
+     "regex": "\\b(tri|three|3)[- ]?zone",
+     "value": 3
+    },
+    {
+     "regex": "\\b(quad|four|4)[- ]?zone",
+     "value": 4
+    },
+    {
+     "regex": "\\bsingle[- ]?zone",
+     "value": 1
+    },
+    {
+     "regex": "דו[- ]?אזורי",
+     "value": 2
+    },
+    {
+     "regex": "תלת[- ]?אזורי",
+     "value": 3
+    },
+    {
+     "regex": "(?:4|ארבעה|ארבע)[- ]?אזורי",
+     "value": 4
+    },
+    {
+     "regex": "מפוצל(?:ת)? ל[- ]?(\\d)",
+     "value": "$1"
+    }
+   ],
+   "plausible_min": 1,
+   "plausible_max": 6
   },
   {
    "name": "sunroof_panoramic",
    "description": "Sunroof / panoramic roof",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "גג שמש / גג פנורמי",
+   "value_type": "boolean",
+   "matcher": "boolean",
+   "aliases_he": [
+    "גג פנורמי",
+    "גג שמש",
+    "חלון גג",
+    "גג זכוכית",
+    "גג שמש פנורמי",
+    "גג זכוכית פנורמי"
+   ],
+   "aliases_en": [
+    "panoramic roof",
+    "panoramic sunroof",
+    "sunroof",
+    "glass roof",
+    "moonroof",
+    "panoramic glass roof",
+    "panorama roof"
+   ],
+   "negative_context_terms_he": [
+    "ללא גג שמש",
+    "ללא גג פנורמי"
+   ],
+   "negative_context_terms_en": [
+    "without sunroof",
+    "no sunroof",
+    "without panoramic roof"
+   ]
   },
   {
    "name": "other_comfort_features",
    "description": "Other comfort features",
-   "group": "comfort"
+   "group": "comfort",
+   "display_name_he": "אבזור נוחות נוסף",
+   "value_type": "text",
+   "matcher": "text",
+   "aliases_he": [
+    "אבזור נוחות",
+    "נוחות",
+    "אבזור נוסף"
+   ],
+   "aliases_en": [
+    "comfort features",
+    "comfort",
+    "convenience features",
+    "convenience"
+   ]
   },
   {
    "name": "rim_diameter_in",
    "description": "Rim diameter (in)",
-   "group": "tires_wheels"
+   "group": "tires_wheels",
+   "display_name_he": "קוטר חישוקים",
+   "value_type": "number",
+   "matcher": "numeric",
+   "aliases_he": [
+    "חישוקים",
+    "קוטר חישוק",
+    "קוטר חישוקים",
+    "גלגלי",
+    "חישוקי",
+    "חישוקי סגסוגת",
+    "גלגלי סגסוגת",
+    "מידת חישוק",
+    "חישוק"
+   ],
+   "aliases_en": [
+    "rim",
+    "rims",
+    "wheel size",
+    "alloy wheels",
+    "wheels",
+    "wheel diameter",
+    "rim diameter",
+    "alloys",
+    "alloy wheel"
+   ],
+   "expected_units": [
+    "in"
+   ],
+   "normalized_unit": "in",
+   "accepted_unit_variants": [
+    "inch",
+    "inches",
+    "in",
+    "\"",
+    "''",
+    "אינץ'",
+    "אינץ",
+    "אינטש",
+    "-inch"
+   ],
+   "plausible_min": 10,
+   "plausible_max": 30,
+   "negative_context_terms_he": [
+    "מסך"
+   ],
+   "negative_context_terms_en": [
+    "screen",
+    "display",
+    "touchscreen"
+   ],
+   "exclusion_rules": [
+    {
+     "terms": [
+      "screen",
+      "display",
+      "touchscreen",
+      "מסך"
+     ],
+     "unless": [
+      "wheel",
+      "rim",
+      "alloy",
+      "חישוק",
+      "גלגלי"
+     ],
+     "reason": "a screen size, not a wheel size"
+    },
+    {
+     "terms": [
+      "steering",
+      "הגה"
+     ],
+     "reason": "steering wheel"
+    }
+   ],
+   "patterns": [
+    {
+     "regex": "\\b\\d{3}\\s?/\\s?\\d{2}\\s?z?r\\s?(\\d{2})\\b",
+     "value": "$1",
+     "confidence": 0.6,
+     "note": "rim diameter as stated inside a tire size"
+    }
+   ]
   },
   {
    "name": "tire_size_front",
    "description": "Front tire size",
-   "group": "tires_wheels"
+   "group": "tires_wheels",
+   "display_name_he": "מידת צמיגים קדמיים",
+   "value_type": "text",
+   "matcher": "tire_size",
+   "component": "front",
+   "aliases_he": [
+    "צמיגים",
+    "מידת צמיג",
+    "צמיג קדמי",
+    "צמיגים קדמיים",
+    "מידת צמיגים קדמיים",
+    "מידות צמיגים"
+   ],
+   "aliases_en": [
+    "tires",
+    "tyres",
+    "tire size",
+    "tyre size",
+    "front tire",
+    "front tyre",
+    "front tires",
+    "front tyres"
+   ]
   },
   {
    "name": "tire_size_rear",
    "description": "Rear tire size",
-   "group": "tires_wheels"
+   "group": "tires_wheels",
+   "display_name_he": "מידת צמיגים אחוריים",
+   "value_type": "text",
+   "matcher": "tire_size",
+   "component": "rear",
+   "aliases_he": [
+    "צמיגים",
+    "מידת צמיג",
+    "צמיג אחורי",
+    "צמיגים אחוריים",
+    "מידת צמיגים אחוריים",
+    "מידות צמיגים"
+   ],
+   "aliases_en": [
+    "tires",
+    "tyres",
+    "tire size",
+    "tyre size",
+    "rear tire",
+    "rear tyre",
+    "rear tires",
+    "rear tyres"
+   ]
   },
   {
    "name": "alternative_tire_sizes",
    "description": "Alternative tire sizes",
-   "group": "tires_wheels"
+   "group": "tires_wheels",
+   "display_name_he": "מידות צמיגים חלופיות",
+   "value_type": "text",
+   "matcher": "tire_size",
+   "component": "alternative",
+   "aliases_he": [
+    "מידות צמיגים חלופיות",
+    "צמיגים אופציונליים",
+    "צמיגים חלופיים",
+    "חישוקים אופציונליים"
+   ],
+   "aliases_en": [
+    "alternative tire sizes",
+    "optional wheel sizes",
+    "optional tires",
+    "optional wheels",
+    "alternative tyre sizes",
+    "optional tyres"
+   ]
   },
   {
    "name": "local_trim_name",
    "description": "Local commercial trim name of this exact variant",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "שם רמת הגימור בישראל",
+   "value_type": "text",
+   "matcher": "text",
+   "aliases_he": [
+    "רמת גימור",
+    "רמת אבזור",
+    "גרסה",
+    "גרסת גימור",
+    "דגם",
+    "גירסה"
+   ],
+   "aliases_en": [
+    "trim",
+    "trim level",
+    "grade",
+    "version",
+    "variant"
+   ]
   },
   {
    "name": "list_price",
    "description": "List price (with currency)",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "מחיר מחירון",
+   "value_type": "number",
+   "matcher": "price",
+   "aliases_he": [
+    "מחיר",
+    "מחיר מחירון",
+    "מחיר הרכב",
+    "מחיר לצרכן",
+    "מחיר מומלץ",
+    "מחירון"
+   ],
+   "aliases_en": [
+    "list price",
+    "msrp",
+    "price",
+    "retail price",
+    "recommended price",
+    "starting price"
+   ],
+   "expected_units": [
+    "ILS"
+   ],
+   "normalized_unit": "ILS",
+   "accepted_unit_variants": [
+    "₪",
+    "ש\"ח",
+    "שח",
+    "ils",
+    "nis",
+    "שקל",
+    "שקלים",
+    "שקלים חדשים"
+   ],
+   "plausible_min": 1000,
+   "plausible_max": 5000000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "לחודש",
+      "per month",
+      "monthly",
+      "/mo",
+      "חודשי",
+      "תשלום",
+      "payment",
+      "ליסינג",
+      "lease",
+      "leasing",
+      "מקדמה",
+      "down payment",
+      "הנחה",
+      "discount",
+      "חיסכון",
+      "save",
+      "אגרה",
+      "אגרת",
+      "licence fee",
+      "license fee",
+      "registration",
+      "ביטוח",
+      "insurance",
+      "טרייד",
+      "trade-in",
+      "מימון",
+      "finance"
+     ],
+     "reason": "a payment, fee or discount, not the list price"
+    }
+   ],
+   "ambiguity_rules": [
+    {
+     "terms": [
+      "החל מ",
+      "starting from",
+      "starting at",
+      "prices from",
+      "מחיר התחלתי",
+      "starting price",
+      "from just"
+     ],
+     "hint_key": "price_type_hint",
+     "hint_value": "starting_price",
+     "note": "a starting price may belong to another trim"
+    }
+   ]
   },
   {
    "name": "registration_licence_fee",
    "description": "Registration / annual licence fee (with currency)",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "אגרת רישוי שנתית",
+   "value_type": "number",
+   "matcher": "price",
+   "aliases_he": [
+    "אגרת רישוי",
+    "אגרת רישיון",
+    "אגרת רישוי שנתית",
+    "אגרה שנתית",
+    "אגרת רישום",
+    "אגרת רישוי לשנה"
+   ],
+   "aliases_en": [
+    "registration fee",
+    "licence fee",
+    "license fee",
+    "annual licence fee",
+    "annual registration",
+    "annual license fee"
+   ],
+   "expected_units": [
+    "ILS"
+   ],
+   "normalized_unit": "ILS",
+   "accepted_unit_variants": [
+    "₪",
+    "ש\"ח",
+    "שח",
+    "ils",
+    "nis",
+    "שקל",
+    "שקלים",
+    "שקלים חדשים"
+   ],
+   "plausible_min": 50,
+   "plausible_max": 30000,
+   "exclusion_rules": [
+    {
+     "terms": [
+      "לחודש",
+      "per month",
+      "monthly",
+      "ביטוח",
+      "insurance"
+     ],
+     "reason": "not the annual licence fee"
+    }
+   ]
   },
   {
    "name": "vehicle_warranty",
    "description": "Vehicle warranty",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "אחריות לרכב",
+   "value_type": "text",
+   "matcher": "warranty",
+   "component": "text",
+   "warranty_kind": "vehicle",
+   "aliases_he": [
+    "אחריות",
+    "אחריות לרכב",
+    "אחריות יצרן",
+    "אחריות כללית",
+    "אחריות יבואן",
+    "תקופת אחריות"
+   ],
+   "aliases_en": [
+    "warranty",
+    "vehicle warranty",
+    "basic warranty",
+    "new vehicle warranty",
+    "manufacturer warranty",
+    "factory warranty",
+    "bumper-to-bumper"
+   ]
   },
   {
    "name": "battery_hybrid_warranty",
    "description": "Battery / hybrid system warranty",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "אחריות סוללה / מערכת היברידית",
+   "value_type": "text",
+   "matcher": "warranty",
+   "component": "text",
+   "warranty_kind": "battery",
+   "aliases_he": [
+    "אחריות סוללה",
+    "אחריות לסוללה",
+    "אחריות מערכת היברידית",
+    "אחריות למערכת ההיברידית",
+    "אחריות סוללת מתח גבוה",
+    "אחריות למצבר מתח גבוה"
+   ],
+   "aliases_en": [
+    "battery warranty",
+    "hybrid system warranty",
+    "high-voltage battery warranty",
+    "hv battery warranty",
+    "ev battery warranty",
+    "hybrid battery warranty"
+   ]
   },
   {
    "name": "warranty_km",
    "description": "Warranty km",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "אחריות — קילומטראז׳",
+   "value_type": "number",
+   "matcher": "warranty",
+   "component": "km",
+   "warranty_kind": "vehicle",
+   "aliases_he": [
+    "ק\"מ אחריות",
+    "קילומטר אחריות",
+    "אחריות ק\"מ",
+    "מגבלת קילומטרים",
+    "קילומטראז' אחריות"
+   ],
+   "aliases_en": [
+    "warranty km",
+    "warranty mileage",
+    "warranty kilometres",
+    "warranty distance"
+   ],
+   "expected_units": [
+    "km"
+   ],
+   "normalized_unit": "km",
+   "accepted_unit_variants": [
+    "km",
+    "ק\"מ",
+    "קילומטר",
+    "קילומטרים",
+    "kms",
+    "kilometres",
+    "kilometers"
+   ],
+   "plausible_min": 1000,
+   "plausible_max": 1000000
   },
   {
    "name": "warranty_years",
    "description": "Warranty years",
-   "group": "commercial"
+   "group": "commercial",
+   "display_name_he": "אחריות — שנים",
+   "value_type": "number",
+   "matcher": "warranty",
+   "component": "years",
+   "warranty_kind": "vehicle",
+   "aliases_he": [
+    "שנות אחריות",
+    "שנים אחריות",
+    "אחריות לשנים",
+    "תקופת אחריות"
+   ],
+   "aliases_en": [
+    "warranty years",
+    "years warranty",
+    "warranty period",
+    "warranty duration"
+   ],
+   "expected_units": [
+    "years"
+   ],
+   "normalized_unit": "years",
+   "accepted_unit_variants": [
+    "years",
+    "year",
+    "yrs",
+    "שנים",
+    "שנה",
+    "שנות"
+   ],
+   "plausible_min": 1,
+   "plausible_max": 15
   }
  ]
 }

@@ -1,5 +1,9 @@
 """Finalize an existing saved research run without repeating the research.
 
+Typical inputs: a run interrupted mid-research, a finalization that failed, or a run whose process died
+after the durable pre-finalization checkpoint (status `finalization_pending`): research, deterministic
+harvest, document sweep and field recovery are never repeated; only the finalizer call is made.
+
     python -m src.cli --finalize-existing --batch-id <batch> --record-id <id>
 
 Reads the run's input.json and events.jsonl (and result.json if one exists),
@@ -142,8 +146,13 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
             api_errors.append(dict(data))
         log.event(kind, phase=phase, **data)
 
+    def activity_hook(kind: str, **data) -> None:
+        log.event(kind, phase=phase, record_id=record_id, **data)
+
     previous_hook = getattr(client, "hook", None)
+    previous_activity = getattr(client, "activity_hook", None)
     client.hook = api_hook
+    client.activity_hook = activity_hook
     caller = ModelCaller(client, log, config)
     try:
         fin = run_finalization(caller, run_log=log, payload=payload, config=config, cache=cache,
@@ -152,8 +161,10 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     except BaseException as exc:  # Ctrl+C: log it; the prior state on disk is untouched
         log.event("interrupted", phase=phase, exception=type(exc).__name__)
         client.hook = previous_hook
+        client.activity_hook = previous_activity
         raise
     client.hook = previous_hook
+    client.activity_hook = previous_activity
     (recovery_dir / "research_bundle.json").write_text(json.dumps(fin["bundle"], ensure_ascii=False, indent=1),
                                                        "utf-8")
 
@@ -163,9 +174,11 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     phases = trace.usage_by_phase([e for e in events if e.get("kind") == "model_response" and e.get("phase") != phase])
     usage_research = base.get("usage_research") or phases["research"]
     usage_recovery = base.get("usage_field_recovery") or phases["field_recovery"]
+    usage_sweep = base.get("usage_document_sweep") or phases["document_sweep"]
     usage_finalizer = trace.sum_usage(base.get("usage_finalizer"), caller.usage["finalization"])
     search_calls = base.get("search_api_calls") or 0
-    cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_recovery), usage_finalizer, search_calls,
+    cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer,
+                                  search_calls,
                                   research_pricing, pricing_finalizer, stats["unknown_usage_attempts"])
     if fin["error"]:
         status = "finalization_failed"
@@ -195,7 +208,8 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
         "usage_research": usage_research,
         "usage_finalizer": usage_finalizer,
         "usage_field_recovery": usage_recovery,
-        "usage": trace.sum_usage(usage_research, usage_recovery, usage_finalizer),
+        "usage_document_sweep": usage_sweep,
+        "usage": trace.sum_usage(usage_research, usage_sweep, usage_recovery, usage_finalizer),
         "api_stats": stats,
         "api_errors": list(base.get("api_errors") or []) + api_errors,
         "pricing": research_pricing,

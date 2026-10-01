@@ -129,7 +129,8 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
     stop_reason = _stop_reason(events, agent_cfg.get("max_steps") or started.get("max_steps"))
     pricing = started.get("pricing") or info.get("pricing")
     pricing_finalizer = started.get("pricing_finalizer") or pricing
-    cost, cost_details = run_cost(trace.sum_usage(usage["research"], usage["field_recovery"]), usage["finalization"],
+    cost, cost_details = run_cost(trace.sum_usage(usage["research"], usage["document_sweep"], usage["field_recovery"]),
+                                  usage["finalization"],
                                   counters.get("search_api_calls", 0),
                                   pricing, pricing_finalizer, stats["unknown_usage_attempts"])
     t_start = trace.parse_ts(started.get("ts") or (events[0].get("ts") if events else None))
@@ -186,8 +187,10 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
         "documents": trace.document_ids(events),
         "tool_calls": trace.tool_call_rows(events),
         "counters": counters,
-        "usage": trace.sum_usage(usage["research"], usage["field_recovery"], usage["finalization"]),
+        "usage": trace.sum_usage(usage["research"], usage["document_sweep"], usage["field_recovery"],
+                                 usage["finalization"]),
         "usage_research": usage["research"],
+        "usage_document_sweep": usage["document_sweep"],
         "usage_field_recovery": usage["field_recovery"],
         "usage_finalizer": usage["finalization"],
         "requested_fields": started.get("requested_fields"),

@@ -134,19 +134,24 @@ def _store(ctx, kind: str, url: str, fetched: dict) -> tuple[dict, str]:
 
 def _fetch(ctx, kind: str, url: str) -> dict:
     url = check_url(url)
-    cached = ctx.cache.lookup(kind, url)
-    if cached:
-        ctx.note_document(cached["document_id"], cache_hit=True)
-        result = _summary(cached, ctx.cache.read_text(cached["document_id"]), cache_hit=True,
-                          preview_chars=ctx.config.preview_chars)
-    else:
-        try:
-            fetched = http_get(ctx, url)
-        except requests.RequestException as exc:
-            return {"error": type(exc).__name__, "message": str(exc)[:300], "url": url}
-        record, text = _store(ctx, kind, url, fetched)
-        ctx.note_document(record["document_id"], cache_hit=False)
-        result = _summary(record, text, cache_hit=False, preview_chars=ctx.config.preview_chars)
+    # Single flight per (kind, URL): one worker downloads, concurrent workers wait and reuse the stored
+    # document. Other URLs are not blocked.
+    with ctx.cache.hold(f"doc:{kind}:{url}") as waited:
+        cached = ctx.cache.lookup(kind, url)
+        if cached:
+            if waited:
+                ctx.cache.count("cross_vehicle_document_singleflight_reuses")
+            ctx.note_document(cached["document_id"], cache_hit=True)
+            result = _summary(cached, ctx.cache.read_text(cached["document_id"]), cache_hit=True,
+                              preview_chars=ctx.config.preview_chars)
+        else:
+            try:
+                fetched = http_get(ctx, url)
+            except requests.RequestException as exc:
+                return {"error": type(exc).__name__, "message": str(exc)[:300], "url": url}
+            record, text = _store(ctx, kind, url, fetched)
+            ctx.note_document(record["document_id"], cache_hit=False)
+            result = _summary(record, text, cache_hit=False, preview_chars=ctx.config.preview_chars)
     ctx.emit("document", document={k: v for k, v in result.items() if k != "text_preview"})
     return result
 
