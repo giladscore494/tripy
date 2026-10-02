@@ -41,8 +41,8 @@ PLANNER_VERSION = "tail-planner-v1"
 TRIAGE_STATES = ("candidate_rich_local", "true_missing", "foreign_only", "conflicting", "policy_blocked",
                  "low_yield")
 DEFAULT_CLUSTER = "other"
-LOCAL_TOOLS = ("find_in_document", "extract_tables", "extract_html", "get_structured_data", "get_cached_document",
-               "store_evidence", "report_field_status")
+LOCAL_TOOLS = ("inspect_document_for_fields", "find_in_document", "extract_tables", "extract_html", "get_structured_data",
+               "get_cached_document", "store_evidence", "report_field_status")
 # field state -> rank: a higher rank after a turn is a state improvement (scheduling only)
 STATE_RANK = {"missing": 0, "unresolved": 0, "weak_provenance": 0, "variant_not_exact": 1,
               "foreign_market_only": 2, "conflicting": 3, "ok": 5, "not_applicable": 5}

@@ -186,7 +186,8 @@ class GLMClient:
             return path
         return self.settings.base_url.rstrip("/") + "/" + path.lstrip("/")
 
-    def _post(self, path: str, payload: dict, request_kind: str) -> tuple[dict, int]:
+    def _post(self, path: str, payload: dict, request_kind: str,
+              timeout_s: float | None = None) -> tuple[dict, int]:
         url = self._url(path)
         headers = {"Authorization": f"Bearer {self.settings.api_key}", "Content-Type": "application/json"}
         max_attempts = max(1, int(self.settings.chat_max_attempts if request_kind == "chat"
@@ -197,7 +198,8 @@ class GLMClient:
         last: GLMError | None = None
         for attempt in range(1, max_attempts + 1):
             will_retry = attempt < max_attempts
-            resp, failure, latency = self._attempt(url, headers, payload, request_kind, attempt, max_attempts)
+            resp, failure, latency = self._attempt(url, headers, payload, request_kind, attempt, max_attempts,
+                                                   timeout_s)
             if failure is not None:
                 exc = failure
                 timeout = isinstance(exc, requests.Timeout)
@@ -238,7 +240,8 @@ class GLMClient:
         raise last
 
     def _attempt(self, url: str, headers: dict, payload: dict, request_kind: str, attempt: int,
-                 max_attempts: int) -> tuple[Any, requests.RequestException | None, int]:
+                 max_attempts: int,
+                 timeout_s: float | None = None) -> tuple[Any, requests.RequestException | None, int]:
         """ONE HTTP attempt inside one concurrency slot. Returns (response, request exception, latency_ms).
 
         The slot is released as soon as the response (or failure) is back: never during the retry
@@ -255,7 +258,7 @@ class GLMClient:
             started = time.monotonic()
             try:
                 resp = self.session.post(url, headers=headers, data=json.dumps(payload),
-                                         timeout=(15, self.settings.timeout_s))
+                                         timeout=(15, timeout_s or self.settings.timeout_s))
             except requests.RequestException as exc:
                 failure = exc
             finally:
@@ -273,8 +276,9 @@ class GLMClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              temperature: float | None = None, max_tokens: int | None = None,
-             extra: dict | None = None, model: str | None = None) -> ChatResponse:
-        """`model` overrides the configured model id for this one call (used by the finalizer)."""
+             extra: dict | None = None, model: str | None = None, timeout_s: float | None = None) -> ChatResponse:
+        """`model` overrides the configured model id for this one call (the finalizer, a phase override);
+        `timeout_s` the read timeout per attempt of this one call (a phase override). Retries are unchanged."""
         payload: dict[str, Any] = {"model": model or self.settings.model, "messages": messages}
         if tools:
             payload["tools"] = tools
@@ -286,7 +290,7 @@ class GLMClient:
         if extra:
             payload.update(extra)
         path = self.settings.chat_path or DEFAULT_CHAT_PATH
-        data, latency = self._post(path, payload, "chat")
+        data, latency = self._post(path, payload, "chat", timeout_s=timeout_s)
         choices = data.get("choices") or []
         if not choices:
             raise GLMError("GLM returned no choices", status=200, body=json.dumps(data)[:RAW_ERROR_BODY_LIMIT],

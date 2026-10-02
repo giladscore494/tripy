@@ -289,3 +289,23 @@ def find_in_document(ctx, document_id: str, query: str, scope: str = "text", con
         haystack = ctx.cache.read_text(document_id)
     hits = _hits(haystack, query, max(50, min(int(context_chars), 2000)), max(1, min(int(max_hits), 50)))
     return {"document_id": document_id, "query": query, "scope": scope, "hits": hits, "hit_count": len(hits)}
+
+
+def inspect_document_for_fields(ctx, document_id: str, fields: list | None = None, max_matches_per_field: int = 2,
+                                context_chars: int = 120) -> dict:
+    """Batch local inspection of ONE stored document for several requested fields in one operation (no model, no
+    network, no evidence): every field's label locations as compact snippets with offsets, plus the parser's candidates
+    for those fields. Default fields: every applicable requested field of this run."""
+    from ..document_inspection import inspect_document
+
+    _load(ctx, document_id)       # unknown document -> DocumentNotFound; counts as a document opening
+    specs = list(getattr(ctx.admission, "all_specs", None) or [])
+    if not specs:
+        from ..fields import resolve_requested_fields
+
+        specs = resolve_requested_fields(None, propulsion=(ctx.vehicle or {}).get("propulsion"))
+    if isinstance(fields, str):
+        fields = [f.strip() for f in fields.split(",") if f.strip()]
+    return inspect_document(ctx.cache, document_id, specs, fields or None, context_chars=context_chars,
+                            max_matches_per_field=max(1, min(int(max_matches_per_field or 2), 5)),
+                            max_chars=int(ctx.config.max_text_chars * 1.4))   # under the default tool-output cap

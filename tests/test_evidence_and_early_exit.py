@@ -54,8 +54,10 @@ def run(tmp_path, ctx, script, **cfg):
     log = RunLog(tmp_path / "runs", "b", "85095")
     # Early-exit tests script every model turn; admitted evidence now records its document, which would schedule
     # a document sweep turn, so the layered stage is off here (it has its own tests).
+    # scripted turns end at the ceiling: the minimum-acquisition safety gate (tests/test_orchestration.py) is off
     config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "layered_harvest_enabled": False,
-                            "recovery_mode": "legacy", **cfg})
+                            "recovery_mode": "legacy", "primary_research_min_base_documents": 0,
+                            "primary_research_min_base_scoped_coverage": 0, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path)

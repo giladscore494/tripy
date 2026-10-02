@@ -23,6 +23,7 @@ from . import labels_he as he
 from .live_state import candidate_table_rows, feed_line
 
 STATUS_ICON = {"completed": "✅", "max_steps_finalized": "⏱️", "no_new_research_finalized": "⏱️",
+               "acquisition_sufficient_finalized": "⏱️",
                "completed_unparsed": "⚠️", "recovered_finalized": "♻️", "finalization_failed": "🟠",
                "research_failed": "❌", "interrupted": "⏹️", "incomplete": "🟡", "error": "❌",
                "finalization_pending": "⏳"}
@@ -436,7 +437,8 @@ def render_candidates(result: dict, runs_dir: Path) -> None:
     else:
         st.caption("No deterministic candidates were recorded for this run.")
     with st.expander("Raw candidates / layered metrics (JSON)"):
-        st.json({"candidate_summary": summary, "document_sweep": result.get("document_sweep"),
+        st.json({"candidate_summary": summary, "primary_research": result.get("primary_research"),
+                 "document_sweep": result.get("document_sweep"),
                  "candidates": [e for e in events if e.get("kind") == "candidates_harvested"]}, expanded=False)
 
 

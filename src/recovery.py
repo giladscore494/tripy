@@ -27,7 +27,7 @@ from typing import Callable
 from .agent import (AgentConfig, ModelCaller, effective_glm_config, finalizer_messages, finalizer_model_of,
                     run_finalization)
 from .bundle import build_research_bundle
-from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
+from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_models_of, phase_run_cost
 from .storage import trace
 from .storage.atomic import atomic_write_json
 from .storage.run_loader import reconstruct_run
@@ -112,7 +112,7 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     tool_config = tool_config or ToolConfig()
     stamp = _stamp()
     recovery_dir = run_dir / "recovery" / stamp
-    finalizer_model = finalizer_model_of(client)
+    finalizer_model = finalizer_model_of(client, config)
     research_pricing = base.get("pricing") or info.get("pricing")
     if pricing_finalizer is None:
         same = finalizer_model == (base.get("research_model") or base.get("model"))
@@ -177,9 +177,12 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     usage_sweep = base.get("usage_document_sweep") or phases["document_sweep"]
     usage_finalizer = trace.sum_usage(base.get("usage_finalizer"), caller.usage["finalization"])
     search_calls = base.get("search_api_calls") or 0
-    cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer,
-                                  search_calls,
-                                  research_pricing, pricing_finalizer, stats["unknown_usage_attempts"])
+    cost, cost_details = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep,
+                                        usage_recovery=usage_recovery, usage_finalizer=usage_finalizer,
+                                        search_api_calls=search_calls, pricing=research_pricing,
+                                        pricing_finalizer=pricing_finalizer,
+                                        unknown_usage_attempts=stats["unknown_usage_attempts"],
+                                        phase_models=phase_models_of(base.get("cost_details")))
     if fin["error"]:
         status = "finalization_failed"
     elif fin["output"] is None:

@@ -22,7 +22,8 @@ from urllib.parse import urldefrag
 
 from .storage.trace import FETCH_TOOLS, SEARCH_TOOLS, parse_args
 
-INSPECT_TOOLS = ("extract_html", "extract_tables", "find_in_document", "get_structured_data", "get_cached_document")
+INSPECT_TOOLS = ("extract_html", "extract_tables", "find_in_document", "get_structured_data", "get_cached_document",
+                 "inspect_document_for_fields")
 # Read-only tools whose exact repeats are answered from the earlier result. store_evidence and
 # report_field_status are never replayed: they record state.
 REPLAY_SAFE_TOOLS = SEARCH_TOOLS + FETCH_TOOLS + INSPECT_TOOLS
@@ -108,6 +109,13 @@ def call_signature(name: str, raw_args: Any) -> str | None:
                      _int_or(args.get("max_rows"), None), _int_or(args.get("start_table"), 0)]
         elif name == "get_structured_data":
             parts = [_norm_text(args.get("document_id")), _int_or(args.get("max_chars"), None)]
+        elif name == "inspect_document_for_fields":
+            fields = args.get("fields") or []
+            if isinstance(fields, str):
+                fields = fields.split(",")
+            parts = [_norm_text(args.get("document_id")),
+                     sorted({_norm_text(f).lower() for f in fields if _norm_text(f)}) or None,
+                     _int_or(args.get("max_matches_per_field"), 2), _int_or(args.get("context_chars"), 120)]
         else:  # extract_html
             parts = [_norm_text(args.get("document_id")), _int_or(args.get("offset"), 0),
                      _int_or(args.get("max_chars"), None)]
@@ -295,6 +303,15 @@ class ResearchTracker:
                 if key not in self._hit_offsets:
                     self._hit_offsets.add(key)
                     fresh += 1
+            return fresh
+        if name == "inspect_document_for_fields":
+            fresh = 0
+            for field, items in (result.get("matches") or {}).items():
+                for item in items:
+                    key = (doc, "inspect", item.get("offset"))
+                    if key not in self._hit_offsets:
+                        self._hit_offsets.add(key)
+                        fresh += 1
             return fresh
         if name == "extract_tables":
             fresh = 0

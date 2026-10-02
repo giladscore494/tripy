@@ -76,6 +76,7 @@ RUN_STATUS_LABELS_HE = {
     "completed": "הושלם",
     "max_steps_finalized": "הושלם (תקציב המחקר נוצל)",
     "no_new_research_finalized": "הושלם (המחקר מוצה)",
+    "acquisition_sufficient_finalized": "הושלם (איסוף המקורות הספיק)",
     "completed_unparsed": "הושלם ללא JSON תקין",
     "recovered_finalized": "הושלם לאחר שחזור",
     "finalization_failed": "בניית התוצאה נכשלה",

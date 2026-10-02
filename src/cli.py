@@ -49,8 +49,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
                    help="Model id for the compact finalization call only (GLM_FINALIZER_MODEL; empty = --model)")
     p.add_argument("--thinking", choices=["", "enabled", "disabled"], default=env("GLM_THINKING", ""),
                    help='"" = provider default (nothing sent)')
-    p.add_argument("--max-steps", type=int, default=int(env("AGENT_MAX_STEPS") or 12),
-                   help="Soft research budget in model turns (AGENT_MAX_STEPS, default 12)")
+    p.add_argument("--max-steps", type=int,
+                   default=int(env("PRIMARY_RESEARCH_MAX_TURNS") or env("AGENT_MAX_STEPS") or 6),
+                   help="Primary research (source acquisition) turn ceiling (PRIMARY_RESEARCH_MAX_TURNS / "
+                        "AGENT_MAX_STEPS, default 6)")
+    p.add_argument("--no-artifact-stop", type=int, default=None,
+                   help="Stop primary research after N consecutive turns that acquire nothing new; 0 = off "
+                        "(PRIMARY_RESEARCH_NO_ARTIFACT_STOP, default 2)")
     p.add_argument("--no-new-research-turns", type=int, default=None,
                    help="Finalize after N consecutive turns with no new research artifact; 0 = off "
                         "(AGENT_NO_NEW_RESEARCH_TURNS, default 2)")
@@ -88,6 +93,8 @@ def _agent_cfg(args: argparse.Namespace, extra_body: dict):
                      extra_body=extra_body)
     if args.level3 or args.no_level3:            # otherwise INCLUDE_LEVEL3 / the default (off) decides
         overrides["include_level3"] = bool(args.level3 and not args.no_level3)
+    if args.no_artifact_stop is not None:
+        overrides["primary_research_no_artifact_stop"] = args.no_artifact_stop
     if args.no_new_research_turns is not None:
         overrides["no_new_research_turns"] = args.no_new_research_turns
     if args.fields:

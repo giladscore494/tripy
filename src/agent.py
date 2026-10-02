@@ -63,7 +63,8 @@ from .field_recovery import (RETRY_STATES, current_evaluation, early_resolution_
                              retry_packet, retry_queue)
 from .fields import normalize_field_name
 from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields, semantic_notes
-from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
+from .phase_settings import for_phase
+from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
 from .storage.cache import DocumentCache
@@ -71,6 +72,7 @@ from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_tools
 from .tools.evidence import EvidenceStore
+from .acquisition import AcquisitionTracker, annotate_search_result
 from .candidate_harvest import RunHarvester
 from .evidence_admission import AdmissionContext
 from .research_memory import ResearchMemory
@@ -138,8 +140,8 @@ change it. Your job is to find additional information about THIS variant on the 
 return a useful result.
 
 You have web tools: search_web, search_official_domains, fetch_url, fetch_pdf, render_page,
-extract_html, extract_tables, find_in_document, get_structured_data, get_cached_document and
-store_evidence. Use them however you judge best. No source type is forbidden and none is required;
+inspect_document_for_fields, extract_html, extract_tables, find_in_document, get_structured_data,
+get_cached_document and store_evidence. Use them however you judge best. No source type is forbidden and none is required;
 official manufacturer/importer pages, spec PDFs, press kits, reviews, forums and databases are all
 allowed. You decide what to trust and how to describe it.
 
@@ -154,36 +156,42 @@ Guidance:
 
 """ + PROVENANCE_GUIDANCE + """
 
-Working efficiently (documents are external memory):
+Your role in this step: SOURCE ACQUISITION (documents are external memory).
 - fetch_url / fetch_pdf / render_page store the full document in a document store and return only a
   document_id, metadata and a short preview. The full text is NOT in this conversation.
-- Before running another web search, exploit the documents you already fetched:
-  1. find_in_document(document_id, query) for specific values;
-  2. extract_tables(document_id) for spec tables (HTML and PDF);
-  3. get_structured_data(document_id) for embedded JSON on HTML pages;
-  4. extract_html(document_id, offset) / get_cached_document to page through text.
-  Search again when an important target is still unresolved and your documents cannot answer it.
-- Every document you fetch is automatically scanned by the runtime for deterministic candidates of ALL
-  requested Level 2 fields (labels, units, spec tables), and a later review step checks those candidates
-  against the cached documents. So focus your turns on: the exact vehicle identity and trim/variant,
-  Israeli-market sources, authoritative specification sources (importer/manufacturer spec pages, price
-  lists, brochures and spec PDFs), obtaining high-value documents, and sources for difficult fields.
-  You may still store obvious evidence, but do not spend turns on manual document searches for every
-  simple specification field.
-- Do not spend turns re-confirming Level 2 values that are already well supported. Spend remaining turns
-  on unresolved fields, conflicting fields, missing evidence records and exact Israeli-market provenance.
-  Level 3 (reliability, resale, insurance, recalls) should not take the budget away from clean Level 2
-  evidence.
+- Once a useful document is fetched, deterministic code harvests ALL requested Level 2 fields from it
+  (labels, units, spec tables, embedded data) and inspects it locally; a later review step checks those
+  candidates against the cached documents, and a targeted recovery handles what is still open. You do NOT
+  have to look up each field in each document, and fields remaining open is not a reason to search a
+  document you already have field by field.
+- So spend your turns on obtaining a compact, high-value source set for THIS exact variant, trying first
+  (search results carry acquisition_priority; 1 = try first):
+  1. the official importer's model / price-list / brochure pages for the target market;
+  2. the official manufacturer's technical specifications;
+  3. official technical PDFs and documents;
+  4. official media / press kits;
+  5. high-quality publishers, then aggregators, then marketplaces and communities.
+  For market-bound fields (price, licence fee, local trim name, warranty) target-market sources come before
+  foreign manufacturer pages (priority_commercial). Lower-priority sources stay allowed when they are what
+  exists; nothing is forbidden.
+- Inspect a fetched document only when you need to establish its identity (model, year, trim, powertrain,
+  market), its usefulness or its scope. To check several fields in one document, make ONE
+  inspect_document_for_fields(document_id, fields) call (a deterministic local lookup) instead of one
+  find_in_document call per field.
+- Do not re-fetch, re-read or re-search what you already have. Research ends automatically after a few
+  consecutive turns that acquire nothing new (a new usable document, a new official source, a new candidate
+  for an open field or newly admitted evidence); re-reading cached documents does not count as progress.
+- You may store obvious evidence you come across with store_evidence, but resolving every field is not
+  this step's job. Level 3 (reliability, resale, insurance, recalls) should not take the budget away from
+  acquiring the Level 2 sources.
 - Re-fetching a URL you already fetched returns the same stored document. Older tool results in this
   conversation are shortened, but every document_id stays valid and can be queried again.
 - If a requested field does not exist for this vehicle (e.g. a fuel tank on an EV), call
-  report_field_status(field, "not_applicable"). If you could not resolve a field, you may report
-  "unresolved"; such fields get a separate focused follow-up later, so do not loop on them now.
+  report_field_status(field, "not_applicable").
 - When storing evidence, you may pass your variant_match claim (exact | different | unclear); the runtime
   computes the effective binding, and a rejected store_evidence returns its reasons.
-- You have a soft budget of research turns. When it runs out, a separate step compiles the final
-  answer from your stored evidence and the excerpts you looked at, so call store_evidence for every
-  value you intend to use as soon as you find it.
+- You have a small budget of research turns. When it runs out (or acquisition stops progressing), later
+  steps harvest, review and recover from your documents and a separate step compiles the final answer.
 
 When you are done, reply with ONLY one JSON object (no tool call) shaped like:
 """ + OUTPUT_SHAPE
@@ -278,10 +286,18 @@ Your job, for ALL requested fields at once, using ONLY what is already downloade
    quote, market, variant, variant_match (exact | different | unclear).
 4. When credible sources give different values, store each credible one with its own market/variant; do not
    pick a winner silently and do not try to resolve conflicts here.
-5. For fields_without_candidates (and fields whose candidates are all rejected), inspect the cached documents
-   with find_in_document / extract_tables / get_structured_data / extract_html / get_cached_document and
-   store any valid fact the parser missed.
-6. If a field does not exist for this vehicle, report_field_status(field, "not_applicable").
+5. Candidates are listed per field in presentation order (a scheduling order: official / target-market / exact-bound
+   / same-row label-value pairings first; never a truth ranking). More may exist (candidates_not_shown): reach them
+   with inspect_document_for_fields when the shown ones are not enough.
+6. For fields_without_candidates, local_snippets (when present) hold the text around the field's label in cached
+   documents, found by deterministic code: read them first; store a value only from the document they cite.
+   fields_not_found_locally: none of their dictionary labels occurs in the text of any cached document; do not
+   search the cached documents for them again unless you have a specific reason (e.g. embedded structured data).
+   For the rest (and fields whose candidates are all rejected) inspect the cached documents, preferably with ONE
+   inspect_document_for_fields(document_id, fields) per document (else find_in_document / extract_tables /
+   get_structured_data / extract_html / get_cached_document), and store any valid fact the parser missed.
+7. If a field does not exist for this vehicle, report_field_status(field, "not_applicable").
+The packet may be one chunk of a larger review (`chunk`): review only the fields it lists.
 You cannot search the web or fetch pages in this step; such calls are refused. Fields that remain open get a
 targeted web follow-up later. Turn budget: at most turn_budget turns (never more than 2), used adaptively.
 If the candidates are enough, put every store_evidence / report_field_status call you can justify into your
@@ -352,12 +368,14 @@ class SearchBudget:
     def remaining(self) -> int:
         return max(0, self.limit - self.used)
 
-STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "user_cancelled", "api_failure",
-                "research_exception")
+STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "no_new_artifact", "acquisition_sufficient",
+                "user_cancelled", "api_failure", "research_exception")
 STATUSES = ("completed", "max_steps_finalized", "no_new_research_finalized", "completed_unparsed",
             "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized",
-            "finalization_pending")
-FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized"}
+            "finalization_pending", "acquisition_sufficient_finalized")
+FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized",
+                    "no_new_artifact": "no_new_research_finalized",
+                    "acquisition_sufficient": "acquisition_sufficient_finalized"}
 # finalization_pending: the durable pre-finalization checkpoint (research complete, finalizer not finished).
 PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete", "finalization_pending")
 PHASE_LABELS = {"research": "Research", "deterministic_harvest": "Deterministic Harvest",
@@ -373,11 +391,26 @@ def interruption_message(phase: str | None) -> str:
 
 @dataclass
 class AgentConfig:
-    max_steps: int = 12                       # soft research budget (model turns)
+    max_steps: int = 6                        # primary research turn ceiling (PRIMARY_RESEARCH_MAX_TURNS / AGENT_MAX_STEPS)
     max_tool_output_chars: int = 6000         # per tool result sent to the model this turn
     keep_recent_tool_results: int = 4         # newest tool results kept as sent; older ones are compacted
     compact_tool_output_chars: int = 700      # size of a compacted older tool result
     no_new_research_turns: int = 2            # finalize after N consecutive idle turns; 0 = off
+    # Primary research is source acquisition (src/acquisition.py). It stops after N consecutive turns that acquired
+    # nothing (no new usable document, official source, candidate for an open field, admitted evidence or better
+    # binding; re-reads, repeated searches and failed fetches are no progress). 0 = off.
+    primary_research_no_artifact_stop: int = 2
+    # Optional acquisition-sufficiency transition: >= N useful documents AND >= X % of the applicable fields covered by a
+    # candidate (or settled). Disabled while either is 0. X may be a fraction (0.6) or a percentage (60).
+    primary_research_min_useful_documents: int = 0
+    primary_research_candidate_field_coverage_threshold: float = 0.0
+    # FAIL-SAFE minimum acquisition base: no scheduler stop (no-artifact streak, sufficiency, idle stop, the normal
+    # ceiling) ends research before the run holds >= N useful documents AND >= X % of the applicable fields have a
+    # candidate from a source in their market scope (any market for market_sensitivity "low", else the target market).
+    # An under-acquired run keeps acquiring up to the hard ceiling. Both 0 = gate off.
+    primary_research_min_base_documents: int = 3
+    primary_research_min_base_scoped_coverage: float = 50.0
+    primary_research_hard_max_turns: int = 12     # only an under-acquired run may go beyond max_steps
     finalizer_bundle_max_chars: int = 60000   # cap on the compact research bundle
     temperature: float | None = None
     max_tokens: int | None = None
@@ -403,8 +436,12 @@ class AgentConfig:
     # content back to interpret; a sweep that just promotes candidates ends after 1 turn. 1 = never a follow-up;
     # 0 = no sweep.
     document_sweep_max_turns: int = 2
-    document_sweep_candidates_per_field: int = 6
-    document_sweep_packet_max_chars: int = 40000
+    # Packet limits of ONE sweep call; a larger packet is split deterministically by recovery_cluster (0 = no limit).
+    # The per-field limit only shapes the packet: every candidate stays stored and reachable through local tools.
+    document_sweep_candidates_per_field: int = 3
+    document_sweep_packet_max_chars: int = 28000
+    document_sweep_max_fields: int = 30
+    document_sweep_max_candidates: int = 48
     # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
     recovery_mode: str = "cluster"
     cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
@@ -415,6 +452,9 @@ class AgentConfig:
     cluster_packet_max_chars: int = 30000
     # Cross-run research memory (src/research_memory.py): verified fact reuse, negative routes, recovery yield.
     research_memory_enabled: bool = True
+    # Per-phase inference settings (src/phase_settings.py): {"research" | "document_sweep" | "recovery" | "finalizer":
+    # {model, thinking, max_tokens, temperature, timeout_s}}. Empty = every phase inherits the global settings.
+    phase_settings: dict = field(default_factory=dict)
     # refuse (without executing) a web route an earlier run already found unproductive for the attempt's open fields;
     # never skips research as such: any other route still runs
     negative_route_blocking: bool = True
@@ -422,6 +462,10 @@ class AgentConfig:
 
 AGENT_ENV = {
     "max_steps": "AGENT_MAX_STEPS",
+    "primary_research_no_artifact_stop": "PRIMARY_RESEARCH_NO_ARTIFACT_STOP",
+    "primary_research_min_useful_documents": "PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS",
+    "primary_research_min_base_documents": "PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS",
+    "primary_research_hard_max_turns": "PRIMARY_RESEARCH_HARD_MAX_TURNS",
     "max_tool_output_chars": "AGENT_MAX_TOOL_OUTPUT_CHARS",
     "keep_recent_tool_results": "AGENT_KEEP_RECENT_TOOL_RESULTS",
     "compact_tool_output_chars": "AGENT_COMPACT_TOOL_OUTPUT_CHARS",
@@ -434,6 +478,10 @@ AGENT_ENV = {
     "field_recovery_prior_excerpts_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS",
     "field_recovery_prior_excerpt_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS",
     "document_sweep_max_turns": "DOCUMENT_SWEEP_MAX_TURNS",
+    "document_sweep_candidates_per_field": "DOCUMENT_SWEEP_CANDIDATES_PER_FIELD",
+    "document_sweep_packet_max_chars": "DOCUMENT_SWEEP_MAX_PACKET_CHARS",
+    "document_sweep_max_fields": "DOCUMENT_SWEEP_MAX_FIELDS",
+    "document_sweep_max_candidates": "DOCUMENT_SWEEP_MAX_CANDIDATES",
     "cluster_max_attempts": "CLUSTER_MAX_ATTEMPTS",
     "cluster_base_turns": "CLUSTER_BASE_TURNS",
     "cluster_max_turns": "CLUSTER_MAX_TURNS",
@@ -471,6 +519,17 @@ def _env_bool(raw: str | None) -> bool | None:
 
 def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **overrides) -> AgentConfig:
     values: dict[str, Any] = _env_ints(AGENT_ENV, env)
+    # PRIMARY_RESEARCH_MAX_TURNS is the name of the research turn ceiling; AGENT_MAX_STEPS stays an alias
+    values.update(_env_ints({"max_steps": "PRIMARY_RESEARCH_MAX_TURNS"}, env))
+    for attr, name in (("primary_research_candidate_field_coverage_threshold",
+                        "PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD"),
+                       ("primary_research_min_base_scoped_coverage", "PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE")):
+        raw = (env(name) or "").strip()
+        if raw:
+            try:
+                values[attr] = float(raw)
+            except ValueError:
+                pass
     enabled = _env_bool(env("FIELD_RECOVERY_ENABLED"))
     if enabled is not None:
         values["field_recovery_enabled"] = enabled
@@ -490,6 +549,11 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
         values["requested_fields"] = parse_field_list(env("ENRICHMENT_FIELDS"))
     if (env("TARGET_MARKET") or "").strip():
         values["target_market"] = env("TARGET_MARKET").strip()
+    from .phase_settings import phase_settings_from_env
+
+    phases = phase_settings_from_env(env)
+    if phases:
+        values["phase_settings"] = phases
     if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
         values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
     return AgentConfig(**{**values, **overrides})
@@ -499,11 +563,13 @@ def tool_config_from_env(env: Callable[[str], str | None] = os.environ.get, **ov
     return ToolConfig(**{**_env_ints(TOOL_ENV, env), **overrides})
 
 
-def request_extra(config: AgentConfig) -> dict:
-    """Extra fields merged into every chat request. The explicit thinking setting wins over extra_body."""
+def request_extra(config: AgentConfig, thinking: str | None = None) -> dict:
+    """Extra fields merged into every chat request. The explicit thinking setting (a phase's own, else the global one)
+    wins over extra_body."""
     extra = dict(config.extra_body or {})
-    if config.thinking:
-        extra["thinking"] = {"type": config.thinking}
+    thinking = config.thinking if thinking is None else thinking
+    if thinking:
+        extra["thinking"] = {"type": thinking}
     return extra
 
 
@@ -511,7 +577,12 @@ def research_model_of(client) -> str:
     return client.model
 
 
-def finalizer_model_of(client) -> str:
+def finalizer_model_of(client, config: AgentConfig | None = None) -> str:
+    from .phase_settings import clean
+
+    override = clean(getattr(config, "phase_settings", None)).get("finalizer", {}).get("model")
+    if override:
+        return override
     settings = getattr(client, "settings", None)
     explicit = getattr(settings, "finalizer_model", "") if settings is not None else ""
     return explicit or getattr(client, "finalizer_model", "") or client.model
@@ -521,8 +592,12 @@ def effective_glm_config(client, config: AgentConfig, tool_config: ToolConfig) -
     """The complete GLM configuration a run used (never includes the API key)."""
     settings = client.settings.public() if hasattr(client, "settings") else {"model": client.model}
     settings.setdefault("research_model", research_model_of(client))
-    settings.setdefault("finalizer_model", finalizer_model_of(client))
+    settings["finalizer_model"] = finalizer_model_of(client, config)
     extra = request_extra(config)
+    from .phase_settings import describe
+
+    phases = describe(config, {"research_model": research_model_of(client), "finalizer_model":
+                               settings["finalizer_model"], "timeout_s": settings.get("timeout_s")})
     return {
         **settings,
         "thinking": extra.get("thinking", "provider_default"),
@@ -531,6 +606,7 @@ def effective_glm_config(client, config: AgentConfig, tool_config: ToolConfig) -
         "tool_choice": "auto",
         "extra_request_body": extra,
         "search_backend": tool_config.search_backend,
+        "phase_settings": phases,
         "recorded_at": utc_now(),
     }
 
@@ -541,7 +617,8 @@ def effective_config(client, config: AgentConfig, tool_config: ToolConfig) -> di
 
 
 def build_user_message(payload: dict, include_level3: bool, max_steps: int | None = None,
-                       notes: dict | None = None, requested: list[dict] | None = None) -> str:
+                       notes: dict | None = None, requested: list[dict] | None = None,
+                       no_artifact_stop: int | None = None) -> str:
     specs = requested if requested is not None else resolve_requested_fields(None)
     targets = {group: [(s["name"], s.get("description") or s["name"]) for s in items if s.get("applicable", True)]
                for group, items in grouped(specs).items()}
@@ -570,7 +647,10 @@ def build_user_message(payload: dict, include_level3: bool, max_steps: int | Non
     else:
         lines += ["", "Level 3 research is disabled for this run; leave `level3` empty."]
     if max_steps:
-        lines += ["", f"Research budget: about {max_steps} model turns. You may finish earlier."]
+        lines += ["", f"Research budget: about {max_steps} model turns (more only while the acquired source set is "
+                      "still too thin). You may finish earlier."
+                  + (f" Once enough sources are acquired, research also ends after {no_artifact_stop} consecutive "
+                     "turns that acquire nothing new." if no_artifact_stop else "")]
     lines += ["", "Start researching."]
     return "\n".join(lines)
 
@@ -641,10 +721,18 @@ class ModelCaller:
         self.run_context.clear()
         self.run_context.update({"field": meta.get("field"), "field_attempt": meta.get("attempt"),
                                  "turn": meta.get("turn"), **(activity or {})})
-        kwargs: dict[str, Any] = {"tools": tools, "temperature": self.config.temperature,
-                                  "max_tokens": self.config.max_tokens, "extra": self.extra or None}
+        # per-phase settings (src/phase_settings.py); unset keys inherit the global configuration
+        from .phase_settings import for_phase
+
+        settings = for_phase(self.config, phase)
+        extra = request_extra(self.config, settings["thinking"]) if settings["overridden"] else self.extra
+        kwargs: dict[str, Any] = {"tools": tools, "temperature": settings["temperature"],
+                                  "max_tokens": settings["max_tokens"], "extra": extra or None}
+        model = model or settings["model"]
         if model:
             kwargs["model"] = model
+        if settings["timeout_s"]:
+            kwargs["timeout_s"] = settings["timeout_s"]
         response = self.client.chat(messages, **kwargs)
         latency = int(getattr(response, "latency_ms", 0) or 0)
         trace.add_usage(self.usage[trace.phase_group(phase)], response.usage, latency)
@@ -841,6 +929,10 @@ class ToolSession:
                                arguments=raw_args, **tags)
             t_tool = time.monotonic()
             result = dispatch(self.ctx, name, raw_args)
+            if phase == "research" and name in trace.SEARCH_TOOLS:
+                adm = self.ctx.admission       # where to try first (src/acquisition.py): scheduling metadata only
+                maker = getattr(adm, "manufacturer", None) or self.ctx.vehicle.get("manufacturer")
+                annotate_search_result(result, maker, getattr(adm, "target_market", None) or self.config.target_market)
             if budget is not None:
                 budget.used += self.ctx.counters["search_cache_misses"] - misses_before
             elapsed = int((time.monotonic() - t_tool) * 1000)
@@ -1757,16 +1849,29 @@ def _state_counts(evaluation: list[dict]) -> dict:
 def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
                        config: AgentConfig, run_log: RunLog, cache, documents_dir: Path, phase_ref: dict,
                        vehicle: dict | None) -> dict:
-    """The bounded Model Document Sweep (see src/document_sweep.py). Cached-document tools only: a search
-    or fetch call is refused without being executed, so this stage makes 0 searches and 0 fetches.
-    Returns the sweep summary; GLMError ends the sweep (recovery still runs), control-flow exceptions
-    propagate."""
-    from .candidate_harvest import candidate_matrix
-    from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, inspection_has_content,
-                                 promoted_or_missed, sweep_packet, sweep_summary, sweep_tool_specs)
+    """LOCAL-FIRST pre-sweep (0 model calls), then the bounded, adaptive Model Document Sweep (src/document_sweep.py).
 
+        every document already harvested for ALL fields (session hook + the harvest step before this)
+        → candidates routed per field (presentation priority only, never truth)
+        → deterministic batch inspection of every usable cached document for open fields WITHOUT candidates
+          (src/document_inspection.py: label snippets with offsets; no evidence, no state)
+        → current_evaluation() again; settled fields are removed
+        → ONE sweep call when the packet fits DOCUMENT_SWEEP_MAX_PACKET_CHARS / _MAX_FIELDS / _MAX_CANDIDATES,
+          otherwise deterministic chunks by recovery_cluster (fields re-evaluated before every chunk)
+
+    Cached-document tools only: a search or fetch call is refused without being executed, so this stage makes 0
+    searches and 0 fetches. Returns the sweep summary; GLMError ends the sweep (recovery still runs), control-flow
+    exceptions propagate."""
+    from .candidate_harvest import candidate_matrix
+    from .document_inspection import inspect_document
+    from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, ROUTING_AUTHORITY,
+                                 inspection_has_content, packet_size, plan_chunks, promoted_or_missed, route_candidates,
+                                 sweep_packet, sweep_summary, sweep_tool_specs)
+    from .tail_planner import candidate_key, document_profile_for, usable_document
+
+    market = config.target_market
     events = trace_events(run_log)
-    before = current_evaluation(events, specs, config.target_market)
+    before = current_evaluation(events, specs, market)
     max_turns = max(0, min(int(config.document_sweep_max_turns or 0), MAX_SWEEP_TURNS))
     matrix = candidate_matrix(events, specs, vehicle)
     doc_metas = _doc_metas(events, cache, documents_dir)
@@ -1785,60 +1890,144 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     if skipped:
         summary = sweep_summary(before=before, after=before, sweep_evidence=[], promoted=[], missed=[], presented=0,
                                 model_calls=0, turns=0, blocked=0, external_calls=0, reply=None, skipped=skipped)
+        summary.update(_sweep_telemetry(chunks=[], packet_chars=0, est_tokens=0, fields=0, candidates=0,
+                                        documents=len(doc_metas), latency_ms=0, timeouts=0, usage=None, pre=None))
         run_log.event("document_sweep_skipped", reason=skipped, fields_unresolved=len(eligible))
         return summary
     phase_ref["name"] = "document_sweep"
-    packet = sweep_packet(payload=payload, specs=specs, evaluation=before, matrix=matrix, events=events,
-                          doc_metas=doc_metas, target_market=config.target_market, max_turns=max_turns,
-                          per_field=config.document_sweep_candidates_per_field,
-                          max_chars=config.document_sweep_packet_max_chars)
-    presented = sum(len(v) for v in packet["deterministic_candidates"].values())
-    from .tail_planner import candidate_key
-
-    presented_keys = [candidate_key(c) for name, shown in packet["deterministic_candidates"].items()
-                      for c in (matrix["fields"].get(name) or [])[:len(shown)]]
     start_seq = run_log.seq
-    run_log.event("document_sweep_started", turn_budget=max_turns, fields_to_review=packet["fields_to_review"],
-                  candidates_presented=presented, fields_without_candidates=packet["fields_without_candidates"],
-                  documents=len(doc_metas), packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)),
-                  allowed_tools=list(DOCUMENT_SWEEP_TOOLS), presented_candidate_keys=presented_keys)
-    messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
-                {"role": "user", "content": "Document sweep task (JSON):\n"
-                                            + json.dumps(packet, ensure_ascii=False, default=str)}]
+    usage_before = dict(caller.usage["document_sweep"])
+
+    # ---- local-first pre-sweep: routing + deterministic batch inspection (no model, no network) ----
+    t_pre = time.monotonic()
+    by_name = {s["name"]: s for s in specs}
+    adm = session.ctx.admission
+    profiles = {}
+    for meta in doc_metas:
+        doc = str(meta.get("document_id"))
+        profiles[doc] = {**document_profile_for(adm, cache, doc), "doc_type": meta.get("doc_type")}
+    routed = {f: route_candidates(matrix["fields"].get(f) or [], profiles, market,
+                                  str(by_name.get(f, {}).get("market_sensitivity")) == "high") for f in eligible}
+    no_candidates = [f for f in eligible if not routed.get(f)]
+    usable = [d for d in profiles if usable_document(cache, d) and profiles[d].get("variant_match") != "different"]
+    usable = sorted(usable, key=lambda d: -ROUTING_AUTHORITY.get(str(profiles[d].get("source_authority")), 0.0))
+    snippets: dict[str, list[dict]] = {}
+    inspected = []
+    searchable: set[str] = set()      # fields the dictionary can look for (no rule: never "not found")
+    for doc in usable if no_candidates else []:
+        found = inspect_document(cache, doc, specs, no_candidates, max_matches_per_field=1, context_chars=100,
+                                 candidates_per_field=0)
+        inspected.append({"document_id": doc, "fields_located": sorted(found.get("matches") or {})})
+        searchable |= set(no_candidates) - set(found.get("fields_without_dictionary") or []) \
+            - set(found.get("unknown_fields") or [])
+        for name, items in (found.get("matches") or {}).items():
+            for item in items:
+                if len(snippets.setdefault(name, [])) < max(1, config.document_sweep_candidates_per_field):
+                    snippets[name].append({"document_id": doc, "snippet": item["snippet"].strip(),
+                                           "offset": item["offset"], "matched_alias": item["matched_alias"]})
+    pre = {"documents_inspected": len(inspected), "fields_without_candidates": no_candidates,
+           "fields_located": sorted(snippets), "model_calls": 0,
+           "duration_ms": int((time.monotonic() - t_pre) * 1000)}
+    run_log.event("document_inspection", stage="pre_sweep", **pre,
+                  locations={f: [{"document_id": x["document_id"], "offset": x["offset"],
+                                  "matched_alias": x["matched_alias"]} for x in v] for f, v in snippets.items()},
+                  note="deterministic local inspection: locations, not evidence")
+    events = trace_events(run_log)
+    current = current_evaluation(events, specs, market)
+    open_fields = [e["field"] for e in current if e["retry_eligible"] and by_name.get(e["field"], {}).get(
+        "applicable", True)]
+
+    def build(fields: list[str], max_chars: int, chunk: dict | None = None) -> dict:
+        return sweep_packet(payload=payload, specs=specs, evaluation=current, matrix=matrix, events=events,
+                            doc_metas=doc_metas, target_market=market, max_turns=max_turns,
+                            per_field=max(1, config.document_sweep_candidates_per_field), max_chars=max_chars,
+                            fields=fields, routed=routed, snippets=snippets, profiles=profiles, chunk=chunk,
+                            not_found_locally=[f for f in no_candidates if f in searchable and f not in snippets])
+
+    limits = {"chars": config.document_sweep_packet_max_chars, "fields": config.document_sweep_max_fields,
+              "candidates": config.document_sweep_max_candidates}
+    chunks = plan_chunks(open_fields, specs, lambda fields: build(fields, 10 ** 9), limits)
+    run_log.event("document_sweep_plan", fields=open_fields, chunks=chunks, limits=limits,
+                  removed_settled=[f for f in eligible if f not in open_fields])
+
     specs_for_tools = sweep_tool_specs(tool_specs())
     calls_before = len(session.tool_calls)
     blocked_before = session.blocked
-    reply_text, turns, error = None, 0, None
-    follow_up: dict | None = None
-    try:
-        for turn_index in range(1, max_turns + 1):
-            message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
-                             meta={"turn": turn_index, "turn_budget": max_turns})
-            turns += 1
-            messages.append(_assistant_echo(message))
-            calls = message.get("tool_calls") or []
-            if not calls:
-                reply_text = message.get("content") or ""
-                break
-            session.execute(calls, messages, phase="document_sweep", allowed=DOCUMENT_SWEEP_TOOLS)
-            if turn_index >= max_turns:
-                break
-            # Adaptive budget: another (paid) turn only when this one read cached documents and got content the
-            # model has not seen yet. Promoting/rejecting candidates needs no follow-up.
-            inspected = [r for r in session.turn_results if inspection_has_content(r["name"], r["result"])]
-            if not inspected:
-                break
-            follow_up = {"after_turn": turn_index, "inspection_results": len(inspected),
-                         "tools": sorted({r["name"] for r in inspected})}
-            run_log.event("document_sweep_follow_up", **follow_up)
-            messages[-1]["content"] += ("\n[operational note] Final document-sweep turn: read the inspection "
-                                        "results above, then store_evidence / report_field_status. Results of "
-                                        "calls made in this turn will not be shown to you.")
-    except GLMError as exc:
-        error = _error_text(exc)
-        run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict())
+    turns, error, presented = 0, None, 0
+    replies, follow_ups, chunk_log = [], [], []
+    t_sweep = time.monotonic()
+    for index, plan in enumerate(chunks, start=1):
+        if index > 1:      # evidence stored by an earlier chunk may have settled fields of this one
+            events = trace_events(run_log)
+            current = current_evaluation(events, specs, market)
+            still = {e["field"] for e in current if e["retry_eligible"]}
+            fields = [f for f in plan["fields"] if f in still]
+        else:
+            fields = list(plan["fields"])
+        info = {"index": index, "of": len(chunks), "clusters": plan["clusters"]}
+        if not fields:
+            chunk_log.append({**info, "fields": [], "skipped": "fields_settled_by_earlier_chunk", "model_calls": 0})
+            run_log.event("document_sweep_chunk_skipped", **info, reason="fields_settled_by_earlier_chunk")
+            continue
+        packet = build(fields, config.document_sweep_packet_max_chars, info if len(chunks) > 1 else None)
+        size = packet_size(packet)
+        shown = sum(len(v) for v in packet["deterministic_candidates"].values())
+        presented += shown
+        presented_keys = [candidate_key(c) for name, items in packet["deterministic_candidates"].items()
+                          for c in (routed.get(name) or [])[:len(items)]]
+        run_log.event("document_sweep_started", turn_budget=max_turns, fields_to_review=packet["fields_to_review"],
+                      candidates_presented=shown, fields_without_candidates=packet["fields_without_candidates"],
+                      documents=len(doc_metas), packet_chars=size["chars"], allowed_tools=list(DOCUMENT_SWEEP_TOOLS),
+                      presented_candidate_keys=presented_keys, chunk=info,
+                      local_snippet_fields=sorted(packet.get("local_snippets") or {}))
+        usage_chunk = dict(caller.usage["document_sweep"])
+        t_chunk = time.monotonic()
+        messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
+                    {"role": "user", "content": "Document sweep task (JSON):\n"
+                                                + json.dumps(packet, ensure_ascii=False, default=str)}]
+        reply_text, chunk_turns, follow_up = None, 0, None
+        try:
+            for turn_index in range(1, max_turns + 1):
+                message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
+                                 meta={"turn": turn_index, "turn_budget": max_turns, "chunk": index})
+                turns += 1
+                chunk_turns += 1
+                messages.append(_assistant_echo(message))
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    reply_text = message.get("content") or ""
+                    break
+                session.execute(calls, messages, phase="document_sweep", allowed=DOCUMENT_SWEEP_TOOLS)
+                if turn_index >= max_turns:
+                    break
+                # Adaptive budget: another (paid) turn only when this one read cached documents and got content the
+                # model has not seen yet. Promoting/rejecting candidates needs no follow-up.
+                inspected_now = [r for r in session.turn_results if inspection_has_content(r["name"], r["result"])]
+                if not inspected_now:
+                    break
+                follow_up = {"after_turn": turn_index, "inspection_results": len(inspected_now),
+                             "tools": sorted({r["name"] for r in inspected_now}), "chunk": index}
+                follow_ups.append(follow_up)
+                run_log.event("document_sweep_follow_up", **follow_up)
+                messages[-1]["content"] += ("\n[operational note] Final document-sweep turn: read the inspection "
+                                            "results above, then store_evidence / report_field_status. Results of "
+                                            "calls made in this turn will not be shown to you.")
+        except GLMError as exc:
+            error = _error_text(exc)
+            run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict(), chunk=info)
+        used = {k: caller.usage["document_sweep"][k] - usage_chunk.get(k, 0) for k in caller.usage["document_sweep"]}
+        if reply_text:
+            replies.append(reply_text)
+        chunk_log.append({**info, "fields": fields, "fields_count": len(fields), "candidates": shown,
+                          "packet_chars": size["chars"], "model_calls": chunk_turns,
+                          "latency_ms": int((time.monotonic() - t_chunk) * 1000),
+                          "prompt_tokens": used.get("prompt_tokens", 0),
+                          "completion_tokens": used.get("completion_tokens", 0), "error": error})
+        if error:
+            break
+    latency_ms = int((time.monotonic() - t_sweep) * 1000)
     events = trace_events(run_log)
-    after = current_evaluation(events, specs, config.target_market)
+    after = current_evaluation(events, specs, market)
     sweep_evidence = [e["evidence"] for e in events if e.get("kind") == "evidence" and (e.get("seq") or 0) > start_seq
                       and isinstance(e.get("evidence"), dict)]
     promoted, missed = promoted_or_missed(sweep_evidence, events)
@@ -1848,16 +2037,46 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                       quote=item.get("quote"), evidence_id=item.get("evidence_id"))
     executed = session.tool_calls[calls_before:]
     external = sum(1 for c in executed if c["name"] in EXTERNAL_TOOLS and not c.get("blocked"))
-    reply, _ = parse_model_output(reply_text)
+    parsed = [r for r in (parse_model_output(t)[0] for t in replies) if r is not None]
+    reply: Any = (parsed[0] if len(parsed) == 1 else parsed) if parsed else ("\n".join(replies) or None)
     summary = sweep_summary(before=before, after=after, sweep_evidence=sweep_evidence, promoted=promoted,
                             missed=missed, presented=presented, model_calls=turns, turns=turns,
-                            blocked=session.blocked - blocked_before, external_calls=external,
-                            reply=reply if reply is not None else (reply_text or None))
+                            blocked=session.blocked - blocked_before, external_calls=external, reply=reply)
     summary["error"] = error
-    summary["follow_up_turn"] = follow_up
+    summary["follow_up_turn"] = follow_ups[0] if len(follow_ups) == 1 else (follow_ups or None)
+    timeouts = sum(1 for e in events if e.get("kind") == "api_error" and (e.get("seq") or 0) > start_seq
+                   and e.get("phase") == "document_sweep" and e.get("timeout"))
+    used = {k: caller.usage["document_sweep"][k] - usage_before.get(k, 0) for k in caller.usage["document_sweep"]}
+    sent = [c for c in chunk_log if c.get("model_calls")]
+    summary.update(_sweep_telemetry(
+        chunks=chunk_log, packet_chars=sum(c["packet_chars"] for c in sent),
+        est_tokens=sum((len(DOCUMENT_SWEEP_SYSTEM_PROMPT) + c["packet_chars"]) // 4 for c in sent),
+        fields=sum(c["fields_count"] for c in sent), candidates=presented, documents=len(doc_metas),
+        latency_ms=latency_ms, timeouts=timeouts, usage=used, pre=pre))
     run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
                   reply=summary["reply"])
     return summary
+
+
+def _sweep_telemetry(*, chunks: list[dict], packet_chars: int, est_tokens: int, fields: int, candidates: int,
+                     documents: int, latency_ms: int, timeouts: int, usage: dict | None, pre: dict | None) -> dict:
+    """Document-sweep telemetry (observational). estimated_input_tokens = (system prompt + packet chars) / 4 per
+    chunk's first turn, an estimate made before the call; input/output tokens are the provider's usage."""
+    usage = usage or {}
+    return {"document_sweep_calls": usage.get("model_calls", 0),
+            "document_sweep_chunks": len([c for c in chunks if c.get("model_calls")]),
+            "document_sweep_packet_chars": packet_chars,
+            "document_sweep_estimated_input_tokens": est_tokens,
+            "document_sweep_fields": fields,
+            "document_sweep_candidates": candidates,
+            "document_sweep_documents": documents,
+            "document_sweep_latency_ms": latency_ms,
+            "document_sweep_model_latency_ms": usage.get("model_latency_ms", 0),
+            "document_sweep_timeouts": timeouts,
+            "document_sweep_input_tokens": usage.get("prompt_tokens", 0),
+            "document_sweep_output_tokens": usage.get("completion_tokens", 0),
+            "document_sweep_chunk_details": chunks,
+            "pre_sweep_inspection": pre}
 
 
 def apply_fact_reuse(ctx: ToolContext, memory: ResearchMemory, specs: list[dict], run_log: RunLog,
@@ -1910,7 +2129,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                       log=lambda kind, **data: run_log.event(kind, **data))
     if session is not None:
         ctx.session = session
-    research_model, finalizer_model = research_model_of(client), finalizer_model_of(client)
+    research_model, finalizer_model = research_model_of(client), finalizer_model_of(client, config)
     if pricing_finalizer is None:
         pricing_finalizer = pricing if finalizer_model == research_model else default_pricing(finalizer_model)
     glm_config = effective_glm_config(client, config, tool_config)
@@ -1960,7 +2179,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     messages: list[dict] = [
         {"role": "system", "content": research_system_prompt()},
         {"role": "user", "content": build_user_message(payload, config.include_level3, config.max_steps,
-                                                       notes_for_variant, specs)},
+                                                       notes_for_variant, specs,
+                                                       config.primary_research_no_artifact_stop)},
     ]
     run_log.write_input(payload)
     run_log.event("run_started", model=research_model, research_model=research_model,
@@ -1999,6 +2219,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     recovery: dict | None = None
     bundle: dict | None = None
     harvest_summary: dict | None = None
+    primary_research: dict | None = None
     sweep: dict | None = None
     steps_done = 0
     research_seconds: float | None = None
@@ -2020,8 +2241,15 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         usage_recovery, usage_sweep = caller.usage["field_recovery"], caller.usage["document_sweep"]
         usage = trace.sum_usage(usage_research, usage_sweep, usage_recovery, usage_finalizer)
         search_calls = counters.get("search_api_calls", 0)
-        cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer,
-                                      search_calls, pricing, pricing_finalizer, stats["unknown_usage_attempts"])
+        # a sweep / recovery phase on its own model (src/phase_settings.py) is priced with that model's prices
+        phase_models = {g: m for g in ("document_sweep", "field_recovery")
+                        if (m := for_phase(config, g)["model"]) and m != research_model}
+        cost, cost_details = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep,
+                                            usage_recovery=usage_recovery, usage_finalizer=usage_finalizer,
+                                            search_api_calls=search_calls, pricing=pricing,
+                                            pricing_finalizer=pricing_finalizer,
+                                            unknown_usage_attempts=stats["unknown_usage_attempts"],
+                                            phase_models=phase_models)
         return {
             "record_id": record_id,
             "ordinal": ordinal,
@@ -2058,6 +2286,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "counters": counters,
             "research_tracking": tracker.snapshot(),
             "field_recovery": recovery,
+            "primary_research": primary_research,
             "candidate_summary": layered_summary(harvest_summary, sweep, recovery, harvester.stats),
             "document_sweep": sweep,
             "usage": usage,
@@ -2086,8 +2315,17 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
 
     try:
         # ---------------- research phase (source acquisition) ----------------
+        # Every turn is measured by what it ACQUIRED (src/acquisition.py: a new usable document, official source,
+        # candidate for an open field, admitted evidence, better binding), never by operations: re-reading cached
+        # documents, repeated searches and failed fetches are no progress. Scheduling only.
+        acq = AcquisitionTracker(run_log=run_log, ctx=ctx, specs=specs, vehicle=vehicle_ctx, cache=cache,
+                                 config=config)
+        # FAIL-SAFE: every scheduler stop (no-artifact streak, optional sufficiency, the legacy idle stop and the normal
+        # turn ceiling) needs the MINIMUM ACQUISITION BASE (acquisition.minimum_base). An under-acquired run is told so
+        # and keeps acquiring, up to PRIMARY_RESEARCH_HARD_MAX_TURNS; a normally acquired run stops exactly as before.
+        hard_ceiling = max(config.max_steps, int(config.primary_research_hard_max_turns or 0))
         try:
-            for step in range(1, config.max_steps + 1):
+            for step in range(1, hard_ceiling + 1):
                 message = caller(outgoing_messages(messages, config), phase="research", tools=tool_specs(),
                                  activity={"turn": step})
                 messages.append(_assistant_echo(message))
@@ -2096,20 +2334,48 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     final_text = message.get("content") or ""
                     stop_reason, steps_done = "model_finished", step
                     break
-                novelty = tools.execute(calls, messages, phase="research")
+                tools.execute(calls, messages, phase="research")
                 steps_done = step
-                remaining = config.max_steps - step
+                found = acq.after_turn(step)          # never raises: a telemetry problem counts as progress
+                base_met, base = acq.base()
+                limit = config.primary_research_no_artifact_stop
+                if step >= config.max_steps:          # the normal ceiling (or a turn beyond it)
+                    if base_met or step >= hard_ceiling:
+                        stop_reason = "max_steps"
+                        break
+                    acq.defer("max_turns", step)      # under-acquired: extend, up to the hard ceiling
+                    wanted = "max_turns"
+                else:
+                    wanted = None
+                    if limit and acq.streak >= limit:
+                        wanted = "no_new_artifact"
+                    elif acq.sufficient():
+                        wanted = "acquisition_sufficient"
+                    elif config.no_new_research_turns and tracker.idle_turns >= config.no_new_research_turns:
+                        wanted = "no_new_research"
+                    if wanted and base_met:
+                        stop_reason = wanted
+                        break
+                    if wanted:
+                        acq.defer(wanted, step)
+                remaining = hard_ceiling - step if wanted else config.max_steps - step
                 notes = []
-                if not novelty.total and remaining > 0:
-                    notes.append("This turn produced no new document, evidence item or source.")
-                if (config.no_new_research_turns and tracker.idle_turns >= config.no_new_research_turns
-                        and remaining > 0):
-                    stop_reason = "no_new_research"
-                    break
-                if 0 < remaining <= 2:
-                    notes.append(f"{remaining} research turn(s) left in the budget; store_evidence (with market) "
-                                 "for values you intend to use, and favour unresolved or conflicting Level 2 "
-                                 "fields over Level 3.")
+                if wanted:
+                    notes.append(f"Research would end here, but the acquired source set is still thin "
+                                 f"({base['useful_documents']} useful document(s); {base['scoped_coverage_pct']}% of the "
+                                 "requested fields have a candidate from a source in their market scope). Acquire NEW "
+                                 "sources now (official importer / manufacturer specification pages or PDFs, "
+                                 "target-market price lists or brochures, other strong spec sources); re-reading cached "
+                                 f"documents does not help. At most {remaining} more turn(s).")
+                elif not found and remaining > 0:
+                    notes.append("This turn acquired nothing new (no new usable document, official source, candidate "
+                                 "or admitted evidence); re-reading cached documents is not acquisition."
+                                 + (f" Research ends after {limit - acq.streak} more turn(s) like this."
+                                    if limit and base_met else ""))
+                if not wanted and 0 < remaining <= 2:
+                    notes.append(f"{remaining} research turn(s) left: fetch the most valuable source still missing "
+                                 "(official spec page or PDF, target-market price list or brochure) or finish. Every "
+                                 "fetched document is harvested for all fields and reviewed in a later step.")
                 if notes:
                     messages[-1]["content"] += "\n[operational note] " + " ".join(notes)
             else:
@@ -2122,6 +2388,10 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         research_seconds = round(time.monotonic() - t0, 2)
         run_log.event("research_stopped", reason=stop_reason, steps=steps_done, research_s=research_seconds,
                       tracking={k: v for k, v in tracker.snapshot().items() if k != "turns"})
+        primary_research = acq.summary(stop_reason=stop_reason, turns=steps_done,
+                                       model_calls=caller.usage["research"]["model_calls"],
+                                       research_s=research_seconds)
+        run_log.event("primary_research_summary", **primary_research)
 
         # ---------------- deterministic harvest + model document sweep ----------------
         if status is None and config.layered_harvest_enabled:

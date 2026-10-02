@@ -484,6 +484,7 @@ MAX_ATTEMPTED_OPERATIONS = 40
 OUTCOME_KEYS = {"step", "phase", "field", "attempt", "outcome", "hit_count", "result_count", "tables_total", "kinds",
                 "chars", "next_offset", "status", "error"}
 READ_ONLY_TOOLS = trace.SEARCH_TOOLS + trace.FETCH_TOOLS + ("extract_html", "extract_tables", "find_in_document",
+                                                            "inspect_document_for_fields",
                                                             "get_structured_data", "get_cached_document")
 
 
@@ -501,6 +502,9 @@ def _operation_outcome(name: str, result: dict | None) -> dict:
     if name == "find_in_document":
         n = int(result.get("hit_count") or len(result.get("hits") or []))
         return {"outcome": "hits", "hit_count": n} if n else {"outcome": "no_hits"}
+    if name == "inspect_document_for_fields":
+        n = len(result.get("fields_with_matches") or [])
+        return {"outcome": "fields_located", "hit_count": n} if n else {"outcome": "no_hits"}
     if name == "extract_tables":
         n = int(result.get("tables_total") or 0)
         return {"outcome": "tables", "tables_total": n} if n else {"outcome": "no_tables"}

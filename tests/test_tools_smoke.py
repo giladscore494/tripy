@@ -32,7 +32,7 @@ def test_tool_specs_cover_every_tool():
     assert set(TOOL_NAMES) == {
         "search_web", "search_official_domains", "fetch_url", "fetch_pdf", "render_page", "extract_html",
         "extract_tables", "find_in_document", "get_structured_data", "get_cached_document", "store_evidence",
-        "report_field_status"}
+        "report_field_status", "inspect_document_for_fields"}
     assert all(spec["type"] == "function" for spec in tool_specs())
 
 
@@ -183,7 +183,7 @@ def test_optional_capabilities_shape_the_tool_schema(monkeypatch):
     assert "render_page" not in research_system_prompt() and "fetch_pdf" in research_system_prompt()
     monkeypatch.setenv("DISABLED_TOOLS", "search_official_domains")
     assert "search_official_domains" not in [s["function"]["name"] for s in tool_specs()]
-    assert len(tools.all_tool_specs()) == 12
+    assert len(tools.all_tool_specs()) == 13
 
 
 def test_parse_model_output_is_lenient():
@@ -267,7 +267,8 @@ def test_agent_finalizes_at_step_budget_and_keeps_unparsed_text(make_ctx, tmp_pa
     client = ScriptedGLM([loop_call, loop_call, {"role": "assistant", "content": "plain text answer"},
                           {"role": "assistant", "content": "still not json"}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
-                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=2),
+                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=2,
+                                                            primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0),
                          tool_config=ctx.config, batch_id="b", session=ctx.session)
     assert result["status"] == "max_steps_finalized"
     assert result["output"] is None and result["raw_final_text"] == "plain text answer"

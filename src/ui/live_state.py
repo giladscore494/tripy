@@ -124,8 +124,22 @@ def feed_line(kind: str, event: dict) -> str | None:
         return f"🛑 research stopped: {event.get('reason')} after {event.get('steps')} step(s)"
     if kind == "candidates_harvested":
         return f"🧲 harvested {event.get('candidate_count')} candidate(s) from {event.get('document_id')}"
+    if kind == "primary_research_turn":
+        found = ", ".join(event.get("artifacts") or []) or f"nothing acquired (streak {event.get('no_artifact_streak')})"
+        return f"   📥 turn {event.get('turn')} acquisition: {found}"
+    if kind == "primary_research_stop_deferred":
+        return (f"   🛟 turn {event.get('turn')}: research wanted to stop ({event.get('wanted_stop')}) but the source set "
+                f"is thin ({event.get('useful_documents')} useful document(s), {event.get('scoped_coverage_pct')}% "
+                "in-scope coverage): acquisition continues")
+    if kind == "document_inspection":
+        return (f"🔍 local inspection (0 model calls): {event.get('documents_inspected')} document(s), "
+                f"{len(event.get('fields_located') or [])}/{len(event.get('fields_without_candidates') or [])} "
+                "field(s) without candidates located")
     if kind == "document_sweep_started":
-        return f"🔎 document sweep · {event.get('candidates_presented')} candidate(s) · {len(event.get('fields_to_review') or [])} field(s)"
+        chunk = event.get("chunk") or {}
+        part = f" · chunk {chunk.get('index')}/{chunk.get('of')}" if (chunk.get("of") or 1) > 1 else ""
+        return (f"🔎 document sweep{part} · {event.get('candidates_presented')} candidate(s) · "
+                f"{len(event.get('fields_to_review') or [])} field(s) · {event.get('packet_chars')} chars")
     if kind == "document_sweep_finished":
         return f"   ↳ document sweep resolved {event.get('unique_fields_resolved')} field(s)"
     if kind == "candidate_missed_by_deterministic_harvest":
