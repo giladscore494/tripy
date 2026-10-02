@@ -138,6 +138,36 @@ def store_evidence(ctx, field: str, value: Any, unit: str | None = None, source_
             **{k: item[k] for k in ACCEPT_ECHO if item.get(k) not in (None, "", [])}}
 
 
+def reuse_verified_fact(ctx, record: dict) -> dict:
+    """Bring a verified fact of a related variant (src/research_memory.py) into this run. NOT a model tool.
+
+    The fact is re-admitted against THIS run's target with the same gate as store_evidence (the document is in the
+    shared cache, the quote states the value, server-side binding to this target) and must again bind exactly at the
+    field's reuse level. It keeps its original source identity (`reused_from`); a reused fact is one source, not a
+    new one. Returns {"reused": bool, "reasons": [...], "evidence_id"?}."""
+    from ..evidence_admission import admit
+    from ..research_memory import _level_ok
+
+    request = {k: record.get(k) for k in ("field", "value", "unit", "document_id", "quote", "condition")
+               if record.get(k) not in (None, "")}
+    decision = admit(admission_context(ctx), ctx.cache, request, ctx.documents_opened)
+    if not decision["accepted"]:
+        return {"reused": False, "reasons": decision["reasons"]}
+    item = decision["record"]
+    if not _level_ok(item, record.get("scope_type")):
+        return {"reused": False, "reasons": [f"binding_below_reuse_scope:{item.get('binding_level')}"]}
+    item["reused_from"] = {"record_id": record.get("record_id"), "scope_type": record.get("scope_type"),
+                           "origin": record.get("origin"), "recorded_at": record.get("recorded_at")}
+    stored, repeated, _ = ctx.evidence.add_or_reuse(item)
+    if stored.get("document_id"):
+        ctx.note_document(stored["document_id"])
+    if repeated:
+        return {"reused": False, "reasons": ["already_stored"], "evidence_id": stored["evidence_id"]}
+    ctx.counters["verified_fact_cache_hits"] += 1
+    ctx.emit("evidence", evidence=stored, phase="fact_reuse")
+    return {"reused": True, "evidence_id": stored["evidence_id"], "reasons": []}
+
+
 def report_field_status(ctx, field: str, status: str, note: str | None = None,
                         evidence_ids: list | None = None) -> dict:
     """The model's own declaration about a requested field. Logged as a `field_status` event.

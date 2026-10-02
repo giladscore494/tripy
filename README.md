@@ -65,6 +65,7 @@ and every one of them stays configurable.
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
 | `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`cluster` default, or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt). See [Clustered tail recovery](#clustered-tail-recovery-default). |
+| `RESEARCH_MEMORY_ENABLED`, `FACT_REUSE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_BLOCKING` | Cross-run memory: verified fact reuse, negative routes, recovery yield (default on, 365 / 30 days). See [Verified fact reuse](#verified-fact-reuse-negative-research-memory-and-the-feedback-dataset). |
 | `DISABLED_TOOLS` | Comma-separated tools never offered to the model (tools whose runtime capability is missing, such as `render_page` without Playwright, are left out automatically). |
 | `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `2` = adaptive: a 2nd turn only after a turn-1 cached-document inspection returned content; absolute max 2). See [Layered field harvesting](#layered-field-harvesting). |
 | `INCLUDE_LEVEL3` | Level 3 open research (default **off**; UI checkbox / `--level3`). It is opt-in so it cannot take research turns from the Level 2 benchmark. |
@@ -425,6 +426,100 @@ page, a price range) played by the same deterministic policy model in both modes
 
 Both modes leave height conflicting, ground clearance unresolved and curb weight / boot volume foreign-only:
 coverage is not bought by loosening truth.
+
+### Verified fact reuse, negative research memory and the feedback dataset
+
+Related variants (the same technical family in one batch, or a re-run) get cheaper through a cross-run memory under
+`<cache>/memory/` (`src/research_memory.py`, `RESEARCH_MEMORY_ENABLED`, default on). One file per fact and one per
+run, each written atomically, so 50 concurrent workers never share an append target.
+
+- **Verified facts.** At the end of a run, an admitted fact is recorded only when its own run settled the field
+  (final state `ok`, no conflict, the item among the field's evidence), the field's schema `reuse_scope`
+  (`none | exact_market_trim | exact_technical_variant | body_powertrain`) allows it, the item bound exactly at that
+  level, and the target identity at that level is complete (a key built from missing parts would collide). The
+  technical-variant key includes the full government model code (letter suffixes included) and the transmission, so
+  battery size, manual vs automatic and the driven axle at equal power are kept apart. The market-trim key uses every
+  word of the trim, so "GR SPORT" is not "SPORT". A later run that ends the field unsettled while holding a reused
+  fact marks that record disputed, and no variant reuses it again. The
+  record carries its scope key, source, quote, binding, authority and a schema identity (the field's meaning,
+  units and policy plus the admission / binding / harvester versions); stale, expired or colliding records are
+  ignored. Price, fees, warranty, equipment, multimedia, tyres and every time-sensitive field are never reused;
+  curb weight, height and ground clearance only within the exact market trim.
+- **Reuse is re-admission, not trust.** At the start of a run, matching facts are re-admitted against the NEW
+  target with the same gate as `store_evidence`. The document must be in the shared cache, the quote must state
+  the value, and the server-side binding to the new target must again be exact at the reuse level. A fact from a
+  page about the 1.8 Hybrid therefore never reaches a 2.0 Hybrid. A reused item keeps its original source and
+  `reused_from`. The same fact on twenty variants is one source, never corroboration. The research prompt lists
+  the fields already supported so they are not researched again.
+- **Negative routes.** A web recovery turn without novelty records its working routes as "no new material" for the
+  fields still open, per identity scope and field identity. The routes are search queries attributed to the field
+  whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
+  fields keep no negative memory. A route is not recorded when the call itself failed (an HTTP error status, or every
+  domain of a domain search erroring; a domain whose own provider search errored is left out). A route is a
+  PROVIDER operation (`src/research_memory.route_identity`), never looser than what it stands for: a search is
+  its backend and engine, its query (apart from case and spacing), its domain restriction and its effective result
+  count (after the tool's default and clamp), the same identity the search cache keys on
+  (`src/tools/search.planned_searches` / `search_key`). So "Corolla ground clearance" on `toyota.co.uk`, on
+  `toyota.co.il` and with no domain are three routes, 8 and 20 results are two, and GLM and DuckDuckGo are two; a
+  `search_official_domains` call is one route per domain it searches (5 results each). A fetch is its mechanism
+  (`fetch_url`, `fetch_pdf` and `render_page` are different routes: a browser render can expose what a fetch did
+  not) and its URL, plus the effective `wait_ms` of a render. Later runs see the routes as
+  `known_unproductive_routes` (only those this session could repeat), and the runtime refuses, before execution, a
+  request whose provider routes were ALL recorded for the open fields it serves (`NEGATIVE_ROUTE_BLOCKING`): a
+  failed UK search never suppresses an IL one, a 20-result search or another provider always runs, and a domain
+  search with any domain not tried before runs. Records of an older route format, or missing any identity part,
+  refuse nothing. Only the route is refused: the cluster's research still runs, and any new query or page is executed even when other
+  routes for the same field failed before. Failed routes are never evidence that a value does not exist. This is
+  scheduling only: it never creates evidence, never changes a field state, never marks a field not_applicable and
+  never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
+- **Historical recovery yield** (by cluster / field, manufacturer, propulsion and source family: attempts, turns,
+  searches, documents, resolutions, by-product resolutions, tokens) only orders clusters within a round, and only
+  with at least 5 samples. It is never a confidence in any value.
+
+**Training feedback** (`src/training_feedback.py`, deterministic, no API or model call). Every run writes
+`<run>/training_feedback.jsonl` with labelled examples. The labels:
+
+- `candidate_accepted` / `candidate_rejected`;
+- `candidate_false_positive`: only with an explicit contradiction, i.e. the gate refused the value and the same
+  document states another value, or the value belongs to another field or quantity. Not being promoted is never a
+  label;
+- `deterministic_miss`: admitted evidence with no parser candidate for that field, value and document;
+- `evidence_admission_rejected`;
+- `variant_binding_rejected`;
+- `conflict_example`;
+- `portability_accepted` / `portability_rejected`.
+
+Each example has the vehicle identity, field, values, unit, a cut quote, document, source and its authority,
+market, binding, matched alias, extraction method, parser confidence, reason code, pattern, schema hash,
+harvester version, phase and time.
+
+`python -m src.cli --export-feedback [--feedback-dir DIR]` aggregates all runs deterministically (old runs are
+derived from their events) into `training_feedback.jsonl`, `training_feedback.csv` and
+`training_feedback_summary.json`. The summary counts misses, false positives, admission and binding rejections by
+field, source family and pattern, which shows the parser or admission rule to fix next.
+
+Offline cold/warm benchmark (`python tests/fixtures/corolla_family.py`). It uses one shared cache and the same
+policy model as the tail benchmark:
+
+| | A 1.8 Business (cold) | A again (re-run) | A2 1.8 Premium (warm) | B 2.0 Business (warm cache) | A2 without memory |
+| --- | --- | --- | --- | --- | --- |
+| model calls | 13 | 8 | 8 | 16 | 16 |
+| tokens (fixed 1,100 per fake call) | 14,300 | 8,800 | 8,800 | 17,600 | 17,600 |
+| recovery turns | 9 | 4 | 4 | 12 | 12 |
+| searches | 2 | 1 | 0 | 3 | 2 |
+| verified facts reused | 0 | 9 | 8 | 0 | 0 |
+| failed routes shown to the model | 0 | 1 | 0 | 0 | 0 |
+| equivalent routes refused | 0 | 0 | 0 | 0 | 0 |
+| fields ok (of 14) | 11 | 11 | 11 | 10 | 9 |
+
+A2 reuses the technical facts (tank, battery, torque, performance, dimensions) but not price, warranty, height or
+curb weight. It also does not reuse the boot volume, because A left that field foreign-market-only. B reuses nothing,
+and its boot stays 581 L, never A's 596 L. The re-run's saved search comes from the model following
+`known_unproductive_routes` (the policy model in the benchmark does). Had it repeated the failed query, the runtime
+would have refused that one request and let every other route run (tested separately). The scale metrics are
+`verified_fact_cache_hits`, `negative_route_cache_hits` (equivalent routes refused), `negative_route_fields_shown`,
+search / document / candidate cache hits,
+`verified_facts_recorded` and `training_feedback_examples`.
 
 ### Targeted field recovery (legacy per-field mode)
 
@@ -996,7 +1091,10 @@ runs/<batch>/<record_id>/result.json   final or partial output, evidence, tool c
 runs/<batch>/<record_id>/finalizer_request.json   exact compact messages sent to the finalizer
 runs/<batch>/<record_id>/recovery/<stamp>/        --finalize-existing request and bundle
 runs/<batch>/<record_id>/documents/    copies of every document the run touched
+runs/<batch>/<record_id>/training_feedback.jsonl   labelled engineering feedback of the run
 runs/_cache/                           shared documents + search results (+ derived tables / candidates)
+runs/_cache/memory/                    verified facts (one file per fact), negative routes and recovery yield (per run)
+runs/_feedback/                        --export-feedback: training_feedback.jsonl / .csv / _summary.json
 ```
 
 ## Tests
@@ -1022,5 +1120,9 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
   valid_as_of and the consistency checks;
 - clustered tail recovery (`tests/test_tail_recovery.py`, offline benchmark in `tests/fixtures/corolla_tail.py`):
   conflict classes, market portability and its veto, triage, local-first, novelty-based turn extensions,
-  search budgets in provider calls, breadth-first clusters and the legacy-vs-cluster comparison.
+  search budgets in provider calls, breadth-first clusters and the legacy-vs-cluster comparison;
+- verified fact reuse and feedback (`tests/test_reuse_feedback.py`, cold/warm benchmark in
+  `tests/fixtures/corolla_family.py`): scope keys, stale / colliding records, cross-powertrain re-admission,
+  negative memory never touching field state, concurrent memory writes and exports, the required Corolla
+  training cases and strict labels.
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).

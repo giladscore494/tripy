@@ -108,6 +108,10 @@ class TargetIdentity:
     trim_tokens: list[str] = field(default_factory=list)
     trim_words: list[str] = field(default_factory=list)      # every word of the government trim (generic ones too)
     target_market: str = "IL"
+    # identity-only parts (never used for document binding): the FULL normalized government model code, whose letter
+    # suffixes separate variants the engine figures cannot, and the transmission (Level 1.5 `automatic` flag)
+    model_code: str | None = None
+    transmission: str | None = None
 
     def as_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v not in (None, [], "")}
@@ -201,7 +205,11 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         model_code_tokens=_code_tokens(ident.get("model_code") or vehicle.get("model_code")),
         trim_tokens=_trim_tokens(ident.get("trim") or vehicle.get("trim"), vocab),
         trim_words=[t for t in re.split(r"[^\wא-ת]+", str(ident.get("trim") or vehicle.get("trim") or "").lower()) if t],
-        target_market=target_market or "IL")
+        target_market=target_market or "IL",
+        model_code=" ".join(t for t in re.split(r"[^0-9a-z]+", str(ident.get("model_code") or vehicle.get("model_code")
+                                                                 or "").lower()) if t) or None,
+        transmission={1: "automatic", 0: "manual", "1": "automatic", "0": "manual", True: "automatic",
+                      False: "manual"}.get(engine.get("automatic")))
 
 
 # --- mentions ------------------------------------------------------------------------------------------

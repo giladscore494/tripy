@@ -68,33 +68,46 @@ def _duckduckgo(ctx, query: str, count: int, domain: str | None) -> list[dict]:
     return parse_duckduckgo(resp.text, count)
 
 
+def search_provider(ctx) -> tuple[str, str]:
+    """(backend, engine): which provider answers a search. Part of the search cache key AND of a negative route's
+    identity (src/research_memory.py), so the two can never disagree about what counts as the same search."""
+    return ctx.config.search_backend, getattr(getattr(ctx.glm, "settings", None), "search_engine", "")
+
+
 def search_key(ctx, query: str, count: int, domain: str | None) -> str:
-    engine = getattr(getattr(ctx.glm, "settings", None), "search_engine", "")
-    return json.dumps([ctx.config.search_backend, engine, query, count, domain or ""], ensure_ascii=False)
+    backend, engine = search_provider(ctx)
+    return json.dumps([backend, engine, query, count, domain or ""], ensure_ascii=False)
+
+
+def planned_searches(name: str, args: dict, defaults: list[str] | None = None) -> list[tuple[str, int, str | None]]:
+    """The (query, effective count, domain) provider searches one search tool call makes, exactly as search_web /
+    search_official_domains execute it (defaults and clamping applied): search_web one, count = max_results clamped
+    to 1..20 (default 8); search_official_domains one per domain (its own list, else the manufacturer defaults, at
+    most MAX_DOMAINS) with count 5, or one plain count-8 search when there is no domain. Invalid arguments: none.
+    Shared by the search budget and negative route memory."""
+    args = args if isinstance(args, dict) else {}
+    query = str(args.get("query") or "")
+    if not query:
+        return []
+    try:
+        if name == "search_web":
+            return [(query, max(1, min(int(args.get("max_results") or 8), 20)), args.get("domain") or None)]
+        if name == "search_official_domains":
+            domains = args.get("domains") or defaults or []
+            if isinstance(domains, str):
+                domains = domains.split(",")
+            chosen = [str(d).strip().lower() for d in domains if d and str(d).strip()][:MAX_DOMAINS]
+            return [(query, 5, d) for d in chosen] or [(query, 8, None)]
+    except (TypeError, ValueError):     # invalid arguments: dispatch refuses the call, no provider search happens
+        return []
+    return []
 
 
 def planned_provider_calls(ctx, name: str, args: dict) -> int:
     """How many underlying provider searches this call would make right now: one per (query, domain) not already
     in the shared search cache. search_official_domains searches each of its domains separately."""
-    args = args if isinstance(args, dict) else {}
-    query = str(args.get("query") or "")
-    try:
-        if name == "search_web":
-            count = max(1, min(int(args.get("max_results") or 8), 20))
-            pairs = [(count, args.get("domain") or None)]
-        elif name == "search_official_domains":
-            domains = args.get("domains") or default_domains(ctx.vehicle)
-            if isinstance(domains, str):
-                domains = [part for part in domains.split(",")]
-            chosen = [str(d).strip().lower() for d in domains if d and str(d).strip()]
-            pairs = [(5, d) for d in chosen[:MAX_DOMAINS]] or [(8, None)]
-        else:
-            return 0
-    except (TypeError, ValueError):     # invalid arguments: dispatch refuses the call, no provider search happens
-        return 0
-    if not query:
-        return 0
-    return sum(1 for count, domain in pairs if not ctx.cache.has_search(search_key(ctx, query, count, domain)))
+    return sum(1 for query, count, domain in planned_searches(name, args, default_domains(ctx.vehicle))
+               if not ctx.cache.has_search(search_key(ctx, query, count, domain)))
 
 
 def _run_search(ctx, query: str, count: int, domain: str | None) -> tuple[list[dict], bool]:

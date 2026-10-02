@@ -77,6 +77,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
                    help="Finalize a saved run (--batch-id, --record-id) from its logged research; no new research")
     p.add_argument("--batch-id", default="", help="Batch to recover with --finalize-existing")
     p.add_argument("--force", action="store_true", help="With --finalize-existing: also when output already exists")
+    p.add_argument("--export-feedback", action="store_true",
+                   help="Aggregate every run's training feedback into training_feedback.jsonl / .csv (no API calls)")
+    p.add_argument("--feedback-dir", default="", help="With --export-feedback: output folder (default runs/_feedback)")
     return p.parse_args(argv)
 
 
@@ -228,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: GLM_EXTRA_BODY is not valid JSON: {exc}", file=sys.stderr)
         return 2
+    if args.export_feedback:
+        from .training_feedback import export_feedback
+
+        print(json.dumps(export_feedback(Path(args.runs_dir), args.feedback_dir or None), indent=1))
+        return 0
     if args.finalize_existing:
         return _finalize_existing(args, extra_body)
 
