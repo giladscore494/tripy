@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 
-from conftest import FakeResponse
+from conftest import FakeResponse, cache_source
 from test_tools_smoke import ScriptedGLM, _call
 
 import src.agent as agent_mod
@@ -20,7 +20,7 @@ from src.ui import run_view
 
 PAGE = "https://www.cadillac.example/escalade-iq"
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
-                        "trim": "SPORT", "model_code": "X1", "government_record_id": "85095"},
+                        "trim": "SPORT", "model_code": "6EQ26", "government_record_id": "85095"},
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd"}}
 
 
@@ -157,6 +157,7 @@ def test_different_operations_are_never_suppressed(tmp_path, make_ctx, counted):
 
 def test_store_evidence_and_failed_calls_are_not_replayed(tmp_path, make_ctx, counted):
     ctx = make_ctx()
+    cache_source(ctx.cache, PAGE, "Cadillac Escalade IQ: battery 205 kWh")      # a retrieved source
     ev = {"field": "battery_gross_kwh", "value": 205, "source_url": PAGE, "quote": "205 kWh"}
     missing = {"document_id": "d_0000000000000000", "query": "kWh"}
     result, _, events = run(tmp_path, ctx, [turn(_call("c1", "store_evidence", ev), _call("c2", "find_in_document", missing)),
@@ -259,7 +260,7 @@ def cadillac(make_ctx):
     ctx = make_ctx()
     d = put_doc(ctx.cache, "https://www.cadillac.co.il/escalade-iq", "אסקלייד IQ מחיר 1,190,000 ש\"ח")
     a = put_doc(ctx.cache, "https://www.cadillac.co.il/escalade-iq/spec.pdf",
-                "מפרט טכני: סוללה 205 קוט\"ש. טווח נסיעה 742 ק\"מ WLTP.")
+                "מפרט טכני אסקלייד IQ 2025 6EQ26 חשמלי AWD: סוללה 205 קוט\"ש. טווח נסיעה 742 ק\"מ WLTP.")
     b = put_doc(ctx.cache, "https://www.cadillac.com/escalade-iq", "Battery: 205 kWh usable. EPA range 460 miles.")
     return ctx, d, a, b
 

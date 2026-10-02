@@ -3,6 +3,7 @@ Scripted GLM / fake HTTP only: no network, no paid calls."""
 
 import json
 
+from conftest import seed_evidence_sources
 from test_tools_smoke import ScriptedGLM, _call
 
 from src import cli
@@ -14,9 +15,12 @@ from src.tools import ToolConfig
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
                         "trim": "SPORT", "model_code": "X1", "government_record_id": "85095"},
-           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd"}}
+           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
+                                 "power_hp": 750}}
 IL_PAGE = "https://www.cadillac.co.il/escalade-iq"
-US_PAGE = "https://www.cadillac.com/escalade-iq"
+US_PAGE = "https://www.cadillac.com/en-us/escalade-iq"
+# Identity text of the retrieved pages (they name the exact technical variant: model, propulsion, power)
+HEADERS = {IL_PAGE: 'קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס AWD', US_PAGE: "2025 Cadillac Escalade IQ, all-electric, 750 hp AWD"}
 
 
 def ev(value, market="IL", **extra):
@@ -38,15 +42,18 @@ def say(obj):
 
 def store(cid, value, market="IL", **extra):
     args = {"field": "torque_nm", "value": value, "unit": "Nm", "market": market,
-            "source_url": IL_PAGE if market == "IL" else US_PAGE, "quote": f"{value} Nm", **extra}
+            "source_url": IL_PAGE if market == "IL" else US_PAGE, "quote": f"Torque {value} Nm", **extra}
     return _call(cid, "store_evidence", args)
 
 
 def run(tmp_path, make_ctx, script, **cfg):
     ctx = make_ctx()
+    seed_evidence_sources(ctx.cache, script, HEADERS)
     client = ScriptedGLM(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": ["torque_nm"], **cfg})
+    # every model turn is scripted, so the layered document sweep (tested on its own) is off here
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": ["torque_nm"],
+                            "layered_harvest_enabled": False, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path)
@@ -170,7 +177,7 @@ FIELDS = ["torque_nm", "paint_code", "service_interval_km", "rear_legroom_mm", "
 def budget_script(turns):
     """Primary research stores one usable field; every recovery turn only reports 'unresolved'."""
     script = [turn(_call("p1", "store_evidence", {"field": "torque_nm", "value": 1066, "market": "IL",
-                                                   "source_url": IL_PAGE, "quote": "1,066 Nm"})),
+                                                   "source_url": IL_PAGE, "quote": "Torque 1,066 Nm"})),
               say({"summary": "primary", "fields": {}})]
     # Breadth-first recovery: round 1 gives every field its first attempt (4 turns each), round 2 starts again
     # with the first field still unresolved.

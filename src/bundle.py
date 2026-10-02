@@ -8,7 +8,11 @@ targets and the last useful model text, capped at a configurable size.
 
 Nothing here judges truth: candidate facts are grouped as stored, no source is
 ranked or dropped for being unofficial, and fields with several stored values
-are listed without picking a winner.
+are listed without picking a winner. Evidence items carry their runtime-computed
+provenance (admission, binding, market, authority, time). Model-written evidence
+notes are commentary and are NOT passed to the finalizer: a note can misdescribe
+provenance (it once blamed a value on another source than the one recorded).
+Cross-field consistency checks are QA signals, never replacement values.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from .fields import normalize_field_name
 from .storage import trace
 from .variant_notes import record_id_of, variant_notes
 
-BUNDLE_VERSION = "bundle-v2"
+BUNDLE_VERSION = "bundle-v3"   # v3: admitted evidence with provenance; notes are not facts; QA checks
 EXCERPT_CHARS = 1500
 EXCERPTS_PER_DOCUMENT_CHARS = 5000
 ACTION_LINE_CHARS = 220
@@ -89,25 +93,36 @@ def _is_electrified(payload: dict) -> bool:
     return any(word in text for word in ("electric", "hybrid", "plug", "חשמל", "היבריד", "bev", "phev"))
 
 
+# Never sent to the finalizer: model commentary and verbose debug detail of an evidence item.
+EVIDENCE_PRIVATE_KEYS = ("note", "supplementary", "binding_dimensions", "admission_checks", "binding_version",
+                         "admission_version")
+FACT_KEYS = ("value", "unit", "market", "variant", "variant_match", "binding_level", "source_authority", "condition",
+             "valid_as_of", "evidence_id", "source_url", "document_id")
+
+
+def finalizer_evidence(item: dict, sanity: dict | None = None) -> dict:
+    """An evidence item as the finalizer sees it: provenance kept, model notes dropped."""
+    from .consistency_checks import sanity_status
+
+    out = {k: v for k, v in item.items() if k not in EVIDENCE_PRIVATE_KEYS}
+    if sanity is not None:
+        out["sanity_status"] = sanity_status(item.get("evidence_id"), sanity)
+    return out
+
+
 def _candidate_facts(evidence: list[dict]) -> tuple[dict, list[str]]:
     facts: dict[str, list[dict]] = {}
     for item in evidence:
         name = str(item.get("field") or "unspecified")
-        facts.setdefault(name, []).append({k: item.get(k) for k in ("value", "unit", "market", "variant",
-                                                                     "evidence_id", "source_url", "document_id",
-                                                                     "note") if item.get(k) is not None})
+        facts.setdefault(name, []).append({k: item.get(k) for k in FACT_KEYS if item.get(k) is not None})
     multi = sorted(name for name, values in facts.items()
                    if len({json.dumps(v.get("value"), ensure_ascii=False, default=str) for v in values}) > 1)
     return facts, multi
 
 
-def _conflict_notes(evidence: list[dict], responses: list[dict]) -> list[dict]:
+def _conflict_notes(responses: list[dict]) -> list[dict]:
+    """Sentences where the MODEL talked about a disagreement (commentary; evidence notes are excluded)."""
     notes: list[dict] = []
-    for item in evidence:
-        note = item.get("note") or ""
-        if note and CONFLICT_WORDS.search(note):
-            notes.append({"source": f"evidence {item.get('evidence_id')}", "field": item.get("field"),
-                          "text": _short(note, CONFLICT_NOTE_CHARS)})
     for response in responses:
         for key in ("content", "reasoning_content"):
             text = response.get(key) or ""
@@ -143,7 +158,8 @@ def _action_line(pair: dict) -> str:
     elif name == "extract_tables":
         outcome = f"{result.get('tables_total', 0)} tables"
     elif name == "store_evidence":
-        outcome = str(result.get("evidence_id"))
+        outcome = (f"rejected: {', '.join(result.get('reasons') or [])}" if result.get("rejected")
+                   else str(result.get("evidence_id")))
     else:
         outcome = "ok"
     if name in trace.SEARCH_TOOLS:
@@ -224,6 +240,25 @@ def _primary_output(events: list[dict]) -> Any:
     return output if output is None or _size(output) <= 20000 else {"_truncated": _short(output, 20000)}
 
 
+def admission_summary(events: list[dict]) -> dict:
+    """What the evidence admission gate did in a run (from events): admitted items by binding / authority /
+    variant_match and rejected requests by reason."""
+    admitted = trace.evidence_items(events)
+    rejected = [e for e in events if e.get("kind") == "evidence_rejected"]
+
+    def count(values) -> dict:
+        out: dict[str, int] = {}
+        for v in values:
+            out[str(v)] = out.get(str(v), 0) + 1
+        return dict(sorted(out.items()))
+
+    return {"admitted": len(admitted), "rejected": len(rejected),
+            "rejected_by_reason": count(r for e in rejected for r in e.get("reasons") or ["unknown"]),
+            "admitted_by_variant_match": count(i.get("variant_match") or "not_recorded" for i in admitted),
+            "admitted_by_binding_level": count(i.get("binding_level") or "legacy_unbound_check" for i in admitted),
+            "admitted_by_source_authority": count(i.get("source_authority") or "not_recorded" for i in admitted)}
+
+
 def current_field_states(events: list[dict], specs: list[dict], target_market: str | None = None) -> dict:
     """The authoritative CURRENT state of every requested field, recomputed from ALL events (evidence,
     field_status declarations, primary output) with the same evaluator live field recovery uses. Never a
@@ -245,6 +280,9 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
     evidence = trace.evidence_items(events)
     responses = trace.model_responses(events)
     facts, multi = _candidate_facts(evidence)
+    from .consistency_checks import run_checks
+
+    sanity = run_checks(evidence, payload, (trace.first_event(events, "run_started") or {}).get("requested_field_specs"))
     event_meta = trace.document_event_meta(events)
     doc_ids = trace.document_ids(events)
     documents = []
@@ -299,11 +337,14 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
         "field_recovery": [{k: a.get(k) for k in ("field", "attempt", "state_before", "state_after", "reply", "error")
                             if a.get(k) is not None} for a in (recovery or {}).get("attempts") or []],
         "primary_output": _primary_output(events),
-        "evidence": evidence,
+        "evidence": [finalizer_evidence(item, sanity) for item in evidence],
         "evidence_by_market": markets,
         "candidate_facts": facts,
         "fields_with_multiple_stored_values": multi,
-        "model_noted_conflicts": _conflict_notes(evidence, responses),
+        "model_noted_conflicts": _conflict_notes(responses),
+        "consistency_checks": [{k: c[k] for k in ("check", "status", "fields", "evidence_ids", "detail")}
+                               for c in sanity["checks"]],
+        "evidence_admission": admission_summary(events),
         "documents": documents,
         "search_queries": queries,
         "research_actions": actions[-MAX_ACTIONS:],

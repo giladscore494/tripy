@@ -27,6 +27,7 @@ import json
 import re
 from typing import Any, Iterable
 
+from .document_binding import DEFAULT_REQUIREMENT, LEVELS, level_index
 from .excerpts import select_prior_excerpts
 from .fields import normalize_field_name, public_spec
 from .schemas import iter_fields, parse_model_output
@@ -36,6 +37,13 @@ RETRY_STATES = ("unresolved", "missing", "conflicting", "foreign_market_only", "
                 "weak_provenance")
 NO_RETRY_STATES = ("ok", "not_applicable")
 UNKNOWN_MARKETS = {"", "unknown", "n/a", "na", "none", "unclear", "?"}
+# variant_match values that say a value is NOT about the target variant. "different" may come from the model or
+# from the server-side binding veto; "unbound" (the source does not even name the model family) only from the
+# server (src/document_binding.py).
+NON_TARGET_VARIANTS = ("different", "unbound")
+# variant_match values that say the server-side binding did NOT reach the field's binding_requirement ("unclear" from
+# src/document_binding.py: the source names the model, but not precisely enough). Never target-safe on their own.
+INSUFFICIENT_VARIANTS = ("unclear", "unknown")
 MARKET_ALIASES = {"il": {"il", "isr", "israel", "ישראל", "israeli"}}
 DEFAULT_TARGET_MARKET = "IL"
 
@@ -102,7 +110,7 @@ def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
     another market, or marked variant_match=different, never makes a same-scope conflict on its own.
     """
     scope = [e for e in evidence if _has_value(e.get("value")) and is_target_market(e.get("market"), target_market)
-             and str(e.get("variant_match") or "").lower() != "different"]
+             and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
 
@@ -135,15 +143,65 @@ def conflict_start_seq(conflict: list[dict], evidence_seq: dict) -> int | None:
     return None
 
 
+def field_requirement(spec: dict | None, item: dict | None = None) -> str:
+    """The binding level a value of this field needs: the schema's `binding_requirement`, else the requirement the
+    admission gate recorded on the item, else the server default. Never a model value."""
+    for value in ((spec or {}).get("binding_requirement"), (item or {}).get("binding_requirement")):
+        if value in LEVELS:
+            return value
+    return DEFAULT_REQUIREMENT
+
+
+def binding_satisfies(item: dict, requirement: str | None = None) -> bool:
+    """Does the server-side binding of this evidence item reach the field's binding requirement?
+
+    * variant_match different / unbound (veto, or not even the model family)  -> no
+    * variant_match unclear / unknown (binding below the requirement)          -> no
+    * a server-computed binding_level                                         -> level >= requirement
+      (the stricter of the field's requirement and the one recorded at admission: evidence admitted under a weaker
+      requirement does not become exact for a field that now needs more)
+    * no binding recorded at all (legacy evidence / fields without a variant distinction) -> yes, unless one of
+      the negative variant_match values above says otherwise.
+    A model's variant claim is stored as model_variant_claim and is never read here."""
+    match = str(item.get("variant_match") or "").strip().lower()
+    if match in NON_TARGET_VARIANTS or match in INSUFFICIENT_VARIANTS:
+        return False
+    level = item.get("binding_level")
+    if level is None:
+        return True
+    if level not in LEVELS:
+        return False
+    needed = max(level_index(requirement or DEFAULT_REQUIREMENT),
+                 level_index(item.get("binding_requirement")) if item.get("binding_requirement") in LEVELS else 0)
+    return level_index(level) >= needed
+
+
+def in_server_scope(item: dict, target_market: str, requirement: str | None = None) -> bool:
+    """Server-side scope of one evidence item: its server-computed binding reaches the field's binding requirement
+    (see binding_satisfies: `unclear` never does) and it is not from a known other market. A model declaration never
+    changes this."""
+    return binding_satisfies(item, requirement or field_requirement(None, item)) and market_in_scope(item, target_market)
+
+
+def market_in_scope(item: dict, target_market: str) -> bool:
+    """The item's server-side market is the target market (or not established)."""
+    return is_target_market(item.get("market"), target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+
+
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
-                         evidence_seq: dict | None) -> bool:
+                         evidence_seq: dict | None, target_market: str | None = None,
+                         requirement: str | None = None) -> bool:
     """A conflict_resolved declaration closes a conflict only if it cites real evidence for this field:
-    evidence_ids non-empty, every id stored for this field, and (when ordering is known) at least one
-    cited item stored at or after the moment the conflict became active (citing only candidates that
+    evidence_ids non-empty, every id stored for this field, at least one cited item in the server-side target scope
+    (citing another variant's or another market's item resolves nothing for the target), and (when ordering is known)
+    at least one cited item stored at or after the moment the conflict became active (citing only candidates that
     predate the conflict is not a resolution). Code never decides which value is true."""
     cited = [str(i) for i in (declared or {}).get("evidence_ids") or []]
     field_ids = {str(e.get("evidence_id")) for e in evidence}
     if not cited or not set(cited) <= field_ids:
+        return False
+    if target_market is not None and not any(in_server_scope(e, target_market, requirement) for e in evidence
+                                             if str(e.get("evidence_id")) in cited):
         return False
     seqs = evidence_seq or {}
     start = conflict_start_seq(conflict, seqs)
@@ -152,14 +210,38 @@ def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: 
     return any(seqs.get(c) is not None and seqs[c] >= start for c in cited)
 
 
+def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dict]],
+                               target_market: str = DEFAULT_TARGET_MARKET, ignore_own: bool = False) -> str | None:
+    """The schema's `not_applicable_when` rules: the field does not exist when target-market evidence of another
+    field that binds EXACTLY to the target variant has one of the listed values (a gear count of a gearbox with no
+    discrete gears). Never when the field has target evidence of its own: then the evaluator judges that evidence
+    as usual (a contradiction stays visible instead of being silently overruled)."""
+    own = [e for e in evidence_by_field.get(spec["name"], []) if _has_value(e.get("value"))
+           and is_target_market(e.get("market"), target_market)
+           and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
+    if own and not ignore_own:
+        return None
+    for rule in spec.get("not_applicable_when") or []:
+        other = normalize_field_name(rule.get("field"))
+        values = {_value_key(v) for v in rule.get("values") or []}
+        for item in evidence_by_field.get(other, []):
+            if (str(item.get("variant_match") or "").lower() == "exact"
+                    and is_target_market(item.get("market"), target_market)
+                    and _value_key(item.get("value")) in values):
+                return f"{other}={item.get('value')} ({rule.get('reason') or 'schema rule'})"
+    return None
+
+
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
                    target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
-                   evidence_seq: dict | None = None) -> dict:
+                   evidence_seq: dict | None = None, not_applicable_rule: str | None = None,
+                   schema_rule_conflict: str | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
 
-    * not_applicable  - not applicable by the schema's `applies_to`, or the model said so;
+    * not_applicable  - not applicable by the schema's `applies_to` or `not_applicable_when` rule, or the model
+                        said so;
     * ok              - a candidate value backed by a stored evidence record, and the model
                         did not itself mark it unresolved / conflicting / wrong market or trim;
     * unresolved      - the model said unresolved (report_field_status or its own answer);
@@ -171,15 +253,24 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         have materially different values and the model has not explicitly resolved
                         them (a `conflict_resolved` declaration newer than the latest evidence). A plain
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
-    * foreign_market_only - every candidate is explicitly marked as another market and the model
-                        has not declared the field found for the target;
-    * variant_not_exact   - every candidate is explicitly marked as another trim/variant
-                        (variant_match=different) and the model has not declared it found.
+    * foreign_market_only - no candidate is in the server-side target scope and the ones that may apply to the
+                        variant are from a known other market;
+    * variant_not_exact   - no candidate's server-side binding reaches the field's binding_requirement in the target
+                        scope: a target-market candidate bound only below it (variant_match=unclear), or
+                        every candidate is about another trim/variant (variant_match=different, from the
+                        model or the server-side binding veto) or from a source that does not name the
+                        model at all (variant_match=unbound).
+
+    Server scope is authoritative. The two out-of-scope states are decided from the evidence (server-computed
+    variant_match and market) BEFORE any model declaration is read: a `found` or `conflict_resolved` declaration
+    cannot turn another variant's or another market's evidence into target evidence. A model declaration can still
+    make a field less settled (unresolved, conflicting, ...) or not_applicable.
 
     Different values across markets, or with a candidate explicitly marked as another variant, are
     recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
     """
     name = spec["name"]
+    requirement = field_requirement(spec)
     info: list[str] = []
     declared_status = (declared or {}).get("status")
     out_provenance = str((output_entry or {}).get("provenance") or "").lower()
@@ -197,12 +288,16 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if not declaration_is_current(output_seq, last_evidence_seq):
         out_provenance = ""
     resolved = declared_status == "conflict_resolved" and (
-        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq))
+        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq, target_market, requirement))
     if conflict and declared_status == "conflict_resolved":
         info.append("conflict_resolved_by_model" if resolved else "conflict_resolution_not_evidence_backed")
 
+    if not_applicable_rule:
+        info.append(f"not_applicable_by_schema_rule:{not_applicable_rule}")
+    elif schema_rule_conflict:
+        info.append(f"schema_rule_conflict:{schema_rule_conflict}")   # own target evidence vs the N/A rule
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
-            or out_provenance == "not_applicable"):
+            or out_provenance == "not_applicable" or not_applicable_rule):
         state = "not_applicable"
     elif declared_status in RETRY_STATES:
         state = declared_status                       # the model's own (current) report wins
@@ -212,14 +307,20 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         state = "weak_provenance" if _has_value(out_value) else "missing"
     elif conflict and not resolved:
         state = "conflicting"                         # same scope, different values, not explicitly resolved
-    elif declared_status in RESOLVED_STATUSES and (declared_status == "found" or resolved):
-        state = "ok"                                  # the model resolved applicability itself
-    elif not target_items and all(_market_key(e.get("market")) not in UNKNOWN_MARKETS for e in with_value):
-        state = "foreign_market_only"
-    elif all(str(e.get("variant_match") or "").lower() == "different" for e in with_value):
-        state = "variant_not_exact"
+    elif not any(in_server_scope(e, target_market, requirement) for e in with_value):
+        # nothing in the server-side target scope: no declaration (found / conflict_resolved) can change that
+        if all(str(e.get("variant_match") or "").lower() in NON_TARGET_VARIANTS for e in with_value):
+            state = "variant_not_exact"
+        elif any(binding_satisfies(e, requirement) for e in with_value):
+            state = "foreign_market_only"             # the target variant, but only from another market
+        elif any(market_in_scope(e, target_market) for e in with_value):
+            state = "variant_not_exact"               # target-scope market, binding below the requirement
+        else:
+            state = "foreign_market_only"
+        if declared_status in RESOLVED_STATUSES:
+            info.append(f"declaration_outside_server_scope:{declared_status}")
     else:
-        state = "ok"
+        state = "ok"                                  # in-scope evidence (a found / backed resolution changes nothing)
     return {
         "field": name,
         "state": state,
@@ -252,7 +353,8 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
-                           evidence_seq)
+                           evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
+                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True))
             for spec in specs]
 
 
@@ -264,7 +366,7 @@ def current_evaluation(events: list[dict], specs: list[dict], target_market: str
     return evaluate_fields(specs, events, market)
 
 
-UNSPECIFIC_VARIANT = {"unclear", "unknown", "different"}
+UNSPECIFIC_VARIANT = {"unclear", "unknown", "different", "unbound"}
 
 
 def early_resolution_check(spec: dict, events: list[dict], target_market: str) -> tuple[bool, dict]:

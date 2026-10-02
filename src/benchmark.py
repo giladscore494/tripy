@@ -19,6 +19,7 @@ from .agent import AgentConfig, effective_glm_config, finalizer_model_of, resear
 from .db import build_level15_payload
 from .pricing import run_cost
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
+from .source_authority import OFFICIAL_CLASSES
 from .storage.run_log import RunLog, update_batch, utc_now, write_batch
 from .storage.trace import sum_usage
 from .tools import ToolConfig
@@ -117,6 +118,10 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     provenance = Counter(str(entry.get("provenance") or "not_stated") for _, entry in fields)
     stored_ids = {str(item.get("evidence_id")) for item in result.get("evidence", [])}
     cited = [str(i) for _, entry in fields for i in (entry.get("evidence_ids") or []) if i is not None]
+    evidence = result.get("evidence") or []
+    admission = result.get("evidence_admission") or {}
+    variant_matches = Counter(str(item.get("variant_match") or "not_recorded") for item in evidence)
+    sanity = (result.get("consistency_checks") or {}).get("summary") or {}
     return {
         "record_id": result.get("record_id"),
         "status": result.get("status"),
@@ -136,6 +141,17 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "extra_field_names": extra,
         "evidence_items": len(result.get("evidence", [])),
         "evidence_with_market": sum(1 for item in result.get("evidence", []) if item.get("market")),
+        # evidence admission / binding / authority (observational; never accuracy)
+        "evidence_rejected": admission.get("rejected", counters.get("evidence_rejected", 0)) or 0,
+        "evidence_rejected_by_reason": admission.get("rejected_by_reason") or {},
+        "evidence_variant_exact": variant_matches.get("exact", 0),
+        "evidence_variant_unclear": variant_matches.get("unclear", 0),
+        "evidence_variant_different": variant_matches.get("different", 0),
+        "evidence_unbound": variant_matches.get("unbound", 0),
+        "evidence_official_source": sum(1 for item in evidence if item.get("source_authority") in OFFICIAL_CLASSES),
+        "evidence_aggregator_source": sum(1 for item in evidence if item.get("source_authority") == "aggregator"),
+        "consistency_checks_suspicious": sanity.get("suspicious", 0),
+        "consistency_checks_consistent": sanity.get("consistent", 0),
         "fields_israel_direct": provenance.get("israel_direct", 0),
         "fields_foreign_direct": provenance.get("foreign_direct", 0),
         "fields_inferred": provenance.get("inferred", 0),
@@ -263,7 +279,10 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "fields_unresolved_before_harvest", "fields_unresolved_after_harvest_review", "fields_entering_web_recovery",
             "recovery_fields_given_first_attempt", "recovery_fields_never_attempted",
             "recovery_second_attempts_started", "recovery_unique_fields_touched", "recovery_unique_fields_resolved",
-            "fields_never_attempted_due_to_budget", "tool_calls_blocked")
+            "fields_never_attempted_due_to_budget", "tool_calls_blocked", "evidence_rejected",
+            "evidence_variant_exact", "evidence_variant_unclear", "evidence_variant_different", "evidence_unbound",
+            "evidence_official_source", "evidence_aggregator_source", "consistency_checks_suspicious",
+            "consistency_checks_consistent")
 
 
 def aggregate(metrics: list[dict]) -> dict:

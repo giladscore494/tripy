@@ -1,0 +1,519 @@
+{
+ "_about": "Vocabulary of the server-side document binding (src/document_binding.py): how documents name a manufacturer, a model family, a body style, a propulsion, a drivetrain. Families are matched as whole words, spaces/hyphens optional; a longer family that extends a shorter one (corolla cross vs corolla) is masked out before the shorter one is searched, and a fact whose context names the longer family is NOT about the shorter one. Body/propulsion/drivetrain keys are the Level 1.5 normalized values. Editing this file changes binding with no code change; nothing in Python names a brand or model. propulsion_weak_terms count as a propulsion match only for a target of that propulsion and only when no conflicting propulsion is named (a plain 'electric' is also said of hybrids).",
+ "version": "identity-vocabulary-v1",
+ "manufacturers": {
+  "טויוטה": [
+   "toyota",
+   "טויוטה"
+  ],
+  "אאודי": [
+   "audi",
+   "אאודי",
+   "אודי"
+  ],
+  "ב מ וו": [
+   "bmw",
+   "ב.מ.וו",
+   "ב מ וו",
+   "במוו",
+   "mini"
+  ],
+  "מרצדס": [
+   "mercedes",
+   "mercedes-benz",
+   "מרצדס",
+   "מרצדס-בנץ"
+  ],
+  "יונדאי": [
+   "hyundai",
+   "יונדאי"
+  ],
+  "קאדילאק": [
+   "cadillac",
+   "קאדילאק",
+   "קדילק",
+   "קאדילק"
+  ],
+  "אקספנג": [
+   "xpeng",
+   "אקספנג",
+   "אקס פנג"
+  ]
+ },
+ "model_families": {
+  "corolla": [
+   "corolla",
+   "קורולה"
+  ],
+  "corolla cross": [
+   "corolla cross",
+   "קורולה קרוס"
+  ],
+  "rav4": [
+   "rav4",
+   "rav 4",
+   "rav-4",
+   "ראב 4",
+   "ראב4",
+   "ראב-4"
+  ],
+  "land cruiser": [
+   "land cruiser",
+   "landcruiser",
+   "לנד קרוזר"
+  ],
+  "hilux": [
+   "hilux",
+   "היילקס",
+   "הילוקס"
+  ],
+  "yaris": [
+   "yaris",
+   "יאריס"
+  ],
+  "yaris cross": [
+   "yaris cross",
+   "יאריס קרוס"
+  ],
+  "camry": [
+   "camry",
+   "קאמרי"
+  ],
+  "c-hr": [
+   "c-hr",
+   "chr",
+   "c hr",
+   "סי-אייץ' אר",
+   "סי אייץ' אר"
+  ],
+  "a1": [
+   "a1"
+  ],
+  "a3": [
+   "a3"
+  ],
+  "a4": [
+   "a4"
+  ],
+  "a6": [
+   "a6"
+  ],
+  "q3": [
+   "q3"
+  ],
+  "q7": [
+   "q7"
+  ],
+  "q8": [
+   "q8"
+  ],
+  "118i": [
+   "118i"
+  ],
+  "330e": [
+   "330e"
+  ],
+  "420i": [
+   "420i"
+  ],
+  "530e": [
+   "530e"
+  ],
+  "x6": [
+   "x6"
+  ],
+  "m4": [
+   "m4"
+  ],
+  "cooper": [
+   "cooper",
+   "קופר"
+  ],
+  "e300e": [
+   "e300e",
+   "e 300 e",
+   "e300 e",
+   "e-class",
+   "e class"
+  ],
+  "a250 e": [
+   "a250 e",
+   "a250e",
+   "a 250 e"
+  ],
+  "gle53": [
+   "gle53",
+   "gle 53",
+   "amg gle 53"
+  ],
+  "glc300e": [
+   "glc300e",
+   "glc 300 e",
+   "glc 300e"
+  ],
+  "sprinter": [
+   "sprinter",
+   "ספרינטר"
+  ],
+  "vito": [
+   "vito",
+   "ויטו"
+  ],
+  "c180": [
+   "c180",
+   "c 180",
+   "c-class",
+   "c class"
+  ],
+  "ioniq5": [
+   "ioniq5",
+   "ioniq 5",
+   "איוניק 5",
+   "איוניק5"
+  ],
+  "santa fe": [
+   "santa fe",
+   "סנטה פה"
+  ],
+  "kona": [
+   "kona",
+   "יונדאי קונה"
+  ],
+  "i20": [
+   "i20"
+  ],
+  "i30": [
+   "i30"
+  ],
+  "h1": [
+   "h1",
+   "h-1"
+  ],
+  "escalade": [
+   "escalade",
+   "אסקלייד"
+  ],
+  "escalade iq": [
+   "escalade iq",
+   "אסקלייד iq"
+  ],
+  "lyriq": [
+   "lyriq",
+   "ליריק"
+  ],
+  "optiq": [
+   "optiq",
+   "אופטיק"
+  ],
+  "xt5": [
+   "xt5"
+  ],
+  "xt6": [
+   "xt6"
+  ],
+  "cts": [
+   "cts"
+  ],
+  "g6": [
+   "g6"
+  ],
+  "g9": [
+   "g9"
+  ],
+  "p7": [
+   "p7"
+  ],
+  "p7i": [
+   "p7i",
+   "p7+i"
+  ],
+  "p7 plus": [
+   "p7 plus",
+   "p7+"
+  ],
+  "x9": [
+   "x9"
+  ]
+ },
+ "model_stop_words": [
+  "hybrid",
+  "phev",
+  "plug-in",
+  "sportback",
+  "4matic",
+  "xdrive",
+  "competition",
+  "40i",
+  "se",
+  "e"
+ ],
+ "body_terms": {
+  "wagon": [
+   "touring sports",
+   "touring sport",
+   "estate",
+   "station wagon",
+   "wagon",
+   "sportswagon",
+   "sports tourer",
+   "kombi",
+   "avant",
+   "סטיישן",
+   "טורינג ספורטס",
+   "טורינג ספורט"
+  ],
+  "hatchback": [
+   "hatchback",
+   "האצ'בק",
+   "הצ'בק",
+   "האצבק"
+  ],
+  "sedan": [
+   "sedan",
+   "saloon",
+   "סדאן",
+   "סדן"
+  ],
+  "suv": [
+   "suv",
+   "crossover",
+   "קרוסאובר",
+   "פנאי-שטח",
+   "פנאי שטח"
+  ],
+  "coupe": [
+   "coupe",
+   "coupé",
+   "קופה"
+  ],
+  "convertible": [
+   "cabriolet",
+   "convertible",
+   "קבריולה"
+  ],
+  "mpv": [
+   "mpv",
+   "minivan",
+   "מיניוואן"
+  ],
+  "pickup_double_cab": [
+   "pickup",
+   "pick-up",
+   "double cab",
+   "טנדר",
+   "דאבל קבינה"
+  ]
+ },
+ "propulsion_terms": {
+  "plug_in": [
+   "plug-in hybrid",
+   "plug in hybrid",
+   "phev",
+   "פלאג-אין",
+   "פלאג אין",
+   "היברידי נטען",
+   "היברידית נטענת"
+  ],
+  "battery_electric": [
+   "bev",
+   "fully electric",
+   "all-electric",
+   "all electric",
+   "100% electric",
+   "חשמלי מלא",
+   "חשמלית מלאה",
+   "רכב חשמלי"
+  ],
+  "hybrid": [
+   "full hybrid",
+   "self-charging hybrid",
+   "self charging hybrid",
+   "hybrid",
+   "hev",
+   "היברידי",
+   "היברידית",
+   "היבריד",
+   "mild hybrid",
+   "mhev"
+  ],
+  "conventional": [
+   "petrol only",
+   "diesel only"
+  ]
+ },
+ "propulsion_weak_terms": {
+  "battery_electric": [
+   "electric",
+   "electric vehicle",
+   "ev",
+   "חשמלי",
+   "חשמלית"
+  ]
+ },
+ "propulsion_conflicts": {
+  "hybrid": [
+   "plug_in",
+   "battery_electric"
+  ],
+  "plug_in": [
+   "battery_electric"
+  ],
+  "battery_electric": [
+   "hybrid",
+   "plug_in"
+  ],
+  "conventional": [
+   "hybrid",
+   "plug_in",
+   "battery_electric"
+  ]
+ },
+ "drivetrain_terms": {
+  "awd": [
+   "awd",
+   "4x4",
+   "4wd",
+   "all-wheel drive",
+   "all wheel drive",
+   "xdrive",
+   "4matic",
+   "quattro",
+   "e-four",
+   "4motion",
+   "dual motor",
+   "הנעה כפולה",
+   "הנעה לכל הגלגלים",
+   "4X4"
+  ],
+  "two_wheel_drive": [
+   "fwd",
+   "rwd",
+   "2wd",
+   "4x2",
+   "front-wheel drive",
+   "rear-wheel drive",
+   "front wheel drive",
+   "rear wheel drive",
+   "הנעה קדמית",
+   "הנעה אחורית",
+   "single motor"
+  ]
+ },
+ "engine_words": [
+  "engine",
+  "מנוע",
+  "נפח מנוע",
+  "displacement",
+  "נפח"
+ ],
+ "displacement_suffixes": [
+  "l",
+  "ליטר",
+  "litre",
+  "liter",
+  "hybrid",
+  "היברידי",
+  "היבריד",
+  "hev",
+  "phev",
+  "plug-in",
+  "turbo",
+  "טורבו",
+  "tsi",
+  "tfsi",
+  "tdi",
+  "vvt-i",
+  "d-4d",
+  "i",
+  "d",
+  "e-hybrid",
+  "mhev",
+  "petrol",
+  "בנזין",
+  "דיזל",
+  "diesel",
+  "היברידית"
+ ],
+ "cc_units": [
+  "cc",
+  "סמ\"ק",
+  "cm3",
+  "cm³",
+  "סמק",
+  "קוב"
+ ],
+ "power_units": [
+  "hp",
+  "bhp",
+  "ps",
+  "כ\"ס",
+  "כוח סוס",
+  "כס"
+ ],
+ "power_words": [
+  "power",
+  "output",
+  "maximum power",
+  "max power",
+  "motor",
+  "הספק",
+  "הספק מרבי",
+  "מנוע"
+ ],
+ "charging_words": [
+  "charging",
+  "charge",
+  "charger",
+  "טעינה",
+  "טעינת",
+  "ac",
+  "dc"
+ ],
+ "generic_trim_words": [
+  "edi",
+  "edition",
+  "pack",
+  "line",
+  "the",
+  "and",
+  "של",
+  "עם",
+  "max",
+  "base",
+  "pro"
+ ],
+ "header_noise_words": [
+  "spec",
+  "specs",
+  "specification",
+  "specifications",
+  "מפרט",
+  "value",
+  "values",
+  "ערך",
+  "ערכים",
+  "feature",
+  "features",
+  "מאפיין",
+  "model",
+  "דגם",
+  "version",
+  "גרסה",
+  "גרסת",
+  "trim",
+  "רמת",
+  "גימור",
+  "price",
+  "מחיר",
+  "data",
+  "נתונים",
+  "standard",
+  "optional",
+  "סטנדרט",
+  "אופציה",
+  "yes",
+  "no",
+  "כן",
+  "לא"
+ ]
+}

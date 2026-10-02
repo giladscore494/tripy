@@ -7,6 +7,7 @@ import json
 import pytest
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
+from conftest import labelled_quote, seed_evidence_sources
 from test_run_config import PostResponse, ScriptedPostSession, chat_reply, tool_call
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -21,8 +22,10 @@ from src.tools import ToolConfig
 from src.ui.run_view import target_status_lines
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "government_record_id": "85095"},
-           "engine_drivetrain": {"propulsion_normalized": "battery_electric"}}
-IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/escalade-iq"
+           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
+IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/en-us/escalade-iq"
+HEADERS = {IL: 'קאדילאק אסקלייד IQ רכב חשמלי 750 כ"ס', US: "Cadillac Escalade IQ all-electric 750 hp"}
+QUOTES = {"gear_count": "Transmission: single-speed"}       # a gear count is admitted only when stated
 REQUESTED = [{"name": "electric_range_standard", "recovery_attempts": 1}, "ac_max_charging_power_kw",
              "cargo_volume_l", "torque_nm", "rear_legroom_mm", "gear_count",
              {"name": "fuel_tank_l", "applies_to": ["conventional"]}]
@@ -38,7 +41,15 @@ def say(obj):
 
 def store(cid, field, value, market, **kw):
     return _call(cid, "store_evidence", {"field": field, "value": value, "market": market,
-                                         "source_url": IL if market == "IL" else US, "quote": str(value), **kw})
+                                         "source_url": IL if market == "IL" else US,
+                                         "quote": QUOTES.get(field, labelled_quote(field, value)), **kw})
+
+
+def seeded(make_ctx, script):
+    """A tool context whose cache holds the retrieved pages the scripted evidence quotes."""
+    ctx = make_ctx()
+    seed_evidence_sources(ctx.cache, script, HEADERS)
+    return ctx
 
 
 class StopsWhenScriptEnds(ScriptedGLM):
@@ -66,12 +77,13 @@ SCRIPT = [
 
 
 def interrupted_run(tmp_path, make_ctx):
-    ctx = make_ctx()
+    ctx = seeded(make_ctx, SCRIPT)
     client = StopsWhenScriptEnds(list(SCRIPT))
     log = RunLog(tmp_path / "runs", "b", "85095")
     with pytest.raises(StopException):                       # re-raised, never swallowed
         run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED),
+                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED,
+                                       layered_harvest_enabled=False),
                     tool_config=ToolConfig(), session=ctx.session)
     return json.loads((log.dir / "result.json").read_text("utf-8")), client, read_events(log.events_path), log
 
@@ -128,7 +140,7 @@ def test_reconstruction_without_result_json_recomputes_current_state(tmp_path, m
 
 
 def test_stop_raised_by_the_ui_callback_is_not_swallowed(tmp_path, make_ctx):
-    ctx = make_ctx()
+    ctx = seeded(make_ctx, SCRIPT)
     seen_after_stop = []
     state = {"stopped": False}
 
@@ -143,7 +155,8 @@ def test_stop_raised_by_the_ui_callback_is_not_swallowed(tmp_path, make_ctx):
     client = ScriptedGLM(list(SCRIPT) + [say({"field": "cargo_volume_l", "status": "unresolved"})])
     with pytest.raises(StopException):
         run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED),
+                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED,
+                                       layered_harvest_enabled=False),
                     tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
     assert saved["status"] == "interrupted" and saved["interruption_type"] == "StopException"
@@ -170,9 +183,9 @@ def test_glm_errors_stay_distinct_from_interruptions(tmp_path, monkeypatch):
 
 
 def test_completed_runs_and_level3_listing(tmp_path, make_ctx):
-    ctx = make_ctx()
-    client = ScriptedGLM([turn(store("p1", "torque_nm", 1066, "IL")),
-                          say({"summary": "done", "fields": {"torque_nm": {"value": 1066}}})])
+    script = [turn(store("p1", "torque_nm", 1066, "IL")), say({"summary": "done", "fields": {"torque_nm": {"value": 1066}}})]
+    ctx = seeded(make_ctx, script)
+    client = ScriptedGLM(script)
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path / "runs", "b", "85095"),
                          config=AgentConfig(field_recovery_enabled=False, requested_fields=["torque_nm", "gear_count"],

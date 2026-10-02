@@ -116,7 +116,8 @@ def test_run_records_effective_config_trace_and_cost(tmp_path):
         "chat/completions": [
             chat_reply(tool_call("c1", "search_web", {"query": "XPeng G6 2026 MAX specs"})),
             chat_reply(tool_call("c2", "fetch_url", {"url": page}), cached=400),
-            chat_reply(tool_call("c3", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": page})),
+            chat_reply(tool_call("c3", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": page,
+                                                          "quote": "Torque 660 Nm"})),
             chat_reply({"role": "assistant", "content": json.dumps({"summary": "ok", "fields": {
                 "torque_nm": {"value": 660, "unit": "Nm", "evidence_ids": ["e1"]}}})}),
         ],
@@ -135,7 +136,7 @@ def test_run_records_effective_config_trace_and_cost(tmp_path):
                         prompt_version="pv")
     result = research_one(vehicle, row, client=client, cache=cache, runs_dir=runs, batch_id="b1",
                           agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing, level15_source="snapshot",
-                          session=FakeSession({page: FakeResponse(b"<html><body><h1>G6</h1>660 Nm</body></html>")}))
+                          session=FakeSession({page: FakeResponse(b"<html><body><h1>G6</h1>Torque 660 Nm</body></html>")}))
 
     assert result["status"] == "completed" and result["output"]["summary"] == "ok"
     cfg = result["glm_config"]

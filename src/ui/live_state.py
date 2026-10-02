@@ -88,7 +88,12 @@ def feed_line(kind: str, event: dict) -> str | None:
         return f"   ↺ repeated work: {_short(event.get('note'), 120)}"
     if kind == "evidence":
         ev = event.get("evidence", {})
-        return f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}"
+        scope = " · ".join(str(ev[k]) for k in ("variant_match", "market", "source_authority") if ev.get(k))
+        return f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}" + (f" ({scope})" if scope
+                                                                                                 else "")
+    if kind == "evidence_rejected":
+        return (f"⛔ evidence rejected: {event.get('field')} = {_short(event.get('value'), 50)} "
+                f"({', '.join(event.get('reasons') or [])})")
     if kind == "evidence_reused":
         return f"↺ evidence reused: {event.get('evidence_id')} {event.get('field')} = {_short(event.get('value'), 60)}"
     if kind == "field_recovery_early_resolved":
@@ -160,6 +165,7 @@ class VehicleLive:
         self.documents: dict[str, str] = {}
         self.model_calls = 0
         self.searches = 0
+        self.evidence_rejected = 0
         self.http_429 = 0
         self.timeouts = 0
         self.unknown_usage = 0
@@ -275,6 +281,9 @@ class VehicleLive:
         self.op = he.TOOL_OP_STATE.get(name, "evaluating")
         if name in ("search_web", "search_official_domains"):
             self.searches += 1
+
+    def _on_evidence_rejected(self, e: dict) -> None:
+        self.evidence_rejected += 1
 
     def _on_tool_result(self, e: dict) -> None:
         result = e.get("result") or {}
@@ -414,6 +423,8 @@ class VehicleLive:
                 "שווקים": ", ".join("ישראל" if str(m).upper() in ("IL", "ISRAEL") else str(m)
                                      for m in entry.get("markets") or []) or "—",
                 "מקור אחרון": _domain((last or {}).get("source_url")) or ((last or {}).get("document_id") or "—"),
+                "סוג מקור": he.authority_label((last or {}).get("source_authority")),
+                "התאמת גרסה": he.variant_match_label((last or {}).get("variant_match")),
                 "ניסיון Recovery": self.recovery_attempts.get(name, 0),
                 "אופן ההשלמה": self.origin(name, state),
             })
@@ -475,6 +486,7 @@ class VehicleLive:
             "harvest": {"documents": self.harvest["documents"], "fields_with_candidates":
                         len(self.harvest["fields"] & {s["name"] for s in self.applicable()})},
             "sweep": dict(self.sweep_info),
+            "evidence_rejected": self.evidence_rejected,
             "reasoning_title": he.REASONING_TITLE_HE,
             "reasoning": reasoning,
             "reasoning_available": self.reasoning_available,

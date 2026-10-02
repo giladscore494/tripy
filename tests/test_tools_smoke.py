@@ -3,7 +3,7 @@
 import json
 import sys
 
-from conftest import FakeResponse, minimal_pdf
+from conftest import FakeResponse, cache_source, minimal_pdf
 
 from src.agent import AgentConfig, run_vehicle
 from src.benchmark import compute_metrics
@@ -108,13 +108,22 @@ def test_technical_validation_only(make_ctx):
     assert missing["status"] == 404
 
 
-def test_store_evidence_accepts_any_source(make_ctx):
+def test_store_evidence_accepts_any_retrieved_source_and_rejects_the_rest(make_ctx):
+    """No source TYPE is forbidden (a forum and a blog are fine), but the source must have been retrieved and the
+    quote must state the value. A URL that was never fetched is not a source."""
     ctx = make_ctx()
+    cache_source(ctx.cache, "https://forum.example/t/1", "Toyota Corolla owners: boot space is 520 litres in my car.")
+    cache_source(ctx.cache, "https://blog.example", "Corolla review. Luggage capacity 536 l.")
     a = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": 520, "source_url": "https://forum.example/t/1",
-                                         "quote": "boot is 520 litres"})
-    b = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": "536", "source_url": "https://blog.example"})
+                                         "quote": "boot space is 520 litres"})
+    b = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": "536", "source_url": "https://blog.example",
+                                         "quote": "Luggage capacity 536 l"})
     assert (a["evidence_id"], b["evidence_id"]) == ("e1", "e2")
     assert [item["value"] for item in ctx.evidence.items] == [520, "536"]
+    assert {item["source_authority"] for item in ctx.evidence.items} == {"unknown"}
+    never = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": 540,
+                                             "source_url": "https://never-fetched.example", "quote": "540 litres"})
+    assert never["stored"] is False and never["reasons"] == ["source_not_retrieved"] and len(ctx.evidence.items) == 2
 
 
 def test_search_backends(make_ctx):

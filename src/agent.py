@@ -49,14 +49,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .bundle import BUNDLE_VERSION, build_research_bundle
+from .bundle import BUNDLE_VERSION, admission_summary, build_research_bundle
+from .consistency_checks import run_checks
 from .concurrency import BatchCancelled
 from .glm_client import GLMError
 from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
 from .storage.trace import FETCH_TOOLS
 from .field_recovery import (current_evaluation, early_resolution_check, parse_retry_reply, retry_packet,
                              retry_queue)
-from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields
+from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields, semantic_notes
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
@@ -66,6 +67,7 @@ from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs
 from .tools.evidence import EvidenceStore
 from .candidate_harvest import RunHarvester
+from .evidence_admission import AdmissionContext
 from .variant_notes import record_id_of, variant_notes
 
 OUTPUT_SHAPE = """{
@@ -79,6 +81,7 @@ OUTPUT_SHAPE = """{
                      "market": "<IL | other market code | null>",
                      "provenance": "israel_direct | foreign_direct | inferred | unresolved",
                      "alternatives": [{"value": <any>, "market": "...", "variant": "...", "evidence_ids": ["e2"]}],
+                     "valid_as_of": "<date the value is valid as of, for time-sensitive fields, or null>",
                      "notes": "<optional>", "evidence_ids": ["e1"]}
   },
   "conflicts": [{"field": "<name>", "values": [{"value": <a>, "market": "IL", "evidence_ids": ["e1"]},
@@ -109,8 +112,17 @@ PROVENANCE_GUIDANCE = """Variant identity and market provenance:
 - Keep EV energy consumption (kWh/100km, field energy_consumption_kwh_100km) separate from fuel
   consumption in l/100km.
 - Every value you report should cite evidence records (e1, e2, ...) created with store_evidence,
-  containing the field, exact value, source URL / document_id, a short verbatim quote, market and notes.
-  A document_id is not an evidence id."""
+  containing the field, exact value, the document_id of a fetched document and a short verbatim quote that
+  states the value. A document_id is not an evidence id.
+- Evidence is admitted by deterministic runtime checks: the quote must occur in the cited (fetched) document
+  and state the value itself. Never store a value you inferred (e.g. a gear count from "e-CVT", a number of
+  climate zones the source does not state); store only what the source says. Each requested field has a
+  semantic_definition; store the quantity it defines (e.g. a hybrid's torque_nm is the combustion engine's).
+- The runtime computes each evidence item's market, source_authority and variant binding (binding_level,
+  variant_match) from the source itself; your market / variant_match are only claims. Notes are commentary
+  and never count as evidence or provenance.
+- Time-sensitive values (price, licence fee, warranty) are valid as of a date: pass valid_as_of when the
+  source states one."""
 
 SYSTEM_PROMPT = """You are a vehicle research agent working on a benchmark.
 
@@ -161,7 +173,8 @@ Working efficiently (documents are external memory):
 - If a requested field does not exist for this vehicle (e.g. a fuel tank on an EV), call
   report_field_status(field, "not_applicable"). If you could not resolve a field, you may report
   "unresolved"; such fields get a separate focused follow-up later, so do not loop on them now.
-- When storing evidence, pass variant_match: exact | different | unclear.
+- When storing evidence, you may pass your variant_match claim (exact | different | unclear); the runtime
+  computes the effective binding, and a rejected store_evidence returns its reasons.
 - You have a soft budget of research turns. When it runs out, a separate step compiles the final
   answer from your stored evidence and the excerpts you looked at, so call store_evidence for every
   value you intend to use as soon as you find it.
@@ -177,7 +190,10 @@ targets, the evidence items it stored (with source URLs and quotes), candidate f
 metadata of the documents it fetched, excerpts it read from them, conflicts it noted, a concise list of
 its research actions, targets with no stored evidence, and its last notes.
 
-You cannot browse or call tools. Organize the research into the final answer. You decide how to use
+You cannot browse or call tools. Organize the research into the final answer. Evidence items with an
+admission_status carry runtime-computed provenance: variant_match / binding_level (does the source describe the
+exact target variant; "different" and "unbound" items are NOT about the target), market, source_authority and, for
+time-sensitive values, valid_as_of (older items without admission_status carry the research model's own claims). Report a time-sensitive value with its valid_as_of, never as timeless. You decide how to use
 the material and which values to report; cite evidence_ids (e1, e2, ... from the bundle's evidence list,
 never document_ids) where they support a value. If sources disagree, report it in `conflicts` (you may
 still pick a value in `fields`). If a value comes from your own background knowledge or only from a
@@ -457,6 +473,10 @@ def build_user_message(payload: dict, include_level3: bool, max_steps: int | Non
     ]
     for group, fields in targets.items():
         lines.append(f"- {group}: " + "; ".join(f"{key} = {label}" for key, label in fields))
+    semantics = semantic_notes(specs)
+    if semantics:
+        lines += ["", "Field semantics (store exactly this quantity; other figures are rejected):"]
+        lines += [f"- {key}: {text}" for key, text in semantics.items()]
     if include_level3:
         lines += ["", "Level 3 open research (put results under `level3`):"]
         lines += [f"- {key}: {label}" for key, label in LEVEL3_TOPICS.items()]
@@ -1102,6 +1122,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     vehicle_ctx = {**(vehicle_meta or {}), **{k: identity.get(k) for k in ("trim", "model_code", "year")
                                               if identity.get(k)}}
     vehicle_ctx.setdefault("manufacturer", identity.get("manufacturer") or row.get("tozar"))
+    # The evidence admission gate of this run: target identity, requested specs, target market.
+    ctx.admission = AdmissionContext.for_run(payload, {**(vehicle_meta or {}), **vehicle_ctx}, specs,
+                                             config.target_market)
     harvester = RunHarvester(cache, specs, run_log, enabled=config.layered_harvest_enabled)
     tools = ToolSession(ctx, run_log, config, cancel_event=cancel_event,
                         on_documents=harvester.observe if config.layered_harvest_enabled else None)
@@ -1208,6 +1231,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "raw_final_text": final_text,
             "last_model_content": caller.last_content,
             "evidence": evidence.items,
+            "evidence_admission": admission_summary(events),
+            "consistency_checks": run_checks(evidence.items, payload, specs),
             "documents": list(ctx.documents_opened),
             "tool_calls": tools.tool_calls,
             "counters": counters,

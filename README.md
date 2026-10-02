@@ -13,20 +13,25 @@ Supabase Level 1.5 → benchmark loader → GLM research phase → research tool
   → GLM finalization phase → structured result → Streamlit UI
 ```
 
-## No epistemic gate in code
+## What code decides, and what it never decides
 
-- No verifier, no domain allowlist, no confidence threshold, no rejection of
-  unofficial sources, no conflict resolution in code, no deterministic variant
-  matching after the model.
-- `search_official_domains` is a convenience bias, not a gate.
-- `store_evidence` is a journal, not a judge.
-- Only technical validation exists: parseable JSON / tool arguments, `http(s)`
-  URLs, timeouts and a response size cap.
-- Operational controls (duplicate/novelty tracking, research budget, context compaction,
-  attempt limits) only manage cost and context. None of them judges whether a source or
-  value is correct, and the model can always search again.
-- Market/variant provenance is prompt guidance plus extra `store_evidence` fields (`market`,
-  `variant`). Values from other markets are never blocked; they are kept with their source.
+- No domain allowlist and no rejection of unofficial sources: a forum, an aggregator or a marketplace can
+  be cited. `search_official_domains` is a convenience bias, not a gate.
+- **Evidence admission is deterministic** (`src/evidence_admission.py`, see
+  [Evidence admission](#evidence-admission-variant-binding-and-source-authority)): `store_evidence` stores a
+  fact only when the cited document was actually retrieved, the quote occurs in it and states the value
+  (literally, or by a schema-approved unit conversion / pattern), and the field applies to the vehicle. No
+  model call is involved; a rejected request returns its reasons to the model.
+- **Variant identity, market and source authority are computed server-side** from the source itself. The
+  model's `variant_match` / `market` are kept as claims (`model_variant_claim`, `model_market_claim`); a
+  model's `note` is commentary and never evidence or provenance.
+- Code never picks between admitted values, never majority-votes and never resolves a conflict: the field
+  evaluator (`field_recovery.current_evaluation`) stays the one field-state authority, and the finalizer
+  still decides how to present conflicts.
+- Cross-field consistency checks (CO2 vs fuel, curb vs gross mass, rim vs tire, ...) are QA signals only:
+  they never create, replace or rank a value.
+- Operational controls (duplicate/novelty tracking, research budget, context compaction, attempt limits)
+  only manage cost and context.
 
 ## Run
 
@@ -195,6 +200,111 @@ FINALIZER
 - `LAYERED_HARVEST_ENABLED=false` restores the previous pipeline; `DOCUMENT_SWEEP_MAX_TURNS=0` keeps the
   zero-cost harvest but skips the sweep.
 
+### Evidence admission, variant binding and source authority
+
+The first real Toyota Corolla Touring Sports 1.8 Hybrid run stored a cargo volume that belongs to the 2.0
+Hybrid as `variant_match=exact`, a gear count of 1 inferred from "e-CVT", label-only booleans as `true`, and a
+model note that blamed a value on the wrong source; every one of its 34 evidence items claimed `exact`. Evidence
+is therefore admitted by deterministic checks, and identity is computed by the server:
+
+```
+store_evidence request
+  → provenance      the document is in the store (document_id, or a URL this run / the cache retrieved);
+                    a search snippet or memory is never a source                    → source_not_retrieved
+  → applicability   the field applies to this propulsion                            → field_not_applicable_for_vehicle
+  → quote           occurs in the document (normalized; whole numbers stay whole, so "150 mm" is not in
+                    "4,150 mm"; "…" joins fragments in order within one short passage; a quote the parser
+                    cut from the same document also counts); with no quote, a deterministic candidate of
+                    the same document/field/value supplies it                       → quote_missing / _too_short / _not_in_source
+  → entailment      ONE fragment states the value FOR THIS FIELD: the field's own dictionary parse, or the
+                    number literally (written numbers such as "שלוש" only with the field's unit) or by a
+                    schema conversion (146.0 ס"מ → 1460 mm), with the field's label in the value's clause
+                    or the parser's own pairing of field and value in this document, and never a number
+                    the quote's parse gives to another field. Booleans need the feature's label with its
+                    availability right after it (יש / אין / ✓ / standard / not available), a negation right
+                    before it, or "includes …"; never another feature's "yes"     → unsupported_inference /
+                                                                                      value_not_in_quote / value_not_stated /
+                                                                                      field_label_not_in_quote /
+                                                                                      value_belongs_to_other_field
+  → semantics       unit (a USD price stays USD), plausible range, the field's semantic exclusions for this
+                    propulsion in the value's own words (its clause up to the next number, its bracket group)
+                    in the quote AND in its source line, and in the section heading above it ("Electric
+                    motor" / "Max. torque 185 Nm" is not a hybrid's engine torque)  → unit_* / implausible_value /
+                                                                                      semantic_mismatch
+  → identity        binding level + variant_match (src/document_binding.py), market from the source
+  → authority       source_authority (src/source_authority.py, data/source_rules.json)
+  → typing / time   typed_value, condition only if quoted, valid_as_of only from the source
+  → EvidenceStore   (the store itself refuses any payload that did not pass admission)
+```
+
+**Server-side variant binding.** The target identity comes from the Level 1.5 record (manufacturer, model
+family, model year, body, propulsion, engine displacement in cc, power, drivetrain, model code, trim, market).
+Each document gets a profile: its identity zone (title, URL, H1 headings or the first lines, keeping only the
+list segments that name the target model family) decides; the full text only confirms, so a navigation menu
+listing hybrids or SUVs never vetoes a page (another displacement / power / drivetrain in the full text only
+leaves the dimension unresolved). Each fact is bound through its own context, most specific first: the value's own
+words, the table column header of the value, the quote fragment that states it, its source line (other numbers'
+bracket groups removed; a value found only in page source keeps the surrounding source), the section heading above
+it; the quote's other "…" fragments can only veto (years inside a fact are never read as model years). The trim counts only when the identity zone names it; another trim vetoes `exact`
+for trim-sensitive fields (price, equipment): a column header with words beyond technical terms and the target
+trim's own words ("Premium", "Business Plus"), a fact naming another trim ("the Premium version"), or the target
+trim named to exclude it ("not available on Business"). Levels: `unknown < model_family < generation < body_powertrain < exact_technical_variant
+< exact_market_trim`. An explicit contradiction vetoes exact binding (another displacement, body, propulsion,
+drivetrain, or the system power of a BEV / combustion car; a longer model family such as "Corolla Cross" for a
+"Corolla"), even when manufacturer, model, body and year all match. A multi-variant page (1.8 AND 2.0 Hybrid)
+is never exact by itself: the fact's context must name the target's technical variant. `variant_match` becomes
+`different` (veto, or the model's own "different"), `unbound` (the source does not even name the model family),
+`exact` (level ≥ the field's `binding_requirement`) or `unclear`. The evaluator treats `different` and
+`unbound` as not about the target, and `unclear` as not target-safe: a value is usable only when its
+server-computed `binding_level` reaches the field's `binding_requirement` (an `exact_market_trim` field whose
+evidence binds only at `exact_technical_variant` stays `variant_not_exact` and retry-eligible). Only `exact`
+target-market evidence ends a recovery attempt early. Server scope is authoritative: these two states are decided from the server-computed
+`variant_match` and market BEFORE any model declaration, so a model's `found` (or a `conflict_resolved` citing an
+out-of-scope item) never turns another variant's or another market's evidence into target evidence. The model's
+`market` is a claim too: when the source itself does not establish a market (domain, regional site, path locale,
+Hebrew text), the evidence market is `unknown`, whichever market the model named; the claim is kept as
+`model_market_claim`. Vocabulary (model families with Hebrew names, body / propulsion / drivetrain terms) lives in
+`data/identity_vocabulary.json`.
+
+**Source authority** is `government | official_manufacturer | official_importer | official_media | aggregator |
+marketplace | publisher | unknown`, from `data/source_rules.json` (government suffixes, per-brand slugs and press
+domains, aggregator / marketplace / publisher lists). Official is relative to the target brand. Authority is not
+identity: an official page about another variant is still `different`.
+
+**Market** comes from the source: domain TLD, regional site (`toyota-europe.com` → EU), path locale
+(`/en-gb/`), else Hebrew text → IL. When the source says nothing, a model claim of ANOTHER market is kept as
+such, while a claim of the target market is recorded as `unknown` (unverified). A UK official fact stays `UK`.
+
+**Schema semantics.** Every field has a `semantic_definition` (shown to the models), a `binding_requirement`,
+and where it matters `semantic_exclusions` (e.g. hybrid torque: engine torque only; cargo: seats up, not folded)
+and `not_applicable_when` (`gear_count` when exact, target-market evidence says the gearbox is CVT / e-CVT: no
+discrete stepped gear count; never over the field's own target evidence). Plug-in-only fields (`electric_range_km`, `electric_range_standard`, AC/DC charging time,
+window and power, `energy_consumption_kwh_100km`) apply to `plug_in` and `battery_electric` only: a regular
+hybrid does not plug in, so they leave its requested fields, its coverage denominator (37 instead of 45), its
+recovery queue and its dashboard. `climate_zones` reads "בקרת אקלים: מפוצלת" as 2 only through an explicit
+schema pattern.
+
+**Typed values and time.** Each evidence item keeps `value` as stored plus `typed_value` (`scalar`, `range` with
+`min`/`max`/`unit`/`condition`, `boolean`, `enum`, `text`, `compound`). A condition is kept only when the quote
+states it. Time-sensitive fields (`list_price`, `registration_licence_fee`, warranty fields) carry `valid_as_of`
+from a date the source states (in the quote or its own source lines), else the document's own publication metadata
+(JSON-LD / meta tags / PDF metadata), else `temporal_status: undated`; the fetch time is kept separately as
+`observed_at` and never used as validity. The finalizer is asked to report such values with their date.
+
+**Consistency checks** (`src/consistency_checks.py`): CO2 vs fuel consumption (government WLTP CO2), curb vs gross
+mass, rim vs tire size, usable vs gross battery, dimensions vs length, fields vs propulsion. Each says
+`consistent | suspicious | not_checkable`; results are in `result.json` (`consistency_checks`), the finalizer
+bundle and the UI, and each evidence item of the bundle gets a `sanity_status`. Nothing is ever replaced.
+
+Evidence items in `result.json` carry `admission_status`, `admission_checks`, `entailment`, `binding_level`,
+`binding_veto`, `binding_dimensions`, `variant_match`, `model_variant_claim`, `market`, `market_basis`,
+`model_market_claim`, `source_authority`, `authority_basis`, `typed_value`, `condition`, `valid_as_of` /
+`temporal_status`, `source_date` and `observed_at`. Rejected requests are `evidence_rejected` events. The finalizer
+bundle drops model notes (a note once misattributed a value to another source) and adds `consistency_checks` and
+`evidence_admission` counts. Metrics: `evidence_rejected`, `evidence_variant_exact` / `_unclear` / `_different`,
+`evidence_unbound`, `evidence_official_source`, `evidence_aggregator_source`, `consistency_checks_suspicious`.
+Runs written before admission load unchanged (their evidence keeps the model's own `variant_match`).
+
 ### Durable pre-finalization checkpoint
 
 `result.json`, `batch.json` and `input.json` are written through one atomic primitive
@@ -247,10 +357,10 @@ A field **is** retried when:
 - `missing`: there is no candidate value and no evidence record;
 - `weak_provenance`: a value exists only in the model's answer, with no evidence record;
 - `unresolved`: the model said unresolved;
-- `foreign_market_only`: every candidate is explicitly marked as another market and the model has not
-  declared the field found;
-- `variant_not_exact`: every candidate is explicitly marked as another trim (`variant_match=different`)
-  and the model has not declared it found;
+- `foreign_market_only`: no candidate is in the server-side target scope, and the ones that may apply to the
+  variant come from a known other market;
+- `variant_not_exact`: every candidate is about another variant (`variant_match=different`, by the server-side
+  binding veto or the model) or from a source that does not name the model (`unbound`);
 - `conflicting`: the model reported an unresolved conflict.
 
 Several stored values for one field are recorded as info only. Nothing is removed, changed or ranked.
@@ -394,7 +504,7 @@ same fact when all of these match:
   as normalized text, so `"205 kWh"` stays different from `205`);
 - the unit;
 - the source (`document_id`, or else the URL without its fragment);
-- the market, variant and `variant_match`.
+- the market, variant and `variant_match` (server-computed for admitted evidence) and the condition.
 
 Quote and note are not part of the identity.
 
@@ -501,9 +611,9 @@ ordering, the declaration still holds.
 leaves the field `conflicting`. Code never decides which value is true.
 
 **Early exit is stricter than "usable".** A recovery attempt ends early only when the field is `ok` and
-at least one target-market evidence item has `variant_match` `exact` or no `variant_match` at all (for
-fields without a variant distinction). `unclear`, `unknown` and `different` never end an attempt early,
-though the evaluator may still call such a field usable.
+at least one target-market evidence item has `variant_match` `exact` (computed server-side) or no
+`variant_match` at all (legacy evidence). `unclear`, `unknown`, `different` and `unbound` never end an attempt early,
+and never make a field usable either.
 
 Metrics:
 
@@ -567,7 +677,8 @@ A run that already has structured output is only re-finalized with `--force`.
 
 ### Market and variant provenance
 
-The prompts ask the model to:
+The prompts ask the model to (the runtime then computes market, binding and authority itself; see
+[Evidence admission](#evidence-admission-variant-binding-and-source-authority)):
 
 - match the exact government variant and treat trim-name mappings as inferences;
 - keep the market of every value;
@@ -693,7 +804,7 @@ vehicles is measured honestly.
 | `find_in_document` | Focused search in visible text, raw source or embedded structured data. |
 | `get_structured_data` | JSON-LD, `__NEXT_DATA__`, `application/json`, window state objects, meta tags, microdata. |
 | `get_cached_document` | Re-reads a document already downloaded by any run. |
-| `store_evidence` | Logs field, value, source, quote and the model's note; returns an evidence id. |
+| `store_evidence` | Stores field, value, source, quote after deterministic admission (retrieved source, quote in it, value stated); computes binding, market, authority, typed value, validity date; returns an evidence id or the rejection reasons. |
 
 ## Output
 
@@ -809,5 +920,9 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 - concurrency (per-model and Search-Prime pools, per-attempt slots, hook isolation, failure isolation,
   cancellation), cache single flight, the field dictionary (all 45 fields, positive and false-positive
   phrases), deterministic harvesting, the layered pipeline (Cadillac LYRIQ-style fixture in
-  `tests/fixtures/cadillac_lyriq.py`), the finalization checkpoint and the Hebrew dashboard state.
+  `tests/fixtures/cadillac_lyriq.py`), the finalization checkpoint and the Hebrew dashboard state;
+- the reliability foundation (`tests/test_reliability_foundation.py`, Corolla fixture in
+  `tests/fixtures/corolla_touring.py`): 2.0-vs-1.8 cargo contamination, server binding over model claims,
+  e-CVT gear count, boolean statements, notes, typed ranges, propulsion applicability, source authority,
+  valid_as_of and the consistency checks.
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).

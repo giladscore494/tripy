@@ -1,0 +1,384 @@
+{
+ "_about": "Deterministic source rules of the evidence admission gate (src/source_authority.py). source_authority says WHO publishes a source (government, manufacturer, importer, press office, aggregator, marketplace, publisher); it never says that a source describes the exact target variant: authority and variant identity are separate dimensions (src/document_binding.py). Domains match the host or any subdomain. Brand slugs match the registrable domain label (toyota.co.uk, toyota-europe.com); an official domain of ANOTHER brand is not official for the target. market_by_tld / market_by_registrable_hint / path locales derive the market a source describes; Hebrew-language text is the IL market. Editing this file changes classification with no code change. A brand slug is official only as the whole registrable label or with a listed suffix (toyota-europe), never as a prefix of another name (toyota-forum). Registrable labels follow a generic second-level rule (co / com / org ... under a two-letter TLD). A path locale counts only as language-country (/en-gb/).",
+ "version": "source-rules-v1",
+ "authority_classes": [
+  "government",
+  "official_manufacturer",
+  "official_importer",
+  "official_media",
+  "aggregator",
+  "marketplace",
+  "publisher",
+  "unknown"
+ ],
+ "government_suffixes": [
+  "gov.il",
+  "gov",
+  "gov.uk",
+  "gouv.fr",
+  "europa.eu",
+  "gc.ca",
+  "gov.au",
+  "go.jp"
+ ],
+ "two_level_public_suffixes": [
+  "co.il",
+  "org.il",
+  "gov.il",
+  "ac.il",
+  "net.il",
+  "co.uk",
+  "org.uk",
+  "gov.uk",
+  "com.au",
+  "net.au",
+  "gov.au",
+  "co.jp",
+  "go.jp",
+  "com.my",
+  "com.cn",
+  "com.sg",
+  "co.nz",
+  "co.za",
+  "com.br",
+  "co.kr",
+  "com.tr",
+  "com.mx",
+  "co.in",
+  "gouv.fr",
+  "gc.ca"
+ ],
+ "second_level_labels": [
+  "co",
+  "com",
+  "org",
+  "net",
+  "gov",
+  "ac",
+  "edu",
+  "gob",
+  "go",
+  "or",
+  "ne",
+  "gv",
+  "ltd",
+  "plc"
+ ],
+ "importer_tlds": [
+  "il"
+ ],
+ "brand_label_suffixes": [
+  "europe",
+  "eu",
+  "uk",
+  "usa",
+  "us",
+  "global",
+  "group",
+  "media",
+  "mediacenter",
+  "press",
+  "newsroom",
+  "il"
+ ],
+ "media_host_prefixes": [
+  "media",
+  "press",
+  "presse",
+  "newsroom",
+  "pressroom",
+  "news",
+  "mediacenter"
+ ],
+ "media_label_terms": [
+  "mediacenter",
+  "media-center",
+  "newsroom",
+  "pressroom",
+  "presskit"
+ ],
+ "brands": {
+  "טויוטה": {
+   "slugs": [
+    "toyota"
+   ],
+   "media_domains": [
+    "newsroom.toyota.eu",
+    "pressroom.toyota.com"
+   ]
+  },
+  "אאודי": {
+   "slugs": [
+    "audi"
+   ],
+   "media_domains": [
+    "audi-mediacenter.com",
+    "audi-press.com"
+   ]
+  },
+  "ב מ וו": {
+   "slugs": [
+    "bmw",
+    "mini",
+    "bmwgroup",
+    "bmw-group"
+   ],
+   "media_domains": [
+    "press.bmwgroup.com"
+   ]
+  },
+  "מרצדס": {
+   "slugs": [
+    "mercedes-benz",
+    "mercedes",
+    "mbusa"
+   ],
+   "media_domains": [
+    "media.mercedes-benz.com",
+    "group-media.mercedes-benz.com"
+   ]
+  },
+  "יונדאי": {
+   "slugs": [
+    "hyundai"
+   ],
+   "media_domains": [
+    "hyundai.news",
+    "hyundainews.com"
+   ]
+  },
+  "קאדילאק": {
+   "slugs": [
+    "cadillac",
+    "cadillaceurope"
+   ],
+   "media_domains": [
+    "news.gm.com",
+    "media.gm.com",
+    "media.cadillac.com"
+   ]
+  },
+  "אקספנג": {
+   "slugs": [
+    "xpeng",
+    "heyxpeng"
+   ],
+   "media_domains": []
+  }
+ },
+ "aggregator": [
+  "cartube.co.il",
+  "auto-data.net",
+  "ultimatespecs.com",
+  "cars-data.com",
+  "autoevolution.com",
+  "ev-database.org",
+  "automobile-catalog.com",
+  "carfolio.com",
+  "car.info",
+  "carsdb.com",
+  "zigwheels.com",
+  "carinfo.co.il",
+  "pricecar.co.il",
+  "autoweb.co.il",
+  "evspecifications.com",
+  "carsized.com"
+ ],
+ "marketplace": [
+  "yad2.co.il",
+  "autotrader.co.uk",
+  "autotrader.com",
+  "mobile.de",
+  "autoscout24.com",
+  "autoscout24.de",
+  "cars.com",
+  "carsales.com.au",
+  "carvana.com",
+  "carmax.com",
+  "ebay.com",
+  "ebay.co.uk",
+  "cargurus.com",
+  "truecar.com",
+  "carzone.ie",
+  "winwin.co.il",
+  "carvago.com"
+ ],
+ "publisher": [
+  "icar.co.il",
+  "auto.co.il",
+  "carzine.co.il",
+  "carnews.co.il",
+  "ynet.co.il",
+  "walla.co.il",
+  "themarker.com",
+  "haaretz.co.il",
+  "globes.co.il",
+  "maariv.co.il",
+  "calcalist.co.il",
+  "mako.co.il",
+  "whatcar.com",
+  "autocar.co.uk",
+  "caranddriver.com",
+  "motortrend.com",
+  "topgear.com",
+  "motor1.com",
+  "carwow.co.uk",
+  "edmunds.com",
+  "carmagazine.co.uk",
+  "autoexpress.co.uk",
+  "evo.co.uk",
+  "wikipedia.org",
+  "insideevs.com",
+  "electrek.co",
+  "autoweek.com",
+  "carscoops.com",
+  "carexpert.com.au",
+  "drive.com.au",
+  "autoblog.com",
+  "roadandtrack.com",
+  "kbb.com",
+  "consumerreports.org",
+  "parkers.co.uk",
+  "honestjohn.co.uk",
+  "autobild.de",
+  "auto-motor-und-sport.de",
+  "carsguide.com.au"
+ ],
+ "market_by_tld": {
+  "il": "IL",
+  "uk": "UK",
+  "de": "DE",
+  "fr": "FR",
+  "it": "IT",
+  "es": "ES",
+  "nl": "NL",
+  "be": "BE",
+  "dk": "DK",
+  "se": "SE",
+  "no": "NO",
+  "fi": "FI",
+  "at": "AT",
+  "ch": "CH",
+  "pl": "PL",
+  "ie": "IE",
+  "pt": "PT",
+  "au": "AU",
+  "nz": "NZ",
+  "jp": "JP",
+  "cn": "CN",
+  "kr": "KR",
+  "my": "MY",
+  "sg": "SG",
+  "ca": "CA",
+  "za": "ZA",
+  "br": "BR",
+  "mx": "MX",
+  "in": "IN",
+  "tr": "TR",
+  "ae": "AE",
+  "eu": "EU",
+  "cz": "CZ",
+  "gr": "GR",
+  "hu": "HU",
+  "tw": "TW",
+  "th": "TH",
+  "hk": "HK",
+  "id": "ID",
+  "ph": "PH",
+  "vn": "VN",
+  "ar": "AR",
+  "sa": "SA",
+  "eg": "EG",
+  "cl": "CL",
+  "ru": "RU",
+  "ua": "UA",
+  "lt": "LT",
+  "lv": "LV",
+  "ee": "EE",
+  "is": "IS",
+  "lu": "LU",
+  "si": "SI",
+  "sk": "SK",
+  "ro": "RO",
+  "bg": "BG",
+  "hr": "HR",
+  "rs": "RS",
+  "cy": "CY",
+  "mt": "MT",
+  "jo": "JO",
+  "ma": "MA",
+  "qa": "QA",
+  "kw": "KW",
+  "bh": "BH",
+  "om": "OM"
+ },
+ "locale_languages": [
+  "en",
+  "he",
+  "iw",
+  "de",
+  "fr",
+  "it",
+  "es",
+  "nl",
+  "da",
+  "sv",
+  "nb",
+  "no",
+  "fi",
+  "pl",
+  "pt",
+  "ja",
+  "zh",
+  "ko",
+  "ms",
+  "ar",
+  "tr",
+  "cs",
+  "el",
+  "hu",
+  "ro",
+  "sk",
+  "sl",
+  "bg",
+  "hr"
+ ],
+ "market_by_registrable_hint": {
+  "europe": "EU",
+  "-eu": "EU"
+ },
+ "country_code_aliases": {
+  "GB": "UK",
+  "EN": null
+ },
+ "market_aliases": {
+  "IL": [
+   "il",
+   "isr",
+   "israel",
+   "ישראל",
+   "israeli"
+  ],
+  "UK": [
+   "uk",
+   "gb",
+   "gbr",
+   "united kingdom",
+   "britain",
+   "england"
+  ],
+  "EU": [
+   "eu",
+   "europe",
+   "european"
+  ],
+  "US": [
+   "us",
+   "usa",
+   "united states",
+   "america"
+  ]
+ },
+ "hebrew_text_market": "IL",
+ "hebrew_text_min_share": 0.3
+}

@@ -12,11 +12,11 @@ VEHICLE = {"manufacturer": "קאדילאק", "model": "LYRIQ", "year": 2025, "tr
 
 IL_SPEC = "https://www.cadillac.co.il/lyriq/specs"
 IL_REVIEW = "https://www.icar.co.il/lyriq-review"
-US_PAGE = "https://www.cadillac.com/electric/lyriq"
+US_PAGE = "https://www.cadillac.com/en-us/electric/lyriq"   # the path locale makes it a US page (server-side)
 EU_PAGE = "https://www.cadillaceurope.com/lyriq"
 IL_PRICE_PDF = "https://www.cadillac.co.il/lyriq/pricelist.pdf"
 
-IL_SPEC_HTML = """<html><head><title>LYRIQ מפרט טכני</title></head><body><h1>קאדילאק LYRIQ 2025</h1>
+IL_SPEC_HTML = """<html><head><title>LYRIQ מפרט טכני</title></head><body><h1>קאדילאק LYRIQ 2025 חשמלית AWD 528 כ"ס</h1>
 <table>
 <tr><th>מפרט</th><th>Luxury</th></tr>
 <tr><td>מומנט מרבי</td><td>610 נ"מ</td></tr>

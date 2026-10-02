@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -56,6 +57,55 @@ class FakeSession:
         response = self.routes[url]
         response.url = response.url if response.url != "https://example.com/" else url
         return response
+
+
+def cache_source(cache, url: str, text: str, *, kind: str = "fetch", doc_type: str = "text", title: str = "") -> str:
+    """Store a fetched document exactly as the fetch tools would (no HTTP); return its document_id.
+    Evidence is admitted only from documents the run retrieved, with a quote that occurs in them."""
+    meta = {"status": 200, "final_url": url, "doc_type": doc_type, "title": title,
+            "content_type": "text/html" if doc_type == "html" else "text/plain"}
+    if doc_type == "html":
+        from src.tools.extract import visible_text
+
+        return cache.put(kind, url, text.encode("utf-8"), meta, visible_text(text))["document_id"]
+    return cache.put(kind, url, text.encode("utf-8"), meta, text)["document_id"]
+
+
+def labelled_quote(field: str, value, unit: str = "") -> str:
+    """A quote that states a value FOR its field (the field's first English alias next to the value), as admission
+    requires; unknown fields (no dictionary entry) keep their own name."""
+    from src.fields import load_schema
+
+    spec = next((s for s in load_schema() if s["name"] == field), {})
+    label = (spec.get("aliases_en") or [field.replace("_", " ")])[0]
+    return f"{label}: {value}" + (f" {unit}" if unit else "")
+
+
+def seed_evidence_sources(cache, script, headers: dict | None = None, default_header: str = "") -> dict[str, str]:
+    """For scripted conversations: write one retrieved document per source_url that store_evidence calls cite,
+    holding a header (identity text: model, propulsion, power...) and every quote cited for that URL. Returns
+    {url: document_id}. Evidence still goes through the real admission gate (quote in source, value stated,
+    server-side binding); the header decides which variant the page describes."""
+    by_url: dict[str, list[str]] = {}
+    for message in script or []:
+        for call in (message.get("tool_calls") or []) if isinstance(message, dict) else []:
+            fn = call.get("function") or {}
+            if fn.get("name") != "store_evidence":
+                continue
+            args = fn.get("arguments")
+            args = json.loads(args) if isinstance(args, str) else (args or {})
+            if args.get("source_url"):
+                by_url.setdefault(args["source_url"].split("#")[0], [])
+                if args.get("quote"):
+                    by_url[args["source_url"].split("#")[0]].append(args["quote"])
+    out = {}
+    for url, quotes in by_url.items():
+        header = (headers or {}).get(url)
+        if header is None:
+            header = next((h for prefix, h in sorted((headers or {}).items(), key=lambda kv: -len(kv[0]))
+                           if url.startswith(prefix)), default_header)
+        out[url] = cache_source(cache, url, header + "\n" + "\n".join(dict.fromkeys(quotes)))
+    return out
 
 
 @pytest.fixture

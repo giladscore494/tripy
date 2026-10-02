@@ -127,7 +127,10 @@ def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches
     assert m["tool_calls"] == len([c for c in result["tool_calls"] if not c.get("blocked")])
 
 
-INTERIOR = "LYRIQ Luxury interior: cooling function built into both front seats (standard)."
+# The parser misses it (the label stands alone on its line, the availability is on the next line, not a bare value
+# cell); the label + stated availability make it admissible evidence once the model has read it.
+INTERIOR = ("Cadillac LYRIQ 2025 Luxury חשמלית AWD 528 כ\"ס interior: climate and cooling overview.\nSeat ventilation\n"
+            "Front row: standard")
 INTERIOR_URL = "https://www.cadillac.co.il/lyriq/interior"
 
 
@@ -155,8 +158,9 @@ def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_
         body, note = results[0]["content"].split("\n[operational note] ", 1)
         assert note.startswith("Final document-sweep turn")
         hits = json.loads(body)["hits"]
-        snippet = next(h["snippet"] for h in hits if "cooling function" in h["snippet"])
-        quote = snippet[snippet.index("cooling function"):snippet.index("seats") + len("seats")]
+        snippet = next(h["snippet"] for h in hits if "Seat ventilation" in h["snippet"])
+        # the quote names the feature AND states its availability ("standard"); a label alone would be rejected
+        quote = snippet[snippet.index("Seat ventilation"):snippet.index("standard") + len("standard")]
         return turn(_call("s1", "store_evidence", {"field": "ventilated_seats", "value": True, "document_id": doc,
                                                    "quote": quote, "market": "IL", "variant_match": "exact"}))
 
@@ -351,7 +355,10 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     sweep = result["document_sweep"]
     layered = result["candidate_summary"]
     assert sweep["model_calls"] == 1 and sweep["external_calls"] == 0
-    assert sweep["fields_unresolved_before"] == 43 and sweep["fields_unresolved_after"] <= 18
+    # 8 before the variant_match=unclear fix: IL equipment / tyre / price values whose server-side binding stays
+    # below the field's exact_market_trim requirement (the trim is not bound for that fact) are no longer usable
+    # evidence, so they enter web recovery instead of counting as resolved.
+    assert sweep["fields_unresolved_before"] == 43 and sweep["fields_unresolved_after"] <= 22
     assert layered["fields_entering_web_recovery"] == sweep["fields_unresolved_after"]
     rec = result["field_recovery"]
     assert len(rec["queue"]) == sweep["fields_unresolved_after"]

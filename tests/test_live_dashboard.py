@@ -49,7 +49,7 @@ def test_bev_denominator_is_43_of_45():
 
 def test_field_table_is_hebrew_for_every_default_field():
     v = VehicleLive("1", "t")
-    feed(v, [started(propulsion="hybrid"),              # hybrid: all 45 default fields apply
+    feed(v, [started(propulsion="plug_in"),             # plug-in hybrid: all 45 default fields apply
              evidence(2, "e1", "battery_gross_kwh", 102, "US", US),
              evidence(3, "e2", "torque_nm", 610, "IL"), evidence(4, "e3", "torque_nm", 650, "IL"),
              {"kind": "field_status", "seq": 5, "field": "fuel_tank_l", "status": "not_applicable"}])
@@ -67,6 +67,11 @@ def test_field_table_is_hebrew_for_every_default_field():
     assert by_name["מומנט מרבי"]["קבוצה"] == "ביצועים וצריכה"
     assert by_name["מומנט מרבי"]["שווקים"] == "ישראל" and by_name["קיבולת סוללה ברוטו"]["מקור אחרון"] == "cadillac.com"
     assert he.op_label("waiting_search") == "ממתין לתור לחיפוש" and he.phase_label("document_sweep")
+    # a regular hybrid does not plug in: its table (and coverage denominator) has no charging / electric-range rows
+    hev = VehicleLive("2", "t")
+    feed(hev, [started(propulsion="hybrid")])
+    hev_names = {r["שדה"] for r in hev.field_rows()}
+    assert len(hev_names) == 37 and "צריכת חשמל" not in hev_names and "קיבולת סוללה ברוטו" in hev_names
 
 
 def test_unresolved_with_evidence_needs_followup_but_is_not_without_evidence():

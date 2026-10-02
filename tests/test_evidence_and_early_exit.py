@@ -14,9 +14,15 @@ from src.tools.evidence import evidence_fact_key
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
                         "trim": "SPORT", "model_code": "X1", "government_record_id": "85095"},
-           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd"}}
+           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
+                                 "power_hp": 750}}
 IL_URL = "https://www.cadillac.co.il/escalade-iq/spec"
-US_URL = "https://www.cadillac.com/escalade-iq"
+US_URL = "https://www.cadillac.com/en-us/escalade-iq"
+# Retrieved documents: evidence is admitted only from these, with a quote that occurs in them. The IL page names the
+# exact technical variant (model, propulsion, power), so its facts bind as variant_match=exact server-side.
+IL_TEXT = ('קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס AWD. מפרט טכני: סוללה 205 קוט"ש, 205 kWh battery, '
+           'טווח 742 ק"מ. מומנט 1,066 Nm (torque 1066 Nm).')
+US_TEXT = "2025 Cadillac Escalade IQ, all-electric, 750 hp AWD. Battery 205 kWh. Range 742 km."
 
 
 def turn(*calls):
@@ -37,9 +43,13 @@ def put_doc(cache, url, text):
 
 
 def run(tmp_path, ctx, script, **cfg):
+    put_doc(ctx.cache, IL_URL, IL_TEXT)
+    put_doc(ctx.cache, US_URL, US_TEXT)
     client = ScriptedGLM(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, **cfg})
+    # Early-exit tests script every model turn; admitted evidence now records its document, which would schedule
+    # a document sweep turn, so the layered stage is off here (it has its own tests).
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "layered_harvest_enabled": False, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path)
@@ -59,16 +69,17 @@ def test_same_fact_is_stored_once_and_reuses_its_id(make_ctx):
     ctx = make_ctx()
     events = []
     ctx.log = lambda kind, **data: events.append({"kind": kind, **data})
-    fact = {"field": "battery_gross_kwh", "value": 205, "unit": "kWh", "document_id": "d_1", "market": "IL",
+    doc = put_doc(ctx.cache, IL_URL, IL_TEXT)
+    fact = {"field": "battery_gross_kwh", "value": 205, "unit": "kWh", "document_id": doc, "market": "IL",
             "quote": "סוללה 205 קוט\"ש"}
     first = dispatch(ctx, "store_evidence", fact)
     second = dispatch(ctx, "store_evidence", {**fact, "value": "205", "quote": "205 kWh battery", "note": "again"})
-    assert first == {"evidence_id": "e1", "stored": True, "_elapsed_ms": first["_elapsed_ms"]}           # 1
+    assert (first["evidence_id"], first["stored"]) == ("e1", True)                                     # 1
     assert (second["evidence_id"], second["stored"], second["reused"]) == ("e1", False, True)
     assert len(ctx.evidence.items) == 1 and ctx.counters["duplicate_evidence_suppressed"] == 1
     assert ctx.evidence.items[0]["supplementary"] == [{"quote": "205 kWh battery", "note": "again"}]
     reused = [e for e in events if e["kind"] == "evidence_reused"]
-    assert reused[0]["evidence_id"] == "e1" and reused[0]["document_id"] == "d_1"
+    assert reused[0]["evidence_id"] == "e1" and reused[0]["document_id"] == doc
     assert [e["kind"] for e in events].count("evidence") == 1
 
 
@@ -79,14 +90,25 @@ def test_different_scope_or_value_stays_separate(make_ctx):
     assert key({**base, "value": 200}) != key(base)                                         # 3: other value
     assert key({**base, "market": "US"}) != key(base)                                       # 4: other market
     assert key({**base, "variant": "Sport"}) != key(base) and key({**base, "variant_match": "different"}) != key(base)
+    assert key({**base, "condition": "with roof rails"}) != key(base)
     assert key({**base, "value": "205 kWh"}) != key(base)                                   # no aggressive merging
     assert key({**base, "value": "205.0"}) == key(base) and key({**base, "quote": "x", "note": "y"}) == key(base)
     url = {k: v for k, v in base.items() if k != "document_id"}
     assert key({**url, "source_url": IL_URL + "#tech"}) == key({**url, "source_url": IL_URL})
     ctx = make_ctx()
-    for variant in ({}, {"document_id": "d_2"}, {"value": 200}, {"market": "US"}):
-        assert dispatch(ctx, "store_evidence", {**base, **variant})["stored"] is True
+    d1 = put_doc(ctx.cache, IL_URL, IL_TEXT)
+    d2 = put_doc(ctx.cache, IL_URL + "/v2", IL_TEXT.replace("סוללה 205", "סוללה 200"))
+    us = put_doc(ctx.cache, US_URL, US_TEXT)
+    il = {"field": "battery_gross_kwh", "value": 205, "unit": "kWh", "quote": "205 kWh battery"}
+    for request in ({**il, "document_id": d1}, {**il, "document_id": d2},
+                    {**il, "document_id": d2, "value": 200, "quote": "סוללה 200 קוט\"ש"},
+                    {**il, "document_id": us, "quote": "Battery 205 kWh", "market": "US"}):
+        assert dispatch(ctx, "store_evidence", request)["stored"] is True
     assert [e["evidence_id"] for e in ctx.evidence.items] == ["e1", "e2", "e3", "e4"]
+    assert [e["market"] for e in ctx.evidence.items] == ["IL", "IL", "IL", "US"]
+    # the market is the SOURCE's (an .il page), so a model claim of another market is not another fact
+    again = dispatch(ctx, "store_evidence", {**il, "document_id": d1, "market": "US"})
+    assert (again["evidence_id"], again["reused"]) == ("e1", True)
 
 
 def test_reused_evidence_is_not_novelty_and_keeps_idle_streak():
@@ -107,8 +129,10 @@ def test_reused_evidence_is_not_novelty_and_keeps_idle_streak():
 
 def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
     ctx = make_ctx()
-    same = {"field": "torque_nm", "value": 1066, "unit": "Nm", "source_url": IL_URL, "market": "IL", "quote": "1,066"}
-    script = [turn(store("c1", **same)), turn(store("c2", **same)), turn(store("c3", **{**same, "quote": "1066 Nm"})),
+    same = {"field": "torque_nm", "value": 1066, "unit": "Nm", "source_url": IL_URL, "market": "IL",
+            "quote": "מומנט 1,066 Nm"}
+    script = [turn(store("c1", **same)), turn(store("c2", **same)),
+              turn(store("c3", **{**same, "quote": "torque 1066 Nm"})),
               turn(_call("c4", "search_web", {"query": "x"})), say({"summary": "final", "fields": {}})]
     result, client, events = run(tmp_path, ctx, script, field_recovery_enabled=False)
     bundle = last_bundle(client)                                                              # 7
@@ -124,11 +148,12 @@ def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
 def test_cadillac_duplicate_store_and_early_resolution(tmp_path, make_ctx):
     """Real trace: turn 3 stored battery_gross_kwh=205 (IL, document D) twice, then turn 4 only said "found"."""
     ctx = make_ctx()
-    doc = put_doc(ctx.cache, IL_URL, "מפרט טכני אסקלייד IQ: סוללה 205 קוט\"ש, טווח 742 ק\"מ")
+    doc = put_doc(ctx.cache, IL_URL, IL_TEXT)
     il_205 = {"field": "battery_gross_kwh", "value": 205, "unit": "kWh", "document_id": doc, "market": "IL",
               "quote": "סוללה 205 קוט\"ש"}
     script = [
-        turn(store("p1", "battery_gross_kwh", 205, unit="kWh", source_url=US_URL, market="US", quote="205 kWh")),
+        turn(store("p1", "battery_gross_kwh", 205, unit="kWh", source_url=US_URL, market="US",
+                   quote="Battery 205 kWh")),
         say({"summary": "primary", "fields": {}}),
         turn(_call("r1", "find_in_document", {"document_id": doc, "query": "סוללה"})),       # recovery turn 1
         turn(_call("r2", "extract_tables", {"document_id": doc})),                          # recovery turn 2
@@ -164,12 +189,16 @@ def test_cadillac_duplicate_store_and_early_resolution(tmp_path, make_ctx):
 
 def test_no_early_exit_while_still_foreign_or_conflicting(tmp_path, make_ctx):
     ctx = make_ctx()
+    put_doc(ctx.cache, US_URL + "/specs", "Cadillac Escalade IQ 2025 all-electric 750 hp. Battery capacity 205 kWh.")
+    put_doc(ctx.cache, IL_URL + "/pdf", 'קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס. סוללה 200 קוט"ש')
     script = [
-        turn(store("p1", "battery_gross_kwh", 205, source_url=US_URL, market="US", quote="205 kWh")),
+        turn(store("p1", "battery_gross_kwh", 205, source_url=US_URL, market="US", quote="Battery 205 kWh")),
         say({"summary": "primary", "fields": {}}),
-        turn(store("r1", "battery_gross_kwh", 205, source_url=US_URL + "/specs", market="US", quote="205")),  # 10
-        turn(store("r2", "battery_gross_kwh", 205, source_url=IL_URL, market="IL", quote="205"),
-             store("r3", "battery_gross_kwh", 200, source_url=IL_URL + "/pdf", market="IL", quote="200")),   # 11
+        turn(store("r1", "battery_gross_kwh", 205, source_url=US_URL + "/specs", market="US",
+                   quote="Battery capacity 205 kWh")),                                       # 10
+        turn(store("r2", "battery_gross_kwh", 205, source_url=IL_URL, market="IL", quote="סוללה 205 קוט\"ש"),
+             store("r3", "battery_gross_kwh", 200, source_url=IL_URL + "/pdf", market="IL",
+                   quote="סוללה 200 קוט\"ש")),                                               # 11
         say({"field": "battery_gross_kwh", "status": "conflicting"}),
         say({"field": "battery_gross_kwh", "status": "conflicting"}),                       # attempt 2
         say({"summary": "final", "fields": {}}),

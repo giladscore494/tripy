@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 from .. import bundle as bundle_mod
+from ..consistency_checks import run_checks
 from ..pricing import UNKNOWN_USAGE_NOTE, run_cost
 from . import trace
 from .run_log import load_batch, read_events
@@ -184,6 +185,8 @@ def reconstruct_run(runs_root: Path | str, batch_id: str, record_id: str, *, cac
         "last_model_content": trace.last_model_content(events),
         "model_responses": trace.model_responses(events),
         "evidence": trace.evidence_items(events),
+        "evidence_admission": bundle_mod.admission_summary(events),
+        "consistency_checks": run_checks(trace.evidence_items(events), payload, started.get("requested_field_specs")),
         "documents": trace.document_ids(events),
         "tool_calls": trace.tool_call_rows(events),
         "counters": counters,

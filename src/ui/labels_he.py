@@ -128,7 +128,15 @@ FINALIZATION_PENDING_MESSAGE_HE = ("המחקר הושלם וכל הראיות נ
                                    "ניתן להריץ Finalizer מחדש בלי לבצע שוב את המחקר.")
 
 FIELD_TABLE_COLUMNS_HE = ["קבוצה", "שדה", "מצב", "ערך / ערכים שנמצאו", "מספר ראיות", "שווקים", "מקור אחרון",
-                          "ניסיון Recovery", "אופן ההשלמה"]
+                          "סוג מקור", "התאמת גרסה", "ניסיון Recovery", "אופן ההשלמה"]
+# Server-side variant binding of the latest evidence item (src/document_binding.py)
+VARIANT_MATCH_HE = {"exact": "גרסה מדויקת", "unclear": "גרסה לא ודאית", "different": "גרסה אחרת",
+                    "unbound": "המקור אינו מזהה את הדגם"}
+# Source authority (src/source_authority.py): who publishes the source, never whether it is right
+SOURCE_AUTHORITY_HE = {"government": "ממשלתי", "official_manufacturer": "יצרן רשמי", "official_importer": "יבואן רשמי",
+                       "official_media": "הודעות יצרן לעיתונות", "aggregator": "אתר מפרטים", "marketplace": "לוח מודעות",
+                       "publisher": "כלי תקשורת", "unknown": "לא מסווג"}
+EVIDENCE_REJECTED_HE = "ראיות שנדחו בבדיקה"
 CANDIDATE_TABLE_COLUMNS_HE = ["שדה", "מועמדים שנמצאו", "מקורות", "ראיה מאומתת", "מצב"]
 
 
@@ -138,6 +146,14 @@ def model_display_name(model: str | None) -> str:
         return "—"
     parts = str(model).split("-")
     return "-".join(p.upper() if p.lower() == "glm" else (p[:1].upper() + p[1:]) for p in parts)
+
+
+def variant_match_label(value: str | None) -> str:
+    return VARIANT_MATCH_HE.get(value or "", "—")
+
+
+def authority_label(value: str | None) -> str:
+    return SOURCE_AUTHORITY_HE.get(value or "", "—")
 
 
 def state_label(state: str | None) -> str:

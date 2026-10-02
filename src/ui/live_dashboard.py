@@ -87,6 +87,8 @@ def render_card(vehicle: VehicleLive, slot) -> None:
         harvest = c["harvest"]
         extra = (f" · נסרקו {harvest['documents']} מסמכים · נמצאו מועמדים ל־{harvest['fields_with_candidates']} שדות"
                  if harvest["documents"] else "")
+        if c.get("evidence_rejected"):
+            extra += f" · {he.EVIDENCE_REJECTED_HE}: {c['evidence_rejected']}"
         _rtl(f"עם ראיות: {p['with_evidence']} / {p['total']} · דורשים המשך: {p['needs_followup']} · "
              f"ללא ראיות: {p['without_evidence']} · סתירות פתוחות: {p['conflicting']}<br>{rec_text}{_e(extra)}")
         if c["reasoning"] is not None:
