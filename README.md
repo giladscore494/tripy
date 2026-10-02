@@ -29,15 +29,18 @@ GitHub repo ──► Railway service (Dockerfile) ──► TRIPY Streamlit app
 3. **Deploy from GitHub repo**.
 4. Select the TRIPY repository (and the branch to deploy). Railway detects `railway.json` and builds the
    `Dockerfile`; no source edits are needed.
-5. Open the service → **Variables** and add the variables in [REQUIRED](#required) (at least `GLM_API_KEY` and
-   `GLM_MODEL`). Optional ones are listed below.
+5. Open the service → **Variables** and add the variables in [REQUIRED](#required): `GLM_API_KEY`, `GLM_MODEL` and
+   `TRIPY_ACCESS_TOKEN` (generate it with `python -c "import secrets; print(secrets.token_urlsafe(32))"`; never
+   commit it). Optional ones are listed below.
 6. Create a Volume: in the project canvas, **Create → Volume** (or right-click the service → *Attach volume*) and
    attach it to the TRIPY service.
 7. Set the volume's **mount path** to `/data`.
 8. In **Variables**, set `TRIPY_DATA_DIR=/data` (the Dockerfile already defaults to it; setting it explicitly makes
    the intent visible).
 9. **Deploy** (Railway redeploys automatically after variable / volume changes).
-10. Service → **Settings → Networking → Generate Domain** to get a public URL.
+10. Service → **Settings → Networking → Generate Domain** to get a public URL — **only after** `GLM_API_KEY`,
+    `GLM_MODEL`, `TRIPY_ACCESS_TOKEN` and `TRIPY_DATA_DIR=/data` are configured. A Railway public domain exposes the
+    service to the internet; `TRIPY_ACCESS_TOKEN` is what protects the dashboard and your GLM / search budget.
 
 What Railway uses (all in the repo):
 
@@ -54,6 +57,16 @@ On startup `python -m src.startup_check` logs the resolved paths and which varia
 values). The app itself shows a **System** panel (GLM, Search, Persistent storage, Level 1.5 data). If
 `GLM_API_KEY` / `GLM_MODEL` are missing, it says exactly which ones and disables *Start research*; if no volume is
 attached on Railway it warns that runs are stored on ephemeral disk.
+
+**Access control (production).** The production dashboard fails closed: without `TRIPY_ACCESS_TOKEN` it shows only
+*"Production access control is not configured."*; with it, every browser session first sees a minimal lock screen
+(access token + *Unlock*) and nothing else — no research target, *Start research*, run history, results, diagnostics,
+retry / restart or settings — until the token is entered. The check is constant-time and the token is opaque
+(compared exactly as configured). The session keeps only an `authenticated` flag, never the token; *Logout* (sidebar)
+locks the session again without touching runs or history. After five wrong tokens a session waits 30 s before the
+next attempt. A browser refresh starts a new Streamlit session, so the token is asked for again. The token is never
+read from the URL or a cookie, and it is redacted from logs, run state, diagnostics and error details like the other
+secrets. The `/_stcore/health` check is not gated. Outside production (local development) the gate is open.
 
 **Secrets never go into the UI in production.** `TRIPY_ENV=production` (set by the Dockerfile, also implied by
 Railway's own variables) removes the development-only API-key box; keys come from Railway variables only.
@@ -94,6 +107,7 @@ environment first, then Streamlit secrets (same names).
 | --- | --- |
 | `GLM_API_KEY` | Z.ai / GLM API key (secret). Also used by the default `glm` web search backend. |
 | `GLM_MODEL` | Research model id (e.g. `glm-5.3-flash`), sent unchanged as the API `model`. |
+| `TRIPY_ACCESS_TOKEN` | **Production:** the private dashboard access secret (a long random string). Without it the production dashboard refuses to open. Optional in local development (not enforced). |
 
 ### Deployment
 

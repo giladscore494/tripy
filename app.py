@@ -20,6 +20,7 @@ import uuid
 
 import streamlit as st
 
+from src import access_control
 from src.agent import PROMPT_VERSION
 from src.app_config import (Check, allow_ui_api_key, blocking_errors, endpoint_reachable,
                             redact, validate_config)
@@ -61,6 +62,11 @@ def pipelines() -> PipelineCache:
 st.set_page_config(page_title="TRIPY · AI Vehicle Research", page_icon="🔎", layout="wide")
 ui.inject_css()
 
+# Access control FIRST (src/access_control.py): in production nothing below runs (no paths, no RunManager, no run
+# history, no settings, no Level 1.5 or GLM access) until this browser session has unlocked with TRIPY_ACCESS_TOKEN.
+if not access_control.gate(secret):
+    st.stop()
+
 paths = resolve_paths(secret)
 vehicles = benchmark_vehicles()
 vehicles_by_id = {v["upstream_record_id"]: v for v in vehicles}
@@ -92,6 +98,7 @@ def history_panel() -> None:
 
 
 with st.sidebar:
+    access_control.render_logout(secret)
     st.fragment(run_every=5 if active_ids else None)(history_panel)()
     st.divider()
     settings = render_settings(secret, manager.controller, allow_ui_key=allow_ui_api_key(secret))

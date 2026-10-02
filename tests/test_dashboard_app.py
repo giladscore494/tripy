@@ -15,7 +15,8 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 @pytest.fixture
 def data_env(tmp_path, monkeypatch):
-    for name in ("GLM_API_KEY", "GLM_MODEL", "MILO_RUNS_DIR", "MILO_CACHE_DIR", "TRIPY_ENV", "RAILWAY_ENVIRONMENT"):
+    for name in ("GLM_API_KEY", "GLM_MODEL", "MILO_RUNS_DIR", "MILO_CACHE_DIR", "TRIPY_ENV", "RAILWAY_ENVIRONMENT",
+                 "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID", "TRIPY_ACCESS_TOKEN", "TRIPY_ALLOW_UI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TRIPY_DATA_DIR", str(tmp_path / "data"))
     return tmp_path / "data" / "runs"
@@ -67,7 +68,9 @@ FAILED_EVENTS = [("run_started", {"agent_config": {"layered_harvest_enabled": Tr
 
 def test_production_without_secrets_shows_a_precise_configuration_error(data_env, monkeypatch):
     monkeypatch.setenv("TRIPY_ENV", "production")
+    monkeypatch.setenv("TRIPY_ACCESS_TOKEN", "operator-token-for-tests-0123456789")
     app = app_test()
+    app.session_state["tripy_authenticated"] = True          # an unlocked operator session (see test_access_control)
     app.run()
     assert not app.exception, app.exception
     body = texts(app)

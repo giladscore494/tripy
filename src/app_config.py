@@ -22,11 +22,12 @@ from .storage.paths import DataPaths, resolve_paths, storage_status
 Lookup = Callable[[str], str | None]
 
 # Values that must never be shown. DATABASE_URL / SUPABASE_DB_URL may embed a password.
-SECRET_VARS = ("GLM_API_KEY", "DATABASE_URL", "SUPABASE_DB_URL")
+SECRET_VARS = ("GLM_API_KEY", "TRIPY_ACCESS_TOKEN", "DATABASE_URL", "SUPABASE_DB_URL")
 
 REQUIRED_VARS = ("GLM_API_KEY", "GLM_MODEL")
 # Strongly recommended on Railway (the app runs without them, but state is then not persistent).
-DEPLOYMENT_VARS = ("TRIPY_DATA_DIR", "TRIPY_ENV")
+DEPLOYMENT_VARS = ("TRIPY_DATA_DIR", "TRIPY_ENV", "TRIPY_ACCESS_TOKEN")
+ACCESS_TOKEN_MIN_LENGTH = 16
 OPTIONAL_VARS = ("GLM_FINALIZER_MODEL", "SEARCH_BACKEND", "DATABASE_URL", "TARGET_MARKET",
                  "TRIPY_MAX_ACTIVE_RUNS", "TRIPY_ALLOW_UI_API_KEY", "TRIPY_LOG_LEVEL", "TRIPY_SHUTDOWN_GRACE_S")
 SEARCH_BACKENDS = ("glm", "duckduckgo")
@@ -157,6 +158,18 @@ def validate_config(lookup: Lookup = env_lookup, paths: DataPaths | None = None,
     dsn = _get(lookup, "DATABASE_URL") or _get(lookup, "SUPABASE_DB_URL")
     checks.append(Check("Level 1.5 data", "ok", "Database" if dsn else "Bundled snapshot",
                         "DATABASE_URL is set" if dsn else "DATABASE_URL not set: the frozen snapshot in data/ is used"))
+    token = _get(lookup, "TRIPY_ACCESS_TOKEN")
+    if is_production(lookup):
+        if not token:
+            checks.append(Check("Access control", "error", "Missing TRIPY_ACCESS_TOKEN",
+                                "Production access control is not configured. Set TRIPY_ACCESS_TOKEN in the deployment "
+                                "environment."))
+        elif len(token) < ACCESS_TOKEN_MIN_LENGTH:
+            checks.append(Check("Access control", "warning", "Weak TRIPY_ACCESS_TOKEN",
+                                f"Use a random token of at least {ACCESS_TOKEN_MIN_LENGTH} characters, e.g. "
+                                "python -c \"import secrets; print(secrets.token_urlsafe(32))\"."))
+        else:
+            checks.append(Check("Access control", "ok", "Enabled", "Dashboard requires TRIPY_ACCESS_TOKEN"))
     problems = []
     raw_extra = _get(lookup, "GLM_EXTRA_BODY")
     if raw_extra:
@@ -227,6 +240,7 @@ def diagnostics(lookup: Lookup = env_lookup) -> dict:
         "glm_base_url": _get(lookup, "GLM_BASE_URL") or "default",
         "search_backend": _get(lookup, "SEARCH_BACKEND") or "glm",
         "database_url_present": bool(_get(lookup, "DATABASE_URL") or _get(lookup, "SUPABASE_DB_URL")),
+        "tripy_access_token_present": bool(_get(lookup, "TRIPY_ACCESS_TOKEN")),
         "max_active_runs": max_active_runs(lookup),
         "checks": [c.as_dict() for c in checks],
     }
