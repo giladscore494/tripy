@@ -647,9 +647,18 @@ def test_streamlit_app_renders_incomplete_baseline(baseline, monkeypatch):
     assert "did not produce a final result.json" in texts
 
 
-def test_batch_ids_never_collide_or_overwrite(tmp_path):
+def test_batch_ids_never_collide_or_overwrite(tmp_path, monkeypatch):
+    from datetime import datetime as real_datetime, timezone
+
+    from src.storage import run_log
     from src.storage.run_log import new_batch_id, write_batch
 
+    class FrozenClock(real_datetime):        # both ids in the SAME second: the collision this test is about
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(run_log, "datetime", FrozenClock)
     first = new_batch_id("glm-5.3-flash-one-101122", tmp_path)
     write_batch(tmp_path, first, {"batch_id": first})
     second = new_batch_id("glm-5.3-flash-one-101122", tmp_path)
