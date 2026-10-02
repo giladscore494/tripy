@@ -1,0 +1,15 @@
+# Safe defaults for every environment. Production-only flags (bind address, $PORT, no file watcher, hidden error
+# details) are passed by scripts/start.sh so local `streamlit run app.py` keeps hot reload and tracebacks.
+[server]
+enableCORS = true
+enableXsrfProtection = true
+maxUploadSize = 5
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#1f6feb"

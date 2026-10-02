@@ -13,6 +13,7 @@ from typing import Callable
 import pandas as pd
 import streamlit as st
 
+from ..app_config import redact, redact_obj
 from ..pricing import UNKNOWN_USAGE_NOTE
 from ..schemas import iter_fields
 from ..storage import trace
@@ -210,9 +211,9 @@ def render_partial_research(result: dict, runs_dir: Path, cache: DocumentCache |
     if result.get("error") or errors:
         st.markdown("**Errors**")
         if result.get("error"):
-            st.error(result["error"])
+            st.error(redact(result["error"]))
         if errors:
-            st.dataframe(pd.DataFrame([{k: _short(v, 200) for k, v in e.items() if k not in ("headers",)}
+            st.dataframe(pd.DataFrame([{k: redact(_short(v, 200)) for k, v in e.items() if k not in ("headers",)}
                                        for e in errors]), hide_index=True, width="stretch")
     if bundle:
         with st.expander("Partial research bundle (JSON)"):
@@ -325,13 +326,13 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
         with tabs[0]:
             if result.get("output") is not None:
                 if result.get("error"):
-                    st.error(result["error"])
+                    st.error(redact(result["error"]))
                 _human_view(result.get("output"))
             else:
                 st.markdown("**Final structured result**")
                 st.warning(no_output_message(result))
                 if result.get("error"):
-                    st.error(result["error"])
+                    st.error(redact(result["error"]))
                 if has_research(result):
                     st.caption("See the Partial research tab for everything the research collected.")
         with tabs[1]:
@@ -373,7 +374,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
         with tabs[8]:
             if result.get("api_error"):
                 st.error("Raw GLM API error")
-                st.json(result["api_error"], expanded=True)
+                st.json(redact_obj(result["api_error"]), expanded=True)
             st.markdown(f"**Research model:** {result.get('research_model') or result.get('model')} · "
                         f"**Finalizer model:** {result.get('finalizer_model')} · "
                         f"**Stop reason:** {result.get('stop_reason')} · "
@@ -398,7 +399,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             st.json(result.get("api_stats") or {}, expanded=True)
             errors = result.get("api_errors") or []
             if errors:
-                st.dataframe(pd.DataFrame([{k: _short(v, 200) for k, v in e.items() if k != "headers"}
+                st.dataframe(pd.DataFrame([{k: redact(_short(v, 200)) for k, v in e.items() if k != "headers"}
                                            for e in errors]), hide_index=True, width="stretch")
             else:
                 st.caption("No failed API attempts.")
@@ -414,7 +415,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
                                     key=_key(result, "kinds"))
             for event in events:
                 if event["kind"] in chosen:
-                    st.json(event, expanded=False)
+                    st.json(redact_obj(event), expanded=False)
 
 
 def render_candidates(result: dict, runs_dir: Path) -> None:
@@ -453,7 +454,7 @@ def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
         st.caption("Field detection did not run for this run (older run, or research did not finish).")
         return
     if recovery.get("error"):
-        st.error(recovery["error"])
+        st.error(redact(recovery["error"]))
     cols = st.columns(4)
     cols[0].metric("Failed after primary", len(recovery.get("queue") or []))
     cols[1].metric("Retried", len(recovery.get("fields_retried") or []))
