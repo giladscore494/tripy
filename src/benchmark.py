@@ -261,7 +261,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "verified_fact_cache_hits": counters.get("verified_fact_cache_hits", 0),
         "verified_facts_not_readmitted": sum(((result.get("fact_reuse") or {}).get("not_readmitted") or {}).values()),
         "verified_facts_recorded": result.get("verified_facts_recorded") or 0,
-        "negative_route_cache_hits": recovery.get("negative_route_cache_hits") or 0,
+        "negative_route_cache_hits": recovery.get("negative_route_cache_hits") or 0,      # equivalent routes refused
+        "negative_route_fields_shown": recovery.get("negative_route_fields_shown") or 0,
         "training_feedback_examples": (result.get("training_feedback") or {}).get("examples", 0),
         "tail_cost_usd": tail_cost_usd,
         "cost_per_tail_field_resolved": round(tail_cost_usd / tail_resolved, 6)
@@ -305,6 +306,7 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "budget_extensions", "search_budget_refusals", "conflicts_normalized_without_search",
             "portable_facts_accepted", "portable_facts_rejected", "verified_fact_cache_hits",
             "verified_facts_not_readmitted", "verified_facts_recorded", "negative_route_cache_hits",
+            "negative_route_fields_shown",
             "training_feedback_examples",
             "duplicate_calls_suppressed", "duplicate_searches_suppressed", "duplicate_fetches_suppressed",
             "duplicate_inspections_suppressed", "recovery_operations_with_new_material",

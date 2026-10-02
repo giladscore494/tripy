@@ -65,7 +65,7 @@ and every one of them stays configurable.
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
 | `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`cluster` default, or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt). See [Clustered tail recovery](#clustered-tail-recovery-default). |
-| `RESEARCH_MEMORY_ENABLED`, `FACT_REUSE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_MAX_AGE_DAYS` | Cross-run memory: verified fact reuse, negative routes, recovery yield (default on, 365 / 30 days). See [Verified fact reuse](#verified-fact-reuse-negative-research-memory-and-the-feedback-dataset). |
+| `RESEARCH_MEMORY_ENABLED`, `FACT_REUSE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_BLOCKING` | Cross-run memory: verified fact reuse, negative routes, recovery yield (default on, 365 / 30 days). See [Verified fact reuse](#verified-fact-reuse-negative-research-memory-and-the-feedback-dataset). |
 | `DISABLED_TOOLS` | Comma-separated tools never offered to the model (tools whose runtime capability is missing, such as `render_page` without Playwright, are left out automatically). |
 | `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `2` = adaptive: a 2nd turn only after a turn-1 cached-document inspection returned content; absolute max 2). See [Layered field harvesting](#layered-field-harvesting). |
 | `INCLUDE_LEVEL3` | Level 3 open research (default **off**; UI checkbox / `--level3`). It is opt-in so it cannot take research turns from the Level 2 benchmark. |
@@ -447,11 +447,13 @@ run, each written atomically, so 50 concurrent workers never share an append tar
   fields still open, per identity scope and field identity. The routes are search queries attributed to the field
   whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
   fields keep no negative memory. A route is not recorded when the call itself failed (an HTTP error status, or every
-  domain of a domain search erroring). Later runs see the routes as `known_unproductive_routes`. A cluster whose
-  open fields have each failed in at least two earlier, independent runs skips its web attempt
-  (`NEGATIVE_MEMORY_SKIP`).
-  This is scheduling only: it never creates evidence, never changes a field state, never marks a field
-  not_applicable and never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
+  domain of a domain search erroring). Later runs see the routes as `known_unproductive_routes`, and the runtime
+  refuses, before execution, a request equivalent to a recorded route for the open fields it serves (the same query
+  apart from case and spacing; the same page by URL, whether fetched or rendered; `NEGATIVE_ROUTE_BLOCKING`). Only
+  the route is refused: the cluster's research still runs, and any new query or page is executed even when other
+  routes for the same field failed before. Failed routes are never evidence that a value does not exist. This is
+  scheduling only: it never creates evidence, never changes a field state, never marks a field not_applicable and
+  never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
 - **Historical recovery yield** (by cluster / field, manufacturer, propulsion and source family: attempts, turns,
   searches, documents, resolutions, by-product resolutions, tokens) only orders clusters within a round, and only
   with at least 5 samples. It is never a confidence in any value.
@@ -488,15 +490,17 @@ policy model as the tail benchmark:
 | recovery turns | 9 | 4 | 4 | 12 | 12 |
 | searches | 2 | 1 | 0 | 3 | 2 |
 | verified facts reused | 0 | 9 | 8 | 0 | 0 |
-| negative route hits | 0 | 1 | 0 | 0 | 0 |
+| failed routes shown to the model | 0 | 1 | 0 | 0 | 0 |
+| equivalent routes refused | 0 | 0 | 0 | 0 | 0 |
 | fields ok (of 14) | 11 | 11 | 11 | 10 | 9 |
 
 A2 reuses the technical facts (tank, battery, torque, performance, dimensions) but not price, warranty, height or
 curb weight. It also does not reuse the boot volume, because A left that field foreign-market-only. B reuses nothing,
 and its boot stays 581 L, never A's 596 L. The re-run's saved search comes from the model following
-`known_unproductive_routes` (the policy model in the benchmark does). The engine itself only skips a cluster after
-two earlier, independent failed runs per field. The scale metrics are
-`verified_fact_cache_hits`, `negative_route_cache_hits`, search / document / candidate cache hits,
+`known_unproductive_routes` (the policy model in the benchmark does). Had it repeated the failed query, the runtime
+would have refused that one request and let every other route run (tested separately). The scale metrics are
+`verified_fact_cache_hits`, `negative_route_cache_hits` (equivalent routes refused), `negative_route_fields_shown`,
+search / document / candidate cache hits,
 `verified_facts_recorded` and `training_feedback_examples`.
 
 ### Targeted field recovery (legacy per-field mode)

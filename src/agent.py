@@ -330,7 +330,6 @@ PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT + FIELD
                                  + DOCUMENT_SWEEP_SYSTEM_PROMPT + CLUSTER_RECOVERY_SYSTEM_PROMPT
                                  + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
-NEGATIVE_SKIP_MIN_ATTEMPTS = 2   # a cluster web attempt is skipped only after two earlier failed attempts per field
 
 
 def research_system_prompt() -> str:
@@ -416,7 +415,9 @@ class AgentConfig:
     cluster_packet_max_chars: int = 30000
     # Cross-run research memory (src/research_memory.py): verified fact reuse, negative routes, recovery yield.
     research_memory_enabled: bool = True
-    negative_memory_skip: bool = True         # skip a cluster's web attempt when every open field's routes failed
+    # refuse (without executing) a web route an earlier run already found unproductive for the attempt's open fields;
+    # never skips research as such: any other route still runs
+    negative_route_blocking: bool = True
 
 
 AGENT_ENV = {
@@ -479,9 +480,9 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     memory = _env_bool(env("RESEARCH_MEMORY_ENABLED"))
     if memory is not None:
         values["research_memory_enabled"] = memory
-    skip = _env_bool(env("NEGATIVE_MEMORY_SKIP"))
-    if skip is not None:
-        values["negative_memory_skip"] = skip
+    blocking = _env_bool(env("NEGATIVE_ROUTE_BLOCKING"))
+    if blocking is not None:
+        values["negative_route_blocking"] = blocking
     layered = _env_bool(env("LAYERED_HARVEST_ENABLED"))
     if layered is not None:
         values["layered_harvest_enabled"] = layered
@@ -747,6 +748,9 @@ class ToolSession:
         self.blocked = 0
         self.turn_results: list[dict] = []
         self.search_budget: SearchBudget | None = None   # set per cluster attempt; None = no per-attempt budget
+        # set per cluster attempt: refuses a web route equivalent to one an earlier run found unproductive
+        self.route_guard: Callable[[str, dict], dict | None] | None = None
+        self.route_blocks = 0
 
     def execute(self, calls: list[dict], messages: list[dict], *, phase: str, allowed: tuple | None = None,
                 **tags: Any):
@@ -794,6 +798,22 @@ class ToolSession:
                     "content": model_view(result, self.config.max_tool_output_chars, duplicate=name in FETCH_TOOLS),
                     "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
                 })
+                continue
+            refusal = self.route_guard(name, trace.parse_args(raw_args)) \
+                if self.route_guard is not None and name in trace.SEARCH_TOOLS + trace.FETCH_TOOLS else None
+            if refusal is not None:
+                self.route_blocks += 1
+                self.blocked += 1
+                result = {"error": "known_unproductive_route", **refusal,
+                          "message": ("An earlier run already made this exact (or an equivalent) request for these "
+                                      "fields and it gave no new usable material. Try a different query, source or "
+                                      "document; nothing about the field's value is implied.")}
+                self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                   arguments=raw_args, reason="known_unproductive_route", **refusal, **tags)
+                self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name, "arguments": raw_args,
+                                        "duration_ms": 0, "cache_hit": None, "error": result["error"],
+                                        "document_id": None, "duplicate": False, "blocked": True})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
                 continue
             budget = self.search_budget if name in trace.SEARCH_TOOLS else None
             if budget is not None:
@@ -1153,6 +1173,39 @@ def _routes_of(calls: list[dict]) -> list[dict]:
     return routes
 
 
+def _route_guard(negative: dict[str, dict], open_fields: list[str], specs_by_name: dict, all_specs: list[dict]):
+    """A dispatch guard for one cluster attempt. It refuses a web route only when an earlier run recorded the SAME or an
+    equivalent route (src/research_memory.normalize_route) as unproductive for every open field the route serves:
+    a search serves the open fields its query names (all of them when it names none); a fetched page serves them all.
+    Any other route runs. It never stops research as such, and implies nothing about a field's value."""
+    from .research_memory import route_signature
+
+    dead: dict[str, set[str]] = {}
+    for field in open_fields:
+        for route in (negative.get(field) or {}).get("routes") or []:
+            signature = route_signature(route.get("tool") or "", route.get("route"))
+            dead.setdefault(signature, set()).add(field)
+
+    def guard(name: str, args: dict) -> dict | None:
+        route = args.get("query") if name in trace.SEARCH_TOOLS else args.get("url")
+        if not route:
+            return None
+        recorded = dead.get(route_signature(name, route))
+        if not recorded:
+            return None
+        if name in trace.SEARCH_TOOLS:
+            served = [f for f in open_fields
+                      if _route_names_field({"tool": name, "route": route}, specs_by_name.get(f) or {"name": f},
+                                            all_specs)] or list(open_fields)
+        else:
+            served = list(open_fields)
+        if not set(served) <= recorded:
+            return None                         # useful for an open field it was never tried for
+        return {"route": str(route)[:300], "fields": sorted(served)}
+
+    return guard
+
+
 def _label_match(query: str, spec: dict) -> int:
     labels = (spec.get("aliases_en") or []) + (spec.get("aliases_he") or []) + [spec.get("name", "").replace("_", " ")]
     return max((len(str(a)) for a in labels if a and f" {str(a).lower()} " in query), default=0)
@@ -1284,7 +1337,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     current = {e["field"]: e for e in primary}
     state = {"total_steps": 0, "stopped": None, "cut_short": None, "early_count": 0, "budget_skipped": 0,
              "no_novelty_stops": 0, "budget_extensions": 0, "searches": 0, "search_refusals": 0,
-             "negative_route_cache_hits": 0}
+             "negative_route_blocks": 0}
     # Cross-run memory (scheduling only): routes that already failed for these fields in the same identity scope,
     # and the historical yield of each cluster for this manufacturer / propulsion.
     from .research_memory import reuse_level, scope_key, spec_identity
@@ -1301,7 +1354,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
             history = memory.cluster_yield(getattr(target, "manufacturer", None), getattr(target, "propulsion", None))
         except Exception as exc:  # unreadable memory never costs the recovery
             run_log.event("research_memory_read_failed", error=_error_text(exc))
-    negative_hits: set[str] = set()
+    negative_shown: set[str] = set()
     if negative or history:
         run_log.event("research_memory_consulted", negative_route_fields=sorted(negative),
                       cluster_yield=history, note="scheduling only: never evidence, never a field state")
@@ -1381,7 +1434,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         known_dead = {f: [r["route"] for r in negative[f]["routes"]][:8] for f in open_fields if f in negative}
         if known_dead and not local:
             packet["known_unproductive_routes"] = known_dead      # earlier runs: these routes found nothing new
-            negative_hits.update(known_dead)
+            negative_shown.update(known_dead)
+        session.route_guard = _route_guard(negative, open_fields, by_name, specs) \
+            if (negative and not local and config.negative_route_blocking) else None
         packet = _trim_packet(packet, config.cluster_packet_max_chars)
         shown = packet.get("deterministic_candidates") or {}
         presented = [candidate_key(c) for f in open_fields for c in (ordered_cands.get(f) or [])[:len(shown.get(f)
@@ -1492,6 +1547,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                           api_error=exc.as_dict())
         finally:
             session.search_budget = None
+            state["negative_route_blocks"] += session.route_blocks
+            session.route_blocks = 0
+            session.route_guard = None
         reply = _cluster_reply(reply_text, name)
         for entry in (reply or {}).get("fields") or []:
             field_name = normalize_field_name((entry or {}).get("field")) if isinstance(entry, dict) else None
@@ -1569,17 +1627,6 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                     skipped.add(name)
                     run_log.event("cluster_recovery_skipped", cluster=name, round=round_no, reason="low_yield",
                                   fields=open_fields)
-                continue
-            if not local and config.negative_memory_skip and not any(p["mode"] == "web" for p in previous[name]) \
-                    and all(negative.get(f, {}).get("attempts", 0) >= NEGATIVE_SKIP_MIN_ATTEMPTS for f in open_fields):
-                # every open field's searches already failed in at least two earlier attempts in this identity scope:
-                # an equivalent web attempt is skipped. The fields keep their state; nothing is marked not_applicable.
-                if name not in skipped:
-                    skipped.add(name)
-                    negative_hits.update(open_fields)
-                    run_log.event("cluster_recovery_skipped", cluster=name, round=round_no,
-                                  reason="negative_route_memory", fields=open_fields,
-                                  routes={f: len(negative[f]["routes"]) for f in open_fields})
                 continue
             if cap_reached():
                 state["stopped"] = "max_total_steps"
@@ -1659,7 +1706,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         "no_novelty_stops": state["no_novelty_stops"],
         "budget_extensions": state["budget_extensions"],
         "search_budget_refusals": state["search_refusals"],
-        "negative_route_cache_hits": len(negative_hits),      # fields whose earlier failed routes were used
+        # equivalent routes refused at dispatch because an earlier run found them unproductive (not research skipped)
+        "negative_route_cache_hits": state["negative_route_blocks"],
+        "negative_route_fields_shown": len(negative_shown),
         "local_only_attempts": sum(1 for a in attempts_log if a["mode"] == "local_only"),
         **metrics,
         "stopped": state["stopped"],

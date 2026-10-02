@@ -153,7 +153,7 @@ def test_a_different_powertrain_inherits_nothing(corolla_family):
 
 def test_a_rerun_uses_negative_route_memory_without_changing_truth(corolla_family):
     a, rerun = corolla_family["A"], corolla_family["A_rerun"]
-    assert rerun["negative_route_cache_hits"] >= 1 and rerun["search_calls"] < a["search_calls"]
+    assert rerun["negative_route_fields_shown"] >= 1 and rerun["search_calls"] < a["search_calls"]
     assert rerun["states"]["ground_clearance_mm"] == a["states"]["ground_clearance_mm"] != "not_applicable"
     # reuse is not corroboration: one source stays one evidence item
     assert rerun["values"]["fuel_tank_l"] == [43]
@@ -177,26 +177,152 @@ def test_reused_evidence_keeps_its_source_and_is_counted_once(tmp_path):
 
 # --- negative memory and yield are scheduling only -------------------------------------------------------------
 
-def test_negative_memory_skips_equivalent_work_but_never_touches_field_state(tmp_path):
+def _dead(field, *routes):
+    return {field: {"routes": [{"tool": tool, "route": route} for tool, route in routes], "attempts": 1}}
+
+
+def _session(tmp_path, make_ctx, negative, open_fields):
+    from src.agent import ToolSession, _route_guard
+
+    ctx = make_ctx()
+    ctx.glm = _Searches()
+    session = ToolSession(ctx, RunLog(tmp_path, "b", "1"), AgentConfig())
+    session.route_guard = _route_guard(negative, open_fields, SPECS, list(SPECS.values()))
+    return session, ctx
+
+
+class _Searches:
+    model = "glm-test"
+    settings = type("S", (), {"search_engine": "fake"})()
+
+    def __init__(self):
+        self.calls = []
+
+    def web_search(self, query, count=8, domain=None):
+        self.calls.append(query)
+        return []
+
+
+def _run(session, name, args):
+    messages = []
+    session.execute([_call("c", name, args)], messages, phase="field_recovery")
+    return json.loads(messages[-1]["content"].split("\n[operational note]")[0])
+
+
+def test_an_equivalent_failed_query_is_refused_without_execution(tmp_path, make_ctx):
+    query = "Toyota Corolla Touring Sports 2024 ground clearance"
+    session, ctx = _session(tmp_path, make_ctx, _dead("ground_clearance_mm", ("search_web", query)),
+                            ["ground_clearance_mm"])
+    result = _run(session, "search_web", {"query": "  toyota corolla TOURING sports 2024   GROUND clearance "})
+    assert result["error"] == "known_unproductive_route" and ctx.glm.calls == []      # not executed, not billed
+    assert session.route_blocks == 1
+
+
+def test_an_equivalent_failed_url_is_refused(tmp_path, make_ctx):
+    url = "https://www.example-forum.net/threads/corolla-ground-clearance"
+    session, ctx = _session(tmp_path, make_ctx, _dead("ground_clearance_mm", ("fetch_url", url)),
+                            ["ground_clearance_mm"])
+    for variant in ("http://example-forum.net/threads/corolla-ground-clearance/",
+                    "https://www.example-forum.net/threads/corolla-ground-clearance#replies"):
+        assert _run(session, "fetch_url", {"url": variant})["error"] == "known_unproductive_route"
+    assert _run(session, "render_page", {"url": url})["error"] == "known_unproductive_route"   # same page, same route
+    assert session.ctx.session.calls == []
+
+
+def test_a_new_route_still_runs_after_other_routes_failed(tmp_path, make_ctx):
+    dead = _dead("ground_clearance_mm", ("search_web", "corolla ground clearance mm"),
+                 ("search_web", "corolla touring ground clearance"))
+    session, ctx = _session(tmp_path, make_ctx, dead, ["ground_clearance_mm"])
+    result = _run(session, "search_web", {"query": "corolla 2024 ground clearance specification"})   # query C
+    assert "error" not in result and ctx.glm.calls == ["corolla 2024 ground clearance specification"]
+    assert session.route_blocks == 0
+
+
+def test_a_route_is_refused_only_for_the_fields_it_failed_for(tmp_path, make_ctx):
+    url = "https://www.example-forum.net/threads/corolla"
+    dead = _dead("ground_clearance_mm", ("search_web", "corolla ground clearance"), ("fetch_url", url))
+    open_fields = ["ground_clearance_mm", "curb_weight_kg"]
+    session, ctx = _session(tmp_path, make_ctx, dead, open_fields)
+    # the search names ground clearance (the field it failed for): refused
+    assert _run(session, "search_web", {"query": "corolla ground clearance"})["error"] == "known_unproductive_route"
+    # the page was never tried for curb weight, which is also open: it runs
+    assert _run(session, "fetch_url", {"url": url}).get("error") != "known_unproductive_route"
+    assert session.route_blocks == 1
+
+
+class _IgnoresHints(family.tail.PolicyGLM):
+    """The benchmark's policy model, minus its habit of avoiding known unproductive routes: it repeats them, so the
+    ENGINE has to refuse the repeats."""
+
+    def recover(self, messages, tools):
+        packet = json.loads(messages[1]["content"].split("\n", 1)[1])
+        packet.pop("known_unproductive_routes", None)
+        messages = [messages[0], {**messages[1], "content": "Cluster recovery task (JSON):\n" + json.dumps(packet)},
+                    *messages[2:]]
+        return super().recover(messages, tools)
+
+
+def _family_run(workdir, cache, client_cls):
+    v = family.variant("A")
+    client = client_cls(primary=v["primary"], search_index=v["index"], engine=v["engine"])
+    return family.tail.run_mode("cluster", workdir, client=client, payload=v["payload"], vehicle=v["vehicle"],
+                                routes=family.ROUTES, record_id=v["record_id"], cache=cache, batch="family",
+                                requested_fields=family.FIELDS, research_memory_enabled=True)
+
+
+def test_negative_memory_blocks_routes_never_research_and_never_truth(tmp_path):
     cache = DocumentCache(tmp_path / "cache")
     memory = ResearchMemory(cache.root / "memory")
-    identity = target_identity(family.variant("A")["payload"], family.variant("A")["vehicle"])
-    entries = [{"scope_key": scope_key(identity, reuse_level(SPECS[f]) or "exact_market_trim"),
-                "spec_identity": spec_identity(SPECS[f]), "cluster": "technical_spec",
-                "field": f, "routes": [{"tool": "search_web", "route": f"corolla {f}", "signature": f}],
-                "outcome": "no_new_material"} for f in family.FIELDS if SPECS[f]["recovery_cluster"] == "technical_spec"]
-    memory.record_routes(entries, "earlier-run")
-    once = family.run_variant("A", tmp_path / "A1", DocumentCache(tmp_path / "copy"))   # control: no memory there
-    assert not [e for e in once["events"] if e.get("reason") == "negative_route_memory"]
-    memory.record_routes(entries, "another-earlier-run")        # two failed attempts per field: now equivalent
-    run = family.run_variant("A", tmp_path / "A", cache)
-    rec = run["result"]["field_recovery"]
-    skipped = [e for e in run["events"] if e.get("kind") == "cluster_recovery_skipped"]
-    assert any(e["reason"] == "negative_route_memory" for e in skipped)
-    assert all(a["mode"] == "local_only" for a in rec["attempts"] if a["cluster"] == "technical_spec")
-    states = run["result"]["research_bundle"]["field_states"]
-    assert states["ground_clearance_mm"]["state"] in ("missing", "unresolved")      # never not_applicable
+    v = family.variant("A")
+    identity = target_identity(v["payload"], v["vehicle"])
+    specs = {s["name"]: s for s in resolve_requested_fields(family.FIELDS, propulsion="hybrid")}
+
+    def dead(field, query, run):     # an earlier run's failed search, exactly as recovery records it
+        spec = specs[field]
+        memory.record_routes([{"scope_key": scope_key(identity, reuse_level(spec) or "exact_market_trim"),
+                               "spec_identity": spec_identity(spec), "cluster": "technical_spec", "field": field,
+                               "outcome": "no_new_material",
+                               "routes": [{"tool": "search_web", "route": query, "signature": "x"}]}], run)
+
+    dead("ground_clearance_mm", "Toyota Corolla Touring Sports 2024 1.8 hybrid ground clearance", "earlier-1")
+    dead("ground_clearance_mm", "corolla minimum ground clearance", "earlier-2")   # a second, different route
+    run = _family_run(tmp_path / "run", cache, _IgnoresHints)
+    events = run["events"]
+    blocked = [e for e in events if e.get("kind") == "tool_blocked" and e.get("reason") == "known_unproductive_route"]
+    assert [json.loads(e["arguments"])["query"] for e in blocked] == [
+        "Toyota Corolla Touring Sports 2024 1.8 hybrid ground clearance"]
+    assert run["result"]["field_recovery"]["negative_route_cache_hits"] == 1
+    # research was NOT skipped: the same attempt went on with another route after the refusal
+    later = [e for e in events if e.get("kind") == "tool_call" and e["seq"] > blocked[0]["seq"]
+             and e.get("name") in ("search_web", "fetch_url")]
+    assert later
+    assert not [e for e in events if e.get("kind") == "cluster_recovery_skipped"
+                and e.get("reason") == "negative_route_memory"]
+    # truth is untouched: every evidence item came from an admitted store request or a re-admitted fact, and no field
+    # was declared absent because of memory
+    stores = {e["seq"] for e in events if e.get("kind") == "tool_call" and e.get("name") == "store_evidence"}
+    for e in events:
+        if e.get("kind") == "evidence":
+            assert e.get("phase") == "fact_reuse" or any(s < e["seq"] for s in stores)
+    states = {f: s["state"] for f, s in run["result"]["research_bundle"]["field_states"].items()}
+    assert "not_applicable" not in {states["curb_weight_kg"], states["ground_clearance_mm"]}
     assert "research_memory" not in (ROOT / "src/field_recovery.py").read_text("utf-8")  # evaluator never reads it
+
+
+def test_negative_memory_is_not_kept_for_time_sensitive_fields_and_expires(tmp_path):
+    from src.agent import run_cluster_recovery  # noqa: F401  (the scope keys come from the same helpers)
+
+    memory = ResearchMemory(tmp_path, route_max_age_days=30)
+    entry = {"scope_key": "k", "field": "list_price", "outcome": "no_new_material",
+             "routes": [{"tool": "search_web", "route": "corolla price", "signature": "s"}]}
+    memory.record_routes([entry], "old-run")
+    path = next((tmp_path / "routes").glob("*.json"))
+    data = json.loads(path.read_text("utf-8"))
+    path.write_text(json.dumps({**data, "recorded_at": "2020-01-01T00:00:00+00:00"}), "utf-8")
+    assert memory.negative_routes({"list_price": "k"}) == {}                     # expired
+    assert SPECS["list_price"].get("time_sensitive")                             # and never looked up (route_keys)
+    agent_code = (ROOT / "src/agent.py").read_text("utf-8")
+    assert 'if not by_name[f].get("time_sensitive")' in agent_code
 
 
 def test_historical_yield_needs_enough_samples(tmp_path):

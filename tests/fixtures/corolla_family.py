@@ -127,7 +127,8 @@ def summarize(run: dict) -> dict:
             "search_calls": m["search_api_calls"], "documents_fetched": m["tool_calls_by_name"].get("fetch_url", 0),
             "verified_fact_cache_hits": m["verified_fact_cache_hits"], "search_cache_hits": m["search_cache_hits"],
             "document_cache_hits": m["document_cache_hits"], "candidate_cache_hits": m["candidate_cache_hits"],
-            "negative_route_cache_hits": m["negative_route_cache_hits"], "fields_ok": sum(
+            "negative_route_cache_hits": m["negative_route_cache_hits"],
+            "negative_route_fields_shown": m["negative_route_fields_shown"], "fields_ok": sum(
                 1 for s in states.values() if s == "ok"), "states": states, "values": values,
             "reused_fields": sorted({i["field"] for i in (result.get("fact_reuse") or {}).get("items") or []})}
 

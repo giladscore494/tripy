@@ -322,5 +322,22 @@ class ResearchMemory:
                 for c, v in totals.items() if v["samples"] >= min_samples}
 
 
-def route_signature(tool: str, route: str) -> str:
-    return _digest([tool, " ".join(str(route or "").lower().split())], 16)
+FETCH_KINDS = ("fetch_url", "fetch_pdf", "render_page")
+
+
+def normalize_route(tool: str, route: Any) -> tuple[str, str]:
+    """(kind, route) identifying EQUIVALENT operations: one search tool + the query with case and spacing removed;
+    any fetch tool + the URL without scheme, "www.", fragment or trailing slash (fetching a page as HTML or rendering
+    it is the same route)."""
+    text = " ".join(str(route or "").split())
+    if tool in FETCH_KINDS:
+        url = text.split("#")[0].strip()
+        url = url.split("://", 1)[-1]
+        url = url[4:] if url.lower().startswith("www.") else url
+        host, _, path = url.partition("/")
+        return "fetch", host.lower() + ("/" + path.rstrip("/") if path.rstrip("/") else "")
+    return str(tool), text.lower()
+
+
+def route_signature(tool: str, route: Any) -> str:
+    return _digest(list(normalize_route(tool, route)), 16)
