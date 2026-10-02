@@ -264,8 +264,10 @@ drivetrain, or the system power of a BEV / combustion car; a longer model family
 is never exact by itself: the fact's context must name the target's technical variant. `variant_match` becomes
 `different` (veto, or the model's own "different"), `unbound` (the source does not even name the model family),
 `exact` (level ≥ the field's `binding_requirement`) or `unclear`. The evaluator treats `different` and
-`unbound` as not about the target (`variant_not_exact`); only `exact` target-market evidence ends a recovery
-attempt early. Server scope is authoritative: these two states are decided from the server-computed
+`unbound` as not about the target, and `unclear` as not target-safe: a value is usable only when its
+server-computed `binding_level` reaches the field's `binding_requirement` (an `exact_market_trim` field whose
+evidence binds only at `exact_technical_variant` stays `variant_not_exact` and retry-eligible). Only `exact`
+target-market evidence ends a recovery attempt early. Server scope is authoritative: these two states are decided from the server-computed
 `variant_match` and market BEFORE any model declaration, so a model's `found` (or a `conflict_resolved` citing an
 out-of-scope item) never turns another variant's or another market's evidence into target evidence. The model's
 `market` is a claim too: when the source itself does not establish a market (domain, regional site, path locale,
@@ -700,7 +702,7 @@ leaves the field `conflicting`. Code never decides which value is true.
 **Early exit is stricter than "usable".** A recovery attempt ends early only when the field is `ok` and
 at least one target-market evidence item has `variant_match` `exact` (computed server-side) or no
 `variant_match` at all (legacy evidence). `unclear`, `unknown`, `different` and `unbound` never end an attempt early,
-though the evaluator may still call such a field usable.
+and never make a field usable either.
 
 Metrics:
 

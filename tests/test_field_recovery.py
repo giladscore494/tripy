@@ -73,7 +73,9 @@ def test_detection_uses_only_the_models_research_state():
     # until the Reliability Foundation this declaration returned ok)
     assert state([ev("paint_code", "X1", market="MY")], {"status": "found"}) == "foreign_market_only"
     assert state([ev("paint_code", "X1", variant_match="different")]) == "variant_not_exact"
-    assert state([ev("paint_code", "X1", variant_match="unclear")]) == "ok"
+    # unclear: the server-side binding did not reach the field's binding_requirement -> never ok
+    assert state([ev("paint_code", "X1", variant_match="unclear")]) == "variant_not_exact"
+    assert state([ev("paint_code", "X1", variant_match="unclear")], {"status": "found"}) == "variant_not_exact"
     assert state([ev("paint_code", "X1")], {"status": "conflicting"}) == "conflicting"
     assert state([], {"status": "not_applicable"}) == "not_applicable"
     assert state([], out={"provenance": "not_applicable"}) == "not_applicable"
@@ -136,12 +138,16 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
         say({"vehicle_id": "101122", "summary": "primary", "fields": {}}),
         # layered pipeline: one document-sweep turn over the cached page finds nothing it can promote
         say({"reviewed": [], "notes": "no usable candidate in the cached page"}),
+        # retry tire_size_front #1: its evidence binds only at exact_technical_variant (the page does not name the
+        # trim; "MAX" is a generic trim word) while the field requires exact_market_trim -> variant_not_exact
+        say({"field": "tire_size_front", "status": "unresolved", "value": None}),
         # retry service_interval_km #1: inspects cached doc, stores evidence, reports found
         turn(_call("r1", "find_in_document", {"document_id": "PLACEHOLDER", "query": "service"}),
              _call("r2", "store_evidence", ev("service_interval_km", 20000, url=PAGE))),
         # (no "found" reply turn: the stored evidence already makes the field ok, so the attempt ends early)
         # retry rear_legroom_mm #1 and #2: unresolved both times
         say({"field": "rear_legroom_mm", "status": "unresolved", "value": None, "notes": "not published"}),
+        say({"field": "tire_size_front", "status": "unresolved", "value": None}),
         say({"field": "rear_legroom_mm", "status": "unresolved", "value": None}),
         # compact finalizer
         say(final),
@@ -149,19 +155,25 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     result, client, events = scripted_run(tmp_path, make_ctx, script)
 
     rec = result["field_recovery"]
-    assert rec["queue"] == ["service_interval_km", "rear_legroom_mm"]  # the three successful fields: no retry
-    assert rec["fields_recovered"] == ["service_interval_km"] and rec["fields_still_failed"] == ["rear_legroom_mm"]
+    # the two successful fields: no retry. tire_size_front has evidence, but its server-side binding
+    # (exact_technical_variant, variant_match=unclear) is below the field's exact_market_trim requirement: retried.
+    assert rec["queue"] == ["tire_size_front", "service_interval_km", "rear_legroom_mm"]
+    assert rec["fields_recovered"] == ["service_interval_km"]
+    assert rec["fields_still_failed"] == ["rear_legroom_mm", "tire_size_front"]
     assert [(a["field"], a["attempt"]) for a in rec["attempts"]] == [
-        ("service_interval_km", 1), ("rear_legroom_mm", 1), ("rear_legroom_mm", 2)]
-    assert rec["primary_states"] == {"ok": 3, "missing": 2}
+        ("tire_size_front", 1), ("service_interval_km", 1), ("rear_legroom_mm", 1), ("tire_size_front", 2),
+        ("rear_legroom_mm", 2)]
+    assert rec["primary_states"] == {"ok": 2, "variant_not_exact": 1, "missing": 2}
     assert result["requested_fields"] == {
         "battery_usable_kwh": "Battery capacity usable (kWh)", "tire_size_front": "Front tire size",
         "paint_code": "paint_code", "service_interval_km": "service_interval_km", "rear_legroom_mm": "rear_legroom_mm"}
 
     # Each retry is a fresh compact conversation about ONE field, never the primary conversation.
     retries = [r for r in client.requests if r["messages"][0]["content"] == FIELD_RECOVERY_SYSTEM_PROMPT]
-    assert len(retries) == 3
-    first = json.loads(retries[0]["messages"][1]["content"].split("\n", 1)[1])
+    assert len(retries) == 5
+    tire = json.loads(retries[0]["messages"][1]["content"].split("\n", 1)[1])
+    assert tire["requested_field"]["name"] == "tire_size_front" and tire["failure_reason"] == "variant_not_exact"
+    first = json.loads(retries[1]["messages"][1]["content"].split("\n", 1)[1])
     assert first["requested_field"]["name"] == "service_interval_km" and first["failure_reason"] == "missing"
     assert first["vehicle_identity"] == {"manufacturer": "אקספנג", "model": "G6", "year": 2026,
                                          "government_trim": "MAX", "model_code": "NSGHA",
@@ -172,7 +184,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     for request in retries:
         sent = json.dumps(request["messages"], ensure_ascii=False)
         assert SYSTEM_PROMPT not in sent and "Nebula White" not in sent and request["tools"]
-    second_attempt = json.loads(retries[2]["messages"][1]["content"].split("\n", 1)[1])
+    second_attempt = json.loads(retries[4]["messages"][1]["content"].split("\n", 1)[1])
     assert second_attempt["requested_field"]["name"] == "rear_legroom_mm" and second_attempt["attempt"] == 2
     assert second_attempt["failure_reason"] == "unresolved"
     assert second_attempt["previous_attempts"][0]["reply"]["notes"] == "not published"
@@ -184,33 +196,36 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     assert bundle["field_states"]["service_interval_km"]["state"] == "ok"
     assert bundle["field_states"]["rear_legroom_mm"]["state"] == "unresolved"
     assert bundle["targets"]["requested_fields"]["rear_legroom_mm"] == "rear_legroom_mm"
-    assert {a["field"] for a in bundle["field_recovery"]} == {"service_interval_km", "rear_legroom_mm"}
+    assert bundle["field_states"]["tire_size_front"]["state"] == "unresolved"
+    assert {a["field"] for a in bundle["field_recovery"]} == {"tire_size_front", "service_interval_km", "rear_legroom_mm"}
     assert bundle["primary_output"]["summary"] == "primary"
     assert result["status"] == "completed" and result["output"]["summary"] == "final"
-    assert result["usage_field_recovery"]["model_calls"] == 3 and result["usage_research"]["model_calls"] == 3
+    assert result["usage_field_recovery"]["model_calls"] == 5 and result["usage_research"]["model_calls"] == 3
     assert result["usage_document_sweep"]["model_calls"] == 1
     assert kinds.index("document_sweep_finished") < kinds.index("field_recovery_started")
-    assert rec["attempts"][0]["early_resolved"] and rec["turns_saved_by_early_resolution"] == 1
+    assert rec["attempts"][1]["early_resolved"] and rec["turns_saved_by_early_resolution"] == 1
     assert [c["phase"] for c in result["tool_calls"]].count("field_recovery") == 2
     assert result["tool_calls"][-1]["field"] == "service_interval_km"
 
     m = compute_metrics(result)
     assert (m["requested_fields"], m["fields_failed_primary"], m["fields_retried"], m["fields_recovered"],
-            m["fields_still_failed"], m["field_retry_attempts"], m["field_recovery_model_calls"]) == (5, 2, 2, 1, 1, 3, 3)
+            m["fields_still_failed"], m["field_retry_attempts"], m["field_recovery_model_calls"]) == (5, 3, 3, 1, 2, 5, 5)
 
 
 def test_no_retry_for_success_or_not_applicable(tmp_path, make_ctx):
     script = [
         turn(_call("p1", "store_evidence", ev("battery_usable_kwh", 80.8)),
-             _call("p2", "store_evidence", ev("tire_size_front", "255/45 R20")),
              _call("p3", "store_evidence", ev("service_interval_km", 20000)),
              _call("p4", "store_evidence", ev("rear_legroom_mm", 950)),
              _call("p5", "report_field_status", {"field": "paint_code", "status": "not_applicable"})),
         say({"vehicle_id": "101122", "summary": "all done", "fields": {"rear_legroom_mm": {"value": 950}}}),
     ]
-    result, client, events = scripted_run(tmp_path, make_ctx, script)
+    # tire_size_front is not requested here: on this page it can only bind at exact_technical_variant, below its
+    # exact_market_trim requirement, so it is never a success (see test_only_failed_requested_fields_get_focused_retries)
+    result, client, events = scripted_run(tmp_path, make_ctx, script,
+                                          requested_fields=[f for f in FUTURE_FIELDS if f != "tire_size_front"])
     assert result["field_recovery"]["queue"] == [] and result["field_recovery"]["attempt_count"] == 0
-    assert result["field_recovery"]["final_states"] == {"ok": 4, "not_applicable": 1}
+    assert result["field_recovery"]["final_states"] == {"ok": 3, "not_applicable": 1}
     assert len(client.requests) == 2  # no retry and no finalizer: the research model's own JSON stands
     assert result["status"] == "completed" and result["output"]["summary"] == "all done"
     assert result["finalization"] is None

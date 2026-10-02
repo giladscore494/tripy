@@ -16,7 +16,7 @@ US_PAGE = "https://www.cadillac.com/en-us/electric/lyriq"   # the path locale ma
 EU_PAGE = "https://www.cadillaceurope.com/lyriq"
 IL_PRICE_PDF = "https://www.cadillac.co.il/lyriq/pricelist.pdf"
 
-IL_SPEC_HTML = """<html><head><title>LYRIQ מפרט טכני</title></head><body><h1>קאדילאק LYRIQ 2025</h1>
+IL_SPEC_HTML = """<html><head><title>LYRIQ מפרט טכני</title></head><body><h1>קאדילאק LYRIQ 2025 חשמלית AWD 528 כ"ס</h1>
 <table>
 <tr><th>מפרט</th><th>Luxury</th></tr>
 <tr><td>מומנט מרבי</td><td>610 נ"מ</td></tr>
