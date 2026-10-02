@@ -68,10 +68,29 @@ def _duckduckgo(ctx, query: str, count: int, domain: str | None) -> list[dict]:
     return parse_duckduckgo(resp.text, count)
 
 
+def search_key(ctx, query: str, count: int, domain: str | None) -> str:
+    engine = getattr(getattr(ctx.glm, "settings", None), "search_engine", "")
+    return json.dumps([ctx.config.search_backend, engine, query, count, domain or ""], ensure_ascii=False)
+
+
+def planned_provider_calls(ctx, name: str, args: dict) -> int:
+    """How many underlying provider searches this call would make right now: one per (query, domain) not already
+    in the shared search cache. search_official_domains searches each of its domains separately."""
+    query = str((args or {}).get("query") or "")
+    if name == "search_web":
+        count = max(1, min(int(args.get("max_results") or 8), 20))
+        pairs = [(count, args.get("domain") or None)]
+    elif name == "search_official_domains":
+        chosen = [d.strip().lower() for d in (args.get("domains") or default_domains(ctx.vehicle)) if d and d.strip()]
+        pairs = [(5, d) for d in chosen[:MAX_DOMAINS]] or [(8, None)]
+    else:
+        return 0
+    return sum(1 for count, domain in pairs if not ctx.cache.has_search(search_key(ctx, query, count, domain)))
+
+
 def _run_search(ctx, query: str, count: int, domain: str | None) -> tuple[list[dict], bool]:
     backend = ctx.config.search_backend
-    engine = getattr(getattr(ctx.glm, "settings", None), "search_engine", "")
-    key = json.dumps([backend, engine, query, count, domain or ""], ensure_ascii=False)
+    key = search_key(ctx, query, count, domain)
 
     def network() -> list[dict]:
         # Runs at most once per key across all concurrent workers (single flight in the cache).

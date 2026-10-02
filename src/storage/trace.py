@@ -344,7 +344,8 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
     # HISTORY only. Current states are never patched from attempt snapshots here: callers attach them
     # with apply_current_states(), computed by the shared evaluator over ALL events.
     states = {f["field"]: f for f in (final or {}).get("fields") or []}
-    retried = sorted({a.get("field") for a in attempts if a.get("field")})
+    # a cluster attempt (clustered tail recovery) lists its fields; a per-field attempt names one
+    retried = sorted({f for a in attempts for f in (a.get("fields") or [a.get("field")]) if f})
     early = [e for e in events if e.get("kind") == "field_recovery_early_resolved"]
     return {
         "enabled": queue.get("enabled"),
@@ -358,6 +359,7 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
         "fields_resolved_indirectly": {e.get("field"): {"resolved_during_field": e.get("resolved_during_field"),
                                                         "attempt": e.get("attempt"), "state": e.get("state")}
                                        for e in events if e.get("kind") == "field_recovery_queue_resolved_indirectly"},
+        "mode": queue.get("mode") or "legacy",
         "attempts": attempts,
         "attempt_count": len(attempts),
         "prior_excerpt_items": sum(int(a.get("prior_excerpt_items") or 0) for a in attempts),

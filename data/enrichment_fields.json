@@ -1,5 +1,5 @@
 {
- "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in.",
+ "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in. Recovery / market keys: recovery_cluster (technical_spec | performance | charging_ev | equipment | multimedia | tires_wheels | commercial | warranty: fields one kind of source usually answers together; the tail recovery unit), market_sensitivity (high | medium | low: how much the value can differ between markets for the same technical variant), portability_scope (none | exact_technical_variant: the binding level at which an official foreign-market fact may count for the target market when no target-market source contradicts it; the source market is never rewritten).",
  "version": "enrichment-v2",
  "dictionary_version": "field-dictionary-v1",
  "groups": {
@@ -449,6 +449,9 @@
    ],
    "semantic_definition": "Peak torque in Nm, by propulsion class (never chosen per vehicle by the model): conventional = combustion engine peak torque; hybrid and plug_in = the COMBUSTION ENGINE's peak torque only (electric-motor and combined/system torque are different quantities and are not this field); battery_electric = total electric-motor peak torque as published.",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "performance",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant",
    "semantic_exclusions": [
     {
      "applies_to": [
@@ -544,7 +547,10 @@
     }
    ],
    "semantic_definition": "0-100 km/h time in seconds as published (0-60 mph is a different quantity).",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "performance",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant"
   },
   {
    "name": "top_speed_kmh",
@@ -593,6 +599,9 @@
    ],
    "semantic_definition": "Maximum vehicle speed in km/h (the electric-only top speed of a plug-in hybrid is not this field).",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "performance",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant",
    "semantic_exclusions": [
     {
      "applies_to": [
@@ -704,6 +713,9 @@
    ],
    "semantic_definition": "Official combined-cycle fuel consumption in l/100km (WLTP where the source states it; plug-in hybrids: the weighted combined figure, not the charge-sustaining one).",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "performance",
+   "market_sensitivity": "medium",
+   "portability_scope": "none",
    "semantic_exclusions": [
     {
      "applies_to": [
@@ -800,7 +812,10 @@
     }
    ],
    "semantic_definition": "Combined electric energy consumption in kWh/100km of a plug-in vehicle (BEV, or a PHEV's electric consumption).",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "battery_gross_kwh",
@@ -886,6 +901,9 @@
    ],
    "semantic_definition": "Gross (total) traction-battery energy capacity in kWh.",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant",
    "semantic_exclusions": [
     {
      "terms": [
@@ -959,6 +977,9 @@
    ],
    "semantic_definition": "Usable (net) traction-battery energy capacity in kWh.",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant",
    "semantic_exclusions": [
     {
      "terms": [
@@ -1042,6 +1063,9 @@
    ],
    "semantic_definition": "All-electric driving range in km of a plug-in vehicle, combined cycle as published (city-only range is not this field); the cycle goes in electric_range_standard.",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none",
    "semantic_exclusions": [
     {
      "terms": [
@@ -1150,7 +1174,10 @@
     }
    ],
    "semantic_definition": "Test cycle of electric_range_km (WLTP, EPA, CLTC, NEDC).",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "ac_charging_time",
@@ -1231,7 +1258,10 @@
    "plausible_min": 30,
    "plausible_max": 3000,
    "semantic_definition": "AC (on-board charger) charging time of a plug-in vehicle as published, with its stated window/power when given.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "dc_charging_time",
@@ -1306,7 +1336,10 @@
    "plausible_min": 5,
    "plausible_max": 300,
    "semantic_definition": "DC fast-charging time of a plug-in vehicle as published, with its stated window.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "dc_charging_window_pct",
@@ -1375,7 +1408,10 @@
    "plausible_min": 0,
    "plausible_max": 100,
    "semantic_definition": "State-of-charge window (percent) of the published DC charging time.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "ac_max_charging_power_kw",
@@ -1467,7 +1503,10 @@
    "plausible_min": 1,
    "plausible_max": 30,
    "semantic_definition": "Maximum AC charging power in kW of a plug-in vehicle.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "dc_max_charging_power_kw",
@@ -1583,7 +1622,10 @@
    "plausible_min": 3,
    "plausible_max": 1000,
    "semantic_definition": "Maximum DC charging power in kW of a plug-in vehicle.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "charging_ev",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "length_mm",
@@ -1664,7 +1706,10 @@
     }
    ],
    "semantic_definition": "Overall body length in mm.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant"
   },
   {
    "name": "width_mm",
@@ -1768,6 +1813,9 @@
    ],
    "semantic_definition": "Overall body width in mm EXCLUDING mirrors (width with mirrors is a different quantity).",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "medium",
+   "portability_scope": "none",
    "semantic_exclusions": [
     {
      "terms": [
@@ -1878,7 +1926,10 @@
     }
    ],
    "semantic_definition": "Overall height of the unladen vehicle in mm; when the source states a condition (with roof rails, with antenna) it is kept as the value's condition.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "wheelbase_mm",
@@ -1938,7 +1989,10 @@
    "plausible_min": 1500,
    "plausible_max": 5000,
    "semantic_definition": "Wheelbase in mm.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant"
   },
   {
    "name": "curb_weight_kg",
@@ -2016,7 +2070,10 @@
     }
    ],
    "semantic_definition": "Curb (kerb) weight in kg as published (an EU 'mass in running order' includes a 75 kg driver; the source wording stays in the quote).",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "ground_clearance_mm",
@@ -2066,7 +2123,10 @@
    "plausible_min": 50,
    "plausible_max": 500,
    "semantic_definition": "Minimum ground clearance of the unladen vehicle in mm.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "medium",
+   "portability_scope": "none"
   },
   {
    "name": "cargo_volume_l",
@@ -2145,6 +2205,9 @@
    ],
    "semantic_definition": "Luggage-compartment volume in litres with all seats in use (seats-folded / maximum volume and a front trunk are not this field). Depends on body AND powertrain (battery packaging).",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "medium",
+   "portability_scope": "none",
    "semantic_exclusions": [
     {
      "terms": [
@@ -2222,7 +2285,10 @@
     }
    ],
    "semantic_definition": "Fuel tank capacity in litres.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant"
   },
   {
    "name": "gearbox_type",
@@ -2318,7 +2384,10 @@
     }
    ],
    "semantic_definition": "Transmission type (automatic, manual, dct, cvt, e-cvt, single-speed, amt).",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant"
   },
   {
    "name": "gear_count",
@@ -2344,6 +2413,9 @@
    "plausible_max": 12,
    "semantic_definition": "Number of discrete forward gear ratios, only when the source states it. Not applicable when the gearbox has no discrete stepped gear count (CVT, e-CVT). Never inferred from the gearbox type.",
    "binding_requirement": "exact_technical_variant",
+   "recovery_cluster": "technical_spec",
+   "market_sensitivity": "low",
+   "portability_scope": "exact_technical_variant",
    "not_applicable_when": [
     {
      "field": "gearbox_type",
@@ -2467,6 +2539,9 @@
    ],
    "semantic_definition": "Diagonal of the central infotainment screen in inches (instrument cluster and head-up display are not this field).",
    "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "multimedia",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "semantic_exclusions": [
     {
      "terms": [
@@ -2512,7 +2587,10 @@
     "carplay is not available"
    ],
    "semantic_definition": "Apple CarPlay support on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "multimedia",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "android_auto",
@@ -2541,7 +2619,10 @@
     "android auto is not available"
    ],
    "semantic_definition": "Android Auto support on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "multimedia",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "wireless_phone_projection",
@@ -2598,7 +2679,10 @@
     }
    ],
    "semantic_definition": "Wireless CarPlay / Android Auto on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "multimedia",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "power_seats",
@@ -2658,7 +2742,10 @@
     }
    ],
    "semantic_definition": "Electrically adjustable front seat(s) on this trim, at least the driver's (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "heated_seats",
@@ -2711,7 +2798,10 @@
     }
    ],
    "semantic_definition": "Heated front seats on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "ventilated_seats",
@@ -2747,7 +2837,10 @@
     "no ventilated seats"
    ],
    "semantic_definition": "Ventilated (cooled) front seats on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "climate_zones",
@@ -2824,7 +2917,10 @@
    "plausible_min": 1,
    "plausible_max": 6,
    "semantic_definition": "Number of independently controlled climate zones on this trim. A word form maps to a number only through an explicit pattern in this schema.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "sunroof_panoramic",
@@ -2860,7 +2956,10 @@
     "without panoramic roof"
    ],
    "semantic_definition": "Sunroof or panoramic glass roof on this trim (true / false).",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "other_comfort_features",
@@ -2881,7 +2980,10 @@
     "convenience"
    ],
    "semantic_definition": "Other comfort equipment of this trim, as listed by the source.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "equipment",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "rim_diameter_in",
@@ -2971,7 +3073,10 @@
     }
    ],
    "semantic_definition": "Standard wheel rim diameter of this trim in inches.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "tire_size_front",
@@ -3000,7 +3105,10 @@
     "front tyres"
    ],
    "semantic_definition": "Standard front tire size of this trim.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "tire_size_rear",
@@ -3029,7 +3137,10 @@
     "rear tyres"
    ],
    "semantic_definition": "Standard rear tire size of this trim.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "alternative_tire_sizes",
@@ -3054,7 +3165,10 @@
     "optional tyres"
    ],
    "semantic_definition": "Optional / alternative tire sizes offered for this trim.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "local_trim_name",
@@ -3079,7 +3193,10 @@
     "variant"
    ],
    "semantic_definition": "Commercial trim name used in the target market.",
-   "binding_requirement": "exact_market_trim"
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "commercial",
+   "market_sensitivity": "high",
+   "portability_scope": "none"
   },
   {
    "name": "list_price",
@@ -3172,6 +3289,9 @@
    ],
    "semantic_definition": "Importer list price of this exact local trim in the target market (time-sensitive: valid as of a date).",
    "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "commercial",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   },
   {
@@ -3227,6 +3347,9 @@
    ],
    "semantic_definition": "Annual registration/licence fee in the target market (time-sensitive: valid as of a date).",
    "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "commercial",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   },
   {
@@ -3257,6 +3380,9 @@
    ],
    "semantic_definition": "Vehicle (basic) warranty terms in the target market (time-sensitive).",
    "binding_requirement": "body_powertrain",
+   "recovery_cluster": "warranty",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   },
   {
@@ -3286,6 +3412,9 @@
    ],
    "semantic_definition": "Traction-battery / hybrid-system warranty terms in the target market (time-sensitive).",
    "binding_requirement": "body_powertrain",
+   "recovery_cluster": "warranty",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   },
   {
@@ -3327,6 +3456,9 @@
    "plausible_max": 1000000,
    "semantic_definition": "Vehicle warranty distance limit in km in the target market (time-sensitive).",
    "binding_requirement": "body_powertrain",
+   "recovery_cluster": "warranty",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   },
   {
@@ -3366,6 +3498,9 @@
    "plausible_max": 15,
    "semantic_definition": "Vehicle warranty duration in years in the target market (time-sensitive).",
    "binding_requirement": "body_powertrain",
+   "recovery_cluster": "warranty",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
    "time_sensitive": true
   }
  ]

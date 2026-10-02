@@ -99,13 +99,20 @@ def declarations(events: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
+def in_target_scope(item: dict, target_market: str) -> bool:
+    """A target-market item, or a foreign item the portability policy lets count for the target market (its own
+    `market` is kept; see src/market_portability.py)."""
+    return is_target_market(item.get("market"), target_market) or item.get("portable_to_target_market") is True
+
+
 def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
-    """Target-market candidates (not explicitly another variant) whose values materially differ.
+    """Target-scope candidates (not explicitly another variant) whose values materially differ.
 
     Returns those candidates when there are at least two different values, else []. A candidate from
-    another market, or marked variant_match=different, never makes a same-scope conflict on its own.
+    another market (unless portable), or marked variant_match=different, never makes a same-scope conflict
+    on its own.
     """
-    scope = [e for e in evidence if _has_value(e.get("value")) and is_target_market(e.get("market"), target_market)
+    scope = [e for e in evidence if _has_value(e.get("value")) and in_target_scope(e, target_market)
              and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
@@ -181,7 +188,7 @@ def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dic
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
                    target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
                    evidence_seq: dict | None = None, not_applicable_rule: str | None = None,
-                   schema_rule_conflict: str | None = None) -> dict:
+                   schema_rule_conflict: str | None = None, portability: dict | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -207,17 +214,34 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
 
     Different values across markets, or with a candidate explicitly marked as another variant, are
     recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
+
+    Portability (`portability`, from src/market_portability.py): a foreign item the field's policy lets count for
+    the target market is treated as target-scope; its market is not rewritten. Conflict classification
+    (src/conflict_normalizer.py): same-scope values that are the same number in other units, or a trim-bound
+    scalar inside a model-line range, are not a conflict; every other class keeps the field conflicting.
     """
+    from .conflict_normalizer import classify_conflict
+
     name = spec["name"]
     info: list[str] = []
+    portability = portability or {}
+    evidence = [{**e, **portability[str(e.get("evidence_id"))]} if str(e.get("evidence_id")) in portability else e
+                for e in evidence]
+    portable_ids = [str(e.get("evidence_id")) for e in evidence if e.get("portable_to_target_market") is True]
+    if portable_ids:
+        info.append("portable_foreign_fact")
     declared_status = (declared or {}).get("status")
     out_provenance = str((output_entry or {}).get("provenance") or "").lower()
     out_value = (output_entry or {}).get("value", (output_entry or {}).get("values")) if output_entry else None
     with_value = [e for e in evidence if _has_value(e.get("value"))]
-    target_items = [e for e in with_value if is_target_market(e.get("market"), target_market)]
+    target_items = [e for e in with_value if in_target_scope(e, target_market)]
     if len({material_key(e.get("value")) for e in (target_items or with_value)}) > 1:
         info.append("multiple_values")
     conflict = same_scope_conflict(evidence, target_market)
+    conflict_class = classify_conflict(spec, conflict, target_market) if conflict else None
+    if conflict_class and conflict_class["normalized"]:
+        info.append(f"conflict_normalized:{conflict_class['class']}")
+        conflict = []
     # Freshness: every declaration (and the primary JSON) only counts while no newer evidence exists.
     declared_current = declaration_is_current((declared or {}).get("seq"), last_evidence_seq)
     if declared_status and not declared_current:
@@ -265,6 +289,9 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         "declared_current": declared_current,
         "primary_output": output_entry,
         "conflict_evidence_ids": [e.get("evidence_id") for e in conflict],
+        "conflict_class": conflict_class,
+        "portable_evidence_ids": portable_ids,
+        "portability": portability,
     }
 
 
@@ -280,13 +307,16 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
             if isinstance(event.get("seq"), int):
                 last_seq[name] = event["seq"]
                 evidence_seq[str(item.get("evidence_id"))] = event["seq"]
+    from .market_portability import assess
+
     declared = declarations(events)
     parsed, output_seq = primary_output(events, with_seq=True)
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
                            evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
-                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True))
+                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True),
+                           assess(spec, evidence_by_field.get(spec["name"], []), target_market, is_target_market))
             for spec in specs]
 
 
@@ -311,9 +341,10 @@ def early_resolution_check(spec: dict, events: list[dict], target_market: str) -
     evaluation = current_evaluation(events, [spec], target_market)[0]
     if evaluation["state"] != "ok":
         return False, evaluation
+    portable = set(evaluation.get("portable_evidence_ids") or [])
     for item in trace.evidence_items(events):
         if (normalize_field_name(item.get("field")) == spec["name"] and _has_value(item.get("value"))
-                and is_target_market(item.get("market"), target_market)
+                and (is_target_market(item.get("market"), target_market) or str(item.get("evidence_id")) in portable)
                 and str(item.get("variant_match") or "").strip().lower() not in UNSPECIFIC_VARIANT):
             return True, evaluation
     return False, evaluation

@@ -55,7 +55,8 @@ def run(tmp_path, make_ctx, script, client_cls=ScriptedGLM, **cfg):
     client = client_cls(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
     # every model turn is scripted, so the layered document sweep (tested on its own) is off here
-    config = AgentConfig(**{"max_steps": 3, "no_new_research_turns": 0, "layered_harvest_enabled": False, **cfg})
+    config = AgentConfig(**{"max_steps": 3, "no_new_research_turns": 0, "layered_harvest_enabled": False,
+                            "recovery_mode": "legacy", **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path), log

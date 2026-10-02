@@ -159,10 +159,31 @@ def test_search_backends(make_ctx):
 
 
 def test_render_page_unavailable_is_reported(make_ctx, monkeypatch):
+    from src import tools
+    from src.tools import render
+
     monkeypatch.setitem(sys.modules, "playwright", None)
     monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    monkeypatch.setattr(tools, "_PROBED", {})
     result = dispatch(make_ctx(), "render_page", {"url": "https://example.com/spa"})
-    assert result["error"] == "render_unavailable"
+    assert result["error"] == "tool_unavailable" and "Playwright" in result["message"]     # refused, not attempted
+    assert "render_page" not in [s["function"]["name"] for s in tool_specs()]             # never offered to a model
+    assert render.render_page(make_ctx(), "https://example.com/spa")["error"] == "render_unavailable"
+
+
+def test_optional_capabilities_shape_the_tool_schema(monkeypatch):
+    from src import tools
+    from src.agent import SYSTEM_PROMPT, research_system_prompt
+
+    monkeypatch.setattr(tools, "_PROBED", {"render_page": True})
+    names = [s["function"]["name"] for s in tool_specs()]
+    assert "render_page" in names and research_system_prompt() == SYSTEM_PROMPT
+    monkeypatch.setattr(tools, "_PROBED", {"render_page": False})
+    assert "render_page" not in [s["function"]["name"] for s in tool_specs()]
+    assert "render_page" not in research_system_prompt() and "fetch_pdf" in research_system_prompt()
+    monkeypatch.setenv("DISABLED_TOOLS", "search_official_domains")
+    assert "search_official_domains" not in [s["function"]["name"] for s in tool_specs()]
+    assert len(tools.all_tool_specs()) == 12
 
 
 def test_parse_model_output_is_lenient():

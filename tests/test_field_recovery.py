@@ -114,7 +114,7 @@ def scripted_run(tmp_path, make_ctx, script, **cfg):
                                        .encode("utf-8"))})
     cache_source(ctx.cache, SPECS, SPECS_TEXT)
     client = ScriptedGLM(script)
-    config = AgentConfig(**{"max_steps": 3, "requested_fields": FUTURE_FIELDS, **cfg})
+    config = AgentConfig(**{"max_steps": 3, "requested_fields": FUTURE_FIELDS, "recovery_mode": "legacy", **cfg})
     result = run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path / "runs", "b", "101122"), config=config, tool_config=ToolConfig(),
                          session=ctx.session)
@@ -257,7 +257,7 @@ def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path
     log = RunLog(tmp_path / "runs", "b", "101122")
     with pytest.raises(KeyboardInterrupt):
         run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(requested_fields=FUTURE_FIELDS), tool_config=ToolConfig(), session=ctx.session)
+                    config=AgentConfig(requested_fields=FUTURE_FIELDS, recovery_mode="legacy"), tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
     assert saved["status"] == "interrupted" and saved["error"] is None   # an interruption is not an error
     assert (saved["partial"], saved["interrupted"], saved["interrupted_phase"], saved["interruption_type"]) == \

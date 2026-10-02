@@ -81,9 +81,52 @@ def _registry() -> dict[str, Callable[..., dict]]:
 
 _SPEC_BY_NAME = {spec["function"]["name"]: spec["function"]["parameters"] for spec in TOOL_SPECS}
 
+# Optional runtime capabilities: tool -> (probe, reason when missing). A tool whose capability is missing on this
+# host is left out of every tool schema sent to a model (a model cannot waste a turn on an impossible call) and is
+# refused by dispatch. DISABLED_TOOLS (comma separated) switches tools off by configuration.
+CAPABILITIES: dict[str, tuple[Callable[[], bool], str]] = {}
+_PROBED: dict[str, bool] = {}
+
+
+def _module_available(module: str) -> Callable[[], bool]:
+    def probe() -> bool:
+        import importlib.util
+
+        try:
+            return importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            return False
+    return probe
+
+
+CAPABILITIES["render_page"] = (_module_available("playwright"), "Playwright is not installed on this host")
+
+
+def unavailable_tools() -> dict[str, str]:
+    """{tool name: reason} for tools this host cannot run (missing capability or DISABLED_TOOLS)."""
+    import os
+
+    out: dict[str, str] = {}
+    for name, (probe, reason) in CAPABILITIES.items():
+        if name not in _PROBED:
+            _PROBED[name] = bool(probe())
+        if not _PROBED[name]:
+            out[name] = reason
+    for name in (os.environ.get("DISABLED_TOOLS") or "").split(","):
+        if name.strip():
+            out[name.strip()] = "disabled by DISABLED_TOOLS"
+    return out
+
+
+def all_tool_specs() -> list[dict]:
+    """Every tool the registry knows, available on this host or not."""
+    return TOOL_SPECS
+
 
 def tool_specs() -> list[dict]:
-    return TOOL_SPECS
+    """The tools a model may be offered on this host."""
+    missing = unavailable_tools()
+    return [spec for spec in TOOL_SPECS if spec["function"]["name"] not in missing] if missing else TOOL_SPECS
 
 
 def _coerce_args(name: str, raw: Any) -> dict:
@@ -118,6 +161,10 @@ def dispatch(ctx: ToolContext, name: str, raw_args: Any) -> dict:
     registry = _registry()
     if name not in registry:
         return {"error": "unknown_tool", "message": f"No tool named {name!r}", "available": list(registry)}
+    missing = unavailable_tools()
+    if name in missing:
+        return {"error": "tool_unavailable", "message": f"{name} is not available on this host: {missing[name]}.",
+                "available": [n for n in registry if n not in missing]}
     try:
         args = _coerce_args(name, raw_args)
     except (ValueError, TypeError) as exc:

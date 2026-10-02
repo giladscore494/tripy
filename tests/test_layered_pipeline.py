@@ -9,7 +9,7 @@ from conftest import FakeResponse
 from fixtures.cadillac_lyriq import IL_SPEC, PAYLOAD, US_PAGE, VEHICLE, put_documents
 from test_tools_smoke import ScriptedGLM, _call
 
-from src.agent import (DOCUMENT_SWEEP_SYSTEM_PROMPT, FIELD_RECOVERY_SYSTEM_PROMPT, SYSTEM_PROMPT, AgentConfig,
+from src.agent import (DOCUMENT_SWEEP_SYSTEM_PROMPT, FIELD_RECOVERY_SYSTEM_PROMPT, AgentConfig, research_system_prompt,
                        run_vehicle)
 from src.benchmark import compute_metrics
 from src.document_sweep import DOCUMENT_SWEEP_TOOLS
@@ -53,7 +53,7 @@ class PhaseGLM:
             packet = json.loads(messages[1]["content"].split("\n", 1)[1])
         turn_no = sum(1 for m in messages if m["role"] == "assistant") + 1
         self.last_messages = messages          # what the model actually sees this turn (tool results included)
-        if system == SYSTEM_PROMPT:
+        if system == research_system_prompt():
             self.calls["research"] += 1
             message = self.research.pop(0)
         elif system == DOCUMENT_SWEEP_SYSTEM_PROMPT:
@@ -72,7 +72,7 @@ class PhaseGLM:
 
 
 def run(tmp_path, ctx, client, **cfg):
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, **cfg})
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "recovery_mode": "legacy", **cfg})
     log = RunLog(tmp_path / "runs", "b", "85095")
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), vehicle_meta=VEHICLE, session=ctx.session)

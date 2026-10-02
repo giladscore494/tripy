@@ -52,7 +52,10 @@ def run(tmp_path, make_ctx, script, **cfg):
     client = ScriptedGLM(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
     # every model turn is scripted, so the layered document sweep (tested on its own) is off here
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": ["torque_nm"],
+    # torque from the official US page would be portable to IL (PR 2); these cases test the foreign-market and
+    # conflict flow, so the field's portability policy is off here (portability has its own tests)
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "recovery_mode": "legacy",
+                            "requested_fields": [{"name": "torque_nm", "portability_scope": "none"}],
                             "layered_harvest_enabled": False, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
