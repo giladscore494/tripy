@@ -35,8 +35,8 @@ TABLE_MAX_ROWS = 8
 TABLE_CELL_CHARS = 60
 STRUCTURED_MAX_LINES = 12
 # Most focused first: a hit snippet beats a table, structured data, then a broad text slice.
-FOCUS = {"find_in_document": 0, "extract_tables": 1, "get_structured_data": 2, "extract_html": 3,
-         "get_cached_document": 4}
+FOCUS = {"find_in_document": 0, "inspect_document_for_fields": 0, "extract_tables": 1, "get_structured_data": 2,
+         "extract_html": 3, "get_cached_document": 4}
 STOPWORDS = {"the", "and", "with", "for", "per", "max", "time", "from", "this", "that", "are", "was"}
 
 
@@ -79,6 +79,18 @@ def fragments(events: list[dict]) -> list[dict]:
                     start = max(0, offset - ctx)
                     frag["span"] = (start, start + len(hit.get("snippet") or ""))
                 out.append(frag)
+        elif name == "inspect_document_for_fields":
+            for field, items in (result.get("matches") or {}).items():
+                for item in items:
+                    snippet = item.get("snippet") or ""
+                    if not snippet.strip():
+                        continue
+                    offset = item.get("offset")
+                    frag = {**base, "query": item.get("matched_alias") or field, "scope": "text", "offset": offset,
+                            "text": snippet.strip()}
+                    if isinstance(offset, int):
+                        frag["span"] = (offset, offset + len(snippet))
+                    out.append(frag)
         elif name in ("extract_html", "get_cached_document"):
             if name == "get_cached_document" and not result.get("found"):
                 continue

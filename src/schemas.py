@@ -141,6 +141,21 @@ TOOL_SPECS: list[dict] = [
         ["document_id", "query"],
     ),
     _fn(
+        "inspect_document_for_fields",
+        "Batch local inspection of ONE stored document for MANY fields in one call (deterministic, no web request): "
+        "returns, per field, compact snippets around the field's labels (with text offsets) and the parser's "
+        "candidate values. Use it instead of one find_in_document call per field. Snippets are locations to read, "
+        "not evidence.",
+        {
+            "document_id": {"type": "string"},
+            "fields": {"type": "array", "items": {"type": "string"},
+                       "description": "Requested field names to look for; default: every requested field."},
+            "max_matches_per_field": {"type": "integer", "description": "1-5, default 2."},
+            "context_chars": {"type": "integer", "description": "Characters around each label, default 120."},
+        },
+        ["document_id"],
+    ),
+    _fn(
         "get_structured_data",
         "Extract JSON-LD, Next.js/Nuxt data, embedded application/json, window state objects and "
         "meta tags from a stored HTML document.",

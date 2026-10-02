@@ -112,7 +112,7 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     tool_config = tool_config or ToolConfig()
     stamp = _stamp()
     recovery_dir = run_dir / "recovery" / stamp
-    finalizer_model = finalizer_model_of(client)
+    finalizer_model = finalizer_model_of(client, config)
     research_pricing = base.get("pricing") or info.get("pricing")
     if pricing_finalizer is None:
         same = finalizer_model == (base.get("research_model") or base.get("model"))

@@ -61,7 +61,11 @@ and every one of them stays configurable.
 | `GLM_CHAT_MAX_ATTEMPTS` | Total chat/completions HTTP attempts per request (default **2**; 1 = no retry). |
 | `GLM_SEARCH_MAX_ATTEMPTS` | Total web_search HTTP attempts per request (default **3**). |
 | `GLM_CHAT_TIMEOUT_S` | Read timeout per attempt in seconds (default 240). |
-| `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
+| `PRIMARY_RESEARCH_MAX_TURNS` (alias `AGENT_MAX_STEPS`) | Primary research (source acquisition) turn ceiling (default **6**). See [Primary research is source acquisition](#primary-research-is-source-acquisition). |
+| `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off). |
+| `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
+| `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 30 fields, 48 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
+| `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting. See [Phase-specific model settings](#phase-specific-model-settings). |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
 | `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`cluster` default, or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt). See [Clustered tail recovery](#clustered-tail-recovery-default). |
@@ -123,15 +127,16 @@ The GLM-5.3 baseline (batch `20261001T185509Z-glm-5.3-one`, vehicle #44) showed 
 re-sending the whole 30-step conversation for the final answer does not: the final call timed out
 repeatedly and no result was saved. Each vehicle run now has two explicit phases:
 
-1. **Research phase** (`GLM_MODEL`). Tool-calling turns up to the soft budget `AGENT_MAX_STEPS`
-   (default 12). Fetch tools store the full document in the cache and return only a `document_id`,
-   metadata and a short preview. The model is told to query stored documents (`find_in_document`,
-   `extract_tables`, `get_structured_data`, `extract_html`) before searching again. Older tool results
+1. **Research phase** (`GLM_MODEL`). Source acquisition: tool-calling turns up to
+   `PRIMARY_RESEARCH_MAX_TURNS` (default 6), ended earlier by the deterministic no-artifact stop (see
+   [Primary research is source acquisition](#primary-research-is-source-acquisition)). Fetch tools store the full
+   document in the cache and return only a `document_id`, metadata and a short preview. Older tool results
    in the conversation are compacted to stubs that keep `document_id`, URL, title, query and result URLs.
    Repeated searches, re-fetches and identical document queries are noticed and pointed out to the
-   model. Research stops with a recorded `stop_reason`: `model_finished`, `max_steps`,
-   `no_new_research` (N turns in a row with no new document, evidence, source or document query),
-   `user_cancelled`, `api_failure` or `research_exception`.
+   model. Research stops with a recorded `stop_reason`: `model_finished`, `max_steps`, `no_new_artifact`
+   (`PRIMARY_RESEARCH_NO_ARTIFACT_STOP` turns in a row that acquired nothing), `acquisition_sufficient` (optional),
+   `no_new_research` (`AGENT_NO_NEW_RESEARCH_TURNS` turns with no new document, evidence, source or document
+   query), `user_cancelled`, `api_failure` or `research_exception`.
 2. **Finalization phase** (`GLM_FINALIZER_MODEL`, default `GLM_MODEL`). If the research model did not
    already return valid JSON, ONE no-tools call receives a compact research bundle (`src/bundle.py`):
    the Level 1.5 identity, the targets, every stored evidence item (with market/variant), candidate facts
@@ -140,7 +145,8 @@ repeatedly and no result was saved. Each vehicle run now has two explicit phases
    no evidence and the last model notes. It is capped at `AGENT_FINALIZER_BUNDLE_MAX_CHARS`. The raw
    conversation is never sent. The exact request is saved as `finalizer_request.json`.
 
-Statuses: `completed`, `max_steps_finalized`, `no_new_research_finalized`, `completed_unparsed`,
+Statuses: `completed`, `max_steps_finalized`, `no_new_research_finalized` (also after `no_new_artifact`),
+`acquisition_sufficient_finalized`, `completed_unparsed`,
 `finalization_failed`, `research_failed`, `interrupted`, `recovered_finalized`, `finalization_pending`
 (the durable checkpoint, see below), plus `incomplete` for runs reconstructed from events.
 
@@ -149,9 +155,13 @@ Statuses: `completed`, `max_steps_finalized`, `no_new_research_finalized`, `comp
 The full per-vehicle pipeline is now:
 
 ```
-PRIMARY RESEARCH (source acquisition)      model turns, tools
+PRIMARY RESEARCH (source acquisition)      model turns, tools; deterministic no-artifact stop
 DETERMINISTIC HARVEST                      0 model calls: every document -> candidates for ALL fields
-MODEL DOCUMENT SWEEP                       1 model turn; a 2nd ONLY to read turn-1 cached inspections; cached tools only
+LOCAL-FIRST PRE-SWEEP                      0 model calls: candidate routing, batch inspection of cached documents for
+                                           open fields without candidates, current_evaluation(), settled fields removed
+ADAPTIVE DOCUMENT SWEEP                    1 call per chunk (1 chunk unless the packet exceeds its limits; chunks by
+                                           recovery_cluster); a 2nd turn per chunk ONLY to read turn-1 cached
+                                           inspections; cached tools only
 current_evaluation()                       the one shared field evaluator
 TARGETED WEB RECOVERY                      only fields still unresolved, breadth-first
 current_evaluation()
@@ -183,9 +193,11 @@ FINALIZER
 - **Candidate cache**: `documents/<id>/derived_field_candidates_<schema_hash>.json` in the shared cache.
   Another vehicle (or worker) reusing the document and dictionary reuses the harvest; it is computed
   once even under concurrent requests.
-- **Document sweep** (`src/document_sweep.py`): one compact packet for all applicable fields (identity,
-  current states, candidate matrix with quotes and hints, stored evidence, cached-document metadata).
-  Only `find_in_document`, `extract_tables`, `extract_html`, `get_structured_data`,
+- **Document sweep** (`src/document_sweep.py`): compact packets for the OPEN fields only (identity, current
+  states, each field's best-routed candidates with quotes and hints, `local_snippets` for fields without
+  candidates, `fields_not_found_locally`, the open fields' stored evidence, cached-document identity with
+  authority / market / binding). See [Local-first adaptive document sweep](#local-first-adaptive-document-sweep).
+  Only `inspect_document_for_fields`, `find_in_document`, `extract_tables`, `extract_html`, `get_structured_data`,
   `get_cached_document`, `store_evidence` and `report_field_status` are offered; any other call is
   refused without being executed (`tool_blocked`), so the stage makes zero searches and zero fetches.
   Evidence the sweep stores for a document/value with no matching candidate is logged as
@@ -209,6 +221,88 @@ FINALIZER
   `DOCUMENT_SWEEP_MAX_TURNS=1` never grants the follow-up.
 - `LAYERED_HARVEST_ENABLED=false` restores the previous pipeline; `DOCUMENT_SWEEP_MAX_TURNS=0` keeps the
   zero-cost harvest but skips the sweep.
+
+### Primary research is source acquisition
+
+A real one-vehicle GLM-5.3-Flash run (Toyota COROLLA 2024 BUSINESS EDI) spent 12 research turns, 6 searches and 6
+documents, much of it as a model-driven Ctrl+F over documents it already had (`find_in_document("Maximum torque")`,
+`("Torque")`, `("Fuel tank")`, `("Kerb Weight")`, `("Apple CarPlay")`, `("Tyres")`, ...), and only then reached a
+document sweep of 37 fields / 66 candidates whose single model call hit a 240 s ReadTimeout. Primary research now
+acquires sources; deterministic code reads them (`src/acquisition.py`):
+
+- The research prompt asks for a compact, high-value source set (official importer, official manufacturer, official
+  technical PDFs, official media, then publishers, aggregators, marketplaces / communities; target-market sources
+  first for price, licence fee, trim and warranty) and states that every fetched document is harvested for ALL
+  fields by code. Field-by-field `find_in_document` over a document already fetched is not the strategy; one
+  `inspect_document_for_fields` call checks many fields at once. Search results in the research phase carry
+  `acquisition_priority` (`priority_technical`, `priority_commercial`, `source_class`, `market`): a deterministic,
+  inspectable order, never an allowlist and never an admission rule.
+- **Acquisition artifacts** of a turn: a new usable document (2xx with content, by URL, not server-side bound to
+  another variant), a new official source (retrieved, or returned by a search), a new target-market document, a new
+  candidate for an open applicable field from a usable document, newly admitted evidence (not `different` /
+  `unbound`) or a better best binding. NOT artifacts: re-reading a cached document, a repeated (or replayed) search,
+  403 / 404 / 429 and other failed calls, commentary, rejected evidence, candidates of another variant.
+- **No-artifact stop**: `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` (default 2) consecutive turns without an artifact end
+  research (`stop_reason=no_new_artifact`) before the `PRIMARY_RESEARCH_MAX_TURNS` ceiling (default 6). The model
+  is told after each empty turn how many such turns remain.
+- **Acquisition sufficiency** (optional, off by default): at least `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS` useful
+  documents AND at least `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` % of the applicable fields covered (a
+  candidate from a useful document, or already settled) end research (`acquisition_sufficient`).
+- All of it is scheduling: nothing here creates evidence or changes a field state, binding, market or conflict.
+- Telemetry (`result.json` `primary_research`, metrics `primary_research_*`): turns, model calls, stop reason
+  (`model_finished`, `max_turns`, `no_new_artifact`, `acquisition_sufficient`, `no_new_research`, `user_cancelled`,
+  `error`), documents added, useful / target-market / other-variant documents, official sources, candidate fields,
+  candidate coverage, no-artifact turns, and the artifacts of every turn (`primary_research_turn` events).
+
+### Deterministic batch document inspection
+
+`src/document_inspection.py` (tool `inspect_document_for_fields(document_id, fields)`) inspects ONE cached document
+for MANY fields in one local operation: the field dictionary's aliases (the same compiled rules as the harvest)
+locate each field's labels; overlapping windows of a field merge into one snippet (the label's line and the next
+one, bounded by `context_chars`); every snippet keeps `offset` / `end` / `label_offset` in the cached text
+(`text[offset:end] == snippet`). The field's harvested candidates come with it (quote, table / row / page and, where
+the quote occurs verbatim, its offset). It makes zero model, API or network calls, creates no evidence, decides no
+variant or market and never calls `current_evaluation()`. Exact repeats are replayed like the other read-only tools.
+
+### Local-first adaptive document sweep
+
+Before any paid sweep call (`run_document_sweep` in `src/agent.py`):
+
+1. every document is already harvested for all fields (each phase's session hook, then the harvest step);
+2. candidates are **routed** per field (`routing_score` in `src/document_sweep.py`): official authority, server-side
+   binding of the source document (another variant ranks last), target market (more for market-sensitive fields),
+   same-row / same-cell pairing, parser confidence, alias specificity, an official PDF, the target trim named next
+   to it, a differing year hint. Distinct values come first, so competing values are both in front of the model.
+   It answers only "which candidate should the model inspect first?"; agreement between sources, occurrences, model
+   confidence and historical yield are never used, and nothing about evidence, state, binding, market or conflict
+   changes;
+3. open fields WITHOUT candidates get a deterministic batch inspection of every usable cached document (event
+   `document_inspection`, 0 model calls): label snippets go into the packet as `local_snippets`; fields with no
+   label anywhere are listed as `fields_not_found_locally` (do not search the cache again for them);
+4. `current_evaluation()` runs again and settled fields are removed (`document_sweep_plan.removed_settled`);
+5. the packet carries the best `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` (default 3) candidates per field
+   (`candidates_not_shown` counts the rest; storage keeps every candidate and the local tools reach them);
+6. while the packet fits `DOCUMENT_SWEEP_MAX_PACKET_CHARS` / `_MAX_FIELDS` / `_MAX_CANDIDATES` (28000 / 30 / 48) it
+   is ONE call; otherwise `plan_chunks` packs the schema's `recovery_cluster`s, in schema order, into as few chunks as
+   fit (a cluster that alone exceeds the limits is split by fields). Every open field is in exactly one chunk; fields
+   settled by an earlier chunk are dropped before the next one. A `GLMError` still ends the sweep (retry semantics
+   unchanged) and recovery still runs.
+
+Telemetry (`result.json` `document_sweep`, metrics `document_sweep_*`): calls, chunks, packet chars, estimated input
+tokens ((system prompt + packet) / 4, before the call), fields, candidates, documents, latency (wall and model),
+timeouts, input / output tokens and per chunk: index, clusters, fields, candidates, packet chars, calls, latency,
+tokens; plus the pre-sweep inspection summary. The timeout itself is not raised by default: the fix is a smaller
+packet, not a longer wait.
+
+### Phase-specific model settings
+
+`src/phase_settings.py`: `research`, `document_sweep`, `recovery` and `finalizer` may each set `model`, `thinking`,
+`max_tokens`, `temperature` and `timeout_s` (read timeout per HTTP attempt; the attempt count and retry policy are
+unchanged) through `AgentConfig.phase_settings` or `GLM_<PHASE>_*` (see the settings table). Unset values inherit the
+global configuration, so the defaults behave exactly as before. The research model stays `GLM_MODEL` and the
+finalizer model `GLM_FINALIZER_MODEL`; a sweep / recovery phase on its own model is priced with that model's prices
+(`cost_details.<phase>_tokens_usd`). The effective settings of every phase are recorded in
+`glm_config.phase_settings`.
 
 ### Evidence admission, variant binding and source authority
 
@@ -1124,5 +1218,12 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 - verified fact reuse and feedback (`tests/test_reuse_feedback.py`, cold/warm benchmark in
   `tests/fixtures/corolla_family.py`): scope keys, stale / colliding records, cross-powertrain re-admission,
   negative memory never touching field state, concurrent memory writes and exports, the required Corolla
-  training cases and strict labels.
+  training cases and strict labels;
+- orchestration (`tests/test_orchestration.py`, offline benchmark in `tests/fixtures/corolla_orchestration.py`,
+  record 38626 shaped after the real GLM-5.3-Flash run): the no-artifact stop and what does / does not reset it,
+  acquisition sufficiency and source priority, batch inspection (several fields, offsets, merged snippets, no
+  evidence, no state, no model), settled fields removed, one sweep vs deterministic cluster chunks (nothing dropped),
+  the presentation limit vs storage, routing without votes, recovery still breadth-first after the sweep, no paid
+  stage when nothing is open, and per-phase settings. `python tests/fixtures/corolla_orchestration.py` prints the
+  report; the same file runs unchanged against an older checkout for a before/after comparison.
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).

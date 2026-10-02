@@ -145,8 +145,13 @@ with st.sidebar:
 
     st.header("Agent")
     env_agent = agent_config_from_env(env=secret)
-    max_steps = st.slider("Research budget (model turns per vehicle)", 3, 80, int(env_agent.max_steps),
-                          help="AGENT_MAX_STEPS. When reached, research stops and a compact finalization runs.")
+    max_steps = st.slider("Primary research turns (source acquisition)", 3, 80, int(env_agent.max_steps),
+                          help="PRIMARY_RESEARCH_MAX_TURNS / AGENT_MAX_STEPS (default 6). When reached, research "
+                               "stops; harvest, document sweep, recovery and finalization follow.")
+    no_artifact = st.number_input("Stop research after N turns that acquire nothing new (0 = off)", 0, 20,
+                                  int(env_agent.primary_research_no_artifact_stop),
+                                  help="PRIMARY_RESEARCH_NO_ARTIFACT_STOP (default 2). Re-reading cached documents, "
+                                       "repeated searches and failed fetches are not acquisition.")
     idle_turns = st.number_input("Finalize after N turns with no new research artifact (0 = off)", 0, 20,
                                  int(env_agent.no_new_research_turns), help="AGENT_NO_NEW_RESEARCH_TURNS")
     tool_chars = st.number_input("Max chars per tool result sent to model", 1000, 60000,
@@ -272,6 +277,7 @@ if run_clicked:
     batch_id = new_batch_id(f"{model_id}-{mode_label.split()[0].lower()}", RUNS_DIR)
     agent_cfg = agent_config_from_env(env=secret, max_steps=int(max_steps), max_tool_output_chars=int(tool_chars),
                                       no_new_research_turns=int(idle_turns), temperature=temperature,
+                                      primary_research_no_artifact_stop=int(no_artifact),
                                       field_recovery_enabled=bool(recovery_on),
                                       field_recovery_max_attempts=int(recovery_attempts),
                                       field_recovery_max_steps=int(recovery_steps),

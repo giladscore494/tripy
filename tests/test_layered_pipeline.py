@@ -341,11 +341,14 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
                         "field": field, "value": c["value"], "unit": c.get("unit"), "document_id": c["document_id"],
                         "quote": c["quote"], "market": "IL", "variant_match": "exact"}))
                     break
-        us = next(c for c in packet["deterministic_candidates"]["torque_nm"] if c.get("source") == "cadillac.com")
-        calls.append(_call("us", "store_evidence", {"field": "torque_nm", "value": us["value"], "unit": "Nm",
-                                                    "document_id": us["document_id"], "quote": us["quote"],
-                                                    "market": "US", "variant_match": "unclear"}))
-        return turn(*calls)
+        # the 43-field packet is chunked by recovery_cluster: torque is in one chunk only
+        us = next((c for c in packet["deterministic_candidates"].get("torque_nm") or []
+                   if c.get("source") == "cadillac.com"), None)
+        if us:
+            calls.append(_call("us", "store_evidence", {"field": "torque_nm", "value": us["value"], "unit": "Nm",
+                                                        "document_id": us["document_id"], "quote": us["quote"],
+                                                        "market": "US", "variant_match": "unclear"}))
+        return turn(*calls) if calls else say({"reviewed": []})
 
     client = PhaseGLM([read_docs(ids), say({"summary": "primary", "fields": {}})], sweep=sweep)
     result, events, _ = run(tmp_path, ctx, client, field_recovery_max_total_steps=24)
@@ -354,7 +357,12 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     assert harvest["candidate_fields_total"] >= 35 and harvest["fields_unresolved_before_harvest"] == 43
     sweep = result["document_sweep"]
     layered = result["candidate_summary"]
-    assert sweep["model_calls"] == 1 and sweep["external_calls"] == 0
+    # 43 open fields / 60+ candidates exceed one packet's limits: deterministic chunks by recovery_cluster, one call
+    # each, every field in exactly one chunk
+    chunks = sweep["document_sweep_chunk_details"]
+    assert sweep["model_calls"] == sweep["document_sweep_chunks"] == len(chunks) >= 2 and sweep["external_calls"] == 0
+    assert sorted(f for c in chunks for f in c["fields"]) == sorted(set(f for c in chunks for f in c["fields"]))
+    assert len({f for c in chunks for f in c["fields"]}) == 43
     # 8 before the variant_match=unclear fix: IL equipment / tyre / price values whose server-side binding stays
     # below the field's exact_market_trim requirement (the trim is not bound for that fact) are no longer usable
     # evidence, so they enter web recovery instead of counting as resolved.

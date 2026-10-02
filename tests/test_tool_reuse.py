@@ -68,7 +68,7 @@ def put_doc(cache, url, text):
 def run(tmp_path, ctx, script, client_cls=ScriptedGLM, **cfg):
     client = client_cls(script)
     config = AgentConfig(**{"field_recovery_enabled": False, "max_steps": 6, "no_new_research_turns": 0,
-                            "recovery_mode": "legacy", **cfg})
+                            "primary_research_no_artifact_stop": 0, "recovery_mode": "legacy", **cfg})
     log = RunLog(tmp_path / "runs", "b", "85095")
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ctx.config, session=ctx.session)
@@ -95,7 +95,7 @@ def test_identical_find_in_document_is_replayed_not_executed(tmp_path, make_ctx,
                                                  say({"summary": "s", "fields": {}})])
     assert counted["find_in_document"] == 1
     replay = tool_json(tool_messages(client)[-1])
-    assert "[operational note] This turn produced no new" in tool_messages(client)[-1]["content"]
+    assert "[operational note] This turn acquired nothing new" in tool_messages(client)[-1]["content"]
     assert replay["hit_count"] == 1 and replay["reused_from_step"] == 1
     assert "previous result reused without executing the tool again" in replay["operational_note"]
     assert tool_messages(client)[-1]["tool_call_id"] == "c2"
@@ -171,7 +171,8 @@ def test_store_evidence_and_failed_calls_are_not_replayed(tmp_path, make_ctx, co
     assert call_signature("store_evidence", ev) is None and call_signature("report_field_status", {}) is None
     assert set(REPLAY_SAFE_TOOLS) == {"search_web", "search_official_domains", "fetch_url", "fetch_pdf",
                                       "render_page", "get_cached_document", "find_in_document", "extract_tables",
-                                      "get_structured_data", "extract_html"}
+                                      "get_structured_data", "extract_html",
+                                      "inspect_document_for_fields"}
 
 
 def test_signature_is_canonical_but_conservative():

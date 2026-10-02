@@ -156,7 +156,8 @@ def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
                                           "quote": f"spec row {i}: value {i * 7} units"})]} for i in range(3, 9)]
     turns.append({"role": "assistant", "content": json.dumps(FINAL_JSON)})
     client = ScriptedGLM(turns)
-    cfg = AgentConfig(field_recovery_enabled=False, max_steps=12, keep_recent_tool_results=2, max_tool_output_chars=5000, compact_tool_output_chars=600)
+    cfg = AgentConfig(field_recovery_enabled=False, max_steps=12, keep_recent_tool_results=2, max_tool_output_chars=5000, compact_tool_output_chars=600,
+                      primary_research_no_artifact_stop=0)   # this test is about context compaction over many turns
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path, "b", "1"), config=cfg, tool_config=ctx.config, session=ctx.session)
     assert result["status"] == "completed"
@@ -164,7 +165,8 @@ def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
     fetch_msg = client.requests[1]["messages"][-1]
     assert fetch_msg["role"] == "tool" and len(fetch_msg["content"]) <= cfg.max_tool_output_chars + 200
     assert len(json.loads(fetch_msg["content"])["text_preview"]) <= ctx.config.preview_chars
-    extract_msg = client.requests[2]["messages"][-1]["content"]
+    # a cached re-read acquires nothing: the turn carries an operational note after the tool JSON
+    extract_msg = client.requests[2]["messages"][-1]["content"].split("\n[operational note]")[0]
     assert len(json.loads(extract_msg)["text"]) <= ctx.config.max_text_chars
     # By the last turn both large results are compacted stubs that still carry the document handle.
     last = client.requests[-1]["messages"]
@@ -185,7 +187,8 @@ def test_no_new_research_trigger_and_duplicate_warnings(make_ctx, tmp_path):
     fetch = {"role": "assistant", "content": "", "tool_calls": [_call("c", "fetch_url", {"url": BIG_PAGE})]}
     client = ScriptedGLM([fetch, fetch, fetch, {"role": "assistant", "content": json.dumps(FINAL_JSON)}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
-                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=10, no_new_research_turns=2),
+                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=10, no_new_research_turns=2,
+                                                                     primary_research_no_artifact_stop=0),
                          tool_config=ctx.config, session=ctx.session)
     assert result["stop_reason"] == "no_new_research" and result["status"] == "no_new_research_finalized"
     assert result["research_steps"] == 3 and result["output"]["summary"] == "compiled"
@@ -524,10 +527,13 @@ def test_cli_finalize_existing(baseline, monkeypatch, capsys):
 # 16 + configuration -----------------------------------------------------------------------------
 
 def test_env_configuration_and_defaults(monkeypatch):
-    for name in ("AGENT_MAX_STEPS", "AGENT_NO_NEW_RESEARCH_TURNS", "TOOL_PREVIEW_CHARS"):
+    for name in ("AGENT_MAX_STEPS", "AGENT_NO_NEW_RESEARCH_TURNS", "TOOL_PREVIEW_CHARS", "PRIMARY_RESEARCH_MAX_TURNS",
+                 "PRIMARY_RESEARCH_NO_ARTIFACT_STOP"):
         monkeypatch.delenv(name, raising=False)
     cfg = agent_config_from_env()
-    assert (cfg.max_steps, cfg.no_new_research_turns) == (12, 2)
+    # primary research is source acquisition: 6 turns, stopped after 2 turns that acquire nothing
+    assert (cfg.max_steps, cfg.no_new_research_turns, cfg.primary_research_no_artifact_stop) == (6, 2, 2)
+    assert cfg.field_recovery_max_total_steps == 24                 # the recovery cap is unchanged
     monkeypatch.setenv("AGENT_MAX_STEPS", "30")
     monkeypatch.setenv("AGENT_NO_NEW_RESEARCH_TURNS", "0")
     monkeypatch.setenv("TOOL_PREVIEW_CHARS", "500")
@@ -545,12 +551,13 @@ def test_cli_dry_run_shows_flash_and_finalizer(monkeypatch, capsys, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
     monkeypatch.delenv("AGENT_MAX_STEPS", raising=False)
+    monkeypatch.delenv("PRIMARY_RESEARCH_MAX_TURNS", raising=False)
     monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")
     monkeypatch.setenv("GLM_FINALIZER_MODEL", "glm-5.3")
     assert cli.main(["--dry-run", "--runs-dir", str(tmp_path)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["research_model"] == "glm-5.3-flash" and out["finalizer_model"] == "glm-5.3"
-    assert out["glm_config"]["model"] == "glm-5.3-flash" and out["agent_config"]["max_steps"] == 12
+    assert out["glm_config"]["model"] == "glm-5.3-flash" and out["agent_config"]["max_steps"] == 6
     assert out["pricing"]["input_per_mtok"] == 0.15 and out["pricing_finalizer"]["input_per_mtok"] == 1.40
     assert not any(tmp_path.iterdir())
 

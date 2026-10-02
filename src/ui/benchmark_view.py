@@ -19,6 +19,11 @@ from ..storage.run_loader import load_runs
 from ..storage.run_log import list_batches
 
 PER_VEHICLE_COLS = ["vehicle", "status", "result_source", "final_output", "finalization_status", "stop_reason",
+                    "primary_research_turns", "primary_research_stop_reason", "primary_research_documents_added",
+                    "primary_research_candidate_fields", "primary_research_no_artifact_turns",
+                    "document_sweep_calls", "document_sweep_chunks", "document_sweep_packet_chars",
+                    "document_sweep_estimated_input_tokens", "document_sweep_fields", "document_sweep_candidates",
+                    "document_sweep_latency_ms", "document_sweep_timeouts", "document_sweep_output_tokens",
                     "requested_fields", "fields_failed_primary", "fields_retried", "fields_recovered",
                     "fields_still_failed", "field_retry_attempts", "field_recovery_model_calls",
                     "field_recovery_turns_used", "fields_not_attempted_due_to_budget", "fields_conflicting_final",
@@ -94,6 +99,9 @@ def render_benchmark(results: list[dict], vehicles_by_id: dict[str, dict], label
             "coverage_mean_%": agg["coverage_pct_mean"], "fields_mean": agg["fields_with_value_mean"],
             "extra_fields_mean": agg["extra_fields_mean"], "evidence_mean": agg["evidence_items_mean"],
             "docs_mean": agg["documents_opened_mean"], "steps_mean": agg["research_steps_mean"],
+            "sweep_calls_mean": agg["document_sweep_calls_mean"],
+            "sweep_packet_chars_mean": agg["document_sweep_packet_chars_mean"],
+            "sweep_timeouts_total": agg["document_sweep_timeouts_total"],
             "tool_calls_mean": agg["tool_calls_mean"], "cache_hit_%": agg["document_cache_hit_rate_pct"],
             "conflicts_total": agg["conflicts_reported_total"], "findings_total": agg["additional_findings_total"],
             "time_mean_s": agg["duration_s_mean"], "searches_total": agg["search_api_calls_total"],

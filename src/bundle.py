@@ -155,6 +155,8 @@ def _action_line(pair: dict) -> str:
                    f"{result.get('text_chars')} chars" + (" (cached)" if result.get("cache_hit") else ""))
     elif name == "find_in_document":
         outcome = f"{result.get('hit_count', 0)} hits"
+    elif name == "inspect_document_for_fields":
+        outcome = f"{len(result.get('fields_with_matches') or [])}/{result.get('fields_requested', 0)} fields located"
     elif name == "extract_tables":
         outcome = f"{result.get('tables_total', 0)} tables"
     elif name == "store_evidence":
@@ -186,8 +188,8 @@ def _table_text(table: dict, max_rows: int = 25) -> str:
 
 def _excerpts(pairs: list[dict]) -> list[dict]:
     """Content the research model already pulled out of documents, most targeted first."""
-    priority = {"find_in_document": 0, "extract_tables": 1, "get_structured_data": 2, "extract_html": 3,
-                "get_cached_document": 3, "fetch_url": 4, "fetch_pdf": 4, "render_page": 4}
+    priority = {"find_in_document": 0, "inspect_document_for_fields": 0, "extract_tables": 1, "get_structured_data": 2,
+                "extract_html": 3, "get_cached_document": 3, "fetch_url": 4, "fetch_pdf": 4, "render_page": 4}
     found = []
     for order, pair in enumerate(pairs):
         result = pair["result"] if isinstance(pair["result"], dict) else None
@@ -199,6 +201,10 @@ def _excerpts(pairs: list[dict]) -> list[dict]:
         if name == "find_in_document":
             text = "\n…\n".join(h.get("snippet", "") for h in result.get("hits") or [])
             via = f"find_in_document {args.get('query')!r}"
+        elif name == "inspect_document_for_fields":
+            text = "\n…\n".join(f"[{field}] {(item.get('snippet') or '').strip()}"
+                                for field, items in (result.get("matches") or {}).items() for item in items)
+            via = "inspect_document_for_fields"
         elif name == "extract_tables":
             text = "\n\n".join(_table_text(t) for t in result.get("tables") or [])
             via = "extract_tables"

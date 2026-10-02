@@ -72,6 +72,7 @@ def _registry() -> dict[str, Callable[..., dict]]:
         "extract_html": extract.extract_html,
         "extract_tables": extract.extract_tables,
         "find_in_document": extract.find_in_document,
+        "inspect_document_for_fields": extract.inspect_document_for_fields,
         "get_structured_data": extract.get_structured_data,
         "get_cached_document": cache.get_cached_document,
         "store_evidence": evidence.store_evidence,

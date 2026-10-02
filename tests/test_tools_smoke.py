@@ -32,7 +32,7 @@ def test_tool_specs_cover_every_tool():
     assert set(TOOL_NAMES) == {
         "search_web", "search_official_domains", "fetch_url", "fetch_pdf", "render_page", "extract_html",
         "extract_tables", "find_in_document", "get_structured_data", "get_cached_document", "store_evidence",
-        "report_field_status"}
+        "report_field_status", "inspect_document_for_fields"}
     assert all(spec["type"] == "function" for spec in tool_specs())
 
 
@@ -183,7 +183,7 @@ def test_optional_capabilities_shape_the_tool_schema(monkeypatch):
     assert "render_page" not in research_system_prompt() and "fetch_pdf" in research_system_prompt()
     monkeypatch.setenv("DISABLED_TOOLS", "search_official_domains")
     assert "search_official_domains" not in [s["function"]["name"] for s in tool_specs()]
-    assert len(tools.all_tool_specs()) == 12
+    assert len(tools.all_tool_specs()) == 13
 
 
 def test_parse_model_output_is_lenient():

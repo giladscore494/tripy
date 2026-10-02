@@ -109,10 +109,15 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     usage_recovery = result.get("usage_field_recovery") or {}
     usage_sweep = result.get("usage_document_sweep") or {}
     layered = result.get("candidate_summary") or {}
+    primary = result.get("primary_research") or {}
+    sweep = result.get("document_sweep") or {}
     cost, _ = run_cost(sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer, search_api_calls,
                        pricing if pricing is not None else result.get("pricing"),
                        pricing if pricing is not None else (result.get("pricing_finalizer") or result.get("pricing")),
                        stats.get("unknown_usage_attempts", 0))
+    if pricing is None and any(k.endswith("_model") for k in (result.get("cost_details") or {})) \
+            and isinstance(result.get("cost"), dict):
+        cost = result["cost"]          # a phase ran on its own model (src/phase_settings.py): priced per phase
     finalization = result.get("finalization") or {}
     tracking = result.get("research_tracking") or {}
     provenance = Counter(str(entry.get("provenance") or "not_stated") for _, entry in fields)
@@ -218,6 +223,25 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "finalizer_model_calls": usage_finalizer.get("model_calls", 0),
         "primary_model_calls": usage_research.get("model_calls", 0),
         "document_sweep_model_calls": usage_sweep.get("model_calls", 0),
+        # primary research = source acquisition (src/acquisition.py; scheduling telemetry, never accuracy)
+        "primary_research_turns": primary.get("turns", result.get("research_steps") or 0),
+        "primary_research_documents_added": primary.get("documents_added", 0),
+        "primary_research_candidate_fields": primary.get("candidate_fields", 0),
+        "primary_research_stop_reason": primary.get("stop_reason"),
+        "primary_research_no_artifact_turns": primary.get("no_artifact_turns", 0),
+        # adaptive document sweep (src/document_sweep.py)
+        "document_sweep_calls": sweep.get("document_sweep_calls", usage_sweep.get("model_calls", 0)),
+        "document_sweep_chunks": sweep.get("document_sweep_chunks", 0),
+        "document_sweep_packet_chars": sweep.get("document_sweep_packet_chars", 0),
+        "document_sweep_estimated_input_tokens": sweep.get("document_sweep_estimated_input_tokens", 0),
+        "document_sweep_fields": sweep.get("document_sweep_fields", 0),
+        "document_sweep_candidates": sweep.get("document_sweep_candidates", sweep.get("candidates_presented", 0)),
+        "document_sweep_documents": sweep.get("document_sweep_documents", 0),
+        "document_sweep_latency_ms": sweep.get("document_sweep_latency_ms", usage_sweep.get("model_latency_ms", 0)),
+        "document_sweep_timeouts": sweep.get("document_sweep_timeouts", 0),
+        "document_sweep_input_tokens": sweep.get("document_sweep_input_tokens", usage_sweep.get("prompt_tokens", 0)),
+        "document_sweep_output_tokens": sweep.get("document_sweep_output_tokens",
+                                                  usage_sweep.get("completion_tokens", 0)),
         "documents_harvested": layered.get("documents_harvested", 0),
         "candidate_count_total": layered.get("candidate_count_total", 0),
         "candidate_fields_total": layered.get("candidate_fields_total", 0),
@@ -314,7 +338,11 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "fields_foreign_direct", "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "finalizer_model_calls", "finalizer_input_chars",
             "finalizer_prompt_tokens", "finalizer_completion_tokens", "api_attempts", "chat_attempts",
             "search_attempts", "timeout_count", "unknown_usage_attempts", "duplicate_searches", "duplicate_fetches",
-            "primary_model_calls", "document_sweep_model_calls", "documents_harvested", "candidate_count_total",
+            "primary_model_calls", "document_sweep_model_calls", "primary_research_turns",
+            "primary_research_documents_added", "primary_research_no_artifact_turns", "document_sweep_calls",
+            "document_sweep_chunks", "document_sweep_packet_chars", "document_sweep_estimated_input_tokens",
+            "document_sweep_fields", "document_sweep_candidates", "document_sweep_latency_ms",
+            "document_sweep_timeouts", "document_sweep_input_tokens", "document_sweep_output_tokens", "documents_harvested", "candidate_count_total",
             "candidate_fields_total", "candidate_cache_hits", "candidate_cache_misses",
             "document_sweep_fields_promoted_to_evidence", "document_sweep_evidence_promoted",
             "document_sweep_fields_resolved", "document_sweep_deterministic_misses_found",
@@ -331,7 +359,9 @@ def aggregate(metrics: list[dict]) -> dict:
     if not metrics:
         return {"vehicles": 0}
     n = len(metrics)
-    out: dict = {"vehicles": n, "statuses": dict(Counter(m["status"] for m in metrics))}
+    out: dict = {"vehicles": n, "statuses": dict(Counter(m["status"] for m in metrics)),
+                 "primary_research_stop_reasons": dict(Counter(str(m.get("primary_research_stop_reason"))
+                                                               for m in metrics))}
     for key in SUM_KEYS:
         total = sum(m.get(key) or 0 for m in metrics)
         out[f"{key}_total"] = round(total, 2)
@@ -501,7 +531,7 @@ def start_batch(runs_dir: Path | str, batch_id: str, *, client, agent_cfg: Agent
         "created_at": utc_now(),
         "model": client.model,
         "research_model": research_model_of(client),
-        "finalizer_model": finalizer_model_of(client),
+        "finalizer_model": finalizer_model_of(client, agent_cfg),
         "glm_config": effective_glm_config(client, agent_cfg, tool_cfg),
         "prompt_version": prompt_version,
         "search_backend": tool_cfg.search_backend,
