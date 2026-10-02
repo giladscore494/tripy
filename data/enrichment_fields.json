@@ -2043,7 +2043,11 @@
     "boot space",
     "trunk capacity",
     "luggage compartment volume",
-    "cargo space"
+    "cargo space",
+    "boot capacity",
+    "luggage space",
+    "trunk space",
+    "luggage volume"
    ],
    "expected_units": [
     "l"

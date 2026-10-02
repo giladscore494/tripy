@@ -42,7 +42,7 @@ def say(obj):
 
 def store(cid, value, market="IL", **extra):
     args = {"field": "torque_nm", "value": value, "unit": "Nm", "market": market,
-            "source_url": IL_PAGE if market == "IL" else US_PAGE, "quote": f"{value} Nm", **extra}
+            "source_url": IL_PAGE if market == "IL" else US_PAGE, "quote": f"Torque {value} Nm", **extra}
     return _call(cid, "store_evidence", args)
 
 
@@ -177,7 +177,7 @@ FIELDS = ["torque_nm", "paint_code", "service_interval_km", "rear_legroom_mm", "
 def budget_script(turns):
     """Primary research stores one usable field; every recovery turn only reports 'unresolved'."""
     script = [turn(_call("p1", "store_evidence", {"field": "torque_nm", "value": 1066, "market": "IL",
-                                                   "source_url": IL_PAGE, "quote": "1,066 Nm"})),
+                                                   "source_url": IL_PAGE, "quote": "Torque 1,066 Nm"})),
               say({"summary": "primary", "fields": {}})]
     # Breadth-first recovery: round 1 gives every field its first attempt (4 turns each), round 2 starts again
     # with the first field still unresolved.

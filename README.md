@@ -212,16 +212,23 @@ store_evidence request
   → provenance      the document is in the store (document_id, or a URL this run / the cache retrieved);
                     a search snippet or memory is never a source                    → source_not_retrieved
   → applicability   the field applies to this propulsion                            → field_not_applicable_for_vehicle
-  → quote           occurs in the document (normalized; "…" joins fragments; a quote the parser cut from
-                    the same document also counts); with no quote, a deterministic candidate of the same
-                    document/field/value supplies it                                → quote_missing / _too_short / _not_in_source
-  → entailment      the quote STATES the value: the field's own dictionary parse of the quote, the number
-                    literally (written numbers such as "שלוש" too), or a schema conversion (146.0 ס"מ →
-                    1460 mm). Booleans need a stated availability (יש / אין / ✓ / standard / ללא); a
-                    label alone is never true                                       → unsupported_inference /
-                                                                                      value_not_in_quote / value_not_stated
-  → semantics       unit, plausible range, the field's semantic exclusions for this propulsion
-                    (a hybrid's torque_nm is the combustion engine's)               → unit_* / implausible_value /
+  → quote           occurs in the document (normalized; whole numbers stay whole, so "150 mm" is not in
+                    "4,150 mm"; "…" joins fragments in order within one short passage; a quote the parser
+                    cut from the same document also counts); with no quote, a deterministic candidate of
+                    the same document/field/value supplies it                       → quote_missing / _too_short / _not_in_source
+  → entailment      ONE fragment states the value FOR THIS FIELD: the field's own dictionary parse, or the
+                    number literally (written numbers such as "שלוש" only with the field's unit) or by a
+                    schema conversion (146.0 ס"מ → 1460 mm), with the field's label in the value's clause
+                    or the parser's own pairing of field and value in this document, and never a number
+                    the quote's parse gives to another field. Booleans need the feature's label with its
+                    availability right after it (יש / אין / ✓ / standard / not available), a negation right
+                    before it, or "includes …"; never another feature's "yes"     → unsupported_inference /
+                                                                                      value_not_in_quote / value_not_stated /
+                                                                                      field_label_not_in_quote /
+                                                                                      value_belongs_to_other_field
+  → semantics       unit (a USD price stays USD), plausible range, the field's semantic exclusions for this
+                    propulsion in the value's clause of the quote AND of its source line (a hybrid's
+                    torque_nm is the combustion engine's)                           → unit_* / implausible_value /
                                                                                       semantic_mismatch
   → identity        binding level + variant_match (src/document_binding.py), market from the source
   → authority       source_authority (src/source_authority.py, data/source_rules.json)
@@ -230,10 +237,15 @@ store_evidence request
 ```
 
 **Server-side variant binding.** The target identity comes from the Level 1.5 record (manufacturer, model
-family, model year, body, propulsion, engine displacement, power, drivetrain, model code, trim, market). Each
-document gets a profile of the values it names; each fact is bound through its own context, most specific
-first: the clause around the value in the quote, the quote, the document line holding it, the table column
-header of the value. Levels: `unknown < model_family < generation < body_powertrain < exact_technical_variant
+family, model year, body, propulsion, engine displacement in cc, power, drivetrain, model code, trim, market).
+Each document gets a profile: its identity zone (title, URL, H1 headings or the first lines, keeping only the
+list segments that name the target model family) decides; the full text only confirms, so a navigation menu
+listing hybrids or SUVs never vetoes a page (another displacement / power / drivetrain in the full text only
+leaves the dimension unresolved). Each fact is bound through its own context, most specific first: the clause
+around the value in the quote, the quote, the source line's clause, the table column header of the value (years
+inside a fact are never read as model years). The trim counts only when the identity zone names it; a column
+header naming none of the target trim on a page that names it elsewhere is another trim, which vetoes
+`exact` for trim-sensitive fields (price, equipment). Levels: `unknown < model_family < generation < body_powertrain < exact_technical_variant
 < exact_market_trim`. An explicit contradiction vetoes exact binding (another displacement, body, propulsion,
 drivetrain, or the system power of a BEV / combustion car; a longer model family such as "Corolla Cross" for a
 "Corolla"), even when manufacturer, model, body and year all match. A multi-variant page (1.8 AND 2.0 Hybrid)
@@ -255,8 +267,8 @@ such, while a claim of the target market is recorded as `unknown` (unverified). 
 
 **Schema semantics.** Every field has a `semantic_definition` (shown to the models), a `binding_requirement`,
 and where it matters `semantic_exclusions` (e.g. hybrid torque: engine torque only; cargo: seats up, not folded)
-and `not_applicable_when` (`gear_count` when admitted target evidence says the gearbox is CVT / e-CVT: no discrete
-stepped gear count). Plug-in-only fields (`electric_range_km`, `electric_range_standard`, AC/DC charging time,
+and `not_applicable_when` (`gear_count` when exact, target-market evidence says the gearbox is CVT / e-CVT: no
+discrete stepped gear count; never over the field's own target evidence). Plug-in-only fields (`electric_range_km`, `electric_range_standard`, AC/DC charging time,
 window and power, `energy_consumption_kwh_100km`) apply to `plug_in` and `battery_electric` only: a regular
 hybrid does not plug in, so they leave its requested fields, its coverage denominator (37 instead of 45), its
 recovery queue and its dashboard. `climate_zones` reads "בקרת אקלים: מפוצלת" as 2 only through an explicit
@@ -265,7 +277,7 @@ schema pattern.
 **Typed values and time.** Each evidence item keeps `value` as stored plus `typed_value` (`scalar`, `range` with
 `min`/`max`/`unit`/`condition`, `boolean`, `enum`, `text`, `compound`). A condition is kept only when the quote
 states it. Time-sensitive fields (`list_price`, `registration_licence_fee`, warranty fields) carry `valid_as_of`
-from a date the source states (verified in the document), else the document's own publication metadata
+from a date the source states (in the quote or its own source lines), else the document's own publication metadata
 (JSON-LD / meta tags / PDF metadata), else `temporal_status: undated`; the fetch time is kept separately as
 `observed_at` and never used as validity. The finalizer is asked to report such values with their date.
 

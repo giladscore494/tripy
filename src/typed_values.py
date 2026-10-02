@@ -56,7 +56,7 @@ def numbers_in(value: Any) -> list[float]:
     if isinstance(value, (int, float)):
         return [float(value)]
     out = []
-    for m in re.finditer(rf"(?<![\w.,])({_NUM.replace('-?', '')})(?![\d])", str(value or "")):
+    for m in re.finditer(rf"(?<![\w.,/])({_NUM.replace('-?', '')})(?![\d])", str(value or "")):
         n = parse_number(m.group(1))
         if n is not None:
             out.append(n)

@@ -47,11 +47,12 @@ LEVELS = ("unknown", "model_family", "generation", "body_powertrain", "exact_tec
 DEFAULT_REQUIREMENT = "exact_technical_variant"
 # Level a veto on this dimension caps the binding at.
 VETO_CAP = {"model": "unknown", "body": "generation", "propulsion": "generation", "displacement": "body_powertrain",
-            "drivetrain": "body_powertrain", "power": "body_powertrain"}
+            "drivetrain": "body_powertrain", "power": "body_powertrain", "trim": "exact_technical_variant"}
 NON_TARGET_MATCHES = ("different", "unbound")
 _VOCAB: dict[str, tuple[float, dict]] = {}
 _COMPILED: dict[tuple, Any] = {}
-YEAR = re.compile(r"(?<![\d.,/])(20[0-3]\d)(?![\d])")
+YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
+                  r"l\b|ליטר|kw|hp|כ\"ס|ש\"ח|₪|€|\$|lb|wh))")
 
 
 def vocabulary(path: Path | str | None = None) -> dict:
@@ -93,6 +94,7 @@ class TargetIdentity:
     body: str | None = None
     propulsion: str | None = None
     displacement_l: float | None = None
+    displacement_cc: float | None = None
     power_hp: float | None = None
     drivetrain: str | None = None
     model_code_tokens: list[str] = field(default_factory=list)
@@ -165,9 +167,10 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
     structure = payload.get("structure") or {}
     cc = engine.get("engine_cc")
     try:
-        displacement = round(float(cc) / 1000, 1) if cc and float(cc) > 0 else None
+        cc_value = float(cc) if cc and float(cc) > 0 else None
     except (TypeError, ValueError):
-        displacement = None
+        cc_value = None
+    displacement = round(cc_value / 1000, 1) if cc_value else None
     try:
         power = float(engine.get("power_hp")) if engine.get("power_hp") else None
     except (TypeError, ValueError):
@@ -184,6 +187,7 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         body=structure.get("body_normalized") or vehicle.get("body"),
         propulsion=engine.get("propulsion_normalized") or vehicle.get("propulsion"),
         displacement_l=displacement,
+        displacement_cc=cc_value,
         power_hp=power,
         drivetrain=_drivetrain(engine.get("drivetrain_normalized") or vehicle.get("drivetrain")),
         model_code_tokens=_code_tokens(ident.get("model_code") or vehicle.get("model_code")),
@@ -200,15 +204,16 @@ def _alternation(terms: Iterable[str]) -> str:
 def _displacements(text: str, vocab: dict) -> set[float]:
     suffixes = _alternation(vocab.get("displacement_suffixes") or [])
     engine = _alternation(vocab.get("engine_words") or [])
+    not_engine = r"(?!\s*(?:kwh?|קוט|קילוואט|times|x\b|פעמים|מיליון|million))"
     cc = _alternation(vocab.get("cc_units") or [])
     found: set[float] = set()
     if suffixes:
         # "4.5 l/100km", "4.5 ליטר ל-100 ק"מ" are consumption figures, not displacements
         for m in re.finditer(rf"(?<![\d.,])([1-9]\.\d)\s*-?\s*(?:{suffixes})(?![\w/])"
-                             rf"(?!\s*(?:/|ל-?\s*100|per\s*100|לכל\s*100))", text):
+                             rf"(?!\s*(?:/|ל-?\s*100|למאה|per\s*100|per\s*hundred|לכל\s*100))", text):
             found.add(float(m.group(1)))
     if engine:
-        for m in re.finditer(rf"(?:{engine})\s*:?\s*([1-9]\.\d)(?![\d])", text):
+        for m in re.finditer(rf"(?:{engine})\s*:?\s*([1-9]\.\d)(?![\d]){not_engine}", text):
             found.add(float(m.group(1)))
     if cc:
         for m in re.finditer(rf"(?<![\d.,])(\d,\d{{3}}|\d{{3,4}})\s*(?:{cc})(?![\w])", text):
@@ -219,6 +224,7 @@ def _displacements(text: str, vocab: dict) -> set[float]:
 
 
 def _powers(text: str, vocab: dict) -> set[float]:
+    """Power figures in hp (PS and, next to a power word, kW converted). Charging kW is never power."""
     units = _alternation(vocab.get("power_units") or [])
     found: set[float] = set()
     if units:
@@ -226,6 +232,14 @@ def _powers(text: str, vocab: dict) -> set[float]:
             value = float(m.group(1))
             unit = text[m.end(1):m.end()].strip()
             found.add(round(value * 0.986, 1) if unit.startswith("ps") else value)
+    words = _alternation(vocab.get("power_words") or [])
+    blockers = _terms(("charging_words",), vocab.get("charging_words") or [])
+    if words:
+        for m in re.finditer(rf"(?:{words})[^\d;|\n]{{0,25}}?(?<![\d.,])(\d{{2,4}})\s*(?:kw|קילוואט|קוט\"ס)(?![a-z])",
+                             text):
+            if blockers and blockers.search(m.group(0)):
+                continue
+            found.add(round(float(m.group(1)) * 1.341, 1))
     return {v for v in found if 40 <= v <= 2000}
 
 
@@ -271,7 +285,8 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     manufacturer_terms = (vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])
     man = _terms(("manufacturer", identity.manufacturer), manufacturer_terms) if manufacturer_terms else None
     codes = [c for c in identity.model_code_tokens if re.search(rf"(?<![a-z0-9]){re.escape(c)}(?![a-z0-9])", norm)]
-    trims = _terms(("trim", tuple(identity.trim_tokens)), identity.trim_tokens) if identity.trim_tokens else None
+    phrase = " ".join(identity.trim_tokens)
+    trims = _terms(("trim", phrase), [phrase]) if phrase else None
     return {
         "manufacturer": bool(man and man.search(norm)),
         "model": _family_status(norm, identity, vocab),
@@ -301,7 +316,7 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
             return "match"
         return "mixed" if "target" in found else "mismatch"
     if dim in ("model_code", "trim", "manufacturer"):
-        return "match" if found else "absent"
+        return "match" if found else "absent"   # (a column header can still make the trim a mismatch, see bind)
     if not found:
         return "absent"
     if dim == "year":
@@ -310,7 +325,14 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
             return "absent"
         return ("match" if found == {target} else "mixed") if target in found else "mismatch"
     if dim == "displacement":
-        target, rel = identity.displacement_l, 0.0
+        # marketed litres vs exact cc: 1950 cc is a "2.0", 1798 cc a "1.8"
+        target = identity.displacement_cc / 1000 if identity.displacement_cc else identity.displacement_l
+        if target is None:
+            return "absent"
+        hits = {v for v in found if abs(v - target) <= 0.06}
+        if not hits:
+            return "mismatch"
+        return "match" if hits == found else "mixed"
     elif dim == "power":
         target, rel = identity.power_hp, 0.03
     elif dim == "propulsion":
@@ -349,13 +371,52 @@ def statuses(text: str, identity: TargetIdentity) -> dict[str, str]:
     return {dim: dimension_status(dim, found[dim], identity) for dim in DIMENSIONS}
 
 
-def document_profile(*, text: str, title: str | None, url: str | None, identity: TargetIdentity) -> dict:
-    """Document-level dimension statuses (title + URL words + full text). Computed once per document."""
+# How a dimension the identity zone does not name is read from the rest of the document. Full text includes
+# navigation menus, related-model teasers and comparisons, so it can CONFIRM a value but never veto one: another
+# body or propulsion there is ignored, another displacement / power / drivetrain only leaves the dimension unresolved.
+FULL_TEXT_MISMATCH = {"body": "absent", "propulsion": "absent", "model": "absent", "year": "absent",
+                      "displacement": "mixed", "power": "mixed", "drivetrain": "mixed"}
+
+
+def identity_zone(*, title: str | None, url: str | None, headings: list[str] | None = None,
+                  text: str | None = None, identity: "TargetIdentity | None" = None, lines: int = 3) -> str:
+    """The part of a document that says WHAT it is about: title, URL words and main headings (HTML; `headings` is
+    a list, possibly empty) or the first lines (text / PDF; `headings` is None). Split into list segments ("|", "•")
+    and, when any segment names the target model family, only those segments: a navigation menu ("Yaris Hybrid |
+    Corolla | RAV4 Plug-in Hybrid | Hilux") never speaks for the page."""
     url_words = re.sub(r"[/_\-.?=&]+", " ", str(url or ""))
-    blob = f"{title or ''}\n{url_words}\n{text or ''}"
-    found = mentions(blob, identity)
-    return {"statuses": {dim: dimension_status(dim, found[dim], identity) for dim in DIMENSIONS},
-            "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in found.items()}}
+    head = [h for h in headings or [] if h and h.strip()]
+    if headings is None:
+        head = [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:lines]
+    segments = [seg.strip() for part in [title or "", url_words, *head] for seg in re.split(r"\s[|•·]\s|\|", part)
+                if seg.strip()]
+    if identity is not None:
+        named = [seg for seg in segments if "target" in _family_status(normalize_text(seg), identity, vocabulary())]
+        if named:
+            segments = named
+    return "\n".join(segments)
+
+
+def document_profile(*, text: str, title: str | None, url: str | None, identity: TargetIdentity,
+                     headings: list[str] | None = None) -> dict:
+    """Document-level dimension statuses. The identity zone (title, URL, headings) decides first; the full text
+    only confirms (see FULL_TEXT_MISMATCH). The trim counts only when the identity zone names it."""
+    zone = identity_zone(title=title, url=url, headings=headings, text=text, identity=identity)
+    zone_found = mentions(zone, identity)
+    full_found = mentions(f"{zone}\n{text or ''}", identity)
+    combined: dict[str, str] = {}
+    zone_statuses = {dim: dimension_status(dim, zone_found[dim], identity) for dim in DIMENSIONS}
+    full_statuses = {dim: dimension_status(dim, full_found[dim], identity) for dim in DIMENSIONS}
+    for dim in DIMENSIONS:
+        if zone_statuses[dim] != "absent" or dim == "trim":
+            combined[dim] = zone_statuses[dim]
+        elif full_statuses[dim] == "mismatch":
+            combined[dim] = FULL_TEXT_MISMATCH.get(dim, "absent")
+        else:
+            combined[dim] = full_statuses[dim]
+    return {"statuses": combined, "zone_statuses": zone_statuses, "full_statuses": full_statuses,
+            "trim_named_in_document": bool(full_found["trim"]),
+            "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in full_found.items()}}
 
 
 # --- binding --------------------------------------------------------------------------------------------
@@ -368,12 +429,27 @@ def _veto_dims(identity: TargetIdentity) -> tuple[str, ...]:
     return tuple(dims)
 
 
+def _layer_statuses(name: str, text: str, identity: TargetIdentity, trim_named_in_document: bool) -> dict[str, str]:
+    st = statuses(text, identity)
+    st["year"] = "absent"        # a year inside a fact (a price-list date, "since 2019") is not a model year
+    if name == "column_header":
+        found = mentions(text, identity)
+        technical = found["displacement"] or found["power"] or found["propulsion"]
+        # a header naming none of the target trim, on a page that names the target trim elsewhere, is ANOTHER trim
+        # (Business | Premium | Executive); a technical header (1.8 Hybrid 140) says nothing about trims
+        if st["trim"] == "absent" and trim_named_in_document and not technical:
+            st["trim"] = "mismatch"
+    return st
+
+
 def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tuple[str, str]] | None = None,
          veto_layers: list[tuple[str, str]] | None = None, *, market: str | None = None,
-         requirement: str | None = None, model_declared_different: bool = False) -> dict:
+         requirement: str | None = None, model_declared_different: bool = False,
+         trim_named_in_document: bool = False) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document)."""
     effective: dict[str, dict] = {}
-    layer_statuses = [(name, statuses(text, identity)) for name, text in layers or [] if text]
+    layer_statuses = [(name, _layer_statuses(name, text, identity, trim_named_in_document))
+                      for name, text in layers or [] if text]
     for dim in DIMENSIONS:
         chosen = None
         for name, st in layer_statuses:
@@ -383,6 +459,9 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         effective[dim] = chosen or {"status": doc_statuses.get(dim, "absent"), "basis": "document"}
     vetoes: list[str] = []
     veto_dims = _veto_dims(identity)
+    required = requirement if requirement in LEVELS else DEFAULT_REQUIREMENT
+    if required == "exact_market_trim" and effective["trim"]["status"] == "mismatch":
+        vetoes.append(f"trim_mismatch@{effective['trim']['basis']}")
     for dim in veto_dims:
         if effective[dim]["status"] == "mismatch":
             vetoes.append(f"{dim}_mismatch@{effective[dim]['basis']}")
@@ -415,7 +494,6 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         cap = VETO_CAP[veto.split("_mismatch")[0]]
         if level_index(level) > level_index(cap):
             level = cap
-    required = requirement if requirement in LEVELS else DEFAULT_REQUIREMENT
     if vetoes or model_declared_different:
         variant_match = "different"
     elif level == "unknown":

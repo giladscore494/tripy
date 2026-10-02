@@ -71,6 +71,16 @@ def cache_source(cache, url: str, text: str, *, kind: str = "fetch", doc_type: s
     return cache.put(kind, url, text.encode("utf-8"), meta, text)["document_id"]
 
 
+def labelled_quote(field: str, value, unit: str = "") -> str:
+    """A quote that states a value FOR its field (the field's first English alias next to the value), as admission
+    requires; unknown fields (no dictionary entry) keep their own name."""
+    from src.fields import load_schema
+
+    spec = next((s for s in load_schema() if s["name"] == field), {})
+    label = (spec.get("aliases_en") or [field.replace("_", " ")])[0]
+    return f"{label}: {value}" + (f" {unit}" if unit else "")
+
+
 def seed_evidence_sources(cache, script, headers: dict | None = None, default_header: str = "") -> dict[str, str]:
     """For scripted conversations: write one retrieved document per source_url that store_evidence calls cite,
     holding a header (identity text: model, propulsion, power...) and every quote cited for that URL. Returns

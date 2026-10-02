@@ -158,7 +158,8 @@ def _action_line(pair: dict) -> str:
     elif name == "extract_tables":
         outcome = f"{result.get('tables_total', 0)} tables"
     elif name == "store_evidence":
-        outcome = str(result.get("evidence_id"))
+        outcome = (f"rejected: {', '.join(result.get('reasons') or [])}" if result.get("rejected")
+                   else str(result.get("evidence_id")))
     else:
         outcome = "ok"
     if name in trace.SEARCH_TOOLS:

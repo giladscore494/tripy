@@ -194,7 +194,7 @@ def test_notes_never_supply_a_value_market_variant_or_provenance(corolla):
     years = store(corolla, field="warranty_years", value=3, document_id=doc, quote="אחריות: שלוש שנים", note=note,
                   market="IL")
     km = store(corolla, field="warranty_km", value=100000, document_id=doc, quote="אחריות: שלוש שנים", note=note)
-    assert years["stored"] and km["reasons"] == ["value_not_in_quote"]
+    assert years["stored"] and km["reasons"] == ["unsupported_inference"]       # the quote has no distance at all
     ev = item(corolla, years["evidence_id"])
     assert ev["source_url"] == CARTUBE and ev["source_authority"] == "aggregator" and ev["market"] == "IL"
     assert ev["market_basis"] == "domain_tld:.il"                       # provenance from the source, not the note
@@ -434,8 +434,7 @@ def test_corolla_run_rejects_the_polluted_evidence_end_to_end(tmp_path, make_ctx
     admitted = {(e["field"], e["variant_match"], e["market"]) for e in result["evidence"]}
     assert admitted == {("cargo_volume_l", "different", "unknown"), ("gearbox_type", "exact", "IL"),
                         ("warranty_years", "exact", "IL"), ("fuel_tank_l", "exact", "UK")}
-    assert result["evidence_admission"]["rejected_by_reason"] == {"unsupported_inference": 1, "value_not_in_quote": 1,
-                                                                  "value_not_stated": 1}
+    assert result["evidence_admission"]["rejected_by_reason"] == {"unsupported_inference": 2, "value_not_stated": 1}
     states = {name: s["state"] for name, s in result["research_bundle"]["field_states"].items()}
     assert (states["cargo_volume_l"], states["gear_count"], states["power_seats"], states["fuel_tank_l"]) == \
         ("variant_not_exact", "not_applicable", "missing", "foreign_market_only")
@@ -445,3 +444,186 @@ def test_corolla_run_rejects_the_polluted_evidence_end_to_end(tmp_path, make_ctx
         == (37, 3, 3, 1)
     assert m["evidence_aggregator_source"] == 2 and m["evidence_official_source"] == 1
     assert "100,000" not in json.dumps(result["research_bundle"]["evidence"], ensure_ascii=False)
+
+
+# --- regressions found by the adversarial review of this PR ---------------------------------------------------
+
+@pytest.fixture
+def page(corolla):
+    """One Corolla aggregator page with every trap the review found; returns a store function bound to it."""
+    from conftest import cache_source
+
+    text = "\n".join([
+        "טויוטה קורולה טורינג ספורט 2024 1.8 היברידי",
+        "Apple CarPlay: yes", "Android Auto", "Sunroof: no",
+        "Wireless Apple CarPlay and Android Auto (iOS 13+)",
+        "Heated seats are not available on Business",
+        "Length 4,150 mm", "Battery capacity 13.5 kWh",
+        "Engine torque 142 Nm; system torque 185 Nm", "Combined torque, 185 Nm",
+        "Boot space 596 litres, 1,526 litres with rear seats folded", "Fuel tank capacity 43 litres",
+        "Fuel tank: 43 litres; boot space 596 litres", "Acceleration 0-100 km/h: 9.2 s",
+        "Warranty: 3 years; 5 seats", "Width 1,790 mm (2,020 mm including mirrors)",
+        "Automatic climate control, two-tone interior", "בקרת אקלים מהדור השני",
+        "Price 35,000 USD", "Fuel consumption 4.5 litres per 100 km", "Gearbox: six-speed automatic", "Gears: 6",
+        "Max torque 142 Nm at 2000-4000 rpm", "Price list 2025: 179,990 ILS",
+    ])
+    doc = cache_source(corolla.cache, "https://www.cartube.co.il/toyota/corolla-ts-review", text)
+    return lambda **args: store(corolla, document_id=doc, **args)
+
+
+@pytest.mark.parametrize("field, value, quote, reason", [
+    ("sunroof_panoramic", True, "Apple CarPlay: yes", "value_not_stated"),             # another feature's yes
+    ("power_seats", False, "Sunroof: no", "value_not_stated"),
+    ("android_auto", True, "Wireless Apple CarPlay and Android Auto (iOS 13+)", "value_not_stated"),
+    ("android_auto", True, "Apple CarPlay: yes\nAndroid Auto", "value_not_stated"),     # the yes is the neighbour's
+    ("ground_clearance_mm", 150, "150 mm", "quote_not_in_source"),                    # not inside "4,150 mm"
+    ("battery_usable_kwh", 5, "5 kWh", "quote_not_in_source"),                         # not inside "13.5 kWh"
+    ("cargo_volume_l", 43, "Boot space … 43 litres", "field_label_not_in_quote"),     # no stitching across lines
+    ("cargo_volume_l", 43, "Fuel tank: 43 litres; boot space 596 litres", "value_belongs_to_other_field"),
+    ("top_speed_kmh", 100, "Acceleration 0-100 km/h: 9.2 s", "field_label_not_in_quote"),
+    ("warranty_years", 5, "Warranty: 3 years; 5 seats", "unit_mismatch"),
+    ("torque_nm", 185, "185 Nm", "semantic_mismatch"),                                 # the source line says system
+    ("torque_nm", 185, "Combined torque, 185 Nm", "semantic_mismatch"),
+    ("cargo_volume_l", 1526, "Boot space 596 litres, 1,526 litres with rear seats folded", "semantic_mismatch"),
+    ("width_mm", 2020, "Width 1,790 mm (2,020 mm including mirrors)", "semantic_mismatch"),
+    ("climate_zones", 2, "Automatic climate control, two-tone interior", "unsupported_inference"),
+    ("climate_zones", 2, "בקרת אקלים מהדור השני", "unsupported_inference"),
+])
+def test_review_false_accepts_are_rejected(page, field, value, quote, reason):
+    out = page(field=field, value=value, quote=quote)
+    assert out["stored"] is False and out["reasons"] == [reason], out
+
+
+@pytest.mark.parametrize("field, value, quote, extra", [
+    ("heated_seats", False, "Heated seats are not available on Business", {}),
+    ("fuel_consumption_combined_l_100km", 4.5, "Fuel consumption 4.5 litres per 100 km", {}),
+    ("gear_count", 6, "Gearbox: six-speed automatic", {}),
+    ("gear_count", 6, "Gears: 6", {}),
+    ("torque_nm", 142, "Engine torque 142 Nm", {}),
+])
+def test_review_false_rejects_are_admitted(page, field, value, quote, extra):
+    assert page(field=field, value=value, quote=quote, **extra)["stored"]
+
+
+def test_a_foreign_currency_price_keeps_its_currency(page, corolla):
+    out = page(field="list_price", value=35000, quote="Price 35,000 USD")
+    assert item(corolla, out["evidence_id"])["unit"] == "USD"
+    assert page(field="list_price", value=35000, unit="ILS", quote="Price 35,000 USD")["reasons"] == ["unit_mismatch"]
+
+
+def test_valid_as_of_must_be_stated_near_the_value(page, corolla):
+    near = page(field="list_price", value=179990, quote="Price list 2025: 179,990 ILS", valid_as_of="2025")
+    assert item(corolla, near["evidence_id"])["valid_as_of"] == "2025"
+    far = page(field="fuel_consumption_combined_l_100km", value=4.5, quote="Fuel consumption 4.5 litres per 100 km",
+               valid_as_of="2024")                     # the model year is in the page title, not a validity date
+    assert item(corolla, far["evidence_id"])["admission_checks"]["valid_as_of"] == "dropped_not_in_source"
+
+
+def test_navigation_menus_never_veto_the_page(make_ctx):
+    """A conventional Hilux page whose menu lists hybrids, and a sedan page whose menu lists SUVs."""
+    from conftest import cache_source
+
+    import json as json_
+    from pathlib import Path
+
+    from src.db import build_level15_payload
+
+    rows = json_.loads((Path(__file__).resolve().parent.parent / "data" / "benchmark_v1_level15_snapshot.json")
+                       .read_text("utf-8"))["rows"]
+    for record, text, quote, field, value in (
+            ("713", "Models: Yaris Hybrid | Corolla | RAV4 Plug-in Hybrid | Hilux\nToyota Hilux 2024 2.4 D-4D\n"
+                    "Fuel tank capacity 80 litres", "Fuel tank capacity 80 litres", "fuel_tank_l", 80),
+            ("43136", "רכבי פנאי שטח | רכבים מסחריים\nטויוטה קאמרי היברידית 2025 2.5\nנפח מיכל דלק 50 ליטר",
+             "נפח מיכל דלק 50 ליטר", "fuel_tank_l", 50)):
+        payload = build_level15_payload(next(r for r in rows if r["upstream_record_id"] == record))
+        ctx = make_ctx()
+        ctx.admission = AdmissionContext.for_run(payload, None, resolve_requested_fields(
+            None, propulsion=payload["engine_drivetrain"]["propulsion_normalized"]))
+        doc = cache_source(ctx.cache, f"https://www.example.co.il/{record}", text)
+        out = dispatch(ctx, "store_evidence", {"field": field, "value": value, "document_id": doc, "quote": quote})
+        assert out["stored"] and out["variant_match"] != "different", out
+
+
+def test_identity_reading_traps():
+    from src.document_binding import mentions
+
+    identity = target_identity(PAYLOAD, VEHICLE)
+    assert mentions('צריכת דלק: 4.5 ליטר למאה ק"מ', identity)["displacement"] == set()
+    assert mentions("Braked towing capacity 1.5 t", identity)["displacement"] == set()
+    assert mentions("Battery 1.3 kWh, motor 1.5 kW", identity)["displacement"] == set()
+    assert mentions("Apple CarPlay: yes - plug in your iPhone", identity)["propulsion"] == set()
+    assert mentions("Max torque 142 Nm at 2000-4000 rpm", identity)["year"] == set()
+    from src.db import build_level15_payload
+
+    import json as json_
+    from pathlib import Path
+    rows = json_.loads((Path(__file__).resolve().parent.parent / "data" / "benchmark_v1_level15_snapshot.json")
+                       .read_text("utf-8"))["rows"]
+    sprinter = target_identity(build_level15_payload(next(r for r in rows if r["upstream_record_id"] == "4330")))
+    from src.document_binding import dimension_status
+    assert dimension_status("displacement", {2.0}, sprinter) == "match"          # 1950 cc is marketed as 2.0
+
+
+def test_another_trim_column_is_not_the_target_trim(corolla):
+    from conftest import cache_source
+
+    html = """<html><head><title>טויוטה קורולה טורינג ספורט 2024 1.8 היברידי</title></head><body>
+<h1>טויוטה קורולה טורינג ספורט 2024 1.8 היברידי</h1><table>
+<tr><th>גרסה</th><th>Business</th><th>Premium</th><th>Executive</th></tr>
+<tr><td>חימום מושבים</td><td>אין</td><td>יש</td><td>יש</td></tr>
+<tr><td>מחיר</td><td>164,990 ש"ח</td><td>179,990 ש"ח</td><td>189,990 ש"ח</td></tr>
+</table></body></html>"""
+    doc = cache_source(corolla.cache, "https://www.cartube.co.il/toyota/corolla-ts-trims", html, doc_type="html")
+    premium = store(corolla, field="list_price", value=179990, document_id=doc, quote='179,990 ש"ח')
+    business = store(corolla, field="list_price", value=164990, document_id=doc, quote='164,990 ש"ח')
+    assert premium["variant_match"] == "different" and business["variant_match"] == "exact"
+    assert any(v.startswith("trim_mismatch") for v in item(corolla, premium["evidence_id"])["binding_veto"])
+    seats = store(corolla, field="heated_seats", value=True, document_id=doc)          # quote from the parser
+    assert seats["variant_match"] == "different"
+
+
+def test_schema_not_applicable_rule_never_overrules_target_evidence():
+    spec = next(s for s in resolve_requested_fields(None, propulsion="hybrid") if s["name"] == "gear_count")
+
+    def events(*items):
+        return [{"kind": "evidence", "seq": i + 1, "evidence": {"evidence_id": f"e{i + 1}", **it}}
+                for i, it in enumerate(items)]
+
+    foreign_cvt = {"field": "gearbox_type", "value": "cvt", "market": "UK", "variant_match": "unclear"}
+    exact_ecvt = {"field": "gearbox_type", "value": "e-CVT", "market": "IL", "variant_match": "exact"}
+    six = {"field": "gear_count", "value": 6, "market": "IL", "variant_match": "exact"}
+    state_of = lambda *items: evaluate_fields([spec], events(*items), "IL")[0]["state"]
+    assert state_of(foreign_cvt) == "missing"                     # a foreign / unclear gearbox decides nothing
+    assert state_of(exact_ecvt) == "not_applicable"
+    assert state_of(exact_ecvt, six) == "ok"                      # the field's own target evidence is judged as usual
+
+
+def test_fields_outside_the_requested_subset_keep_their_policy(make_ctx):
+    from conftest import cache_source
+
+    ctx = make_ctx()
+    ctx.admission = AdmissionContext.for_run(PAYLOAD, VEHICLE, resolve_requested_fields(["list_price"],
+                                                                                         propulsion="hybrid"))
+    doc = cache_source(ctx.cache, "https://www.cartube.co.il/x", "Toyota Corolla 1.8 Hybrid. Electric range 2 km. "
+                                                                 "Engine torque 142 Nm; system torque 185 Nm")
+    assert dispatch(ctx, "store_evidence", {"field": "electric_range_km", "value": 2, "document_id": doc,
+                                            "quote": "Electric range 2 km"})["reasons"] == \
+        ["field_not_applicable_for_vehicle"]
+    assert dispatch(ctx, "store_evidence", {"field": "torque_nm", "value": 185, "document_id": doc,
+                                            "quote": "system torque 185 Nm"})["reasons"] == ["semantic_mismatch"]
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://bmw-club.co.il/x", "unknown"), ("https://toyota-forum.com/x", "unknown"),
+    ("https://www.toyota.com.tw/x", "official_manufacturer"), ("https://www.toyota.co.th/x", "official_manufacturer"),
+])
+def test_brand_slugs_need_the_whole_label(url, expected):
+    assert classify_source(url, "טויוטה")["source_authority"] == expected
+
+
+def test_odd_argument_types_are_rejected_not_crashing(corolla):
+    doc = corolla.docs[CARTUBE]
+    assert store(corolla, field="cargo_volume_l", value={"min": 581}, document_id=doc,
+                 quote="נפח תא מטען 581-588 ליטר")["reasons"] == ["invalid_value_type"]
+    out = store(corolla, field="gearbox_type", value="e-CVT", document_id=doc, quote=["תיבת הילוכים: e-CVT"], unit=5)
+    assert out["stored"]

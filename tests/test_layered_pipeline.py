@@ -127,7 +127,9 @@ def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches
     assert m["tool_calls"] == len([c for c in result["tool_calls"] if not c.get("blocked")])
 
 
-INTERIOR = "LYRIQ Luxury interior: cooling function built into both front seats (standard)."
+# The parser misses it (the label stands alone on its line, the availability is on the next line, not a bare value
+# cell); the label + stated availability make it admissible evidence once the model has read it.
+INTERIOR = "LYRIQ Luxury interior: climate and cooling overview.\nSeat ventilation\nFront row: standard"
 INTERIOR_URL = "https://www.cadillac.co.il/lyriq/interior"
 
 
@@ -155,9 +157,9 @@ def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_
         body, note = results[0]["content"].split("\n[operational note] ", 1)
         assert note.startswith("Final document-sweep turn")
         hits = json.loads(body)["hits"]
-        snippet = next(h["snippet"] for h in hits if "cooling function" in h["snippet"])
-        # the quote must state availability ("(standard)"), not just name a feature
-        quote = snippet[snippet.index("cooling function"):snippet.index("(standard)") + len("(standard)")]
+        snippet = next(h["snippet"] for h in hits if "Seat ventilation" in h["snippet"])
+        # the quote names the feature AND states its availability ("standard"); a label alone would be rejected
+        quote = snippet[snippet.index("Seat ventilation"):snippet.index("standard") + len("standard")]
         return turn(_call("s1", "store_evidence", {"field": "ventilated_seats", "value": True, "document_id": doc,
                                                    "quote": quote, "market": "IL", "variant_match": "exact"}))
 

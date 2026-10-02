@@ -29,9 +29,16 @@ SEVERITY = {"suspicious": 2, "consistent": 1, "not_checkable": 0}
 TIRE_RIM = re.compile(r"r\s?(\d{2})", re.I)
 
 
+def _number(value: Any) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _target_items(evidence: Iterable[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
-    for item in evidence:
+    for item in evidence or []:
         if str(item.get("variant_match") or "").lower() in NON_TARGET:
             continue
         out.setdefault(normalize_field_name(item.get("field")), []).append(item)
@@ -53,7 +60,7 @@ def _check(name: str, status: str, fields: list[str], ids: list[str], detail: st
 def _co2(by_field: dict, payload: dict) -> dict:
     fuel = _nums(by_field.get("fuel_consumption_combined_l_100km", []))
     env, engine = payload.get("environment") or {}, payload.get("engine_drivetrain") or {}
-    co2 = env.get("co2_wltp")
+    co2 = _number(env.get("co2_wltp"))
     kind = str(engine.get("fuel_normalized") or "").lower()
     factor = CO2_PER_L100.get("diesel" if "diesel" in kind else "petrol" if kind and "electric" not in kind else "")
     fields = ["fuel_consumption_combined_l_100km", "government:co2_wltp"]
@@ -69,7 +76,7 @@ def _co2(by_field: dict, payload: dict) -> dict:
 
 def _curb(by_field: dict, payload: dict) -> dict:
     curb = _nums(by_field.get("curb_weight_kg", []))
-    gross = (payload.get("structure") or {}).get("gross_weight_kg")
+    gross = _number((payload.get("structure") or {}).get("gross_weight_kg"))
     fields = ["curb_weight_kg", "government:gross_weight_kg"]
     if not curb or not gross:
         return _check("curb_vs_gross_mass", "not_checkable", fields, [i for _, i in curb],

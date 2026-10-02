@@ -256,6 +256,7 @@ class Dictionary:
         self.negative_values = {normalize_term(x) for x in v.get("negative_values") or []}
         self.optional_values = {normalize_term(x) for x in v.get("optional_values") or []}
         self.optional_terms = compile_terms(x for x in v.get("optional_values") or [] if len(x) > 2)
+        self.negative_terms = compile_terms(x for x in v.get("negative_values") or [] if len(x) > 2)
         negations = compile_terms(v.get("negation_prefixes") or [])
         self.negation_prefix = re.compile(rf"(?:{negations.pattern})\s*$") if negations else None
         self.equipment = compile_terms(v.get("equipment_context_terms") or [])
@@ -544,6 +545,8 @@ def _bool_value(d: Dictionary, cell: str) -> tuple[Any, str] | None:
         return None
     if cell in d.negative_values:
         return False, "absent"
+    if _contains(d.negative_terms, cell):          # "not available" is not the optional "available"
+        return False, "absent"
     if cell in d.optional_values or _contains(d.optional_terms, cell):
         return True, "optional"
     if cell in d.affirmative or cell.startswith(("standard", "סטנדרט", "כן", "yes", "✓", "✔")):
@@ -605,6 +608,8 @@ def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[in
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
     if _contains(rule.negative, clause):
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
+    if _contains(d.negative_terms, text[b:bounds[1]]):          # "heated seats are not available on Business"
+        return Hit(False, "absent", confidence=0.7, span=anchor, hints={"availability": "absent"})
     if _contains(d.optional_terms, _window(text, *anchor, 25, bounds)):
         return Hit(True, "optional", confidence=0.6, span=anchor, hints={"availability": "optional"})
     outside = text[bounds[0]:a] + " " + text[b:bounds[1]]      # the label's own words are not equipment context

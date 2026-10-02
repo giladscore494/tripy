@@ -56,7 +56,8 @@ def split_host(host: str, rule_set: dict | None = None) -> tuple[str, str, str]:
     if len(parts) < 2:
         return "", host, ""
     two = ".".join(parts[-2:])
-    if two in (r.get("two_level_public_suffixes") or []) and len(parts) >= 3:
+    generic = len(parts[-1]) == 2 and parts[-2] in (r.get("second_level_labels") or [])   # toyota.com.tw, .co.th
+    if (two in (r.get("two_level_public_suffixes") or []) or generic) and len(parts) >= 3:
         return ".".join(parts[:-3]), parts[-3], two
     return ".".join(parts[:-2]), parts[-2], parts[-1]
 
@@ -81,9 +82,17 @@ def _brand(rule_set: dict, manufacturer: str | None) -> dict:
     return {}
 
 
-def _is_brand_label(label: str, slugs: list[str]) -> bool:
-    return any(label == s or label.startswith(s + "-") or label.startswith(s) and label[len(s):] in ("europe", "eu")
-               for s in (x.lower() for x in slugs))
+def _is_brand_label(label: str, slugs: list[str], rule_set: dict | None = None) -> bool:
+    """The registrable label IS the brand (toyota) or the brand with a listed suffix (toyota-europe, cadillaceurope);
+    toyota-forum or mini-storage are not."""
+    suffixes = (rule_set if rule_set is not None else rules()).get("brand_label_suffixes") or []
+    for slug in (x.lower() for x in slugs):
+        if label == slug:
+            return True
+        rest = label[len(slug):] if label.startswith(slug) else None
+        if rest is not None and rest.lstrip("-") in suffixes:
+            return True
+    return False
 
 
 def classify_source(url: str | None, manufacturer: str | None = None, rule_set: dict | None = None) -> dict:
@@ -103,7 +112,7 @@ def classify_source(url: str | None, manufacturer: str | None = None, rule_set: 
     if media:
         return {**out, "source_authority": "official_media", "authority_basis": f"brand_media_domain:{media}"}
     slugs = brand.get("slugs") or []
-    if slugs and _is_brand_label(label, slugs):
+    if slugs and _is_brand_label(label, slugs, r):
         first = sub.split(".")[-1] if sub else ""
         if first in (r.get("media_host_prefixes") or []) or any(t in host for t in r.get("media_label_terms") or []):
             return {**out, "source_authority": "official_media", "authority_basis": f"brand_media_host:{host}"}
@@ -116,7 +125,7 @@ def classify_source(url: str | None, manufacturer: str | None = None, rule_set: 
         if hit:
             return {**out, "source_authority": cls, "authority_basis": f"rule:{cls}:{hit}"}
     other = next((name for name, entry in (r.get("brands") or {}).items()
-                  if entry is not brand and _is_brand_label(label, entry.get("slugs") or [])), None)
+                  if entry is not brand and _is_brand_label(label, entry.get("slugs") or [], r)), None)
     if other:
         return {**out, "source_authority": "unknown", "authority_basis": "official_domain_of_another_brand"}
     return {**out, "source_authority": "unknown", "authority_basis": "no_rule"}
@@ -153,11 +162,13 @@ def url_market(url: str | None, rule_set: dict | None = None) -> tuple[str | Non
         if hint in label:
             return market, f"regional_domain:{label}"
     path = urlparse(str(url)).path.lower()
-    match = LOCALE.search(path)
-    if match:
-        market = normalize_market(match.group(2), r)
-        if market:
-            return market, f"path_locale:{match.group(0).strip('/')}"
+    for match in LOCALE.finditer(path):
+        language, country = match.group(1), match.group(2)
+        countries = {k.lower() for k in (r.get("market_by_tld") or {})} | {"gb", "us"}
+        if language in (r.get("locale_languages") or []) and country in countries:
+            market = normalize_market(country, r)
+            if market:
+                return market, f"path_locale:{match.group(0).strip('/')}"
     return None, None
 
 

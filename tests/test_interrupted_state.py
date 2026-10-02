@@ -7,7 +7,7 @@ import json
 import pytest
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
-from conftest import seed_evidence_sources
+from conftest import labelled_quote, seed_evidence_sources
 from test_run_config import PostResponse, ScriptedPostSession, chat_reply, tool_call
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -42,7 +42,7 @@ def say(obj):
 def store(cid, field, value, market, **kw):
     return _call(cid, "store_evidence", {"field": field, "value": value, "market": market,
                                          "source_url": IL if market == "IL" else US,
-                                         "quote": QUOTES.get(field, f"{field}: {value}"), **kw})
+                                         "quote": QUOTES.get(field, labelled_quote(field, value)), **kw})
 
 
 def seeded(make_ctx, script):

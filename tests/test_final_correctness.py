@@ -7,7 +7,7 @@ import json
 import pytest
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
-from conftest import cache_source, seed_evidence_sources
+from conftest import cache_source, labelled_quote, seed_evidence_sources
 from test_conflict_and_budget import budget_script, FIELDS
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -46,7 +46,7 @@ def say(obj):
 def store(cid, field, value, market="IL", url=None, **kw):
     return _call(cid, "store_evidence", {"field": field, "value": value, "market": market,
                                          "source_url": url or (IL if market == "IL" else US),
-                                         "quote": f"{field}: {value}", **kw})
+                                         "quote": labelled_quote(field, value), **kw})
 
 
 def run(tmp_path, make_ctx, script, client_cls=ScriptedGLM, **cfg):
@@ -202,14 +202,14 @@ def test_not_cut_short_when_the_next_attempt_never_started(tmp_path, make_ctx):
 
 def test_supplementary_evidence_is_rebuilt_from_events(tmp_path, make_ctx):
     same = {"field": "torque_nm", "value": 1066, "unit": "Nm", "market": "IL", "source_url": IL}
-    script = [turn(_call("c1", "store_evidence", {**same, "quote": "1,066 Nm"})),
+    script = [turn(_call("c1", "store_evidence", {**same, "quote": "Torque 1,066 Nm"})),
               turn(_call("c2", "store_evidence", {**same, "quote": "מומנט 1,066", "note": "Hebrew page"})),
               say({"summary": "done", "fields": {}})]
     result, _, _, log = run(tmp_path, make_ctx, script, field_recovery_enabled=False, requested_fields=["torque_nm"])
     live = result["evidence"]
     assert len(live) == 1 and live[0]["supplementary"] == [{"quote": "מומנט 1,066", "note": "Hebrew page"}]
     bundle_items = result["research_bundle"]["evidence"]            # the bundle (built from events) agrees ...
-    assert [(e["evidence_id"], e["value"], e["quote"]) for e in bundle_items] == [("e1", 1066, "1,066 Nm")]
+    assert [(e["evidence_id"], e["value"], e["quote"]) for e in bundle_items] == [("e1", 1066, "Torque 1,066 Nm")]
     assert "supplementary" not in bundle_items[0] and "note" not in bundle_items[0]   # ... minus model notes
     (log.dir / "result.json").unlink()
     rebuilt = load_runs(tmp_path / "runs", "b")[0]

@@ -112,10 +112,10 @@ def test_store_evidence_accepts_any_retrieved_source_and_rejects_the_rest(make_c
     """No source TYPE is forbidden (a forum and a blog are fine), but the source must have been retrieved and the
     quote must state the value. A URL that was never fetched is not a source."""
     ctx = make_ctx()
-    cache_source(ctx.cache, "https://forum.example/t/1", "Toyota Corolla owners: the boot is 520 litres in my car.")
+    cache_source(ctx.cache, "https://forum.example/t/1", "Toyota Corolla owners: boot space is 520 litres in my car.")
     cache_source(ctx.cache, "https://blog.example", "Corolla review. Luggage capacity 536 l.")
     a = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": 520, "source_url": "https://forum.example/t/1",
-                                         "quote": "the boot is 520 litres"})
+                                         "quote": "boot space is 520 litres"})
     b = dispatch(ctx, "store_evidence", {"field": "cargo_volume_l", "value": "536", "source_url": "https://blog.example",
                                          "quote": "Luggage capacity 536 l"})
     assert (a["evidence_id"], b["evidence_id"]) == ("e1", "e2")

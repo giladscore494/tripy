@@ -177,7 +177,7 @@
   ],
   "kona": [
    "kona",
-   "קונה"
+   "יונדאי קונה"
   ],
   "i20": [
    "i20"
@@ -307,11 +307,12 @@
  "propulsion_terms": {
   "plug_in": [
    "plug-in hybrid",
-   "plug-in",
-   "plug in",
+   "plug in hybrid",
    "phev",
    "פלאג-אין",
-   "פלאג אין"
+   "פלאג אין",
+   "היברידי נטען",
+   "היברידית נטענת"
   ],
   "battery_electric": [
    "bev",
@@ -400,7 +401,6 @@
  },
  "engine_words": [
   "engine",
-  "motor",
   "מנוע",
   "נפח מנוע",
   "displacement",
@@ -424,7 +424,6 @@
   "tdi",
   "vvt-i",
   "d-4d",
-  "t",
   "i",
   "d",
   "e-hybrid",
@@ -449,6 +448,25 @@
   "כ\"ס",
   "כוח סוס",
   "כס"
+ ],
+ "power_words": [
+  "power",
+  "output",
+  "maximum power",
+  "max power",
+  "motor",
+  "הספק",
+  "הספק מרבי",
+  "מנוע"
+ ],
+ "charging_words": [
+  "charging",
+  "charge",
+  "charger",
+  "טעינה",
+  "טעינת",
+  "ac",
+  "dc"
  ],
  "generic_trim_words": [
   "edi",

@@ -190,10 +190,10 @@ targets, the evidence items it stored (with source URLs and quotes), candidate f
 metadata of the documents it fetched, excerpts it read from them, conflicts it noted, a concise list of
 its research actions, targets with no stored evidence, and its last notes.
 
-You cannot browse or call tools. Organize the research into the final answer. Every evidence item carries
-runtime-computed provenance: variant_match / binding_level (does the source describe the exact target variant;
-"different" and "unbound" items are NOT about the target), market, source_authority and, for time-sensitive
-values, valid_as_of. Report a time-sensitive value with its valid_as_of, never as timeless. You decide how to use
+You cannot browse or call tools. Organize the research into the final answer. Evidence items with an
+admission_status carry runtime-computed provenance: variant_match / binding_level (does the source describe the
+exact target variant; "different" and "unbound" items are NOT about the target), market, source_authority and, for
+time-sensitive values, valid_as_of (older items without admission_status carry the research model's own claims). Report a time-sensitive value with its valid_as_of, never as timeless. You decide how to use
 the material and which values to report; cite evidence_ids (e1, e2, ... from the bundle's evidence list,
 never document_ids) where they support a value. If sources disagree, report it in `conflicts` (you may
 still pick a value in `fields`). If a value comes from your own background knowledge or only from a

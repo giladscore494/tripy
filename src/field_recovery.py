@@ -156,14 +156,23 @@ def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: 
     return any(seqs.get(c) is not None and seqs[c] >= start for c in cited)
 
 
-def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dict]]) -> str | None:
-    """The schema's `not_applicable_when` rules: the field does not exist when admitted evidence of another field
-    (about the target variant) has one of the listed values (a gear count of a gearbox with no discrete gears)."""
+def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dict]],
+                               target_market: str = DEFAULT_TARGET_MARKET) -> str | None:
+    """The schema's `not_applicable_when` rules: the field does not exist when target-market evidence of another
+    field that binds EXACTLY to the target variant has one of the listed values (a gear count of a gearbox with no
+    discrete gears). Never when the field has target evidence of its own: then the evaluator judges that evidence
+    as usual (a contradiction stays visible instead of being silently overruled)."""
+    own = [e for e in evidence_by_field.get(spec["name"], []) if _has_value(e.get("value"))
+           and is_target_market(e.get("market"), target_market)
+           and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
+    if own:
+        return None
     for rule in spec.get("not_applicable_when") or []:
         other = normalize_field_name(rule.get("field"))
         values = {_value_key(v) for v in rule.get("values") or []}
         for item in evidence_by_field.get(other, []):
-            if (str(item.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS
+            if (str(item.get("variant_match") or "").lower() == "exact"
+                    and is_target_market(item.get("market"), target_market)
                     and _value_key(item.get("value")) in values):
                 return f"{other}={item.get('value')} ({rule.get('reason') or 'schema rule'})"
     return None
@@ -273,7 +282,7 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
-                           evidence_seq, conditional_not_applicable(spec, evidence_by_field))
+                           evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market))
             for spec in specs]
 
 

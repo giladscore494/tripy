@@ -335,13 +335,13 @@ class InterruptingGLM(ScriptedGLM):
 def test_keyboard_interrupt_preserves_partial_artifacts(tmp_path):
     client = InterruptingGLM([{"role": "assistant", "content": "", "tool_calls": [
         _call("c1", "fetch_url", {"url": BIG_PAGE}),
-        _call("c2", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": BIG_PAGE, "quote": "660 Nm"})]}])
+        _call("c2", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": BIG_PAGE, "quote": "Torque 660 Nm"})]}])
     runs = tmp_path / "runs"
     with pytest.raises(KeyboardInterrupt):
         research_one(vehicle44(), {"upstream_record_id": HANDSHAKE_RECORD_ID}, client=client,
                      cache=DocumentCache(runs / "_cache"), runs_dir=runs, batch_id="b", agent_cfg=AgentConfig(field_recovery_enabled=False),
                      tool_cfg=ToolConfig(), pricing=default_pricing("glm-5.3"), level15_source="snapshot",
-                     session=FakeSession({BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")}))
+                     session=FakeSession({BIG_PAGE: FakeResponse(b"<html><body>Torque 660 Nm</body></html>")}))
     run_dir = runs / "b" / HANDSHAKE_RECORD_ID
     saved = json.loads((run_dir / "result.json").read_text("utf-8"))
     assert saved["status"] == "interrupted" and saved["stop_reason"] == "user_cancelled"
