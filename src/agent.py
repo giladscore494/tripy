@@ -840,6 +840,7 @@ class ToolSession:
                 "error": result.get("error") if isinstance(result, dict) else None,
                 "document_id": result.get("document_id") if isinstance(result, dict) else None,
                 "duplicate": duplicate,
+                "route_failed": _route_failed(result),
             })
             messages.append({
                 "role": "tool", "tool_call_id": call_id,
@@ -1119,6 +1120,22 @@ def _clamp(value: Any, default: int, low: int, high: int) -> int:
     return max(low, min(number, high))
 
 
+def _route_failed(result: Any) -> bool:
+    """Did a web call fail as a call (HTTP error status, or every domain of a domain search erroring)? Such a call
+    says nothing about whether the route has material."""
+    if not isinstance(result, dict):
+        return True
+    if result.get("error"):
+        return True
+    status = result.get("status")
+    if isinstance(status, int) and status >= 400:
+        return True
+    domains = result.get("per_domain")
+    if isinstance(domains, dict) and domains and all(isinstance(v, dict) and v.get("error") for v in domains.values()):
+        return True
+    return False
+
+
 def _routes_of(calls: list[dict]) -> list[dict]:
     """The web routes (search queries, fetched URLs) of executed tool calls that worked: a 429, an HTTP error or any
     other failed call says nothing about the route and is never remembered as unproductive."""
@@ -1126,7 +1143,7 @@ def _routes_of(calls: list[dict]) -> list[dict]:
 
     routes = []
     for c in calls:
-        if c.get("blocked") or c.get("reused") or c.get("error") \
+        if c.get("blocked") or c.get("reused") or c.get("error") or c.get("route_failed") \
                 or c["name"] not in trace.SEARCH_TOOLS + trace.FETCH_TOOLS:
             continue
         args = trace.parse_args(c.get("arguments"))

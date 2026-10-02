@@ -38,14 +38,15 @@ from .storage.atomic import atomic_write_json
 
 MEMORY_VERSION = "memory-v1"
 REUSE_LEVELS = ("exact_market_trim", "exact_technical_variant", "body_powertrain")
-# identity parts each reuse level needs (all present, else there is no safe scope key and nothing is reused). The
-# government model code separates variants the other parts cannot (battery size, transmission, FWD vs RWD at the
-# same power); the exact market trim uses EVERY word of the government trim ("gr sport" != "sport", "7 seats").
+# identity parts each reuse level needs (all present, else there is no safe scope key and nothing is reused). The FULL
+# government model code (letter suffixes included) and the transmission separate variants the other parts cannot
+# (battery size, manual vs automatic, FWD vs RWD at the same power); the exact market trim uses EVERY word of the
+# government trim ("gr sport" != "sport", "7 seats").
 REQUIRED_PARTS = {"body_powertrain": ("manufacturer", "family", "year", "body", "propulsion"),
                   "exact_technical_variant": ("manufacturer", "family", "year", "body", "propulsion",
-                                              "displacement_l", "power_hp", "drivetrain", "model_code_tokens"),
+                                              "displacement_l", "power_hp", "drivetrain", "transmission", "model_code"),
                   "exact_market_trim": ("manufacturer", "family", "year", "body", "propulsion", "displacement_l",
-                                        "power_hp", "drivetrain", "model_code_tokens", "trim_words",
+                                        "power_hp", "drivetrain", "transmission", "model_code", "trim_words",
                                         "target_market")}
 SPEC_IDENTITY_KEYS = ("name", "semantic_definition", "semantic_exclusions", "normalized_unit", "value_type",
                       "matcher", "binding_requirement", "reuse_scope", "applies_to", "not_applicable_when")
@@ -152,6 +153,8 @@ class ResearchMemory:
         unresolved or declared otherwise is never handed to a sibling as settled."""
         by_name = {s["name"]: s for s in specs}
         states = {e["field"]: e for e in evaluation or []}
+        evidence = list(evidence)
+        self._dispute(evidence, states, identity)
         written = []
         for item in evidence:
             name = normalize_field_name(item.get("field"))
@@ -190,6 +193,22 @@ class ResearchMemory:
             written.append(record)
         return written
 
+    def _dispute(self, evidence: list[dict], states: dict, identity: TargetIdentity | None) -> None:
+        """A run that ended a field unsettled (conflicting, unresolved, ...) while it held a REUSED fact for it disputes
+        that record: no later variant gets it as settled again (the marker is per record and permanent)."""
+        for item in evidence:
+            origin = item.get("reused_from") or {}
+            name = normalize_field_name(item.get("field"))
+            state = (states.get(name) or {}).get("state")
+            if not origin.get("record_id") or state in (None, "ok", "not_applicable"):
+                continue
+            level = origin.get("scope_type")
+            key = scope_key(identity, level) if level in REUSE_LEVELS else None
+            if key:
+                atomic_write_json(self._fact_dir(key, name) / "disputed" / f"{origin['record_id']}.json",
+                                  {"record_id": origin["record_id"], "field": name, "state": state,
+                                   "evidence_id": item.get("evidence_id"), "disputed_at": _now()})
+
     def reusable_facts(self, specs: list[dict], identity: TargetIdentity | None) -> tuple[list[dict], dict]:
         """(fresh records whose scope and schema identity match this target, skip counts by reason)."""
         out, skipped = [], {}
@@ -211,8 +230,10 @@ class ResearchMemory:
                     continue
                 if not isinstance(record, dict):
                     continue
-                if record.get("scope_key") != key or record.get("scope_type") != level:           # a digest collision never leaks across scopes
+                if record.get("scope_key") != key or record.get("scope_type") != level:   # digest collisions
                     reason = "scope_key_mismatch"
+                elif (folder / "disputed" / f"{record.get('record_id')}.json").exists():
+                    reason = "disputed_by_a_later_run"
                 elif record.get("spec_identity") != wanted:
                     reason = "stale_schema_or_gate_version"
                 elif _age_days(record.get("recorded_at")) > self.fact_max_age_days:
@@ -255,8 +276,10 @@ class ResearchMemory:
                     continue
                 if identities and entry.get("spec_identity") != identities.get(field):
                     continue
-                slot = out.setdefault(field, {"routes": [], "attempts": 0})
-                slot["attempts"] += 1
+                slot = out.setdefault(field, {"routes": [], "attempts": 0, "runs": []})
+                if data.get("run") not in slot["runs"]:          # independent runs, not attempts within one run
+                    slot["runs"].append(data.get("run"))
+                slot["attempts"] = len(slot["runs"])
                 known = {r.get("signature") for r in slot["routes"]}
                 slot["routes"] += [r for r in entry.get("routes") or []
                                    if isinstance(r, dict) and r.get("signature") and r.get("signature") not in known]

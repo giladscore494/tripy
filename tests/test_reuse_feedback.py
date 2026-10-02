@@ -455,3 +455,55 @@ def test_reused_facts_are_not_relabelled_as_accepted_candidates(tmp_path):
     examples = [json.loads(line) for line in (Path(run["result"]["documents_dir"]).parent
                                               / "training_feedback.jsonl").read_text("utf-8").splitlines()]
     assert reused and not [e for e in examples if e["example_type"] == "candidate_accepted" and e["field"] in reused]
+
+
+# --- second-review regressions -------------------------------------------------------------------------------------
+
+def test_a_later_run_that_disputes_a_reused_fact_stops_its_reuse(tmp_path):
+    memory = ResearchMemory(tmp_path)
+    identity = target_identity(PAYLOAD, VEHICLE)
+    record = memory.record_facts([_evidence()], HEV, identity, {"record_id": "A"}, ok("fuel_tank_l"))[0]
+    reused = _evidence(evidence_id="e1", reused_from={"record_id": record["record_id"],
+                                                       "scope_type": "exact_technical_variant"})
+    contradiction = _evidence(evidence_id="e2", value=40, document_id="d9", quote="Fuel tank capacity 40 l")
+    disputed = [{"field": "fuel_tank_l", "state": "conflicting", "evidence_ids": ["e1", "e2"],
+                 "conflict_evidence_ids": ["e1", "e2"]}]
+    memory.record_facts([reused, contradiction], HEV, identity, {"record_id": "B"}, disputed)
+    assert memory.reusable_facts(HEV, identity) == ([], {"disputed_by_a_later_run": 1})
+
+
+def test_full_model_code_and_transmission_separate_variants():
+    auto = _identity(code="ZWE211L-DWXNBW", automatic=1)
+    manual = _identity(code="ZWE211L-DWMNBW", automatic=0)
+    assert scope_key(auto, "exact_technical_variant") != scope_key(manual, "exact_technical_variant")
+    assert scope_key(_identity(code="ZWE211L-DWXNBW", automatic=0), "exact_technical_variant") != \
+        scope_key(auto, "exact_technical_variant")
+    for short in ("GY", "205.040", "NSGHA"):                     # codes without a letter+digit token still key
+        assert scope_key(_identity(code=short), "exact_technical_variant")
+
+
+def test_failed_web_calls_are_never_unproductive_routes():
+    from src.agent import _route_failed, _routes_of
+
+    assert _route_failed({"status": 429, "document_id": "d"}) and _route_failed({"error": "x"})
+    assert _route_failed({"results": [], "per_domain": {"a": {"error": "429"}, "b": {"error": "429"}}})
+    assert not _route_failed({"results": [], "per_domain": {"a": {"result_count": 0}}})
+    calls = [{"name": "fetch_url", "arguments": json.dumps({"url": "https://x"}), "route_failed": True},
+             {"name": "search_web", "arguments": json.dumps({"query": "q"}), "route_failed": False}]
+    assert [r["route"] for r in _routes_of(calls)] == ["q"]
+
+
+def test_table_row_candidates_keep_their_labels():
+    from src.training_feedback import _same_place
+
+    assert _same_place("Fuel tank capacity | 43 l (1.8 Hybrid 140)", "Fuel tank capacity\n43 l")
+    assert not _same_place("חימום מושבים: יש", "Business: חימום מושבים: אין")
+
+
+def test_negative_route_attempts_count_independent_runs(tmp_path):
+    memory = ResearchMemory(tmp_path)
+    entry = {"scope_key": "k", "field": "f", "outcome": "no_new_material", "routes": [{"route": "q", "signature": "s"}]}
+    memory.record_routes([entry, dict(entry)], "one-run")
+    assert memory.negative_routes({"f": "k"})["f"]["attempts"] == 1
+    memory.record_routes([entry], "another-run")
+    assert memory.negative_routes({"f": "k"})["f"]["attempts"] == 2

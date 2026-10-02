@@ -424,8 +424,10 @@ run, each written atomically, so 50 concurrent workers never share an append tar
   (final state `ok`, no conflict, the item among the field's evidence), the field's schema `reuse_scope`
   (`none | exact_market_trim | exact_technical_variant | body_powertrain`) allows it, the item bound exactly at that
   level, and the target identity at that level is complete (a key built from missing parts would collide). The
-  technical-variant key includes the government model code (battery size, gearbox and driven axle at equal power
-  differ there). The market-trim key uses every word of the trim, so "GR SPORT" is not "SPORT". The
+  technical-variant key includes the full government model code (letter suffixes included) and the transmission, so
+  battery size, manual vs automatic and the driven axle at equal power are kept apart. The market-trim key uses every
+  word of the trim, so "GR SPORT" is not "SPORT". A later run that ends the field unsettled while holding a reused
+  fact marks that record disputed, and no variant reuses it again. The
   record carries its scope key, source, quote, binding, authority and a schema identity (the field's meaning,
   units and policy plus the admission / binding / harvester versions); stale, expired or colliding records are
   ignored. Price, fees, warranty, equipment, multimedia, tyres and every time-sensitive field are never reused;
@@ -439,8 +441,10 @@ run, each written atomically, so 50 concurrent workers never share an append tar
 - **Negative routes.** A web recovery turn without novelty records its working routes as "no new material" for the
   fields still open, per identity scope and field identity. The routes are search queries attributed to the field
   whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
-  fields keep no negative memory. Later runs see the routes as `known_unproductive_routes`. A cluster whose open
-  fields have each failed in at least two earlier attempts skips its web attempt (`NEGATIVE_MEMORY_SKIP`).
+  fields keep no negative memory. A route is not recorded when the call itself failed (an HTTP error status, or every
+  domain of a domain search erroring). Later runs see the routes as `known_unproductive_routes`. A cluster whose
+  open fields have each failed in at least two earlier, independent runs skips its web attempt
+  (`NEGATIVE_MEMORY_SKIP`).
   This is scheduling only: it never creates evidence, never changes a field state, never marks a field
   not_applicable and never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
 - **Historical recovery yield** (by cluster / field, manufacturer, propulsion and source family: attempts, turns,
@@ -486,7 +490,7 @@ A2 reuses the technical facts (tank, battery, torque, performance, dimensions) b
 curb weight. It also does not reuse the boot volume, because A left that field foreign-market-only. B reuses nothing,
 and its boot stays 581 L, never A's 596 L. The re-run's saved search comes from the model following
 `known_unproductive_routes` (the policy model in the benchmark does). The engine itself only skips a cluster after
-two earlier failed attempts per field. The scale metrics are
+two earlier, independent failed runs per field. The scale metrics are
 `verified_fact_cache_hits`, `negative_route_cache_hits`, search / document / candidate cache hits,
 `verified_facts_recorded` and `training_feedback_examples`.
 

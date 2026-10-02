@@ -93,12 +93,16 @@ def _same_value(a: Any, b: Any) -> bool:
 
 
 def _squash(text: Any) -> str:
-    return " ".join(str(text or "").lower().split())
+    """Quote text without layout: a table row "label | value (header)" and the page text "label\nvalue" compare
+    equal (cell separators, colons, brackets and the trailing column-header note are removed)."""
+    text = re.sub(r"\s*\([^()]*\)\s*$", "", str(text or ""))
+    text = re.sub(r"[|:;,()\[\]\"'״׳]", " ", text.lower())
+    return " ".join(text.split())
 
 
 def _same_place(a: Any, b: Any) -> bool:
-    """Do two quotes come from the same place (one contains the other)? A refusal of one quote says nothing about a
-    candidate read from another line of the same page."""
+    """Do two quotes come from the same place (one contains the other once layout is removed)? A refusal of one
+    quote says nothing about a candidate read from another line of the same page."""
     x, y = _squash(a), _squash(b)
     return bool(x and y) and (x in y or y in x)
 
