@@ -63,6 +63,8 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
                    help="Retry attempts per failed field (FIELD_RECOVERY_MAX_ATTEMPTS, default 2)")
     p.add_argument("--field-recovery-max-steps", type=int, default=None,
                    help="Model turns per retry attempt (FIELD_RECOVERY_MAX_STEPS, default 4)")
+    p.add_argument("--recovery-mode", choices=["cluster", "legacy"], default=None,
+                   help="Tail recovery: cluster (default; RECOVERY_MODE) or the legacy per-field retries")
     p.add_argument("--max-tokens", type=int, default=0, help="0 = provider default")
     p.add_argument("--search-backend", choices=["glm", "duckduckgo"], default=env("SEARCH_BACKEND") or "glm")
     p.add_argument("--data-source", choices=["auto", "database", "snapshot"], default="auto")
@@ -93,6 +95,8 @@ def _agent_cfg(args: argparse.Namespace, extra_body: dict):
         overrides["field_recovery_max_attempts"] = args.field_recovery_max_attempts
     if args.field_recovery_max_steps is not None:
         overrides["field_recovery_max_steps"] = args.field_recovery_max_steps
+    if args.recovery_mode:
+        overrides["recovery_mode"] = args.recovery_mode
     return agent_config_from_env(**overrides)
 
 
@@ -115,10 +119,13 @@ def _listener(kind: str, event: dict) -> None:
                 "field_recovery_queue_resolved_indirectly", "evidence_reused", "field_recovery_early_resolved",
                 "field_recovery_budget_exhausted", "deterministic_harvest_summary", "document_sweep_started",
                 "document_sweep_finished", "document_sweep_skipped", "candidate_missed_by_deterministic_harvest",
-                "finalization_checkpoint_written", "tool_blocked"):
+                "finalization_checkpoint_written", "tool_blocked", "cluster_recovery_started",
+                "cluster_recovery_no_novelty_stop", "cluster_recovery_budget_extended", "cluster_recovery_skipped"):
         brief = {k: v for k, v in event.items()
                  if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking", "queue",
-                              "reply_text", "candidates", "fields_with_candidates", "fields_without_candidates")}
+                              "reply_text", "candidates", "fields_with_candidates", "fields_without_candidates",
+                              "presented_candidate_keys", "triage", "clusters", "novelty", "states_before",
+                              "states_after")}
         if kind == "api_error":
             brief = {"request": brief.get("request_kind"), "attempt": f"{brief.get('attempt')}/{brief.get('max_attempts')}",
                      "status": brief.get("status"), "timeout": brief.get("timeout"),
@@ -134,8 +141,19 @@ def _worst_case_recovery_turns(agent_cfg, payload: dict, vehicle: dict) -> int:
     if not agent_cfg.field_recovery_enabled:
         return 0
     specs = resolve_requested_fields(agent_cfg.requested_fields or None, propulsion=propulsion_of(payload, vehicle))
-    turns = sum(max_attempts_for(s, agent_cfg.field_recovery_max_attempts) * agent_cfg.field_recovery_max_steps
-                for s in specs if s.get("applicable", True))
+    applicable = [s for s in specs if s.get("applicable", True)]
+    if agent_cfg.recovery_mode == "cluster":
+        from .agent import CLUSTER_TURN_CEILING
+        from .tail_planner import cluster_of
+
+        attempts: dict[str, int] = {}
+        for s in applicable:
+            n = min(agent_cfg.cluster_max_attempts, max_attempts_for(s, agent_cfg.field_recovery_max_attempts))
+            attempts[cluster_of(s)] = max(attempts.get(cluster_of(s), 0), n)
+        turns = sum(attempts.values()) * min(agent_cfg.cluster_max_turns, CLUSTER_TURN_CEILING)
+    else:
+        turns = sum(max_attempts_for(s, agent_cfg.field_recovery_max_attempts) * agent_cfg.field_recovery_max_steps
+                    for s in applicable)
     cap = agent_cfg.field_recovery_max_total_steps
     return min(turns, cap) if cap else turns
 
@@ -150,7 +168,8 @@ def _summary(result: dict, extra: dict | None = None) -> str:
            "usage_field_recovery": result.get("usage_field_recovery"),
            "usage_finalizer": result.get("usage_finalizer"), "api_stats": result.get("api_stats"),
            "field_recovery": {k: (result.get("field_recovery") or {}).get(k) for k in (
-               "queue", "fields_retried", "fields_recovered", "fields_still_failed", "attempt_count", "turns")},
+               "mode", "queue", "fields_retried", "fields_recovered", "fields_still_failed", "attempt_count", "turns",
+               "tail_fields_at_start", "tail_fields_resolved", "tail_search_calls", "no_novelty_stops")},
            "search_api_calls": result.get("search_api_calls"), "tool_calls": m.get("tool_calls"),
            "documents_opened": m.get("documents_opened"), "evidence_items": m.get("evidence_items"),
            "fields_with_value": m.get("fields_with_value"),
