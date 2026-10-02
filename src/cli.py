@@ -34,6 +34,7 @@ from .glm_client import GLMClient, GLMError, GLMSettings
 from .pricing import default_pricing
 from .recovery import RecoveryError, finalize_existing_run, plan_recovery
 from .storage.cache import DocumentCache
+from .storage.paths import resolve_paths
 from .storage.run_log import new_batch_id
 
 EXIT_INTERRUPTED = 130
@@ -76,7 +77,8 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--level3", action="store_true",
                    help="Include Level 3 open research (off by default; INCLUDE_LEVEL3=true also enables it)")
     p.add_argument("--no-level3", action="store_true", help="Skip Level 3 open research (the default)")
-    p.add_argument("--runs-dir", default=env("MILO_RUNS_DIR") or "runs")
+    p.add_argument("--runs-dir", default=str(resolve_paths(env).runs_dir),
+                   help="Runs folder (default: TRIPY_DATA_DIR/runs, or MILO_RUNS_DIR when set)")
     p.add_argument("--dry-run", action="store_true", help="Print the plan and effective config; call nothing")
     p.add_argument("--finalize-existing", action="store_true",
                    help="Finalize a saved run (--batch-id, --record-id) from its logged research; no new research")
@@ -118,7 +120,12 @@ def _settings(args: argparse.Namespace) -> GLMSettings:
 
 
 def _cache(runs_dir: Path) -> DocumentCache:
-    return DocumentCache(Path(os.environ.get("MILO_CACHE_DIR") or runs_dir / "_cache"))
+    """The configured shared cache (src/storage/paths.py); an explicit other --runs-dir keeps the historical
+    <runs-dir>/_cache layout unless MILO_CACHE_DIR is set."""
+    paths = resolve_paths()
+    if Path(runs_dir) == paths.runs_dir:
+        return DocumentCache(paths.cache_dir)
+    return DocumentCache(Path(os.environ.get("MILO_CACHE_DIR") or Path(runs_dir) / "_cache"))
 
 
 def _listener(kind: str, event: dict) -> None:
