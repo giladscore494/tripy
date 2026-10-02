@@ -267,7 +267,8 @@ def test_agent_finalizes_at_step_budget_and_keeps_unparsed_text(make_ctx, tmp_pa
     client = ScriptedGLM([loop_call, loop_call, {"role": "assistant", "content": "plain text answer"},
                           {"role": "assistant", "content": "still not json"}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
-                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=2),
+                         run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=2,
+                                                            primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0),
                          tool_config=ctx.config, batch_id="b", session=ctx.session)
     assert result["status"] == "max_steps_finalized"
     assert result["output"] is None and result["raw_final_text"] == "plain text answer"

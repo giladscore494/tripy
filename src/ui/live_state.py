@@ -127,6 +127,10 @@ def feed_line(kind: str, event: dict) -> str | None:
     if kind == "primary_research_turn":
         found = ", ".join(event.get("artifacts") or []) or f"nothing acquired (streak {event.get('no_artifact_streak')})"
         return f"   📥 turn {event.get('turn')} acquisition: {found}"
+    if kind == "primary_research_stop_deferred":
+        return (f"   🛟 turn {event.get('turn')}: research wanted to stop ({event.get('wanted_stop')}) but the source set "
+                f"is thin ({event.get('useful_documents')} useful document(s), {event.get('scoped_coverage_pct')}% "
+                "in-scope coverage): acquisition continues")
     if kind == "document_inspection":
         return (f"🔍 local inspection (0 model calls): {event.get('documents_inspected')} document(s), "
                 f"{len(event.get('fields_located') or [])}/{len(event.get('fields_without_candidates') or [])} "

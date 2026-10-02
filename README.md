@@ -62,7 +62,8 @@ and every one of them stays configurable.
 | `GLM_SEARCH_MAX_ATTEMPTS` | Total web_search HTTP attempts per request (default **3**). |
 | `GLM_CHAT_TIMEOUT_S` | Read timeout per attempt in seconds (default 240). |
 | `PRIMARY_RESEARCH_MAX_TURNS` (alias `AGENT_MAX_STEPS`) | Primary research (source acquisition) turn ceiling (default **6**). See [Primary research is source acquisition](#primary-research-is-source-acquisition). |
-| `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off). |
+| `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off), once the minimum acquisition base is met. |
+| `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `PRIMARY_RESEARCH_HARD_MAX_TURNS` | Fail-safe minimum acquisition base (defaults **3** useful documents AND **50**% in-scope candidate coverage; both 0 = off) and the hard ceiling an under-acquired run may extend to (default **12**). See [Minimum acquisition base](#minimum-acquisition-base-fail-safe-stop). |
 | `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
 | `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 30 fields, 48 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
 | `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting. See [Phase-specific model settings](#phase-specific-model-settings). |
@@ -243,8 +244,9 @@ acquires sources; deterministic code reads them (`src/acquisition.py`):
   `unbound`) or a better best binding. NOT artifacts: re-reading a cached document, a repeated (or replayed) search,
   403 / 404 / 429 and other failed calls, commentary, rejected evidence, candidates of another variant.
 - **No-artifact stop**: `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` (default 2) consecutive turns without an artifact end
-  research (`stop_reason=no_new_artifact`) before the `PRIMARY_RESEARCH_MAX_TURNS` ceiling (default 6). The model
-  is told after each empty turn how many such turns remain.
+  research (`stop_reason=no_new_artifact`) before the `PRIMARY_RESEARCH_MAX_TURNS` ceiling (default 6), once the
+  minimum acquisition base is met. The model is told after each empty turn how many such turns remain.
+- **Minimum acquisition base (fail-safe stop)**: see below. Every scheduler stop above needs it.
 - **Acquisition sufficiency** (optional, off by default): at least `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS` useful
   documents AND at least `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` % of the applicable fields covered (a
   candidate from a useful document, or already settled) end research (`acquisition_sufficient`).
@@ -253,6 +255,45 @@ acquires sources; deterministic code reads them (`src/acquisition.py`):
   (`model_finished`, `max_turns`, `no_new_artifact`, `acquisition_sufficient`, `no_new_research`, `user_cancelled`,
   `error`), documents added, useful / target-market / other-variant documents, official sources, candidate fields,
   candidate coverage, no-artifact turns, and the artifacts of every turn (`primary_research_turn` events).
+
+### Minimum acquisition base (fail-safe stop)
+
+A scheduling optimization must not cost reliable coverage because a research model does not follow the new prompt.
+The offline orchestration benchmark showed it: a model that keeps interleaving per-field Ctrl+F turns (as the real
+GLM run did) was stopped after two empty turns with 2 of 6 documents, and trustworthy fields fell from 15 to 11. So a
+no-artifact streak is not enough to stop on its own:
+
+```
+if a scheduler stop fires (no-artifact streak, acquisition sufficiency, AGENT_NO_NEW_RESEARCH_TURNS, or the normal
+PRIMARY_RESEARCH_MAX_TURNS ceiling):
+    if minimum acquisition base met:  stop
+    else:                             log primary_research_stop_deferred, tell the model the source set is still thin
+                                      and to acquire NEW sources, continue (up to PRIMARY_RESEARCH_HARD_MAX_TURNS)
+```
+
+The base (`acquisition.minimum_base`) is met when the run holds at least `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS` (3)
+useful documents AND at least `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE` (50) % of the applicable fields have a
+candidate from a source in their market scope (any useful document for a `market_sensitivity: low` field, a
+target-market document otherwise) or are already ok. In-scope coverage, not raw candidate coverage: in the benchmark
+raw candidate fields plateau (26 of 37) while trustworthy fields still wait for an Israeli source for the
+market-sensitive dimensions. It reads documents, candidates and the schema only: never model confidence, a vote,
+historical yield, an expected answer or Golden Set truth, and it never changes evidence, a field state, a binding,
+N/A or a conflict. A run that acquires normally stops exactly as before (6 turns); only an under-acquired run may go
+beyond the normal ceiling, and it stops as soon as the base is met (or at the hard ceiling,
+`stop_reason=hard_max_turns_under_acquired`). `model_finished` (the model's own final answer) is not a scheduler stop
+and is never held back.
+
+Defaults come from the benchmark's sensitivity sweep (policy that ignores the new prompt / follows it): 3 documents
+with 40-45 % let the regression back (13 trustworthy fields); 50 % is the smallest threshold that keeps 15 with 10
+research calls; 55-60 % also keep 15 but run to the hard ceiling (12 calls) and add a turn when the prompt is followed;
+the document count alone (3 / 0 %) does not protect. The fixture sits close to the 50 % edge (49 % -> 54 % when the
+Israeli source arrives), so a live run should re-check it.
+
+Telemetry: `primary_research.minimum_acquisition_met`, `minimum_acquisition` (documents, in-scope coverage,
+thresholds), `stop_deferred_count`, `stops_deferred`, `under_acquired_turns`, `extended_turns`,
+`scoped_coverage_pct`; metrics `primary_research_minimum_acquisition_met`, `primary_research_stop_deferred_count`,
+`primary_research_under_acquired_turns`, `primary_research_extended_turns`, `primary_research_scoped_coverage_pct`;
+events `primary_research_stop_deferred` and `primary_research_turn.minimum_acquisition_met`.
 
 ### Deterministic batch document inspection
 

@@ -65,6 +65,13 @@ def research_run(tmp_path, script, routes=None, **cfg):
 
 
 EU_ROUTE = {EU: (tail.EU_SPEC_HTML, "text/html; charset=utf-8", 200)}
+# the artifact-definition tests below run on ONE document: the minimum-acquisition safety gate is switched off there
+# (it is tested on its own further down)
+GATE_OFF = {"primary_research_min_base_documents": 0, "primary_research_min_base_scoped_coverage": 0}
+RICH_ROUTES = {**EU_ROUTE, tail.CARTUBE: (tail.CARTUBE_TEXT, "text/plain", 200),
+               tail.LAUNCH: (tail.LAUNCH_TEXT, "text/plain", 200)}
+FETCH_THREE = turn(_call("a", "fetch_url", {"url": EU}), _call("b", "fetch_url", {"url": tail.CARTUBE}),
+                   _call("c", "fetch_url", {"url": tail.LAUNCH}))
 
 
 # --- primary research: adaptive no-artifact stop ---------------------------------------------------------------
@@ -75,7 +82,7 @@ def test_two_consecutive_no_artifact_turns_stop_primary_research(tmp_path):
               turn(_call("c", "find_in_document", {"document_id": EU_DOC, "query": "Kerb weight"})),
               turn(_call("d", "find_in_document", {"document_id": EU_DOC, "query": "Top speed"})),
               say({"summary": "never reached", "fields": {}}), say({"summary": "final", "fields": {}})]
-    result, events, client, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6)
+    result, events, client, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6, **GATE_OFF)
     assert result["stop_reason"] == "no_new_artifact" and result["research_steps"] == 3
     primary = result["primary_research"]
     assert primary["stop_reason"] == "no_new_artifact" and primary["final_no_artifact_streak"] == 2
@@ -120,7 +127,7 @@ def test_failed_fetches_and_rate_limited_searches_do_not_reset_the_counter(tmp_p
                    _call("c", "fetch_url", {"url": "https://www.example.com/missing"})),             # 404
               turn(_call("d", "search_web", {"query": "corolla 429 specifications"})),                # 429
               say({"summary": "never reached", "fields": {}}), say({"summary": "final", "fields": {}})]
-    result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6)
+    result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6, **GATE_OFF)
     assert result["stop_reason"] == "no_new_artifact" and result["research_steps"] == 3
     assert [t["artifacts"] for t in result["primary_research"]["turn_artifacts"]][1:] == [[], []]
     errors = [e for e in events if e["kind"] == "tool_result" and e["name"] == "search_web"]
@@ -134,7 +141,7 @@ def test_cached_rereads_and_repeated_searches_do_not_reset_the_counter(tmp_path)
                    _call("d", "fetch_url", {"url": EU})),                                            # same page
               turn(_call("e", "search_web", {"query": "corolla touring sports specifications"})),     # replay
               say({"summary": "never reached", "fields": {}}), say({"summary": "final", "fields": {}})]
-    result, events, client, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6)
+    result, events, client, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6, **GATE_OFF)
     assert result["stop_reason"] == "no_new_artifact" and result["research_steps"] == 3
     assert [bool(t["artifacts"]) for t in result["primary_research"]["turn_artifacts"]] == [True, False, False]
     assert any(e["kind"] == "tool_reused" and e["name"] == "search_web" for e in events)
@@ -151,12 +158,15 @@ def test_no_artifact_stop_is_configurable_and_zero_disables_it(tmp_path):
 def test_default_runtime_configuration(monkeypatch):
     for name in ("AGENT_MAX_STEPS", "PRIMARY_RESEARCH_MAX_TURNS", "PRIMARY_RESEARCH_NO_ARTIFACT_STOP",
                  "PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS", "PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD",
-                 "FIELD_RECOVERY_MAX_TOTAL_STEPS", "GLM_THINKING"):
+                 "FIELD_RECOVERY_MAX_TOTAL_STEPS", "GLM_THINKING", "PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS",
+                 "PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE", "PRIMARY_RESEARCH_HARD_MAX_TURNS"):
         monkeypatch.delenv(name, raising=False)
     cfg = agent_config_from_env()
     assert (cfg.max_steps, cfg.primary_research_no_artifact_stop) == (6, 2)
     assert (cfg.primary_research_min_useful_documents, cfg.primary_research_candidate_field_coverage_threshold) == (0, 0)
     assert cfg.field_recovery_max_total_steps == 24 and cfg.thinking == "" and cfg.phase_settings == {}
+    assert (cfg.primary_research_min_base_documents, cfg.primary_research_min_base_scoped_coverage,
+            cfg.primary_research_hard_max_turns) == (3, 50.0, 12)
     monkeypatch.setenv("PRIMARY_RESEARCH_MAX_TURNS", "8")
     monkeypatch.setenv("AGENT_MAX_STEPS", "30")
     monkeypatch.setenv("PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD", "0.6")
@@ -180,7 +190,7 @@ def test_acquisition_sufficiency_ends_research_without_touching_field_states(tmp
     routes = {**EU_ROUTE, tail.CARTUBE: (tail.CARTUBE_TEXT, "text/plain", 200)}
     result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6,
                                         primary_research_min_useful_documents=2,
-                                        primary_research_candidate_field_coverage_threshold=50)
+                                        primary_research_candidate_field_coverage_threshold=50, **GATE_OFF)
     assert result["stop_reason"] == "acquisition_sufficient" and result["research_steps"] == 2
     assert result["status"] == "acquisition_sufficient_finalized" and result["evidence"] == []
     assert all(s["state"] != "ok" for s in result["research_bundle"]["field_states"].values())
@@ -550,7 +560,11 @@ def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
     assert follows["final_trustworthy_fields"] >= 15 and follows["final_polluted_fields"] == []
     assert follows["evidence_rejected"] <= 7 and follows["document_sweep_calls"] <= 2
     ignores = report["policy_ignores_prompt"]
-    assert ignores["research_model_calls"] < 12 and ignores["final_polluted_fields"] == []
+    # the defensive path: a research model that keeps doing per-field Ctrl+F is kept acquiring by the minimum
+    # acquisition base until the source set is no longer thin, so trustworthy coverage stays at the baseline
+    assert ignores["final_trustworthy_fields"] >= 15 and ignores["final_polluted_fields"] == []
+    assert ignores["documents_fetched"] == 6 and ignores["candidate_fields"] >= 26
+    assert ignores["research_model_calls"] < 12 and ignores["evidence_rejected"] <= 7
     assert re.match(r"no_new_artifact|max_turns", ignores["primary_research_stop_reason"])
 
 
@@ -608,3 +622,123 @@ def test_a_large_inspection_result_stays_valid_and_names_what_it_left_out(tmp_pa
     out.pop("_elapsed_ms", None)
     assert len(json.dumps(out, ensure_ascii=False)) <= int(1500 * 1.4)
     assert out.get("fields_omitted_for_size") and "hint" in out
+
+
+# --- fail-safe: the minimum acquisition base -------------------------------------------------------------------------
+
+STALL = [turn(_call("d", "find_in_document", {"document_id": EU_DOC, "query": "Fuel tank"})),
+         turn(_call("e", "find_in_document", {"document_id": EU_DOC, "query": "Top speed"}))]
+
+
+def test_two_stalled_turns_with_enough_material_may_stop(tmp_path):
+    script = [FETCH_THREE] + STALL + [say({"summary": "never reached", "fields": {}}), say({"summary": "f", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, RICH_ROUTES, max_steps=6)     # default gate
+    primary = result["primary_research"]
+    assert result["stop_reason"] == "no_new_artifact" and result["research_steps"] == 3
+    assert primary["minimum_acquisition_met"] and primary["stop_deferred_count"] == 0
+    assert primary["minimum_acquisition"]["useful_documents"] == 3
+    assert primary["minimum_acquisition"]["scoped_coverage_pct"] >= 50 and primary["extended_turns"] == 0
+
+
+def test_two_stalled_turns_on_a_thin_source_set_do_not_stop(tmp_path):
+    script = [turn(_call("a", "fetch_url", {"url": EU}))] + STALL + [
+        turn(_call("f", "fetch_url", {"url": tail.CARTUBE}), _call("g", "fetch_url", {"url": tail.LAUNCH})),
+        say({"summary": "done", "fields": {}})]
+    result, events, client, _ = research_run(tmp_path, script, RICH_ROUTES, max_steps=6)
+    primary = result["primary_research"]
+    assert result["stop_reason"] == "model_finished" and result["research_steps"] == 5   # kept alive, then acquired
+    deferred = [e for e in events if e["kind"] == "primary_research_stop_deferred"]
+    assert [(e["turn"], e["wanted_stop"]) for e in deferred] == [(3, "no_new_artifact")]
+    assert deferred[0]["useful_documents"] == 1 and deferred[0]["scoped_coverage_pct"] < 50
+    assert primary["stop_deferred_count"] == 1 and primary["minimum_acquisition_met"]
+    note = client.requests[3]["messages"][-1]["content"]          # the model is told why it continues
+    assert "source set is still thin" in note and "Acquire NEW" in note
+
+
+def test_an_under_acquired_run_continues_until_the_hard_ceiling(tmp_path):
+    stall = [turn(_call(f"s{i}", "find_in_document", {"document_id": EU_DOC, "query": f"label {i}"}))
+             for i in range(8)]
+    script = [turn(_call("a", "fetch_url", {"url": EU}))] + stall + [say({"summary": "final", "fields": {}})]
+    result, events, client, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=3,
+                                             primary_research_hard_max_turns=5)
+    primary = result["primary_research"]
+    assert result["research_steps"] == 5 and result["stop_reason"] == "max_steps"          # hard ceiling holds
+    assert primary["stop_reason"] == "hard_max_turns_under_acquired" and not primary["minimum_acquisition_met"]
+    assert primary["extended_turns"] == 2 and primary["under_acquired_turns"] == 5
+    # the normal ceiling (turn 3) and turn 4 are deferred; turn 5 is the hard ceiling and ends research
+    assert [(d["turn"], d["wanted_stop"]) for d in primary["stops_deferred"]] == [(3, "max_turns"), (4, "max_turns")]
+    assert result["usage_research"]["model_calls"] == 5
+    m = compute_metrics(result)
+    assert (m["primary_research_minimum_acquisition_met"], m["primary_research_stop_deferred_count"],
+            m["primary_research_under_acquired_turns"], m["primary_research_extended_turns"]) == (False, 2, 5, 2)
+    assert m["primary_research_stop_reason"] == "hard_max_turns_under_acquired"
+
+
+def test_extension_ends_as_soon_as_the_base_is_met_and_a_normal_run_keeps_the_normal_ceiling(tmp_path):
+    script = [turn(_call("a", "fetch_url", {"url": EU})), STALL[0],
+              turn(_call("f", "fetch_url", {"url": tail.CARTUBE}), _call("g", "fetch_url", {"url": tail.LAUNCH})),
+              turn(_call("h", "find_in_document", {"document_id": EU_DOC, "query": "Height"})),
+              say({"summary": "never reached", "fields": {}}), say({"summary": "final", "fields": {}})]
+    result, _, _, _ = research_run(tmp_path, script, RICH_ROUTES, max_steps=2)
+    primary = result["primary_research"]
+    # turn 2 (the normal ceiling) is under-acquired -> extended; turn 3 meets the base -> stop at once
+    assert result["research_steps"] == 3 and primary["stop_reason"] == "max_turns" and primary["extended_turns"] == 1
+    rich = [FETCH_THREE, STALL[0], say({"summary": "never reached", "fields": {}}), say({"summary": "f", "fields": {}})]
+    result, _, _, _ = research_run(tmp_path / "rich", rich, RICH_ROUTES, max_steps=2)
+    assert result["research_steps"] == 2 and result["primary_research"]["extended_turns"] == 0
+
+
+def test_new_in_scope_material_after_stalled_turns_resets_and_meets_the_base(tmp_path):
+    script = [turn(_call("a", "fetch_url", {"url": EU}))] + STALL + [
+        turn(_call("f", "fetch_url", {"url": tail.CARTUBE}), _call("g", "fetch_url", {"url": tail.LAUNCH}))] + [
+        turn(_call(f"x{i}", "find_in_document", {"document_id": EU_DOC, "query": f"label {i}"})) for i in range(2)] + [
+        say({"summary": "never reached", "fields": {}}), say({"summary": "final", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, RICH_ROUTES, max_steps=8)
+    turns = [e for e in events if e["kind"] == "primary_research_turn"]
+    assert [t["no_artifact_streak"] for t in turns] == [0, 1, 2, 0, 1, 2]
+    assert [t["minimum_acquisition_met"] for t in turns] == [False, False, False, True, True, True]
+    assert turns[3]["scoped_coverage_pct"] > turns[2]["scoped_coverage_pct"]
+    assert result["stop_reason"] == "no_new_artifact" and result["research_steps"] == 6   # allowed once the base holds
+
+
+def test_failures_rereads_and_replays_are_still_no_progress_while_under_acquired(tmp_path):
+    routes = {**EU_ROUTE, "https://www.toyota.co.il/blocked": ("Access denied", "text/html", 403)}
+    script = [turn(_call("a", "search_web", {"query": "corolla touring sports specifications"}),
+                   _call("b", "fetch_url", {"url": EU})),
+              turn(_call("c", "fetch_url", {"url": "https://www.toyota.co.il/blocked"}),
+                   _call("d", "fetch_url", {"url": "https://www.example.com/missing"}),
+                   _call("e", "search_web", {"query": "corolla 429 specifications"})),
+              turn(_call("f", "get_cached_document", {"key": EU_DOC}),
+                   _call("g", "search_web", {"query": "corolla touring sports specifications"})),
+              say({"summary": "final", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6)
+    turns = [e for e in events if e["kind"] == "primary_research_turn"]
+    assert [bool(t["artifacts"]) for t in turns] == [True, False, False]
+    assert [t["no_artifact_streak"] for t in turns] == [0, 1, 2]
+    assert [e["wanted_stop"] for e in events if e["kind"] == "primary_research_stop_deferred"] == ["no_new_artifact"]
+    assert result["stop_reason"] == "model_finished" and result["research_steps"] == 4
+
+
+def test_the_safety_gate_never_touches_evidence_state_binding_or_conflicts(tmp_path):
+    from src.acquisition import minimum_base
+
+    snap = {"useful_documents": ["d1"], "target_market_documents": [], "applicable_fields": 10,
+            "scoped_fields": {"torque_nm"}}
+    frozen = json.dumps(snap, default=sorted, sort_keys=True)
+    assert minimum_base(snap, 3, 50)[0] is False and minimum_base(snap, 0, 0)[0] is True
+    assert json.dumps(snap, default=sorted, sort_keys=True) == frozen                  # pure
+    stall = [turn(_call(f"s{i}", "find_in_document", {"document_id": EU_DOC, "query": f"label {i}"}))
+             for i in range(4)]
+    script = [turn(_call("a", "fetch_url", {"url": EU}))] + stall + [say({"summary": "final", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=3, primary_research_hard_max_turns=5)
+    assert result["primary_research"]["stop_deferred_count"] >= 2
+    assert result["evidence"] == [] and not [e for e in events if e["kind"] in ("evidence", "field_status")]
+    states = {f: s["state"] for f, s in result["research_bundle"]["field_states"].items()}
+    assert states == {e["field"]: e["state"] for e in current_evaluation(events, resolve_requested_fields(
+        tail.FIELDS, propulsion="hybrid"), "IL")}
+    assert set(states.values()) <= {"missing", "not_applicable"}
+    assert [f for f, v in states.items() if v == "not_applicable"] == [
+        f for f, v in {e["field"]: e["state"] for e in current_evaluation([], resolve_requested_fields(
+            tail.FIELDS, propulsion="hybrid"), "IL")}.items() if v == "not_applicable"]    # no N/A from the gate
+    deferred = [e for e in events if e["kind"] == "primary_research_stop_deferred"]
+    assert all(not ({"state", "evidence", "binding_level", "conflict_class"} & set(e)) for e in deferred)

@@ -98,7 +98,8 @@ def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp
         chat_reply({"role": "assistant", "content": json.dumps(FINAL_JSON)}),
     ]})
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash", GLM_FINALIZER_MODEL="glm-5.3")
-    result, runs, cache = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=3, no_new_research_turns=0),
+    result, runs, cache = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=3, no_new_research_turns=0,
+                                                                        primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0),
                                   {BIG_PAGE: FakeResponse(big_page_body())})
     payloads = chat_payloads(session)
     research, final = payloads[:3], payloads[3]
@@ -188,7 +189,8 @@ def test_no_new_research_trigger_and_duplicate_warnings(make_ctx, tmp_path):
     client = ScriptedGLM([fetch, fetch, fetch, {"role": "assistant", "content": json.dumps(FINAL_JSON)}])
     result = run_vehicle({"upstream_record_id": "1"}, {}, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path, "b", "1"), config=AgentConfig(field_recovery_enabled=False, max_steps=10, no_new_research_turns=2,
-                                                                     primary_research_no_artifact_stop=0),
+                                                                     primary_research_no_artifact_stop=0,
+                                                                     primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0),
                          tool_config=ctx.config, session=ctx.session)
     assert result["stop_reason"] == "no_new_research" and result["status"] == "no_new_research_finalized"
     assert result["research_steps"] == 3 and result["output"]["summary"] == "compiled"
@@ -279,7 +281,8 @@ def test_finalizer_timeout_still_writes_durable_partial_result(monkeypatch, tmp_
         "web_search": [PostResponse(200, {"search_result": [{"title": "G6", "link": BIG_PAGE, "content": "s"}]})],
     })
     client = env_client(monkeypatch, session, GLM_MODEL="glm-5.3-flash")
-    result, runs, _ = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=2),
+    result, runs, _ = run_one(client, tmp_path, AgentConfig(field_recovery_enabled=False, max_steps=2,
+                                                                primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0),
                               {BIG_PAGE: FakeResponse(b"<html><body>660 Nm</body></html>")})
     saved = json.loads((runs / "b" / HANDSHAKE_RECORD_ID / "result.json").read_text("utf-8"))
     for r in (result, saved):

@@ -234,6 +234,12 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "primary_research_candidate_fields": primary.get("candidate_fields", 0),
         "primary_research_stop_reason": primary.get("stop_reason"),
         "primary_research_no_artifact_turns": primary.get("no_artifact_turns", 0),
+        # the fail-safe minimum acquisition base (scheduling only)
+        "primary_research_minimum_acquisition_met": primary.get("minimum_acquisition_met"),
+        "primary_research_stop_deferred_count": primary.get("stop_deferred_count", 0),
+        "primary_research_under_acquired_turns": primary.get("under_acquired_turns", 0),
+        "primary_research_extended_turns": primary.get("extended_turns", 0),
+        "primary_research_scoped_coverage_pct": primary.get("scoped_coverage_pct"),
         # adaptive document sweep (src/document_sweep.py)
         "document_sweep_calls": sweep.get("document_sweep_calls", usage_sweep.get("model_calls", 0)),
         "document_sweep_chunks": sweep.get("document_sweep_chunks", 0),
@@ -345,6 +351,8 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "search_attempts", "timeout_count", "unknown_usage_attempts", "duplicate_searches", "duplicate_fetches",
             "primary_model_calls", "document_sweep_model_calls", "primary_research_turns",
             "primary_research_documents_added", "primary_research_no_artifact_turns", "document_sweep_calls",
+            "primary_research_stop_deferred_count", "primary_research_under_acquired_turns",
+            "primary_research_extended_turns",
             "document_sweep_chunks", "document_sweep_packet_chars", "document_sweep_estimated_input_tokens",
             "document_sweep_fields", "document_sweep_candidates", "document_sweep_latency_ms",
             "document_sweep_timeouts", "document_sweep_input_tokens", "document_sweep_output_tokens", "documents_harvested", "candidate_count_total",
@@ -366,7 +374,9 @@ def aggregate(metrics: list[dict]) -> dict:
     n = len(metrics)
     out: dict = {"vehicles": n, "statuses": dict(Counter(m["status"] for m in metrics)),
                  "primary_research_stop_reasons": dict(Counter(str(m.get("primary_research_stop_reason"))
-                                                               for m in metrics))}
+                                                               for m in metrics)),
+                 "primary_research_minimum_acquisition_not_met": sum(
+                     1 for m in metrics if m.get("primary_research_minimum_acquisition_met") is False)}
     for key in SUM_KEYS:
         total = sum(m.get(key) or 0 for m in metrics)
         out[f"{key}_total"] = round(total, 2)

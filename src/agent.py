@@ -404,6 +404,13 @@ class AgentConfig:
     # candidate (or settled). Disabled while either is 0. X may be a fraction (0.6) or a percentage (60).
     primary_research_min_useful_documents: int = 0
     primary_research_candidate_field_coverage_threshold: float = 0.0
+    # FAIL-SAFE minimum acquisition base: no scheduler stop (no-artifact streak, sufficiency, idle stop, the normal
+    # ceiling) ends research before the run holds >= N useful documents AND >= X % of the applicable fields have a
+    # candidate from a source in their market scope (any market for market_sensitivity "low", else the target market).
+    # An under-acquired run keeps acquiring up to the hard ceiling. Both 0 = gate off.
+    primary_research_min_base_documents: int = 3
+    primary_research_min_base_scoped_coverage: float = 50.0
+    primary_research_hard_max_turns: int = 12     # only an under-acquired run may go beyond max_steps
     finalizer_bundle_max_chars: int = 60000   # cap on the compact research bundle
     temperature: float | None = None
     max_tokens: int | None = None
@@ -457,6 +464,8 @@ AGENT_ENV = {
     "max_steps": "AGENT_MAX_STEPS",
     "primary_research_no_artifact_stop": "PRIMARY_RESEARCH_NO_ARTIFACT_STOP",
     "primary_research_min_useful_documents": "PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS",
+    "primary_research_min_base_documents": "PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS",
+    "primary_research_hard_max_turns": "PRIMARY_RESEARCH_HARD_MAX_TURNS",
     "max_tool_output_chars": "AGENT_MAX_TOOL_OUTPUT_CHARS",
     "keep_recent_tool_results": "AGENT_KEEP_RECENT_TOOL_RESULTS",
     "compact_tool_output_chars": "AGENT_COMPACT_TOOL_OUTPUT_CHARS",
@@ -512,12 +521,15 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     values: dict[str, Any] = _env_ints(AGENT_ENV, env)
     # PRIMARY_RESEARCH_MAX_TURNS is the name of the research turn ceiling; AGENT_MAX_STEPS stays an alias
     values.update(_env_ints({"max_steps": "PRIMARY_RESEARCH_MAX_TURNS"}, env))
-    raw = (env("PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD") or "").strip()
-    if raw:
-        try:
-            values["primary_research_candidate_field_coverage_threshold"] = float(raw)
-        except ValueError:
-            pass
+    for attr, name in (("primary_research_candidate_field_coverage_threshold",
+                        "PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD"),
+                       ("primary_research_min_base_scoped_coverage", "PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE")):
+        raw = (env(name) or "").strip()
+        if raw:
+            try:
+                values[attr] = float(raw)
+            except ValueError:
+                pass
     enabled = _env_bool(env("FIELD_RECOVERY_ENABLED"))
     if enabled is not None:
         values["field_recovery_enabled"] = enabled
@@ -635,9 +647,10 @@ def build_user_message(payload: dict, include_level3: bool, max_steps: int | Non
     else:
         lines += ["", "Level 3 research is disabled for this run; leave `level3` empty."]
     if max_steps:
-        lines += ["", f"Research budget: at most {max_steps} model turns. You may finish earlier."
-                  + (f" Research also ends after {no_artifact_stop} consecutive turns that acquire nothing new."
-                     if no_artifact_stop else "")]
+        lines += ["", f"Research budget: about {max_steps} model turns (more only while the acquired source set is "
+                      "still too thin). You may finish earlier."
+                  + (f" Once enough sources are acquired, research also ends after {no_artifact_stop} consecutive "
+                     "turns that acquire nothing new." if no_artifact_stop else "")]
     lines += ["", "Start researching."]
     return "\n".join(lines)
 
@@ -2307,8 +2320,12 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         # documents, repeated searches and failed fetches are no progress. Scheduling only.
         acq = AcquisitionTracker(run_log=run_log, ctx=ctx, specs=specs, vehicle=vehicle_ctx, cache=cache,
                                  config=config)
+        # FAIL-SAFE: every scheduler stop (no-artifact streak, optional sufficiency, the legacy idle stop and the normal
+        # turn ceiling) needs the MINIMUM ACQUISITION BASE (acquisition.minimum_base). An under-acquired run is told so
+        # and keeps acquiring, up to PRIMARY_RESEARCH_HARD_MAX_TURNS; a normally acquired run stops exactly as before.
+        hard_ceiling = max(config.max_steps, int(config.primary_research_hard_max_turns or 0))
         try:
-            for step in range(1, config.max_steps + 1):
+            for step in range(1, hard_ceiling + 1):
                 message = caller(outgoing_messages(messages, config), phase="research", tools=tool_specs(),
                                  activity={"turn": step})
                 messages.append(_assistant_echo(message))
@@ -2319,26 +2336,43 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     break
                 tools.execute(calls, messages, phase="research")
                 steps_done = step
-                remaining = config.max_steps - step
                 found = acq.after_turn(step)          # never raises: a telemetry problem counts as progress
-                notes = []
+                base_met, base = acq.base()
                 limit = config.primary_research_no_artifact_stop
-                if limit and acq.streak >= limit and remaining > 0:
-                    stop_reason = "no_new_artifact"
-                    break
-                if acq.sufficient() and remaining > 0:
-                    stop_reason = "acquisition_sufficient"
-                    break
-                if (config.no_new_research_turns and tracker.idle_turns >= config.no_new_research_turns
-                        and remaining > 0):
-                    stop_reason = "no_new_research"
-                    break
-                if not found and remaining > 0:
+                if step >= config.max_steps:          # the normal ceiling (or a turn beyond it)
+                    if base_met or step >= hard_ceiling:
+                        stop_reason = "max_steps"
+                        break
+                    acq.defer("max_turns", step)      # under-acquired: extend, up to the hard ceiling
+                    wanted = "max_turns"
+                else:
+                    wanted = None
+                    if limit and acq.streak >= limit:
+                        wanted = "no_new_artifact"
+                    elif acq.sufficient():
+                        wanted = "acquisition_sufficient"
+                    elif config.no_new_research_turns and tracker.idle_turns >= config.no_new_research_turns:
+                        wanted = "no_new_research"
+                    if wanted and base_met:
+                        stop_reason = wanted
+                        break
+                    if wanted:
+                        acq.defer(wanted, step)
+                remaining = hard_ceiling - step if wanted else config.max_steps - step
+                notes = []
+                if wanted:
+                    notes.append(f"Research would end here, but the acquired source set is still thin "
+                                 f"({base['useful_documents']} useful document(s); {base['scoped_coverage_pct']}% of the "
+                                 "requested fields have a candidate from a source in their market scope). Acquire NEW "
+                                 "sources now (official importer / manufacturer specification pages or PDFs, "
+                                 "target-market price lists or brochures, other strong spec sources); re-reading cached "
+                                 f"documents does not help. At most {remaining} more turn(s).")
+                elif not found and remaining > 0:
                     notes.append("This turn acquired nothing new (no new usable document, official source, candidate "
                                  "or admitted evidence); re-reading cached documents is not acquisition."
                                  + (f" Research ends after {limit - acq.streak} more turn(s) like this."
-                                    if limit else ""))
-                if 0 < remaining <= 2:
+                                    if limit and base_met else ""))
+                if not wanted and 0 < remaining <= 2:
                     notes.append(f"{remaining} research turn(s) left: fetch the most valuable source still missing "
                                  "(official spec page or PDF, target-market price list or brochure) or finish. Every "
                                  "fetched document is harvested for all fields and reviewed in a later step.")

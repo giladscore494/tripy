@@ -37,8 +37,8 @@ from .source_authority import OFFICIAL_CLASSES, classify_source, url_market
 from .storage import trace
 from .tail_planner import _level, candidate_key, document_profile_for, usable_document
 
-STOP_REASONS = ("model_finished", "max_turns", "no_new_artifact", "acquisition_sufficient", "no_new_research",
-                "user_cancelled", "error")
+STOP_REASONS = ("model_finished", "max_turns", "hard_max_turns_under_acquired", "no_new_artifact",
+                "acquisition_sufficient", "no_new_research", "user_cancelled", "error")
 # run stop_reason -> primary_research_stop_reason
 STOP_REASON_MAP = {"model_finished": "model_finished", "max_steps": "max_turns", "no_new_artifact": "no_new_artifact",
                    "acquisition_sufficient": "acquisition_sufficient", "no_new_research": "no_new_research",
@@ -107,8 +107,9 @@ def _search_urls(events: Iterable[dict]) -> set[str]:
 
 
 def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[dict], matrix: dict, adm, cache,
-             target_market: str, manufacturer: str | None) -> dict:
-    """What the run has acquired so far (for one before/after comparison around a research turn)."""
+             target_market: str, manufacturer: str | None, sensitivity: dict[str, str] | None = None) -> dict:
+    """What the run has acquired so far (for one before/after comparison around a research turn).
+    `sensitivity` ({field: market_sensitivity} from the schema) drives the scope-aware coverage of the safety gate."""
     from .field_recovery import is_target_market
 
     open_fields = {e["field"] for e in evaluation if e["retry_eligible"]}
@@ -147,6 +148,12 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
             "other_variant_documents": sorted(other_variant),
             "official_sources": official, "candidates": candidates, "evidence": evidence, "best_binding": best,
             "covered_fields": covered | settled, "applicable_fields": len(applicable),
+            # scope-aware coverage (minimum acquisition base): a field counts only with a candidate from a source its
+            # schema market_sensitivity lets it use (any market when "low", else a target-market source), or ok
+            "scoped_fields": settled | {name for name in applicable if any(
+                str(c.get("document_id")) in (good if str((sensitivity or {}).get(name) or "high") == "low"
+                                              else set(target_docs))
+                for c in matrix["fields"].get(name) or [])},
             "fields_with_candidates": len(covered)}
 
 
@@ -173,6 +180,27 @@ def artifacts(before: dict, after: dict) -> list[str]:
     if better:
         reasons.append(f"binding_improvement:{len(better)}")
     return reasons
+
+
+def scoped_coverage_pct(snap: dict) -> float:
+    total = snap["applicable_fields"]
+    return round(100.0 * len(snap.get("scoped_fields") or ()) / total, 1) if total else 0.0
+
+
+def minimum_base(snap: dict, min_documents: int, min_scoped_coverage: Any) -> tuple[bool, dict]:
+    """The MINIMUM ACQUISITION BASE (fail-safe of the primary-research stop): a no-artifact streak, the optional
+    sufficiency transition or the normal turn ceiling may end research only once the run holds at least
+    `min_documents` useful documents AND at least `min_scoped_coverage` % of the applicable fields have a candidate
+    from a source in their scope (or are already ok). Scheduling only: it reads documents, candidates and the schema's
+    market sensitivity, never a model's confidence, a vote, historical yield or an expected answer; it changes no
+    field state, evidence, binding or conflict. Both 0 = gate off (always met)."""
+    pct = threshold_pct(min_scoped_coverage)
+    docs = len(snap["useful_documents"])
+    scoped = round(scoped_coverage_pct(snap), 1)
+    met = (not min_documents or docs >= int(min_documents)) and (not pct or scoped >= pct)
+    return met, {"useful_documents": docs, "min_documents": int(min_documents or 0),
+                 "scoped_coverage_pct": scoped, "min_scoped_coverage_pct": pct,
+                 "target_market_documents": len(snap["target_market_documents"])}
 
 
 def coverage_pct(snap: dict) -> float:
@@ -206,9 +234,12 @@ class AcquisitionTracker:
             cache, config
         self.market = config.target_market
         self.manufacturer = getattr(ctx.admission, "manufacturer", None) or (vehicle or {}).get("manufacturer")
+        self.sensitivity = {s["name"]: str(s.get("market_sensitivity") or "high") for s in specs}
         self.turns: list[dict] = []
         self.streak = 0
         self.max_streak = 0
+        self.deferred: list[dict] = []     # stops the minimum acquisition base held back
+        self.extended_turns = 0            # turns beyond the normal ceiling (only while under-acquired)
         try:
             self.start = self.last = self.take()
         except Exception as exc:     # never costs the run; an empty baseline only makes turn 1 look productive
@@ -217,6 +248,7 @@ class AcquisitionTracker:
                                       "target_market_urls": set(), "other_variant_documents": [],
                                       "official_sources": set(), "candidates": set(), "evidence": set(),
                                       "best_binding": {}, "covered_fields": set(), "applicable_fields": 0,
+                                      "scoped_fields": set(),
                                       "fields_with_candidates": 0}
 
     def take(self) -> dict:
@@ -228,7 +260,8 @@ class AcquisitionTracker:
         return snapshot(events=events, documents=list(self.ctx.documents_opened),
                         evaluation=current_evaluation(events, self.specs, self.market),
                         matrix=candidate_matrix(events, self.specs, self.vehicle), adm=self.ctx.admission,
-                        cache=self.cache, target_market=self.market, manufacturer=self.manufacturer)
+                        cache=self.cache, target_market=self.market, manufacturer=self.manufacturer,
+                        sensitivity=self.sensitivity)
 
     def after_turn(self, step: int) -> list[str]:
         try:
@@ -241,13 +274,35 @@ class AcquisitionTracker:
         self.last = now
         self.streak = 0 if found else self.streak + 1
         self.max_streak = max(self.max_streak, self.streak)
+        met, base = self.base()
         row = {"turn": step, "artifacts": found, "no_artifact_streak": self.streak,
                "useful_documents": len(now["useful_documents"]),
                "fields_with_candidates": now["fields_with_candidates"],
-               "candidate_field_coverage_pct": coverage_pct(now)}
+               "candidate_field_coverage_pct": coverage_pct(now),
+               "scoped_coverage_pct": base["scoped_coverage_pct"], "minimum_acquisition_met": met}
         self.turns.append(row)
         self.run_log.event("primary_research_turn", **row)
         return found
+
+    def base(self) -> tuple[bool, dict]:
+        """Is the minimum acquisition base met (see minimum_base)? Never raises: an unreadable state counts as met,
+        so a telemetry problem can never keep research running."""
+        try:
+            return minimum_base(self.last, self.config.primary_research_min_base_documents,
+                                self.config.primary_research_min_base_scoped_coverage)
+        except Exception:
+            return True, {"error": "base_unmeasured"}
+
+    def defer(self, reason: str, step: int) -> dict:
+        """A stop the run wanted but the minimum acquisition base held back: logged, never silent."""
+        _, base = self.base()
+        entry = {"turn": step, "wanted_stop": reason, **base}
+        self.deferred.append(entry)
+        if reason == "max_turns":
+            self.extended_turns += 1
+        self.run_log.event("primary_research_stop_deferred", **entry,
+                           note="under-acquired: acquisition continues (hard ceiling still applies)")
+        return entry
 
     def sufficient(self) -> bool:
         return sufficient(self.last, self.config.primary_research_min_useful_documents,
@@ -259,7 +314,8 @@ class AcquisitionTracker:
             "turns": turns,
             "model_calls": model_calls,
             "max_turns": self.config.max_steps,
-            "stop_reason": STOP_REASON_MAP.get(stop_reason or "", stop_reason),
+            "stop_reason": ("hard_max_turns_under_acquired" if stop_reason == "max_steps" and not self.base()[0]
+                            else STOP_REASON_MAP.get(stop_reason or "", stop_reason)),
             "run_stop_reason": stop_reason,
             "documents_added": len(end["useful_urls"] - self.start["useful_urls"]),
             "useful_documents": len(end["useful_documents"]),
@@ -269,11 +325,21 @@ class AcquisitionTracker:
             "candidate_fields": end["fields_with_candidates"],
             "candidate_field_coverage_pct": coverage_pct(end),
             "no_artifact_turns": sum(1 for t in self.turns if not t["artifacts"]),
+            "minimum_acquisition_met": self.base()[0],
+            "minimum_acquisition": self.base()[1],
+            "stop_deferred_count": len(self.deferred),
+            "stops_deferred": self.deferred,
+            "under_acquired_turns": sum(1 for t in self.turns if not t.get("minimum_acquisition_met", True)),
+            "extended_turns": self.extended_turns,
+            "scoped_coverage_pct": scoped_coverage_pct(end),
             "final_no_artifact_streak": self.streak,
             "max_no_artifact_streak": self.max_streak,
             "turn_artifacts": [{"turn": t["turn"], "artifacts": t["artifacts"]} for t in self.turns],
             "research_s": research_s,
             "settings": {"max_turns": self.config.max_steps,
+                         "hard_max_turns": max(self.config.max_steps, self.config.primary_research_hard_max_turns or 0),
+                         "min_base_documents": self.config.primary_research_min_base_documents,
+                         "min_base_scoped_coverage": threshold_pct(self.config.primary_research_min_base_scoped_coverage),
                          "no_artifact_stop": self.config.primary_research_no_artifact_stop,
                          "min_useful_documents": self.config.primary_research_min_useful_documents,
                          "candidate_field_coverage_threshold":
