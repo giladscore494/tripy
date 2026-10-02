@@ -1,16 +1,30 @@
 """GLM agent for one vehicle: research, targeted field retries, then a compact finalization.
 
-    RESEARCH PHASE      tool-calling turns with GLM_MODEL; raw trace -> events.jsonl,
-                        documents -> document cache, evidence -> evidence store
+    RESEARCH PHASE      tool-calling turns with GLM_MODEL (source acquisition); raw trace ->
+                        events.jsonl, documents -> document cache, evidence -> evidence store
+          ↓
+    DETERMINISTIC       every document touched (in ANY phase) is harvested once for candidates of
+    HARVEST             ALL applicable fields (src/candidate_harvest.py). 0 model calls. Candidates
+                        are never evidence and never change a field state.
+          ↓
+    DOCUMENT SWEEP      1 model turn (a 2nd only to read turn-1 cached inspections; max 2) over the candidate
+                        matrix with cached-document tools only (src/document_sweep.py): review and
+                        promote candidates with store_evidence, catch what the parser missed.
+                        0 searches, 0 fetches.
           ↓
     FIELD DETECTION     every REQUESTED enrichment field (schema-driven, src/fields.py) is
-                        evaluated from the model's own evidence/declarations
+                        evaluated from the model's own evidence/declarations (current_evaluation)
           ↓
-    FIELD RETRIES       one focused, compact-context research task per failed field
+    FIELD RETRIES       focused, compact-context web recovery for the fields still unresolved,
+                        BREADTH-FIRST: every field gets attempt 1 before any field gets attempt 2
                         (src/field_recovery.py); successful fields are never re-researched
           ↓
     COMPACT BUNDLE      identity, targets, evidence, candidate facts, document metadata,
                         excerpts, concise actions, missing targets (src/bundle.py)
+          ↓
+    CHECKPOINT          result.json with status finalization_pending is written atomically and durably
+                        BEFORE the paid finalizer request starts (a hard process death leaves a
+                        finalizable run). If it cannot be written, the finalizer is NOT called.
           ↓
     FINALIZATION PHASE  ONE no-tools call with GLM_FINALIZER_MODEL (default GLM_MODEL)
           ↓
@@ -36,19 +50,22 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .bundle import BUNDLE_VERSION, build_research_bundle
+from .concurrency import BatchCancelled
 from .glm_client import GLMError
 from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
 from .storage.trace import FETCH_TOOLS
 from .field_recovery import (current_evaluation, early_resolution_check, parse_retry_reply, retry_packet,
                              retry_queue)
-from .fields import grouped, parse_field_list, propulsion_of, resolve_requested_fields
+from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
 from .storage.cache import DocumentCache
+from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs
 from .tools.evidence import EvidenceStore
+from .candidate_harvest import RunHarvester
 from .variant_notes import record_id_of, variant_notes
 
 OUTPUT_SHAPE = """{
@@ -128,6 +145,13 @@ Working efficiently (documents are external memory):
   3. get_structured_data(document_id) for embedded JSON on HTML pages;
   4. extract_html(document_id, offset) / get_cached_document to page through text.
   Search again when an important target is still unresolved and your documents cannot answer it.
+- Every document you fetch is automatically scanned by the runtime for deterministic candidates of ALL
+  requested Level 2 fields (labels, units, spec tables), and a later review step checks those candidates
+  against the cached documents. So focus your turns on: the exact vehicle identity and trim/variant,
+  Israeli-market sources, authoritative specification sources (importer/manufacturer spec pages, price
+  lists, brochures and spec PDFs), obtaining high-value documents, and sources for difficult fields.
+  You may still store obvious evidence, but do not spend turns on manual document searches for every
+  simple specification field.
 - Do not spend turns re-confirming Level 2 values that are already well supported. Spend remaining turns
   on unresolved fields, conflicting fields, missing evidence records and exact Israeli-market provenance.
   Level 3 (reliability, resale, insurance, recalls) should not take the budget away from clean Level 2
@@ -180,6 +204,11 @@ Do not research the vehicle generally. Your only research objective is the reque
   If they show that a document was already inspected but do not answer the field, prefer a new targeted
   query or search strategy rather than reopening the same broad text. Re-read a cached document only
   when you have a concrete reason that the provided excerpts are insufficient.
+- The task may contain deterministic_candidates: values the runtime's parser located in cached documents
+  for this field (with quote, document_id, market/variant hints and parser_confidence = how sure the parser
+  is of the label/value pairing, NOT that it applies to this variant). They are not evidence. If one is
+  valid for the exact target variant and market, store it with store_evidence (citing its document_id and
+  quote); otherwise use them to aim your research instead of rediscovering them.
 - The task includes already_attempted_operations. Do not repeat an operation listed there when the exact
   same operation has already produced a result. Use a different query, another document, another
   extraction method, or a targeted web search instead. If an exact duplicate tool call is emitted anyway,
@@ -211,20 +240,51 @@ When done, reply with ONLY one JSON object (no tool call):
  "value": <any or null>, "unit": "<unit or null>", "market": "<market or null>",
  "evidence_ids": ["e12"], "notes": "..."}"""
 
+DOCUMENT_SWEEP_SYSTEM_PROMPT = """You are the document-sweep step of a vehicle research benchmark for ONE exact vehicle
+variant. Research has already downloaded documents, and a deterministic parser has extracted CANDIDATE values
+for the requested enrichment fields from them. Candidates are not evidence: a parser found a label next to a
+value; `parser_confidence` says how sure it is of that pairing, never that the value belongs to this variant.
+
+Your job, for ALL requested fields at once, using ONLY what is already downloaded:
+1. Review the deterministic candidates.
+2. Reject candidates from the wrong market, model year or trim (use market_hint, variant_hint, year_hint,
+   trim_mentioned, official_domain, the quote and the document) - simply do not store them.
+3. Promote every valid candidate with store_evidence: field, value, unit, document_id, the short verbatim
+   quote, market, variant, variant_match (exact | different | unclear).
+4. When credible sources give different values, store each credible one with its own market/variant; do not
+   pick a winner silently and do not try to resolve conflicts here.
+5. For fields_without_candidates (and fields whose candidates are all rejected), inspect the cached documents
+   with find_in_document / extract_tables / get_structured_data / extract_html / get_cached_document and
+   store any valid fact the parser missed.
+6. If a field does not exist for this vehicle, report_field_status(field, "not_applicable").
+You cannot search the web or fetch pages in this step; such calls are refused. Fields that remain open get a
+targeted web follow-up later. Turn budget: at most turn_budget turns (never more than 2), used adaptively.
+If the candidates are enough, put every store_evidence / report_field_status call you can justify into your
+FIRST turn and the sweep ends there. A second turn is given ONLY when your first turn inspected cached
+documents (find_in_document / extract_tables / extract_html / get_structured_data / get_cached_document) and
+those calls returned content, so you can read the results and then store evidence. Results of tool calls made
+in your last turn are never shown to you.
+When done (or out of turns), reply with ONLY a JSON object:
+{"reviewed": [{"field": "<name>", "decision": "promoted | rejected | conflict | not_found", "reason": "..."}],
+ "notes": "..."}"""
+
 REPAIR_PROMPT = ("Your last reply could not be parsed as JSON. Return the same content as ONE valid JSON object "
                  "and nothing else.")
 
 PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT + FIELD_RECOVERY_SYSTEM_PROMPT
-                                 + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
+                                 + DOCUMENT_SWEEP_SYSTEM_PROMPT + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
 
 STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "user_cancelled", "api_failure",
                 "research_exception")
 STATUSES = ("completed", "max_steps_finalized", "no_new_research_finalized", "completed_unparsed",
-            "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized")
+            "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized",
+            "finalization_pending")
 FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized"}
-PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete")
-PHASE_LABELS = {"research": "Research", "field_detection": "Field Detection", "field_recovery": "Field Recovery",
-                "finalization": "Finalization"}
+# finalization_pending: the durable pre-finalization checkpoint (research complete, finalizer not finished).
+PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete", "finalization_pending")
+PHASE_LABELS = {"research": "Research", "deterministic_harvest": "Deterministic Harvest",
+                "document_sweep": "Document Sweep", "field_detection": "Field Detection",
+                "field_recovery": "Field Recovery", "finalization": "Finalization"}
 
 
 def interruption_message(phase: str | None) -> str:
@@ -243,7 +303,7 @@ class AgentConfig:
     finalizer_bundle_max_chars: int = 60000   # cap on the compact research bundle
     temperature: float | None = None
     max_tokens: int | None = None
-    include_level3: bool = True
+    include_level3: bool = False              # Level 3 open research is opt-in (INCLUDE_LEVEL3 / UI / --level3)
     thinking: str = ""                        # "" = provider default (not sent), "enabled", "disabled"
     extra_body: dict = field(default_factory=dict)
     # Requested enrichment fields: names or specs; empty = every field of the enrichment schema.
@@ -258,6 +318,15 @@ class AgentConfig:
     field_recovery_prior_excerpts_max_items: int = 8
     field_recovery_prior_excerpts_max_chars: int = 8000
     field_recovery_prior_excerpt_max_chars: int = 1500
+    field_recovery_candidates_per_field: int = 8   # deterministic candidates handed to a field retry
+    # Layered harvesting: deterministic candidates from every document + one bounded model document sweep.
+    layered_harvest_enabled: bool = True
+    # Adaptive: up to N turns (absolute max 2). Turn 2 happens ONLY when turn 1 inspected cached documents and got
+    # content back to interpret; a sweep that just promotes candidates ends after 1 turn. 1 = never a follow-up;
+    # 0 = no sweep.
+    document_sweep_max_turns: int = 2
+    document_sweep_candidates_per_field: int = 6
+    document_sweep_packet_max_chars: int = 40000
 
 
 AGENT_ENV = {
@@ -273,6 +342,7 @@ AGENT_ENV = {
     "field_recovery_prior_excerpts_max_items": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_ITEMS",
     "field_recovery_prior_excerpts_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS",
     "field_recovery_prior_excerpt_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS",
+    "document_sweep_max_turns": "DOCUMENT_SWEEP_MAX_TURNS",
 }
 TOOL_ENV = {
     "preview_chars": "TOOL_PREVIEW_CHARS",
@@ -309,6 +379,12 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     enabled = _env_bool(env("FIELD_RECOVERY_ENABLED"))
     if enabled is not None:
         values["field_recovery_enabled"] = enabled
+    level3 = _env_bool(env("INCLUDE_LEVEL3"))
+    if level3 is not None:
+        values["include_level3"] = level3
+    layered = _env_bool(env("LAYERED_HARVEST_ENABLED"))
+    if layered is not None:
+        values["layered_harvest_enabled"] = layered
     if (env("ENRICHMENT_FIELDS") or "").strip():
         values["requested_fields"] = parse_field_list(env("ENRICHMENT_FIELDS"))
     if (env("TARGET_MARKET") or "").strip():
@@ -429,19 +505,35 @@ def _error_text(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc)[:500]}"
 
 
+def check_cancelled(cancel_event) -> None:
+    """Safe point for cooperative batch cancellation (see src/concurrency.BatchCancelled)."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise BatchCancelled("batch cancelled")
+
+
 class ModelCaller:
     """Calls GLM, logs every response as a `model_response` event and books usage by phase."""
 
-    def __init__(self, client, run_log: RunLog, config: AgentConfig):
+    def __init__(self, client, run_log: RunLog, config: AgentConfig, run_context: dict | None = None,
+                 cancel_event=None):
         self.client, self.run_log, self.config = client, run_log, config
         self.extra = request_extra(config)
         self.usage = {group: trace.empty_usage() for group in trace.PHASE_GROUPS}
         self.last_content: str | None = None
+        self.run_context = run_context if run_context is not None else {}
+        self.cancel_event = cancel_event
 
     def __call__(self, messages: list[dict], *, phase: str, tools: list[dict] | None = None,
-                 model: str | None = None, meta: dict | None = None) -> dict:
+                 model: str | None = None, meta: dict | None = None, activity: dict | None = None) -> dict:
         """`meta` adds explicit context to the logged model_response (e.g. the field and attempt of a
-        field-recovery turn). It never changes `phase`, which usage accounting groups by."""
+        field-recovery turn). It never changes `phase`, which usage accounting groups by. `activity`
+        only labels this call's request-lifecycle events (e.g. the research turn); it is not logged
+        on the model_response."""
+        check_cancelled(self.cancel_event)
+        meta = meta or {}
+        self.run_context.clear()
+        self.run_context.update({"field": meta.get("field"), "field_attempt": meta.get("attempt"),
+                                 "turn": meta.get("turn"), **(activity or {})})
         kwargs: dict[str, Any] = {"tools": tools, "temperature": self.config.temperature,
                                   "max_tokens": self.config.max_tokens, "extra": self.extra or None}
         if model:
@@ -464,17 +556,17 @@ class ModelCaller:
 
 def run_finalization(caller: ModelCaller, *, run_log: RunLog, payload: dict, config: AgentConfig, cache=None,
                      documents_dir: Path | None = None, stop_reason: str | None, phase: str = "finalization",
-                     model: str, request_path: Path | None = None) -> dict:
+                     model: str, request_path: Path | None = None, bundle: dict | None = None) -> dict:
     """Build the compact bundle from the run's events and make the no-tools finalization call(s).
 
     Never raises for API/parse problems (they are returned in `error`); lets
     KeyboardInterrupt and other BaseExceptions through to the caller.
     """
-    events = trace_events(run_log)
-    bundle = build_research_bundle(events, payload, cache=cache, documents_dir=documents_dir,
-                                   include_level3=config.include_level3,
-                                   max_chars=config.finalizer_bundle_max_chars, stop_reason=stop_reason,
-                                   target_market=config.target_market)
+    if bundle is None:
+        bundle = build_research_bundle(trace_events(run_log), payload, cache=cache, documents_dir=documents_dir,
+                                       include_level3=config.include_level3,
+                                       max_chars=config.finalizer_bundle_max_chars, stop_reason=stop_reason,
+                                       target_market=config.target_market)
     messages = finalizer_messages(bundle)
     input_chars = sum(len(m["content"]) for m in messages)
     before = dict(caller.usage["finalization"])
@@ -484,9 +576,8 @@ def run_finalization(caller: ModelCaller, *, run_log: RunLog, payload: dict, con
                             "evidence_items": len(bundle.get("evidence") or []),
                             "started_at": utc_now(), "request_path": str(request_path) if request_path else None}
     if request_path is not None:
-        request_path.parent.mkdir(parents=True, exist_ok=True)
-        request_path.write_text(json.dumps({"model": model, "phase": phase, "created_at": info["started_at"],
-                                            "messages": messages}, ensure_ascii=False, indent=1), "utf-8")
+        atomic_write_json(request_path, {"model": model, "phase": phase, "created_at": info["started_at"],
+                                         "messages": messages})
     run_log.event("finalization_started", **{k: v for k, v in info.items() if k != "started_at"})
     t0 = time.monotonic()
     output, parse_note, text, repair_text, error, api_error = None, None, None, None, None, None
@@ -539,25 +630,48 @@ class ToolSession:
     instead of tool_call/tool_result, so counters and cost only count real executions.
     """
 
-    def __init__(self, ctx: ToolContext, run_log: RunLog, config: AgentConfig):
+    def __init__(self, ctx: ToolContext, run_log: RunLog, config: AgentConfig, cancel_event=None,
+                 on_documents: Callable[[list[str], str], None] | None = None):
         self.ctx, self.run_log, self.config = ctx, run_log, config
         self.tracker = ResearchTracker()
         self.tool_calls: list[dict] = []
         self.step = 0                      # global tool-turn counter across phases
+        self.cancel_event = cancel_event
+        self.on_documents = on_documents   # e.g. the deterministic harvester (every phase, every new document)
+        self.blocked = 0
+        self.turn_results: list[dict] = []
 
-    def execute(self, calls: list[dict], messages: list[dict], *, phase: str, **tags: Any):
-        """Run one model turn's tool calls, append the tool messages, return the turn's novelty."""
+    def execute(self, calls: list[dict], messages: list[dict], *, phase: str, allowed: tuple | None = None,
+                **tags: Any):
+        """Run one model turn's tool calls, append the tool messages, return the turn's novelty.
+
+        `allowed`: tool names this phase may execute (e.g. the document sweep's cached-document tools).
+        Any other call is answered with an error WITHOUT being executed: no HTTP request, no search."""
         self.step += 1
         step = self.step
         self.tracker.begin_turn(step)
+        self.turn_results = []             # (name, result) of every call answered this turn, replayed or executed
         for call in calls:
+            check_cancelled(self.cancel_event)
             fn = call.get("function") or {}
             name, raw_args = fn.get("name", ""), fn.get("arguments")
             call_id = call.get("id") or f"call_{len(self.tool_calls) + 1}"
+            if allowed is not None and name not in allowed:
+                self.blocked += 1
+                result = {"error": "tool_not_allowed_in_phase", "phase": phase,
+                          "message": f"{name} is not available in this step. Allowed: {', '.join(allowed)}."}
+                self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                   arguments=raw_args, **tags)
+                self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name, "arguments": raw_args,
+                                        "duration_ms": 0, "cache_hit": None, "error": result["error"],
+                                        "document_id": None, "duplicate": False, "blocked": True})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
+                continue
             signature = call_signature(name, raw_args)
             prior = self.tracker.lookup(signature)
             if prior is not None:
                 result = replay_result(prior)
+                self.turn_results.append({"name": name, "result": result, "reused": True})
                 self.tracker.note_reused(name)
                 self.run_log.event("tool_reused", step=step, phase=phase, call_id=call.get("id"), name=name,
                                    arguments=raw_args, **tags, original_step=prior["step"],
@@ -586,6 +700,9 @@ class ToolSession:
                 self.run_log.event("duplicate_work", step=step, phase=phase, name=name, arguments=raw_args,
                                    note=note, detected="after_execution", **tags)
             self.tracker.remember(signature, {"step": step, "phase": phase, **tags, "result": result})
+            self.turn_results.append({"name": name, "result": result, "reused": False})
+            if self.on_documents is not None:
+                self.on_documents(self.ctx.documents_opened, phase)
             self.tool_calls.append({
                 "step": step, "phase": phase, **tags, "name": name, "arguments": raw_args, "duration_ms": elapsed,
                 "cache_hit": result.get("cache_hit") if isinstance(result, dict) else None,
@@ -610,29 +727,35 @@ def _doc_metas(events: list[dict], cache, documents_dir: Path) -> list[dict]:
 
 def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
                        config: AgentConfig, run_log: RunLog, cache, documents_dir: Path,
-                       operator_notes: dict | None, phase_ref: dict) -> dict:
+                       operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None) -> dict:
     """Detect failed requested fields from the research state, then run focused retries for them only.
 
-    Generic over whatever fields were requested. The queue is dynamic: after EVERY attempt all
-    requested fields are re-evaluated, and a queued field that another field's recovery resolved
-    (e.g. by-product evidence from the same spec table) is skipped without its own model call.
+    Generic over whatever fields were requested. BREADTH-FIRST: round 1 gives every queued field its
+    first attempt (A1, B1, C1, ...); round 2 only revisits fields still unresolved (A2, C2, ...), so a
+    second attempt can never starve a field that has not had its first. An attempt may still use up to
+    FIELD_RECOVERY_MAX_STEPS model turns. The queue is dynamic: after EVERY attempt all requested
+    fields are re-evaluated, and a queued field another field's recovery resolved (e.g. by-product
+    evidence from the same spec table) is skipped without its own model call.
     KeyboardInterrupt propagates; an API failure stops further retries (the run still finalizes).
     """
+    from .candidate_harvest import candidate_matrix
+    from .document_sweep import compact_candidate
+
     events = trace_events(run_log)
     primary = current_evaluation(events, specs, config.target_market)
     run_log.event("field_evaluation", stage="primary", fields=primary,
                   summary=_state_counts(primary))
     queue = retry_queue(primary, specs, config.field_recovery_max_attempts) if config.field_recovery_enabled else []
     run_log.event("field_retry_queue", fields=[q["field"] for q in queue], queue=queue,
-                  enabled=config.field_recovery_enabled)
+                  enabled=config.field_recovery_enabled, order="breadth_first")
     by_name = {s["name"]: s for s in specs}
     queued = [q["field"] for q in queue]
     current = {e["field"]: e for e in primary}
     attempts_log: list[dict] = []
     resolved_directly: list[str] = []
     resolved_indirectly: dict[str, dict] = {}
-    total_steps, stopped, cut_short = 0, None, None
-    early_count, budget_skipped = 0, 0
+    previous_by_field: dict[str, list[dict]] = {name: [] for name in queued}
+    state = {"total_steps": 0, "stopped": None, "cut_short": None, "early_count": 0, "budget_skipped": 0}
 
     def reevaluate(during_field: str, attempt: int) -> None:
         """Refresh the state of every requested field; record queued fields another recovery resolved."""
@@ -648,110 +771,128 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                 run_log.event("field_recovery_queue_resolved_indirectly", field=name,
                               resolved_during_field=during_field, attempt=attempt, state=entry["state"])
 
-    for item in queue:
-        name, previous = item["field"], []
-        if not current[name]["retry_eligible"]:
-            continue  # resolved by an earlier field's recovery: no retry for it
-        for attempt in range(1, item["max_attempts"] + 1):
-            if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                stopped = "max_total_steps"   # hard per-vehicle cap: no further attempt is started
-                break                         # (not "cut short": no attempt of this field was running)
-            events = trace_events(run_log)
-            before = current[name]
-            packet = retry_packet(spec=by_name[name], evaluation=before, events=events, payload=payload,
-                                  doc_metas=_doc_metas(events, cache, documents_dir), attempt=attempt,
-                                  max_attempts=item["max_attempts"], max_steps=config.field_recovery_max_steps,
-                                  target_market=config.target_market, previous_attempts=previous,
-                                  operator_notes=operator_notes,
-                                  excerpt_limits={"max_items": config.field_recovery_prior_excerpts_max_items,
-                                                  "max_chars": config.field_recovery_prior_excerpts_max_chars,
-                                                  "max_excerpt_chars": config.field_recovery_prior_excerpt_max_chars})
-            packet["other_requested_fields"] = {s["name"]: s.get("description") for s in specs
-                                                if s["name"] != name and s.get("applicable", True)}
-            run_log.event("field_recovery_started", field=name, attempt=attempt, max_attempts=item["max_attempts"],
-                          failure_reason=before["state"], turn_budget=config.field_recovery_max_steps,
-                          already_attempted_operations=len(packet["already_attempted_operations"]),
-                          prior_excerpt_items=packet["prior_excerpt_stats"]["items"],
-                          prior_excerpt_chars=packet["prior_excerpt_stats"]["chars"],
-                          prior_excerpts=packet["prior_relevant_excerpts"],
-                          packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)))
-            phase_ref["name"] = "field_recovery"
-            messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
-                        {"role": "user", "content": "Field recovery task (JSON):\n"
-                                                    + json.dumps(packet, ensure_ascii=False, default=str)}]
-            reply_text, turns, error, early = None, 0, None, False
-            idle = 0
-            budget = max(1, config.field_recovery_max_steps)
-            try:
-                for turn_index in range(1, budget + 1):
-                    if config.field_recovery_max_total_steps and total_steps >= config.field_recovery_max_total_steps:
-                        stopped = "max_total_steps"   # hard per-vehicle cap: no further model turn
-                        cut_short = name
-                        break
-                    meta = {"field": name, "attempt": attempt, "max_attempts": item["max_attempts"],
-                            "turn": turn_index, "turn_budget": budget}
-                    message = caller(outgoing_messages(messages, config), phase="field_recovery",
-                                     tools=tool_specs(), meta=meta)
-                    turns += 1
-                    total_steps += 1
-                    messages.append(_assistant_echo(message))
-                    calls = message.get("tool_calls") or []
-                    if not calls:
-                        reply_text = message.get("content") or ""
-                        break
-                    # A turn whose calls were all replayed (or found nothing new) is idle, so a model that
-                    # keeps re-emitting the same call ends within AGENT_NO_NEW_RESEARCH_TURNS.
-                    novelty = session.execute(calls, messages, phase="field_recovery", field=name, attempt=attempt)
-                    # Early success: if the evidence stored by this turn already makes the target field `ok`,
-                    # end the attempt now instead of paying for a model turn that only says "found".
-                    # Only `ok` short-circuits; every other state still needs model work or an explicit reply.
-                    may_stop, now = early_resolution_check(by_name[name], trace_events(run_log),
-                                                           config.target_market)
-                    if may_stop:
-                        early = True
-                        early_count += 1
-                        budget_skipped += budget - turn_index
-                        run_log.event("field_recovery_early_resolved", field=name, attempt=attempt,
-                                      after_turn=turn_index, state="ok", turn_budget=budget,
-                                      turn_budget_skipped=budget - turn_index, evidence_ids=now["evidence_ids"])
-                        break
-                    idle = 0 if novelty.total else idle + 1
-                    if config.no_new_research_turns and idle >= config.no_new_research_turns:
-                        break
-            except GLMError as exc:  # stop spending on retries; finalize with what we have
-                error = _error_text(exc)
-                stopped = "api_failure"
-                run_log.event("field_recovery_failed", field=name, attempt=attempt, error=error,
-                              api_error=exc.as_dict())
-            reply = parse_retry_reply(reply_text, name)
-            if reply and reply.get("status"):
-                cited = reply.get("evidence_ids")
-                run_log.event("field_status", field=name, status=str(reply["status"]).lower(),
-                              note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}",
-                              evidence_ids=[str(i) for i in cited] if isinstance(cited, list) else [])
-            reevaluate(name, attempt)
-            after = current[name]
-            if not after["retry_eligible"] and name not in resolved_directly:
-                resolved_directly.append(name)
-            excerpt_docs = {e.get("document_id") for e in packet["prior_relevant_excerpts"] if e.get("document_id")}
-            rereads = sum(1 for c in session.tool_calls
-                          if c.get("phase") == "field_recovery" and c.get("field") == name
-                          and c.get("attempt") == attempt and c["name"] in ("get_cached_document", "extract_html")
-                          and _call_document(c) in excerpt_docs)
-            record = {"field": name, "attempt": attempt, "state_before": before["state"],
-                      "state_after": after["state"], "turns": turns, "reply": reply,
-                      "reply_text": None if reply else reply_text, "error": error, "early_resolved": early,
-                      "packet_chars": len(json.dumps(packet, ensure_ascii=False, default=str)),
-                      "prior_excerpt_items": packet["prior_excerpt_stats"]["items"],
-                      "prior_excerpt_chars": packet["prior_excerpt_stats"]["chars"],
-                      "document_rereads_after_prior_excerpt": rereads}
-            attempts_log.append(record)
-            previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
-            run_log.event("field_recovery_finished", **record)
-            if not after["retry_eligible"] or stopped:
+    def cap_reached() -> bool:
+        cap = config.field_recovery_max_total_steps
+        return bool(cap and state["total_steps"] >= cap)
+
+    def run_attempt(item: dict, attempt: int, round_no: int) -> None:
+        name = item["field"]
+        previous = previous_by_field[name]
+        events = trace_events(run_log)
+        before = current[name]
+        packet = retry_packet(spec=by_name[name], evaluation=before, events=events, payload=payload,
+                              doc_metas=_doc_metas(events, cache, documents_dir), attempt=attempt,
+                              max_attempts=item["max_attempts"], max_steps=config.field_recovery_max_steps,
+                              target_market=config.target_market, previous_attempts=previous,
+                              operator_notes=operator_notes,
+                              excerpt_limits={"max_items": config.field_recovery_prior_excerpts_max_items,
+                                              "max_chars": config.field_recovery_prior_excerpts_max_chars,
+                                              "max_excerpt_chars": config.field_recovery_prior_excerpt_max_chars})
+        packet["other_requested_fields"] = {s["name"]: s.get("description") for s in specs
+                                            if s["name"] != name and s.get("applicable", True)}
+        if config.layered_harvest_enabled and config.field_recovery_candidates_per_field:
+            matrix = candidate_matrix(events, [by_name[name]], vehicle,
+                                      per_field=config.field_recovery_candidates_per_field)
+            cands = matrix["fields"].get(name) or []
+            if cands:
+                packet["deterministic_candidates"] = [compact_candidate(c) for c in cands]
+        run_log.event("field_recovery_started", field=name, attempt=attempt, max_attempts=item["max_attempts"],
+                      round=round_no, failure_reason=before["state"], turn_budget=config.field_recovery_max_steps,
+                      already_attempted_operations=len(packet["already_attempted_operations"]),
+                      prior_excerpt_items=packet["prior_excerpt_stats"]["items"],
+                      prior_excerpt_chars=packet["prior_excerpt_stats"]["chars"],
+                      prior_excerpts=packet["prior_relevant_excerpts"],
+                      deterministic_candidates=len(packet.get("deterministic_candidates") or []),
+                      packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)))
+        phase_ref["name"] = "field_recovery"
+        messages = [{"role": "system", "content": FIELD_RECOVERY_SYSTEM_PROMPT},
+                    {"role": "user", "content": "Field recovery task (JSON):\n"
+                                                + json.dumps(packet, ensure_ascii=False, default=str)}]
+        reply_text, turns, error, early = None, 0, None, False
+        idle = 0
+        budget = max(1, config.field_recovery_max_steps)
+        try:
+            for turn_index in range(1, budget + 1):
+                if cap_reached():
+                    state["stopped"] = "max_total_steps"   # hard per-vehicle cap: no further model turn
+                    state["cut_short"] = name
+                    break
+                meta = {"field": name, "attempt": attempt, "max_attempts": item["max_attempts"],
+                        "turn": turn_index, "turn_budget": budget}
+                message = caller(outgoing_messages(messages, config), phase="field_recovery",
+                                 tools=tool_specs(), meta=meta)
+                turns += 1
+                state["total_steps"] += 1
+                messages.append(_assistant_echo(message))
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    reply_text = message.get("content") or ""
+                    break
+                # A turn whose calls were all replayed (or found nothing new) is idle, so a model that
+                # keeps re-emitting the same call ends within AGENT_NO_NEW_RESEARCH_TURNS.
+                novelty = session.execute(calls, messages, phase="field_recovery", field=name, attempt=attempt)
+                # Early success: if the evidence stored by this turn already makes the target field `ok`,
+                # end the attempt now instead of paying for a model turn that only says "found".
+                # Only `ok` short-circuits; every other state still needs model work or an explicit reply.
+                may_stop, now = early_resolution_check(by_name[name], trace_events(run_log), config.target_market)
+                if may_stop:
+                    early = True
+                    state["early_count"] += 1
+                    state["budget_skipped"] += budget - turn_index
+                    run_log.event("field_recovery_early_resolved", field=name, attempt=attempt,
+                                  after_turn=turn_index, state="ok", turn_budget=budget,
+                                  turn_budget_skipped=budget - turn_index, evidence_ids=now["evidence_ids"])
+                    break
+                idle = 0 if novelty.total else idle + 1
+                if config.no_new_research_turns and idle >= config.no_new_research_turns:
+                    break
+        except GLMError as exc:  # stop spending on retries; finalize with what we have
+            error = _error_text(exc)
+            state["stopped"] = "api_failure"
+            run_log.event("field_recovery_failed", field=name, attempt=attempt, error=error,
+                          api_error=exc.as_dict())
+        reply = parse_retry_reply(reply_text, name)
+        if reply and reply.get("status"):
+            cited = reply.get("evidence_ids")
+            run_log.event("field_status", field=name, status=str(reply["status"]).lower(),
+                          note=reply.get("notes"), source=f"field_recovery_attempt_{attempt}",
+                          evidence_ids=[str(i) for i in cited] if isinstance(cited, list) else [])
+        reevaluate(name, attempt)
+        after = current[name]
+        if not after["retry_eligible"] and name not in resolved_directly:
+            resolved_directly.append(name)
+        excerpt_docs = {e.get("document_id") for e in packet["prior_relevant_excerpts"] if e.get("document_id")}
+        rereads = sum(1 for c in session.tool_calls
+                      if c.get("phase") == "field_recovery" and c.get("field") == name
+                      and c.get("attempt") == attempt and c["name"] in ("get_cached_document", "extract_html")
+                      and _call_document(c) in excerpt_docs)
+        record = {"field": name, "attempt": attempt, "round": round_no, "state_before": before["state"],
+                  "state_after": after["state"], "turns": turns, "reply": reply,
+                  "reply_text": None if reply else reply_text, "error": error, "early_resolved": early,
+                  "packet_chars": len(json.dumps(packet, ensure_ascii=False, default=str)),
+                  "prior_excerpt_items": packet["prior_excerpt_stats"]["items"],
+                  "prior_excerpt_chars": packet["prior_excerpt_stats"]["chars"],
+                  "deterministic_candidates": len(packet.get("deterministic_candidates") or []),
+                  "document_rereads_after_prior_excerpt": rereads}
+        attempts_log.append(record)
+        previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
+        run_log.event("field_recovery_finished", **record)
+
+    rounds = max((item["max_attempts"] for item in queue), default=0)
+    for round_no in range(1, rounds + 1):
+        for item in queue:
+            name = item["field"]
+            if item["max_attempts"] < round_no or not current[name]["retry_eligible"]:
+                continue  # out of attempts, or resolved (directly or by another field's recovery)
+            if cap_reached():
+                state["stopped"] = "max_total_steps"   # hard per-vehicle cap: no further attempt is started
+                break                                  # (not "cut short": no attempt of this field was running)
+            run_attempt(item, round_no, round_no)
+            if state["stopped"]:
                 break
-        if stopped:
+        if state["stopped"]:
             break
+    total_steps, stopped, cut_short = state["total_steps"], state["stopped"], state["cut_short"]
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
     retried = sorted({a["field"] for a in attempts_log})
@@ -762,8 +903,11 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     if stopped == "max_total_steps":
         run_log.event("field_recovery_budget_exhausted", turn_budget=cap, turns_used=total_steps,
                       fields_not_attempted=not_attempted, field_cut_short=cut_short)
+    first = sorted({a["field"] for a in attempts_log if a["attempt"] == 1})
+    resolved_queue = [f for f in queued if not current[f]["retry_eligible"]]
     return {
         "enabled": config.field_recovery_enabled,
+        "order": "breadth_first",
         "field_recovery_turn_budget": cap or None,
         "field_recovery_turns_used": total_steps,
         "field_recovery_turns_remaining": max(0, cap - total_steps) if cap else None,
@@ -781,15 +925,24 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "fields_not_attempted": not_attempted,
         "attempts": attempts_log,
         "attempt_count": len(attempts_log),
+        "attempt_order": [f"{a['field']}#{a['attempt']}" for a in attempts_log],
         "turns": total_steps,
-        "early_resolution_count": early_count,
-        "turn_budget_skipped_by_early_resolution": budget_skipped,
-        "turns_saved_by_early_resolution": early_count,   # deprecated alias of early_resolution_count
+        "early_resolution_count": state["early_count"],
+        "turn_budget_skipped_by_early_resolution": state["budget_skipped"],
+        "turns_saved_by_early_resolution": state["early_count"],   # deprecated alias of early_resolution_count
         "prior_excerpt_items": sum(a.get("prior_excerpt_items") or 0 for a in attempts_log),
         "prior_excerpt_chars": sum(a.get("prior_excerpt_chars") or 0 for a in attempts_log),
         "attempts_with_prior_excerpts": sum(1 for a in attempts_log if a.get("prior_excerpt_items")),
         "document_rereads_after_prior_excerpt": sum(a.get("document_rereads_after_prior_excerpt") or 0
                                                     for a in attempts_log),
+        # coverage of the breadth-first schedule (observational)
+        "recovery_fields_given_first_attempt": len(first),
+        "recovery_fields_never_attempted": len([f for f in queued if f not in retried]),
+        "recovery_second_attempts_started": sum(1 for a in attempts_log if a["attempt"] >= 2),
+        "recovery_unique_fields_touched": len(retried),
+        "recovery_unique_fields_resolved": len(resolved_queue),
+        "recovery_resolution_per_turn": round(len(resolved_queue) / total_steps, 3) if total_steps else None,
+        "fields_never_attempted_due_to_budget": not_attempted if stopped == "max_total_steps" else [],
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,
@@ -808,17 +961,123 @@ def _state_counts(evaluation: list[dict]) -> dict:
     return counts
 
 
+def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
+                       config: AgentConfig, run_log: RunLog, cache, documents_dir: Path, phase_ref: dict,
+                       vehicle: dict | None) -> dict:
+    """The bounded Model Document Sweep (see src/document_sweep.py). Cached-document tools only: a search
+    or fetch call is refused without being executed, so this stage makes 0 searches and 0 fetches.
+    Returns the sweep summary; GLMError ends the sweep (recovery still runs), control-flow exceptions
+    propagate."""
+    from .candidate_harvest import candidate_matrix
+    from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, inspection_has_content,
+                                 promoted_or_missed, sweep_packet, sweep_summary, sweep_tool_specs)
+
+    events = trace_events(run_log)
+    before = current_evaluation(events, specs, config.target_market)
+    max_turns = max(0, min(int(config.document_sweep_max_turns or 0), MAX_SWEEP_TURNS))
+    matrix = candidate_matrix(events, specs, vehicle)
+    doc_metas = _doc_metas(events, cache, documents_dir)
+    eligible = [e["field"] for e in before if e["retry_eligible"]]
+    skipped = None
+    if not config.layered_harvest_enabled:
+        skipped = "layered_harvest_disabled"
+    elif not config.field_recovery_enabled:
+        skipped = "field_recovery_disabled"     # research + finalize only: no post-research model stage
+    elif max_turns == 0:
+        skipped = "document_sweep_max_turns=0"
+    elif not eligible:
+        skipped = "no_unresolved_fields"
+    elif not doc_metas:
+        skipped = "no_cached_documents"
+    if skipped:
+        summary = sweep_summary(before=before, after=before, sweep_evidence=[], promoted=[], missed=[], presented=0,
+                                model_calls=0, turns=0, blocked=0, external_calls=0, reply=None, skipped=skipped)
+        run_log.event("document_sweep_skipped", reason=skipped, fields_unresolved=len(eligible))
+        return summary
+    phase_ref["name"] = "document_sweep"
+    packet = sweep_packet(payload=payload, specs=specs, evaluation=before, matrix=matrix, events=events,
+                          doc_metas=doc_metas, target_market=config.target_market, max_turns=max_turns,
+                          per_field=config.document_sweep_candidates_per_field,
+                          max_chars=config.document_sweep_packet_max_chars)
+    presented = sum(len(v) for v in packet["deterministic_candidates"].values())
+    start_seq = run_log.seq
+    run_log.event("document_sweep_started", turn_budget=max_turns, fields_to_review=packet["fields_to_review"],
+                  candidates_presented=presented, fields_without_candidates=packet["fields_without_candidates"],
+                  documents=len(doc_metas), packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)),
+                  allowed_tools=list(DOCUMENT_SWEEP_TOOLS))
+    messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
+                {"role": "user", "content": "Document sweep task (JSON):\n"
+                                            + json.dumps(packet, ensure_ascii=False, default=str)}]
+    specs_for_tools = sweep_tool_specs(tool_specs())
+    calls_before = len(session.tool_calls)
+    blocked_before = session.blocked
+    reply_text, turns, error = None, 0, None
+    follow_up: dict | None = None
+    try:
+        for turn_index in range(1, max_turns + 1):
+            message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
+                             meta={"turn": turn_index, "turn_budget": max_turns})
+            turns += 1
+            messages.append(_assistant_echo(message))
+            calls = message.get("tool_calls") or []
+            if not calls:
+                reply_text = message.get("content") or ""
+                break
+            session.execute(calls, messages, phase="document_sweep", allowed=DOCUMENT_SWEEP_TOOLS)
+            if turn_index >= max_turns:
+                break
+            # Adaptive budget: another (paid) turn only when this one read cached documents and got content the
+            # model has not seen yet. Promoting/rejecting candidates needs no follow-up.
+            inspected = [r for r in session.turn_results if inspection_has_content(r["name"], r["result"])]
+            if not inspected:
+                break
+            follow_up = {"after_turn": turn_index, "inspection_results": len(inspected),
+                         "tools": sorted({r["name"] for r in inspected})}
+            run_log.event("document_sweep_follow_up", **follow_up)
+            messages[-1]["content"] += ("\n[operational note] Final document-sweep turn: read the inspection "
+                                        "results above, then store_evidence / report_field_status. Results of "
+                                        "calls made in this turn will not be shown to you.")
+    except GLMError as exc:
+        error = _error_text(exc)
+        run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict())
+    events = trace_events(run_log)
+    after = current_evaluation(events, specs, config.target_market)
+    sweep_evidence = [e["evidence"] for e in events if e.get("kind") == "evidence" and (e.get("seq") or 0) > start_seq
+                      and isinstance(e.get("evidence"), dict)]
+    promoted, missed = promoted_or_missed(sweep_evidence, events)
+    for item in missed:
+        run_log.event("candidate_missed_by_deterministic_harvest", field=item.get("field"), value=item.get("value"),
+                      unit=item.get("unit"), document_id=item.get("document_id"), source_url=item.get("source_url"),
+                      quote=item.get("quote"), evidence_id=item.get("evidence_id"))
+    executed = session.tool_calls[calls_before:]
+    external = sum(1 for c in executed if c["name"] in EXTERNAL_TOOLS and not c.get("blocked"))
+    reply, _ = parse_model_output(reply_text)
+    summary = sweep_summary(before=before, after=after, sweep_evidence=sweep_evidence, promoted=promoted,
+                            missed=missed, presented=presented, model_calls=turns, turns=turns,
+                            blocked=session.blocked - blocked_before, external_calls=external,
+                            reply=reply if reply is not None else (reply_text or None))
+    summary["error"] = error
+    summary["follow_up_turn"] = follow_up
+    run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
+                  reply=summary["reply"])
+    return summary
+
+
 def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_log: RunLog,
                 config: AgentConfig, tool_config: ToolConfig, vehicle_meta: dict | None = None,
                 batch_id: str = "", ordinal: int | None = None, session=None,
                 pricing: dict | None = None, pricing_finalizer: dict | None = None,
-                persist: Callable[[dict], Any] | None = None) -> dict:
+                persist: Callable[[dict], Any] | None = None, cancel_event=None) -> dict:
     """Research one vehicle, retry failed requested fields, finalize from a compact bundle, persist.
 
     `persist(result)` runs on EVERY exit path (default: write result.json). On
     KeyboardInterrupt (or another BaseException such as a Streamlit stop) the
     partial result is persisted first and the exception is re-raised; no further
-    model call is made.
+    model call is made. `cancel_event` (a threading.Event of the batch) requests the same cooperative
+    interruption from another thread: BatchCancelled is raised at the next safe point.
+
+    `client` must not be shared with another vehicle running at the same time: its hooks are attached
+    to this run (one GLMClient per vehicle worker; they share only the ConcurrencyController).
     """
     record_id = str(row.get("upstream_record_id"))
     persist = persist or run_log.write_result
@@ -839,9 +1098,16 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     requested_fields = {s["name"]: s.get("description") for s in specs if s.get("applicable", True)}
     notes_for_variant = variant_notes(record_id_of(payload) or record_id)
     api_errors: list[dict] = []
-    tools = ToolSession(ctx, run_log, config)
+    identity = payload.get("identity") or {}
+    vehicle_ctx = {**(vehicle_meta or {}), **{k: identity.get(k) for k in ("trim", "model_code", "year")
+                                              if identity.get(k)}}
+    vehicle_ctx.setdefault("manufacturer", identity.get("manufacturer") or row.get("tozar"))
+    harvester = RunHarvester(cache, specs, run_log, enabled=config.layered_harvest_enabled)
+    tools = ToolSession(ctx, run_log, config, cancel_event=cancel_event,
+                        on_documents=harvester.observe if config.layered_harvest_enabled else None)
     tracker = tools.tracker
-    caller = ModelCaller(client, run_log, config)
+    run_context: dict = {}
+    caller = ModelCaller(client, run_log, config, run_context=run_context, cancel_event=cancel_event)
     phase = {"name": "research"}
 
     def api_hook(kind: str, **data: Any) -> None:
@@ -850,8 +1116,22 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             api_errors.append({k: v for k, v in data.items()})
         run_log.event(kind, phase=phase["name"], **data)
 
+    def activity_hook(kind: str, **data: Any) -> None:
+        """Request lifecycle (queue wait / in flight) of THIS vehicle's client, labelled with the
+        run's current phase and the field / recovery attempt / turn of the model call it belongs to."""
+        extra = {k: v for k, v in run_context.items() if v is not None and k not in data}
+        run_log.event(kind, phase=phase["name"], record_id=record_id, **extra, **data)
+
+    if getattr(client, "_tripy_active_run", None):
+        raise RuntimeError("This GLM client is already attached to another running vehicle; create one "
+                           "GLMClient per vehicle worker (they share only the ConcurrencyController).")
+    client._tripy_active_run = record_id
     previous_hook = getattr(client, "hook", None)
+    previous_activity = getattr(client, "activity_hook", None)
     client.hook = api_hook
+    client.activity_hook = activity_hook
+    if cancel_event is not None and hasattr(client, "cancel_event"):
+        client.cancel_event = cancel_event
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_message(payload, config.include_level3, config.max_steps,
@@ -864,8 +1144,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   search_backend=tool_config.search_backend, glm_config=glm_config,
                   agent_config=asdict(config), tool_config=asdict(tool_config), pricing=pricing,
                   pricing_finalizer=pricing_finalizer, variant_notes=notes_for_variant,
-                  requested_fields=requested_fields, requested_field_specs=specs,
-                  target_market=config.target_market)
+                  requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
+                  target_market=config.target_market, vehicle_label=vehicle_ctx)
 
     status: str | None = None
     stop_reason: str | None = None
@@ -875,15 +1155,96 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     finalization: dict | None = None
     recovery: dict | None = None
     bundle: dict | None = None
+    harvest_summary: dict | None = None
+    sweep: dict | None = None
     steps_done = 0
     research_seconds: float | None = None
     interrupted: BaseException | None = None
+    documents_dir = run_log.dir / "documents"
+
+    def export_documents() -> None:
+        for document_id in ctx.documents_opened:
+            try:
+                cache.export(document_id, documents_dir)
+            except OSError:
+                pass
+
+    def assemble(final_status: str | None, *, events: list[dict], research_bundle: dict | None) -> dict:
+        """The result record (final, partial or the pre-finalization checkpoint) from the current state."""
+        counters = dict(ctx.counters)
+        stats = trace.api_stats(events, glm_config.get("chat_path") or "chat/completions")
+        usage_research, usage_finalizer = caller.usage["research"], caller.usage["finalization"]
+        usage_recovery, usage_sweep = caller.usage["field_recovery"], caller.usage["document_sweep"]
+        usage = trace.sum_usage(usage_research, usage_sweep, usage_recovery, usage_finalizer)
+        search_calls = counters.get("search_api_calls", 0)
+        cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer,
+                                      search_calls, pricing, pricing_finalizer, stats["unknown_usage_attempts"])
+        return {
+            "record_id": record_id,
+            "ordinal": ordinal,
+            "batch_id": batch_id,
+            "model": research_model,
+            "research_model": research_model,
+            "finalizer_model": finalizer_model,
+            "glm_config": glm_config,
+            "effective_config": eff_config,
+            "prompt_version": PROMPT_VERSION,
+            "bundle_version": BUNDLE_VERSION,
+            "requested_fields": requested_fields,
+            "target_market": config.target_market,
+            "status": final_status,
+            "stop_reason": stop_reason,
+            "research_steps": steps_done,
+            "error": error,
+            "api_error": api_error,
+            "api_errors": api_errors,
+            "finalizer_error": finalization.get("error") if finalization else None,
+            "started_at": started_at,
+            "finished_at": utc_now(),
+            "duration_s": round(time.monotonic() - t0, 2),
+            "research_duration_s": research_seconds,
+            "output": output,
+            "parse_note": parse_note,
+            "raw_final_text": final_text,
+            "last_model_content": caller.last_content,
+            "evidence": evidence.items,
+            "documents": list(ctx.documents_opened),
+            "tool_calls": tools.tool_calls,
+            "counters": counters,
+            "research_tracking": tracker.snapshot(),
+            "field_recovery": recovery,
+            "candidate_summary": layered_summary(harvest_summary, sweep, recovery, harvester.stats),
+            "document_sweep": sweep,
+            "usage": usage,
+            "usage_research": usage_research,
+            "usage_document_sweep": usage_sweep,
+            "usage_field_recovery": usage_recovery,
+            "usage_finalizer": usage_finalizer,
+            "api_stats": stats,
+            "finalization": finalization,
+            "search_api_calls": search_calls,
+            "pricing": pricing,
+            "pricing_finalizer": pricing_finalizer,
+            "cost": cost,
+            "cost_details": cost_details,
+            "cost_note": UNKNOWN_USAGE_NOTE if stats["unknown_usage_attempts"] else None,
+            "research_bundle": research_bundle,
+            "documents_dir": str(documents_dir) if ctx.documents_opened else None,
+            "result_source": "result.json",
+            "recovered": False,
+            "partial": final_status in PARTIAL_STATUSES,
+            "interrupted": interrupted is not None,
+            "interrupted_phase": phase["name"] if interrupted is not None else None,
+            "interruption_type": type(interrupted).__name__ if interrupted is not None else None,
+            "interruption_message": interruption_message(phase["name"]) if interrupted is not None else None,
+        }
 
     try:
-        # ---------------- research phase ----------------
+        # ---------------- research phase (source acquisition) ----------------
         try:
             for step in range(1, config.max_steps + 1):
-                message = caller(outgoing_messages(messages, config), phase="research", tools=tool_specs())
+                message = caller(outgoing_messages(messages, config), phase="research", tools=tool_specs(),
+                                 activity={"turn": step})
                 messages.append(_assistant_echo(message))
                 calls = message.get("tool_calls") or []
                 if not calls:
@@ -917,14 +1278,28 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         run_log.event("research_stopped", reason=stop_reason, steps=steps_done, research_s=research_seconds,
                       tracking={k: v for k, v in tracker.snapshot().items() if k != "turns"})
 
+        # ---------------- deterministic harvest + model document sweep ----------------
+        if status is None and config.layered_harvest_enabled:
+            phase["name"] = "deterministic_harvest"
+            harvester.observe(ctx.documents_opened, "deterministic_harvest")
+            harvest_summary = harvest_report(trace_events(run_log), specs, vehicle_ctx, harvester, config)
+            run_log.event("deterministic_harvest_summary", **harvest_summary)
+            try:
+                sweep = run_document_sweep(session=tools, caller=caller, specs=specs, payload=payload, config=config,
+                                           run_log=run_log, cache=cache, documents_dir=documents_dir,
+                                           phase_ref=phase, vehicle=vehicle_ctx)
+            except Exception as exc:  # a sweep problem never costs the primary research
+                sweep = {"error": _error_text(exc), "model_calls": 0}
+                run_log.event("document_sweep_failed", error=sweep["error"])
+
         # ---------------- failed-field detection + targeted field retries ----------------
         if status is None:
             phase["name"] = "field_detection"
             try:
                 recovery = run_field_recovery(session=tools, caller=caller, specs=specs, payload=payload,
                                               config=config, run_log=run_log, cache=cache,
-                                              documents_dir=run_log.dir / "documents",
-                                              operator_notes=notes_for_variant, phase_ref=phase)
+                                              documents_dir=documents_dir, operator_notes=notes_for_variant,
+                                              phase_ref=phase, vehicle=vehicle_ctx)
             except Exception as exc:  # recovery problems never cost the primary research
                 recovery = {"error": _error_text(exc), "attempt_count": 0}
                 run_log.event("field_recovery_failed", error=recovery["error"])
@@ -932,15 +1307,46 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         # ---------------- finalization phase ----------------
         if status is None:
             retried = bool(recovery and recovery.get("attempt_count"))
-            if stop_reason == "model_finished" and not retried:
+            swept = bool(sweep and sweep.get("model_calls"))
+            fin = None
+            if stop_reason == "model_finished" and not retried and not swept:
                 output, parse_note = parse_model_output(final_text)
                 if output is not None:
                     status = "completed"
             if output is None:
                 phase["name"] = "finalization"
-                fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
-                                       documents_dir=run_log.dir / "documents", stop_reason=stop_reason,
-                                       model=finalizer_model, request_path=run_log.dir / "finalizer_request.json")
+                export_documents()
+                events_now = trace_events(run_log)
+                bundle = build_research_bundle(events_now, payload, cache=cache, documents_dir=documents_dir,
+                                               include_level3=config.include_level3,
+                                               max_chars=config.finalizer_bundle_max_chars, stop_reason=stop_reason,
+                                               target_market=config.target_market)
+                # Durable checkpoint BEFORE the paid finalizer request: a hard process death from here on
+                # leaves a run that --finalize-existing can finish without repeating any research.
+                # FAIL CLOSED: if the checkpoint cannot be persisted, the finalizer is never called.
+                finalization = {"status": "started", "model": finalizer_model, "checkpoint_at": utc_now()}
+                checkpoint_error = None
+                try:
+                    persist(assemble("finalization_pending", events=events_now, research_bundle=bundle))
+                except Exception as exc:
+                    checkpoint_error = _error_text(exc)
+                    run_log.event("result_write_failed", error=checkpoint_error, stage="checkpoint")
+                if checkpoint_error is not None:
+                    finalization = {"status": "not_started", "model": finalizer_model,
+                                    "reason": "checkpoint_write_failed", "error": checkpoint_error}
+                    status, error = "finalization_failed", f"checkpoint_write_failed: {checkpoint_error}"
+                    parse_note = "finalization_not_started"
+                    run_log.event("finalization_not_started", reason="checkpoint_write_failed",
+                                  error=checkpoint_error, model=finalizer_model)
+                    fin = None
+                else:
+                    run_log.event("finalization_checkpoint_written", status="finalization_pending",
+                                  evidence_items=len(evidence.items), bundle_chars=bundle.get("bundle_chars"))
+                    fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
+                                           documents_dir=documents_dir, stop_reason=stop_reason,
+                                           model=finalizer_model,
+                                           request_path=run_log.dir / "finalizer_request.json", bundle=bundle)
+            if output is None and fin is not None:
                 finalization, bundle = fin["info"], fin["bundle"]
                 if stop_reason != "model_finished":
                     final_text = fin["text"]
@@ -953,7 +1359,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                         status = "completed" if output is not None else "completed_unparsed"
                     else:
                         status = FINALIZED_STATUS[stop_reason]
-    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop/rerun, SystemExit: persist, then re-raise
+    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop/rerun, SystemExit, BatchCancelled
         # A script-control interruption, not a research/API/tool error: stop all model and tool calls (no
         # finalizer), persist everything already completed, rebuild current state from events, re-raise.
         interrupted = exc
@@ -966,14 +1372,11 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         run_log.event("interrupted", phase=phase["name"], step=steps_done, exception=type(exc).__name__)
     finally:
         client.hook = previous_hook
+        client.activity_hook = previous_activity
+        client._tripy_active_run = None
 
     duration = round(time.monotonic() - t0, 2)
-    documents_dir = run_log.dir / "documents"
-    for document_id in ctx.documents_opened:
-        try:
-            cache.export(document_id, documents_dir)
-        except OSError:
-            pass
+    export_documents()
     events = trace_events(run_log)
     if recovery is None and status == "interrupted":
         recovery = trace.field_recovery_summary(events)   # interrupted mid-recovery: history from events
@@ -983,78 +1386,63 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                        include_level3=config.include_level3,
                                        max_chars=config.finalizer_bundle_max_chars, stop_reason=stop_reason,
                                        target_market=config.target_market)
-    counters = dict(ctx.counters)
-    stats = trace.api_stats(events, glm_config.get("chat_path") or "chat/completions")
-    usage_research, usage_finalizer = caller.usage["research"], caller.usage["finalization"]
-    usage_recovery = caller.usage["field_recovery"]
-    usage = trace.sum_usage(usage_research, usage_recovery, usage_finalizer)
-    search_calls = counters.get("search_api_calls", 0)
-    cost, cost_details = run_cost(trace.sum_usage(usage_research, usage_recovery), usage_finalizer, search_calls,
-                                  pricing, pricing_finalizer, stats["unknown_usage_attempts"])
-    result = {
-        "record_id": record_id,
-        "ordinal": ordinal,
-        "batch_id": batch_id,
-        "model": research_model,
-        "research_model": research_model,
-        "finalizer_model": finalizer_model,
-        "glm_config": glm_config,
-        "effective_config": eff_config,
-        "prompt_version": PROMPT_VERSION,
-        "bundle_version": BUNDLE_VERSION,
-        "requested_fields": requested_fields,
-        "target_market": config.target_market,
-        "status": status,
-        "stop_reason": stop_reason,
-        "research_steps": steps_done,
-        "error": error,
-        "api_error": api_error,
-        "api_errors": api_errors,
-        "finalizer_error": finalization.get("error") if finalization else None,
-        "started_at": started_at,
-        "finished_at": utc_now(),
-        "duration_s": duration,
-        "research_duration_s": research_seconds,
-        "output": output,
-        "parse_note": parse_note,
-        "raw_final_text": final_text,
-        "last_model_content": caller.last_content,
-        "evidence": evidence.items,
-        "documents": list(ctx.documents_opened),
-        "tool_calls": tools.tool_calls,
-        "counters": counters,
-        "research_tracking": tracker.snapshot(),
-        "field_recovery": recovery,
-        "usage": usage,
-        "usage_research": usage_research,
-        "usage_field_recovery": usage_recovery,
-        "usage_finalizer": usage_finalizer,
-        "api_stats": stats,
-        "finalization": finalization,
-        "search_api_calls": search_calls,
-        "pricing": pricing,
-        "pricing_finalizer": pricing_finalizer,
-        "cost": cost,
-        "cost_details": cost_details,
-        "cost_note": UNKNOWN_USAGE_NOTE if stats["unknown_usage_attempts"] else None,
-        "research_bundle": bundle,
-        "documents_dir": str(documents_dir) if ctx.documents_opened else None,
-        "result_source": "result.json",
-        "recovered": False,
-        "partial": status in PARTIAL_STATUSES,
-        "interrupted": interrupted is not None,
-        "interrupted_phase": phase["name"] if interrupted is not None else None,
-        "interruption_type": type(interrupted).__name__ if interrupted is not None else None,
-        "interruption_message": interruption_message(phase["name"]) if interrupted is not None else None,
-    }
+    result = assemble(status, events=events, research_bundle=bundle)
+    result["duration_s"] = duration
     trace.apply_current_states(recovery, (bundle or {}).get("field_states"))
     # Persist first, then announce: a UI stop raised by the run_finished callback cannot lose the result.
     try:
         persist(result)
     except Exception as exc:  # disk problems must not hide the in-memory result from the caller
         run_log.event("result_write_failed", error=_error_text(exc))
-    run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration, usage=usage,
-                  search_api_calls=search_calls, cost=cost, api_stats=stats)
+    run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration,
+                  usage=result["usage"], search_api_calls=result["search_api_calls"], cost=result["cost"],
+                  api_stats=result["api_stats"])
     if interrupted is not None:
         raise interrupted
     return result
+
+
+def harvest_report(events: list[dict], specs: list[dict], vehicle: dict | None, harvester, config) -> dict:
+    """Summary of the deterministic harvest for the run (logged once, before the document sweep)."""
+    from .candidate_harvest import candidate_matrix
+
+    matrix = candidate_matrix(events, specs, vehicle)
+    evaluation = current_evaluation(events, specs, config.target_market)
+    return {"documents_harvested": harvester.stats["documents_harvested"],
+            "candidate_cache_hits": harvester.stats["candidate_cache_hits"],
+            "candidate_cache_misses": harvester.stats["candidate_cache_misses"],
+            "harvest_errors": harvester.stats["harvest_errors"],
+            "candidate_count_total": matrix["candidate_count"],
+            "candidate_fields_total": len(matrix["fields_with_candidates"]),
+            "candidate_field_coverage_pct": matrix["candidate_field_coverage_pct"],
+            "applicable_fields": matrix["applicable_fields"],
+            "fields_with_candidates": matrix["fields_with_candidates"],
+            "fields_without_candidates": matrix["fields_without_candidates"],
+            "fields_unresolved_before_harvest": sum(1 for e in evaluation if e["retry_eligible"]),
+            "note": "candidate coverage is not factual accuracy; candidates are not evidence"}
+
+
+def layered_summary(harvest: dict | None, sweep: dict | None, recovery: dict | None, stats: dict) -> dict:
+    """Layered-pipeline metrics for result.json (observational; never accuracy)."""
+    harvest, sweep, recovery = harvest or {}, sweep or {}, recovery or {}
+    return {
+        "documents_harvested": harvest.get("documents_harvested", stats.get("documents_harvested", 0)),
+        "candidate_count_total": harvest.get("candidate_count_total", stats.get("candidates_total", 0)),
+        "candidate_fields_total": harvest.get("candidate_fields_total", 0),
+        "candidate_field_coverage_pct": harvest.get("candidate_field_coverage_pct", 0.0),
+        "candidate_cache_hits": stats.get("candidate_cache_hits", 0),
+        "candidate_cache_misses": stats.get("candidate_cache_misses", 0),
+        "fields_with_candidates": harvest.get("fields_with_candidates", []),
+        "fields_without_candidates": harvest.get("fields_without_candidates", []),
+        "document_sweep_model_calls": sweep.get("model_calls", 0),
+        "document_sweep_skipped": sweep.get("skipped"),
+        "document_sweep_fields_promoted_to_evidence": len(sweep.get("fields_promoted_to_evidence") or []),
+        "document_sweep_evidence_promoted": sweep.get("evidence_stored", 0),
+        "document_sweep_fields_resolved": sweep.get("unique_fields_resolved", 0),
+        "document_sweep_deterministic_misses_found": sweep.get("deterministic_misses_found", 0),
+        "candidate_precision_reviewed": sweep.get("candidate_precision_reviewed"),
+        "fields_unresolved_before_harvest": harvest.get("fields_unresolved_before_harvest"),
+        "fields_unresolved_after_harvest_review": sweep.get("fields_unresolved_after",
+                                                            harvest.get("fields_unresolved_before_harvest")),
+        "fields_entering_web_recovery": len(recovery.get("queue") or []),
+    }

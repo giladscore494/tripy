@@ -21,7 +21,8 @@ USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "cached_toke
               "model_latency_ms")
 RESEARCH_PHASE = "research"
 RECOVERY_PHASE = "field_recovery"
-PHASE_GROUPS = (RESEARCH_PHASE, RECOVERY_PHASE, "finalization")
+SWEEP_PHASE = "document_sweep"
+PHASE_GROUPS = (RESEARCH_PHASE, RECOVERY_PHASE, "finalization", SWEEP_PHASE)
 
 
 def empty_usage() -> dict:
@@ -48,10 +49,13 @@ def sum_usage(*usages: dict | None) -> dict:
 
 
 def phase_group(phase: str | None) -> str:
-    """'research', 'field_recovery' or 'finalization' (finalization, its repair turn, recovery finalization)."""
+    """'research', 'field_recovery', 'document_sweep' or 'finalization' (finalization, its repair turn,
+    recovery finalization)."""
     if not phase or phase == RESEARCH_PHASE:
         return RESEARCH_PHASE
-    return RECOVERY_PHASE if phase == RECOVERY_PHASE else "finalization"
+    if phase in (RECOVERY_PHASE, SWEEP_PHASE):
+        return phase
+    return "finalization"
 
 
 def usage_by_phase(events: Iterable[dict]) -> dict[str, dict]:

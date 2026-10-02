@@ -24,7 +24,7 @@ DEFAULT_OFFICIAL_DOMAINS: dict[str, list[str]] = {
     "ב מ וו": ["bmw.co.il", "bmw.com", "bmwgroup.com", "mini.co.il", "mini.com"],
     "מרצדס": ["mercedes-benz.co.il", "mercedes-benz.com", "mercedes-benz.de", "group.mercedes-benz.com"],
     "יונדאי": ["hyundai.co.il", "hyundai.com", "hyundai.news"],
-    "קאדילאק": ["cadillac.com", "cadillaceurope.com", "news.gm.com"],
+    "קאדילאק": ["cadillac.co.il", "cadillac.com", "cadillaceurope.com", "news.gm.com"],
     "אקספנג": ["xpeng.com", "heyxpeng.com"],
 }
 MAX_DOMAINS = 6
@@ -72,26 +72,28 @@ def _run_search(ctx, query: str, count: int, domain: str | None) -> tuple[list[d
     backend = ctx.config.search_backend
     engine = getattr(getattr(ctx.glm, "settings", None), "search_engine", "")
     key = json.dumps([backend, engine, query, count, domain or ""], ensure_ascii=False)
-    cached = ctx.cache.get_search(key)
-    if cached is not None:
-        ctx.counters["search_cache_hits"] += 1
-        return cached, True
-    ctx.counters["search_cache_misses"] += 1
-    if backend == "glm":
-        if ctx.glm is None:
-            raise RuntimeError("GLM search backend selected but no GLM client is configured")
-        try:
-            results = ctx.glm.web_search(query, count=count, domain=domain)
-        except Exception:
-            ctx.counters["search_api_errors"] += 1
-            raise
-        ctx.counters["search_api_calls"] += 1  # billable GLM web_search calls (cache hits excluded)
-    elif backend == "duckduckgo":
-        results = _duckduckgo(ctx, query, count, domain)
-    else:
+
+    def network() -> list[dict]:
+        # Runs at most once per key across all concurrent workers (single flight in the cache).
+        ctx.counters["search_cache_misses"] += 1
+        if backend == "glm":
+            if ctx.glm is None:
+                raise RuntimeError("GLM search backend selected but no GLM client is configured")
+            try:
+                results = ctx.glm.web_search(query, count=count, domain=domain)
+            except Exception:
+                ctx.counters["search_api_errors"] += 1
+                raise
+            ctx.counters["search_api_calls"] += 1  # billable GLM web_search calls (cache hits excluded)
+            return results
+        if backend == "duckduckgo":
+            return _duckduckgo(ctx, query, count, domain)
         raise ValueError(f"Unknown search backend {backend!r}")
-    ctx.cache.put_search(key, results)
-    return results, False
+
+    results, hit = ctx.cache.search_singleflight(key, network)
+    if hit:
+        ctx.counters["search_cache_hits"] += 1
+    return results, hit
 
 
 def search_web(ctx, query: str, max_results: int = 8, domain: str | None = None) -> dict:

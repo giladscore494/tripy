@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .atomic import atomic_write_json
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -42,8 +44,9 @@ def new_batch_id(label: str = "", runs_root: Path | str | None = None) -> str:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=1, default=str), "utf-8")
+    """Atomic and durable (temp file in the same folder, fsync, os.replace): a crash mid-write leaves the
+    previous file or the new one, never a truncated result.json / batch.json / input.json."""
+    atomic_write_json(path, value, durable=True)
 
 
 class RunLog:
@@ -74,10 +77,17 @@ class RunLog:
                 pass
         return record
 
+    @property
+    def seq(self) -> int:
+        """Sequence number of the last event written by this log."""
+        with self._lock:
+            return self._seq
+
     def write_input(self, payload: dict) -> None:
         _write_json(self.dir / "input.json", payload)
 
     def write_result(self, result: dict) -> None:
+        """Atomic + durable. Raises on failure (the destination keeps its previous content)."""
         _write_json(self.dir / "result.json", result)
 
 
@@ -121,6 +131,19 @@ def write_batch(runs_root: Path | str, batch_id: str, info: dict) -> None:
     if path.exists():
         raise FileExistsError(f"{path} already exists; refusing to overwrite an existing batch")
     _write_json(path, info)
+
+
+_BATCH_LOCK = threading.Lock()
+
+
+def update_batch(runs_root: Path | str, batch_id: str, updates: dict) -> dict:
+    """Merge keys into an existing batch.json (e.g. end-of-batch observability), atomically."""
+    path = Path(runs_root) / batch_id / "batch.json"
+    with _BATCH_LOCK:
+        info = json.loads(path.read_text("utf-8")) if path.is_file() else {"batch_id": batch_id}
+        info.update(updates)
+        _write_json(path, info)
+    return info
 
 
 def list_batches(runs_root: Path | str) -> list[dict]:

@@ -172,7 +172,9 @@ def budget_script(turns):
     script = [turn(_call("p1", "store_evidence", {"field": "torque_nm", "value": 1066, "market": "IL",
                                                    "source_url": IL_PAGE, "quote": "1,066 Nm"})),
               say({"summary": "primary", "fields": {}})]
-    order = [f for f in FIELDS[1:] for _ in range(8)]   # 2 attempts x 4 turns per field
+    # Breadth-first recovery: round 1 gives every field its first attempt (4 turns each), round 2 starts again
+    # with the first field still unresolved.
+    order = [f for f in FIELDS[1:] for _ in range(4)] + [f for f in FIELDS[1:] for _ in range(4)]
     for i in range(turns):
         field = order[i]
         calls = [_call(f"r{i}", "report_field_status", {"field": field, "status": "unresolved"})]
@@ -190,8 +192,12 @@ def test_budget_of_24_stops_recovery_and_the_run_still_finalizes(tmp_path, make_
     assert rec["queue"] == FIELDS[1:]
     assert (rec["field_recovery_turn_budget"], rec["field_recovery_turns_used"],
             rec["field_recovery_turns_remaining"], rec["stopped"]) == (24, 24, 0, "max_total_steps")      # 9
-    assert rec["fields_retried"] == sorted(FIELDS[1:4]) and rec["attempt_count"] == 6
-    assert rec["fields_not_attempted_due_to_budget"] == ["tire_size_front", "boot_floor_mm"]         # 11
+    # breadth-first: all five fields got attempt 1 (20 turns) before paint_code got attempt 2 (4 turns)
+    assert rec["attempt_order"] == ["paint_code#1", "service_interval_km#1", "rear_legroom_mm#1",
+                                    "tire_size_front#1", "boot_floor_mm#1", "paint_code#2"]
+    assert rec["fields_retried"] == sorted(FIELDS[1:]) and rec["attempt_count"] == 6
+    assert rec["fields_not_attempted_due_to_budget"] == []                                           # 11
+    assert rec["recovery_fields_given_first_attempt"] == 5 and rec["recovery_second_attempts_started"] == 1
     assert rec["field_cut_short_by_budget"] is None
     recovery_turns = [e for e in events if e["kind"] == "model_response" and e.get("phase") == "field_recovery"]
     assert len(recovery_turns) == 24 and len(client.requests) == 1 + 1 + 24 + 1
@@ -200,11 +206,11 @@ def test_budget_of_24_stops_recovery_and_the_run_still_finalizes(tmp_path, make_
     bundle = json.loads(client.requests[-1]["messages"][1]["content"].split("\n", 1)[1].rsplit("\n\nReturn", 1)[0])
     assert {e["field"] for e in bundle["evidence"]} == {"torque_nm", "service_interval_km"}
     assert bundle["field_states"]["service_interval_km"]["state"] in ("foreign_market_only", "unresolved")
-    assert bundle["field_states"]["tire_size_front"]["state"] == "missing"
+    assert bundle["field_states"]["tire_size_front"]["state"] == "unresolved"   # attempted (round 1), unresolved
     budget_event = next(e for e in events if e["kind"] == "field_recovery_budget_exhausted")
-    assert budget_event["fields_not_attempted"] == ["tire_size_front", "boot_floor_mm"]
+    assert budget_event["fields_not_attempted"] == []
     m = compute_metrics(result)
-    assert (m["field_recovery_turns_used"], m["fields_not_attempted_due_to_budget"]) == (24, 2)
+    assert (m["field_recovery_turns_used"], m["fields_not_attempted_due_to_budget"]) == (24, 0)
 
 
 def test_budget_cuts_a_field_mid_attempt(tmp_path, make_ctx):
@@ -212,8 +218,9 @@ def test_budget_cuts_a_field_mid_attempt(tmp_path, make_ctx):
                             field_recovery_max_total_steps=6)
     rec = result["field_recovery"]
     assert rec["field_recovery_turns_used"] == 6 and rec["stopped"] == "max_total_steps"
+    # breadth-first: the cap cuts the SECOND field's first attempt, never a second attempt of the first field
     assert [(a["field"], a["attempt"], a["turns"]) for a in rec["attempts"]] == [("paint_code", 1, 4),
-                                                                                 ("paint_code", 2, 2)]
-    assert rec["field_cut_short_by_budget"] == "paint_code"
-    assert rec["fields_not_attempted_due_to_budget"] == FIELDS[2:]
+                                                                                 ("service_interval_km", 1, 2)]
+    assert rec["field_cut_short_by_budget"] == "service_interval_km"
+    assert rec["fields_not_attempted_due_to_budget"] == FIELDS[3:]
     assert result["output"]["summary"] == "final"

@@ -19,10 +19,13 @@ from ..storage import trace
 from ..storage.cache import DocumentCache
 from ..storage.run_loader import document_text, run_document_metas
 from ..storage.run_log import load_events, load_input
+from . import labels_he as he
+from .live_state import candidate_table_rows, feed_line
 
 STATUS_ICON = {"completed": "✅", "max_steps_finalized": "⏱️", "no_new_research_finalized": "⏱️",
                "completed_unparsed": "⚠️", "recovered_finalized": "♻️", "finalization_failed": "🟠",
-               "research_failed": "❌", "interrupted": "⏹️", "incomplete": "🟡", "error": "❌"}
+               "research_failed": "❌", "interrupted": "⏹️", "incomplete": "🟡", "error": "❌",
+               "finalization_pending": "⏳"}
 FAILED_STATUSES = ("research_failed", "finalization_failed", "interrupted", "incomplete", "error")
 NO_OUTPUT_REASON = {
     "finalization_failed": "finalization failed",
@@ -31,6 +34,7 @@ NO_OUTPUT_REASON = {
     "research_failed": "research failed",
     "error": "the run failed",
     "completed_unparsed": "the final answer could not be parsed as JSON",
+    "finalization_pending": "research finished and was checkpointed, but the finalizer did not complete",
 }
 
 
@@ -59,86 +63,32 @@ def has_research(result: dict) -> bool:
 
 
 def live_listener(placeholder, max_lines: int = 40) -> Callable[[str, dict], None]:
-    """Return a RunLog listener that renders a rolling feed of tool activity."""
+    """A RunLog listener rendering a rolling text feed (single-run / debug use; it calls Streamlit, so use it
+    only on the script thread). Batches use the live dashboard (src/ui/live_dashboard.py) instead."""
     lines: list[str] = []
 
     def listen(kind: str, event: dict) -> None:
-        if kind == "tool_call":
-            lines.append(tool_call_line(event))
-        elif kind == "tool_reused":
-            lines.append(f"   ↺ reused result of step {event.get('original_step')} (not executed again): "
-                         f"{event.get('name')}({_short(event.get('arguments'), 100)})")
-        elif kind == "field_recovery_started":
-            lines.append(f"🎯 field recovery · {event.get('field')} · attempt {event.get('attempt')}/"
-                         f"{event.get('max_attempts')} · reason {event.get('failure_reason')}")
-        elif kind == "field_recovery_finished":
-            lines.append(f"   ↳ {event.get('field')} attempt {event.get('attempt')}: {event.get('state_before')} → "
-                         f"{event.get('state_after')}")
-        elif kind == "field_recovery_queue_resolved_indirectly":
-            lines.append(f"✅ {event.get('field')} resolved while recovering {event.get('resolved_during_field')}; "
-                         "its own retry is skipped")
-        elif kind == "tool_result":
-            result = event.get("result") or {}
-            if isinstance(result, dict) and result.get("error"):
-                lines.append(f"   ↳ error: {result.get('error')} {_short(result.get('message', ''), 120)}")
-            elif isinstance(result, dict) and "results" in result:
-                lines.append(f"   ↳ {len(result['results'])} results{' (cache)' if result.get('cache_hit') else ''}")
-            elif isinstance(result, dict) and result.get("document_id"):
-                hit = " (cache)" if result.get("cache_hit") else ""
-                lines.append(f"   ↳ {result['document_id']} {result.get('status', '')} "
-                             f"{_short(result.get('final_url') or result.get('url') or '', 90)}{hit}")
-        elif kind == "duplicate_work":
-            lines.append(f"   ↺ repeated work: {_short(event.get('note'), 120)}")
-        elif kind == "evidence":
-            ev = event.get("evidence", {})
-            lines.append(f"📌 {ev.get('evidence_id')} {ev.get('field')} = {_short(ev.get('value'), 60)}")
-        elif kind == "evidence_reused":
-            lines.append(evidence_reused_line(event))
-        elif kind == "field_recovery_early_resolved":
-            lines.append(f"✅ {event.get('field')} resolved by stored evidence after turn {event.get('after_turn')}; "
-                         "attempt ended without another model call")
-        elif kind == "model_response":
-            lines.append(model_turn_line(event))
-        elif kind == "research_stopped":
-            lines.append(f"🛑 research stopped: {event.get('reason')} after {event.get('steps')} step(s)")
-        elif kind == "finalization_started":
-            lines.append(f"🧾 finalization with {event.get('model')} · bundle {event.get('finalizer_input_chars')} chars")
-        elif kind == "api_error":
-            lines.append(f"⚠️ API {event.get('request_kind') or event.get('endpoint')} attempt "
-                         f"{event.get('attempt')}/{event.get('max_attempts', '?')}: "
-                         f"{event.get('status') or event.get('error')} {_short(event.get('body') or '', 160)}")
-        elif kind in ("error", "finalization_failed"):
-            lines.append(f"❌ {event.get('message') or event.get('error')}")
-        elif kind == "interrupted":
-            lines.append(f"⏹️ interrupted during {event.get('phase')}")
+        line = feed_line(kind, event)
+        if line:
+            lines.append(line)
         placeholder.code("\n".join(lines[-max_lines:]), language=None)
 
     return listen
 
 
 def evidence_reused_line(event: dict) -> str:
-    return f"↺ evidence reused: {event.get('evidence_id')} {event.get('field')} = {_short(event.get('value'), 60)}"
+    return feed_line("evidence_reused", event) or ""
 
 
 def tool_call_line(event: dict) -> str:
     """Live-feed line for a tool call; field-recovery calls name their field and attempt."""
-    call = f"{event.get('name')}({_short(event.get('arguments'), 140)})"
-    if event.get("field"):
-        return f"🔧 {event['field']} · attempt {event.get('attempt')} · step {event.get('step')}\n   {call}"
-    return f"🔧 step {event.get('step')} · {call}"
+    return feed_line("tool_call", event) or ""
 
 
 def model_turn_line(event: dict) -> str:
     """Live-feed line for a model turn, e.g.
     🧠 field_recovery · battery_usable_kwh · attempt 1/2 · turn 2/4 · tokens 7263"""
-    usage = event.get("usage") or {}
-    calls = event.get("tool_calls") or []
-    tokens = usage.get("total_tokens", "?")
-    if event.get("field"):
-        return (f"🧠 {event.get('phase', 'field_recovery')} · {event['field']} · attempt {event.get('attempt')}/"
-                f"{event.get('max_attempts')} · turn {event.get('turn')}/{event.get('turn_budget')} · "
-                f"{len(calls)} tool call(s) · tokens {tokens}")
-    return f"🧠 {event.get('phase', 'research')} turn · {len(calls)} tool call(s) · tokens {tokens}"
+    return feed_line("model_response", event) or ""
 
 
 def _human_view(output) -> None:
@@ -302,6 +252,10 @@ def _responses_from_events(result: dict, runs_dir: Path) -> list[dict]:
 
 
 def _status_banner(result: dict) -> None:
+    if result.get("status") == "finalization_pending":
+        st.info(he.FINALIZATION_PENDING_MESSAGE_HE)
+        st.caption(f"python -m src.cli --finalize-existing --batch-id {result.get('batch_id')} "
+                   f"--record-id {result.get('record_id')}")
     if result.get("interrupted"):
         # A script-control interruption (Stop / rerun / Ctrl+C), not a research, API or tool failure.
         st.info(result.get("interruption_message") or "Run interrupted. All completed research/evidence was "
@@ -333,7 +287,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
         _status_banner(result)
         tabs = st.tabs(["Human view", "JSON", "Partial research", "Evidence", "Tool calls", "Documents",
                         "Model responses", "Level 1.5 input", "Run config & cost", "API attempts", "Events",
-                        "Field recovery"])
+                        "Field recovery", "מועמדים (Candidates)"])
         with tabs[0]:
             if result.get("output") is not None:
                 if result.get("error"):
@@ -419,6 +373,8 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
                 st.caption("No failed API attempts.")
         with tabs[11]:
             render_field_recovery(result, runs_dir)
+        with tabs[12]:
+            render_candidates(result, runs_dir)
         with tabs[10]:
             events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
             st.caption(f"{len(events)} events in events.jsonl")
@@ -428,6 +384,30 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
             for event in events:
                 if event["kind"] in chosen:
                     st.json(event, expanded=False)
+
+
+def render_candidates(result: dict, runs_dir: Path) -> None:
+    """Deterministic candidate matrix (Hebrew table) + layered-pipeline metrics + raw candidate JSON."""
+    events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
+    started = trace.first_event(events, "run_started") or {}
+    specs = started.get("requested_field_specs") or []
+    summary = result.get("candidate_summary") or {}
+    st.caption("מועמדים הם ערכים שהקוד איתר במסמכים. הם אינם ראיות ואינם משנים את מצב השדה; רק ראיה שנשמרה "
+               "על ידי המודל נחשבת. כיסוי מועמדים אינו מדד לנכונות.")
+    if summary:
+        cols = st.columns(4)
+        cols[0].metric("מסמכים שנסרקו", summary.get("documents_harvested", 0))
+        cols[1].metric("מועמדים", summary.get("candidate_count_total", 0))
+        cols[2].metric("שדות עם מועמדים", summary.get("candidate_fields_total", 0))
+        cols[3].metric("נפתרו בבדיקת המסמכים", summary.get("document_sweep_fields_resolved", 0))
+    rows = candidate_table_rows(events, specs, started.get("vehicle_label")) if specs else []
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    else:
+        st.caption("No deterministic candidates were recorded for this run.")
+    with st.expander("Raw candidates / layered metrics (JSON)"):
+        st.json({"candidate_summary": summary, "document_sweep": result.get("document_sweep"),
+                 "candidates": [e for e in events if e.get("kind") == "candidates_harvested"]}, expanded=False)
 
 
 def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:

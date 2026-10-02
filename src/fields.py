@@ -9,6 +9,11 @@ never from hard-coded field names. A field spec is a dict:
 
 Only `name` is required. Unknown names requested at run time simply get
 {"name": name, "description": name}.
+
+The same file carries each field's Hebrew UI label (`display_name_he`), the Hebrew group labels and the
+field dictionary of the deterministic candidate harvester (aliases, units, context and exclusion rules;
+see src/candidate_harvest.py). Dictionary keys are metadata for code: `public_spec()` strips them from
+anything handed to a model or written into events.
 """
 
 from __future__ import annotations
@@ -21,6 +26,12 @@ from typing import Any, Iterable
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "data" / "enrichment_fields.json"
 DEFAULT_GROUP = "requested"
+# Field-dictionary keys (harvester metadata). Never sent to a model; see public_spec().
+DICTIONARY_KEYS = ("matcher", "component", "warranty_kind", "aliases_he", "aliases_en", "abbreviations",
+                   "positive_context_terms_he", "positive_context_terms_en", "negative_context_terms_he",
+                   "negative_context_terms_en", "expected_units", "accepted_unit_variants", "normalized_unit",
+                   "value_type", "patterns", "plausible_min", "plausible_max", "enum_values", "conversion_rules",
+                   "ambiguity_rules", "exclusion_rules", "require_context")
 
 
 def normalize_field_name(name: Any) -> str:
@@ -99,3 +110,78 @@ def grouped(specs: Iterable[dict]) -> dict[str, list[dict]]:
     for spec in specs:
         groups.setdefault(spec.get("group") or DEFAULT_GROUP, []).append(spec)
     return groups
+
+
+def public_spec(spec: dict) -> dict:
+    """A field spec without its harvester dictionary (what models and event logs receive)."""
+    return {k: v for k, v in spec.items() if k not in DICTIONARY_KEYS}
+
+
+_DOC_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def schema_document(path: Path | str | None = None) -> dict:
+    """The whole schema file (fields, groups, harvest vocabulary); re-read only when the file changes."""
+    path = Path(path or os.environ.get("ENRICHMENT_SCHEMA_PATH") or SCHEMA_PATH)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached = _DOC_CACHE.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = json.loads(path.read_text("utf-8"))
+    doc = data if isinstance(data, dict) else {"fields": data}
+    _DOC_CACHE[str(path)] = (mtime, doc)
+    return doc
+
+
+def _default_document() -> dict:
+    return schema_document(SCHEMA_PATH)
+
+
+def harvest_vocabulary() -> dict:
+    """Shared matcher vocabularies: from the active schema, else from the default schema."""
+    return schema_document().get("harvest_vocabulary") or _default_document().get("harvest_vocabulary") or {}
+
+
+_DISPLAY_CACHE: dict[tuple[int, int], dict[str, dict]] = {}
+
+
+def _display_specs() -> dict[str, dict]:
+    docs = (_default_document(), schema_document())
+    key = (id(docs[0]), id(docs[1]))      # schema_document() returns the same object until the file changes
+    specs = _DISPLAY_CACHE.get(key)
+    if specs is None:
+        specs = {}
+        for doc in docs:
+            for item in doc.get("fields") or []:
+                if isinstance(item, dict) and item.get("name"):
+                    specs[normalize_field_name(item["name"])] = item
+        _DISPLAY_CACHE.clear()
+        _DISPLAY_CACHE[key] = specs
+    return specs
+
+
+def field_display_name(name: Any, spec: dict | None = None, locale: str = "he") -> str:
+    """The user-facing label of a field: the spec's `display_name_<locale>`, else the schema's, else the
+    description (custom fields without a label), else the canonical name. Raw/debug views keep `name`."""
+    key = normalize_field_name(name)
+    attr = f"display_name_{locale}"
+    for candidate in (spec or {}, _display_specs().get(key) or {}):
+        if candidate.get(attr):
+            return str(candidate[attr])
+    for candidate in (spec or {}, _display_specs().get(key) or {}):
+        description = candidate.get("description")
+        if description and normalize_field_name(description) != key:
+            return str(description)
+    return str(name)
+
+
+def group_display_name(group: Any, locale: str = "he") -> str:
+    attr = f"display_name_{locale}"
+    for doc in (schema_document(), _default_document()):
+        entry = (doc.get("groups") or {}).get(str(group or ""))
+        if isinstance(entry, dict) and entry.get(attr):
+            return str(entry[attr])
+    return str(group or "")

@@ -89,7 +89,9 @@ def test_any_requested_field_is_eligible_with_schema_driven_attempts():
 
 def test_recovery_engine_contains_no_field_names():
     names = {s["name"] for s in load_schema()} | set(FUTURE_FIELDS)
-    for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py"):
+    for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py",
+                   "src/candidate_harvest.py", "src/document_sweep.py", "src/ui/live_state.py", "src/ui/labels_he.py",
+                   "src/ui/live_dashboard.py"):
         code = (ROOT / module).read_text("utf-8")
         found = [n for n in names if re.search(rf"\b{re.escape(n)}\b", code)]
         assert not found, (module, found)
@@ -118,6 +120,8 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
              _call("p4", "store_evidence", ev("tire_size_front", "255/45 R20")),
              _call("p5", "store_evidence", ev("paint_code", "Nebula White"))),
         say({"vehicle_id": "101122", "summary": "primary", "fields": {}}),
+        # layered pipeline: one document-sweep turn over the cached page finds nothing it can promote
+        say({"reviewed": [], "notes": "no usable candidate in the cached page"}),
         # retry service_interval_km #1: inspects cached doc, stores evidence, reports found
         turn(_call("r1", "find_in_document", {"document_id": "PLACEHOLDER", "query": "service"}),
              _call("r2", "store_evidence", ev("service_interval_km", 20000))),
@@ -170,6 +174,8 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     assert bundle["primary_output"]["summary"] == "primary"
     assert result["status"] == "completed" and result["output"]["summary"] == "final"
     assert result["usage_field_recovery"]["model_calls"] == 3 and result["usage_research"]["model_calls"] == 3
+    assert result["usage_document_sweep"]["model_calls"] == 1
+    assert kinds.index("document_sweep_finished") < kinds.index("field_recovery_started")
     assert rec["attempts"][0]["early_resolved"] and rec["turns_saved_by_early_resolution"] == 1
     assert [c["phase"] for c in result["tool_calls"]].count("field_recovery") == 2
     assert result["tool_calls"][-1]["field"] == "service_interval_km"
@@ -217,13 +223,14 @@ def test_total_retry_turn_cap(tmp_path, make_ctx):
     script = [
         say({"summary": "x", "fields": {}}),
         say({"field": "battery_usable_kwh", "status": "unresolved"}),
-        say({"field": "battery_usable_kwh", "status": "unresolved"}),
+        say({"field": "tire_size_front", "status": "unresolved"}),    # breadth-first: next field, attempt 1
         say({"summary": "final", "fields": {}}),
     ]
     result, client, _ = scripted_run(tmp_path, make_ctx, script, field_recovery_max_total_steps=2)
     rec = result["field_recovery"]
     assert rec["turns"] == 2 and rec["stopped"] == "max_total_steps" and rec["attempt_count"] == 2
-    assert rec["fields_retried"] == ["battery_usable_kwh"] and result["output"]["summary"] == "final"
+    assert rec["attempt_order"] == ["battery_usable_kwh#1", "tire_size_front#1"]
+    assert rec["fields_retried"] == ["battery_usable_kwh", "tire_size_front"] and result["output"]["summary"] == "final"
 
 
 def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path, make_ctx):

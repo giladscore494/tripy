@@ -8,22 +8,27 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 
 import streamlit as st
 
 from src.agent import PROMPT_VERSION, agent_config_from_env, tool_config_from_env
-from src.benchmark import (HANDSHAKE_RECORD_ID, benchmark_vehicles, manufacturers, research_one, run_batch,
-                           select_vehicles, start_batch, vehicle_label)
+from src.benchmark import (HANDSHAKE_RECORD_ID, batch_observability, benchmark_vehicles, manufacturers,
+                           research_one, select_vehicles, start_batch, vehicle_client_factory, vehicle_label)
+from src.concurrency import (DEFAULT_SEARCH_MAX_INFLIGHT, SEARCH_PRIME_PROVIDER_LIMIT, ConcurrencyController,
+                             batch_max_workers_from_env)
 from src.db import Level15Error, database_url, load_level15
 from src.glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_MAX_ATTEMPTS, DEFAULT_CHAT_PATH, DEFAULT_CHAT_TIMEOUT_S,
-                            DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_MAX_ATTEMPTS, DEFAULT_SEARCH_PATH, GLMClient,
-                            GLMError, GLMSettings)
+                            DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_MAX_ATTEMPTS, DEFAULT_SEARCH_PATH, GLMError,
+                            GLMSettings)
 from src.storage.cache import DocumentCache
 from src.pricing import default_pricing
 from src.storage.run_loader import load_runs
-from src.storage.run_log import list_batches, load_batch, new_batch_id
+from src.storage.run_log import list_batches, load_batch, new_batch_id, update_batch
 from src.ui import benchmark_view, run_view
+from src.ui.live_dashboard import run_live_batch
+from src.ui.live_state import BatchLiveState
 
 ROOT = Path(__file__).resolve().parent
 RUNS_DIR = Path(os.environ.get("MILO_RUNS_DIR", ROOT / "runs"))
@@ -58,6 +63,16 @@ def pricing_defaults(model: str) -> dict:
 @st.cache_resource
 def shared_cache(path: str) -> DocumentCache:
     return DocumentCache(path)
+
+
+@st.cache_resource
+def shared_controller() -> ConcurrencyController:
+    """One controller per process: Z.ai limits are per account, so every batch/session shares the pools."""
+    return ConcurrencyController.from_env(secret)
+
+
+def vehicle_title(v: dict) -> str:
+    return " · ".join(str(x) for x in (f"{v['manufacturer']} {v['model']}", v.get("year"), v.get("trim")) if x)
 
 
 st.set_page_config(page_title="MILO GLM Benchmark v1", page_icon="🔎", layout="wide")
@@ -99,6 +114,35 @@ with st.sidebar:
     chat_timeout = st.number_input("Chat read timeout per attempt (s)", 30, 1800,
                                    int(float(secret("GLM_CHAT_TIMEOUT_S") or DEFAULT_CHAT_TIMEOUT_S)), step=30)
 
+    st.header("Concurrency")
+    controller = shared_controller()
+    workers = st.number_input("Vehicle workers (vehicles researched at once)", 1, 50,
+                              min(50, batch_max_workers_from_env(secret)),
+                              help="BATCH_MAX_WORKERS (default 50). Not a request limit: the model and search "
+                                   "pools below guard every HTTP request.")
+
+    def chat_limit_input(model: str, label: str) -> int:
+        provider = controller.provider_limit_for(model)
+        current = controller.limit_for(model)
+        value = st.number_input(f"{label} in-flight requests ({model})", 1, provider or 50, min(current, provider or 50),
+                                key=f"chat_limit_{model}",
+                                help="Concurrent chat/completions requests for this exact model id. A slot is held "
+                                     "only while an HTTP attempt is in flight.")
+        st.caption(f"configured operational limit: {value} · provider limit: "
+                   + (str(provider) if provider else "unknown model (conservative fallback "
+                      f"{controller.unknown_model_limit}; check the account limit)"))
+        return int(value)
+
+    chat_limits = {}
+    if model_id:
+        chat_limits[model_id] = chat_limit_input(model_id, "Research model")
+    if finalizer_model_id.strip() and finalizer_model_id.strip().lower() != model_id.strip().lower():
+        chat_limits[finalizer_model_id.strip()] = chat_limit_input(finalizer_model_id.strip(), "Finalizer model")
+    search_limit = st.number_input("Search-Prime in-flight requests", 1, SEARCH_PRIME_PROVIDER_LIMIT,
+                                   min(controller.search.limit, SEARCH_PRIME_PROVIDER_LIMIT) or DEFAULT_SEARCH_MAX_INFLIGHT,
+                                   help="GLM_SEARCH_MAX_INFLIGHT (provider limit 5).")
+    st.caption(f"configured operational limit: {search_limit} · provider limit: {SEARCH_PRIME_PROVIDER_LIMIT}")
+
     st.header("Agent")
     env_agent = agent_config_from_env(env=secret)
     max_steps = st.slider("Research budget (model turns per vehicle)", 3, 80, int(env_agent.max_steps),
@@ -119,7 +163,9 @@ with st.sidebar:
                                      int(env_agent.field_recovery_max_total_steps), disabled=not recovery_on,
                                      help="FIELD_RECOVERY_MAX_TOTAL_STEPS (default 24): hard cap across all fields, "
                                           "attempts and turns; the run still finalizes when it is reached.")
-    include_level3 = st.checkbox("Include Level 3 open research", value=True)
+    include_level3 = st.checkbox("Include Level 3 open research", value=bool(env_agent.include_level3),
+                                 help="INCLUDE_LEVEL3 (default off): Level 3 topics compete with the Level 2 "
+                                      "benchmark for research turns, so they are opt-in.")
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
     max_tokens = st.number_input("max_tokens per model turn (0 = provider default)", 0, 131072, 0, step=1024)
@@ -207,14 +253,18 @@ if run_clicked:
         st.stop()
     if load.missing:
         st.warning(f"Level 1.5 rows not found for: {', '.join(load.missing)}")
+    settings = GLMSettings(api_key=api_key, base_url=base_url, model=model_id,
+                           finalizer_model=finalizer_model_id.strip(), chat_path=chat_path or DEFAULT_CHAT_PATH,
+                           search_path=search_path or DEFAULT_SEARCH_PATH,
+                           search_engine=search_engine or DEFAULT_SEARCH_ENGINE, timeout_s=float(chat_timeout),
+                           chat_max_attempts=int(chat_attempts), search_max_attempts=int(search_attempts))
+    for model, limit in chat_limits.items():
+        controller.set_model_limit(model, limit)
+    controller.set_search_limit(int(search_limit))
+    cancel_event = threading.Event()
+    make_client = vehicle_client_factory(settings, controller, cancel_event)
     try:
-        client = GLMClient(GLMSettings(api_key=api_key, base_url=base_url, model=model_id,
-                                       finalizer_model=finalizer_model_id.strip(),
-                                       chat_path=chat_path or DEFAULT_CHAT_PATH,
-                                       search_path=search_path or DEFAULT_SEARCH_PATH,
-                                       search_engine=search_engine or DEFAULT_SEARCH_ENGINE,
-                                       timeout_s=float(chat_timeout), chat_max_attempts=int(chat_attempts),
-                                       search_max_attempts=int(search_attempts)))
+        client = make_client()   # validates the settings; every vehicle worker gets its own client
     except GLMError as exc:
         st.error(str(exc))
         st.stop()
@@ -229,34 +279,36 @@ if run_clicked:
                                       max_tokens=int(max_tokens) or None, include_level3=include_level3,
                                       thinking=thinking, extra_body=extra_body)
     tool_cfg = tool_config_from_env(env=secret, search_backend=search_backend)
+    rows_by_id = {str(r["upstream_record_id"]): r for r in load.rows}
+    batch_workers = max(1, min(int(workers), len(selection)))
     start_batch(RUNS_DIR, batch_id, client=client, agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing,
                 vehicles=selection, level15_source=load.source, level15_note=load.note, selection=mode_label,
-                prompt_version=PROMPT_VERSION)
+                prompt_version=PROMPT_VERSION,
+                concurrency={"batch_max_workers": batch_workers,
+                             **controller.config([model_id, finalizer_model_id.strip() or model_id])})
     st.session_state["batch_id"] = batch_id
-    rows_by_id = {str(r["upstream_record_id"]): r for r in load.rows}
-    progress = st.progress(0.0, text=f"Batch {batch_id} · Level 1.5 from {load.source}")
-    done = {"n": 0}
+    st.caption(f"Batch {batch_id} · Level 1.5 from {load.source} · {batch_workers} vehicle worker(s)")
+    finalizer = client.finalizer_model
+    state = BatchLiveState([(v["upstream_record_id"], vehicle_title(v)) for v in selection
+                            if v["upstream_record_id"] in rows_by_id],
+                           pricing=pricing, controller=controller,
+                           pricing_finalizer=pricing if finalizer == model_id else default_pricing(finalizer))
 
     def run_one(vehicle: dict, row: dict) -> dict:
-        with st.status(labels[vehicle["upstream_record_id"]], expanded=True) as status_box:
-            feed = st.empty()
-            result = research_one(vehicle, row, client=client, cache=cache, runs_dir=RUNS_DIR, batch_id=batch_id,
-                                  agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing,
-                                  level15_source=load.source, listener=run_view.live_listener(feed))
-            m = result["metrics"]
-            if result.get("api_error"):
-                st.error(f"GLM API error: {result['api_error']}")
-            status_box.update(
-                label=f"{labels[vehicle['upstream_record_id']]} · {result['status']} · {m['fields_with_value']} fields"
-                      f" · {m['tool_calls']} tools · {m['search_api_calls']} searches · {result['duration_s']}s",
-                state="error" if result["status"] in run_view.FAILED_STATUSES else "complete", expanded=False)
-        return result
+        """Runs on a worker thread: its own GLM client and HTTP session, events only to the queue."""
+        return research_one(vehicle, row, client=make_client(), cache=cache, runs_dir=RUNS_DIR, batch_id=batch_id,
+                            agent_cfg=agent_cfg, tool_cfg=tool_cfg, pricing=pricing, level15_source=load.source,
+                            listener=state.listener_for(vehicle["upstream_record_id"]), cancel_event=cancel_event)
 
-    def on_done(vehicle: dict, result: dict) -> None:
-        done["n"] += 1
-        progress.progress(done["n"] / len(selection), text=f"{done['n']}/{len(selection)} done")
-
-    run_batch(selection, rows_by_id, run_one, on_done=on_done)
+    stats: dict = {}
+    cache_before = cache.stats_snapshot()
+    with controller.observe() as observation:
+        try:
+            run_live_batch(selection, rows_by_id, run_one, state, max_workers=batch_workers,
+                           cancel_event=cancel_event, stats=stats)
+        finally:
+            update_batch(RUNS_DIR, batch_id, {"concurrency_observed": batch_observability(
+                stats, observation, cache_before, cache.stats_snapshot())})
     view_batch = batch_id
 
 # --- Views ---------------------------------------------------------------------------
