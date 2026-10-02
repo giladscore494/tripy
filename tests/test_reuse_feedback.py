@@ -18,6 +18,7 @@ from src.agent import AgentConfig, run_vehicle
 from src.document_binding import target_identity
 from src.fields import load_schema, resolve_requested_fields
 from src.research_memory import ResearchMemory, provider_routes, reuse_level, scope_key, spec_identity
+from src.tools.search import search_provider
 from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
@@ -177,8 +178,15 @@ def test_reused_evidence_keeps_its_source_and_is_counted_once(tmp_path):
 
 # --- negative memory and yield are scheduling only -------------------------------------------------------------
 
+PROVIDER = ("glm", "fake")       # the search provider of _session (backend, engine): see src/tools/search.search_provider
+
+
 def _dead(field, *routes):
-    return {field: {"routes": [{"tool": tool, "route": route} for tool, route in routes], "attempts": 1}}
+    """Negative memory exactly as recovery records it: the provider routes of the failed calls."""
+    recorded = [r for tool, route in routes
+                for r in provider_routes(tool, {"query" if tool.startswith("search") else "url": route},
+                                         provider=PROVIDER)]
+    return {field: {"routes": recorded, "attempts": 1}}
 
 
 def _session(tmp_path, make_ctx, negative, open_fields):
@@ -187,7 +195,9 @@ def _session(tmp_path, make_ctx, negative, open_fields):
     ctx = make_ctx()
     ctx.glm = _Searches()
     session = ToolSession(ctx, RunLog(tmp_path, "b", "1"), AgentConfig())
-    session.route_guard = _route_guard(negative, open_fields, SPECS, list(SPECS.values()))
+    session.route_guard = _route_guard(negative, open_fields, SPECS, list(SPECS.values()),
+                                       provider=search_provider(ctx))
+    assert search_provider(ctx) == PROVIDER
     return session, ctx
 
 
@@ -225,8 +235,10 @@ def test_an_equivalent_failed_url_is_refused(tmp_path, make_ctx):
     for variant in ("http://example-forum.net/threads/corolla-ground-clearance/",
                     "https://www.example-forum.net/threads/corolla-ground-clearance#replies"):
         assert _run(session, "fetch_url", {"url": variant})["error"] == "known_unproductive_route"
-    assert _run(session, "render_page", {"url": url})["error"] == "known_unproductive_route"   # same page, same route
     assert session.ctx.session.calls == []
+    # a browser render is another mechanism (it can expose JavaScript content the fetch did not): never refused
+    assert _run(session, "render_page", {"url": url}).get("error") != "known_unproductive_route"
+    assert session.route_blocks == 2
 
 
 def test_a_new_route_still_runs_after_other_routes_failed(tmp_path, make_ctx):
@@ -282,7 +294,8 @@ def test_negative_memory_blocks_routes_never_research_and_never_truth(tmp_path):
         memory.record_routes([{"scope_key": scope_key(identity, reuse_level(spec) or "exact_market_trim"),
                                "spec_identity": spec_identity(spec), "cluster": "technical_spec", "field": field,
                                "outcome": "no_new_material",
-                               "routes": provider_routes("search_web", {"query": query})}], run)
+                               "routes": provider_routes("search_web", {"query": query},
+                                                         provider=("glm", "fake-index"))}], run)
 
     dead("ground_clearance_mm", "Toyota Corolla Touring Sports 2024 1.8 hybrid ground clearance", "earlier-1")
     dead("ground_clearance_mm", "corolla minimum ground clearance", "earlier-2")   # a second, different route
@@ -544,12 +557,18 @@ def test_miss_and_false_positive_labels_need_their_basis(tmp_path):
     assert labels == ["evidence_admission_rejected"]
 
 
+def _executed(name, args, **entry):
+    """A session tool_calls entry as ToolSession.execute records it (with the provider routes it made)."""
+    return {"name": name, "arguments": json.dumps(args), **entry,
+            "routes": provider_routes(name, args, provider=PROVIDER)}
+
+
 def test_failed_calls_and_other_fields_never_become_negative_routes():
     from src.agent import _route_names_field, _routes_of
 
-    calls = [{"name": "search_web", "arguments": json.dumps({"query": "corolla ground clearance"}), "error": "http_429"},
-             {"name": "fetch_url", "arguments": json.dumps({"url": "https://x"}), "error": "http_503"},
-             {"name": "search_web", "arguments": json.dumps({"query": "corolla ground clearance"}), "error": None}]
+    calls = [_executed("search_web", {"query": "corolla ground clearance"}, error="http_429"),
+             _executed("fetch_url", {"url": "https://x"}, error="http_503"),
+             _executed("search_web", {"query": "corolla ground clearance"}, error=None)]
     assert [r["route"] for r in _routes_of(calls)] == ["corolla ground clearance"]
     specs = list(SPECS.values())
     dc = {"tool": "search_web", "route": "lyriq dc charging time"}
@@ -614,8 +633,8 @@ def test_failed_web_calls_are_never_unproductive_routes():
     assert _route_failed({"status": 429, "document_id": "d"}) and _route_failed({"error": "x"})
     assert _route_failed({"results": [], "per_domain": {"a": {"error": "429"}, "b": {"error": "429"}}})
     assert not _route_failed({"results": [], "per_domain": {"a": {"result_count": 0}}})
-    calls = [{"name": "fetch_url", "arguments": json.dumps({"url": "https://x"}), "route_failed": True},
-             {"name": "search_web", "arguments": json.dumps({"query": "q"}), "route_failed": False}]
+    calls = [_executed("fetch_url", {"url": "https://x"}, route_failed=True),
+             _executed("search_web", {"query": "q"}, route_failed=False)]
     assert [r["route"] for r in _routes_of(calls)] == ["q"]
 
 

@@ -15,12 +15,14 @@ written atomically, so 50 concurrent vehicle workers never append to a shared fi
                      original source identity (`reused_from`); the same fact reused on twenty variants is still ONE
                      source.
     NEGATIVE ROUTES  "this exact route already failed to give new usable material for this field in this identity
-                     scope". A route is a PROVIDER route: a search is (normalized query, normalized domain), so the
-                     same query restricted to toyota.co.uk and to toyota.co.il, or with no domain at all, are three
-                     different routes, and a search_official_domains call is one route per domain it searched; a
-                     fetch is its normalized URL. Scheduling only: it never creates evidence, never changes a field
-                     state, never marks a field not_applicable and never resolves a conflict. It only steers recovery
-                     away from equivalent wasted operations, and it expires.
+                     scope". A route is a PROVIDER operation (route_identity): a search is (backend, engine,
+                     normalized query, normalized domain, effective result count), the same identity the search
+                     cache keys on, so another domain, no domain, a larger result window or another provider is
+                     another route; a search_official_domains call is one route per domain it searched. A fetch is
+                     its tool (fetch_url, fetch_pdf and render_page are different mechanisms) and normalized URL,
+                     plus the effective wait for render_page. Scheduling only: it never creates evidence, never
+                     changes a field state, never marks a field not_applicable and never resolves a conflict. It only
+                     steers recovery away from equivalent wasted operations, and it expires.
     RECOVERY YIELD   per-run tail statistics (attempts, turns, searches, documents, resolutions, by-product
                      resolutions, cost) by field, cluster, manufacturer, propulsion and source family. Used only to
                      ORDER recovery work, only with enough samples, and never as a confidence in any value.
@@ -40,9 +42,9 @@ from .fields import normalize_field_name
 from .storage.atomic import atomic_write_json
 
 MEMORY_VERSION = "memory-v1"
-# route identity format: a recorded route without this version (e.g. a search recorded without its domain) is
-# ambiguous and never refuses anything
-ROUTE_VERSION = "route-v2"
+# route identity format (see route_identity). A recorded route of any other version (route-v2 searches carry no result
+# count or provider; earlier ones no domain) is ambiguous and never refuses anything.
+ROUTE_VERSION = "route-v3"
 REUSE_LEVELS = ("exact_market_trim", "exact_technical_variant", "body_powertrain")
 # identity parts each reuse level needs (all present, else there is no safe scope key and nothing is reused). The FULL
 # government model code (letter suffixes included) and the transmission separate variants the other parts cannot
@@ -286,10 +288,14 @@ class ResearchMemory:
                 if data.get("run") not in slot["runs"]:          # independent runs, not attempts within one run
                     slot["runs"].append(data.get("run"))
                 slot["attempts"] = len(slot["runs"])
-                known = {r.get("signature") for r in slot["routes"]}
-                slot["routes"] += [r for r in entry.get("routes") or []
-                                   if isinstance(r, dict) and r.get("signature") and r.get("signature") not in known
-                                   and r.get("route_version") == ROUTE_VERSION]
+                known = {r["signature"] for r in slot["routes"]}
+                for r in entry.get("routes") or []:
+                    # older or unidentifiable records are ignored; the signature is recomputed, never trusted
+                    signature = route_signature(r) if isinstance(r, dict) and r.get("route_version") == ROUTE_VERSION \
+                        else None
+                    if signature and signature not in known:
+                        known.add(signature)
+                        slot["routes"].append({**r, "signature": signature})
         return out
 
     # --- recovery yield ---------------------------------------------------------------------------------------
@@ -331,6 +337,7 @@ class ResearchMemory:
 
 FETCH_KINDS = ("fetch_url", "fetch_pdf", "render_page")
 SEARCH_KINDS = ("search_web", "search_official_domains")
+DEFAULT_RENDER_WAIT_MS, MAX_RENDER_WAIT_MS = 2500, 15000      # src/tools/render.py: default and clamp of wait_ms
 
 
 def normalize_domain(domain: Any) -> str:
@@ -339,66 +346,119 @@ def normalize_domain(domain: Any) -> str:
     return text[4:] if text.startswith("www.") else text
 
 
-def normalize_route(tool: str, route: Any, domain: Any = None) -> tuple[str, ...]:
-    """The identity of EQUIVALENT provider operations: a search (either search tool) is the query with case and
-    spacing removed PLUS its normalized domain restriction (no restriction is its own route, never equivalent to a
-    domain-specific one); any fetch tool is the URL without scheme, "www.", fragment or trailing slash (fetching a
-    page as HTML or rendering it is the same route)."""
-    text = " ".join(str(route or "").split())
+def _normalize_url(url: Any) -> str:
+    """A URL without scheme, "www.", fragment or trailing slash (the host lower-cased)."""
+    text = " ".join(str(url or "").split()).split("#")[0].strip().split("://", 1)[-1]
+    text = text[4:] if text.lower().startswith("www.") else text
+    host, _, path = text.partition("/")
+    return host.lower() + ("/" + path.rstrip("/") if path.rstrip("/") else "") if host else ""
+
+
+def effective_wait_ms(value: Any) -> int | None:
+    """render_page's wait after load as it executes (default 2500, clamped to 0..15000); None if invalid."""
+    try:
+        wait = DEFAULT_RENDER_WAIT_MS if value in (None, "") else int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(wait, MAX_RENDER_WAIT_MS))
+
+
+def route_identity(route: dict) -> tuple | None:
+    """THE identity of a provider route: the only one used to record, look up, compare and show negative routes.
+
+    search (either search tool): ("search", backend, engine, query without case / extra spaces, normalized domain,
+                                  effective result count): the search cache's own key (src/tools/search.search_key),
+                                  so a negative route is never looser than the operation it stands for;
+    fetch_url / fetch_pdf:        (tool, normalized URL): an HTML fetch and a PDF retrieval are different mechanisms;
+    render_page:                  ("render_page", normalized URL, effective wait_ms): a browser render can expose
+                                  content a fetch did not, and a longer wait content a shorter one did not.
+    A route missing any of these parts (an older record) has no identity: it matches nothing and refuses nothing."""
+    if not isinstance(route, dict):
+        return None
+    tool = route.get("tool")
     if tool in FETCH_KINDS:
-        url = text.split("#")[0].strip()
-        url = url.split("://", 1)[-1]
-        url = url[4:] if url.lower().startswith("www.") else url
-        host, _, path = url.partition("/")
-        return "fetch", host.lower() + ("/" + path.rstrip("/") if path.rstrip("/") else "")
+        url = _normalize_url(route.get("route"))
+        if not url:
+            return None
+        if tool != "render_page":
+            return tool, url
+        wait = route.get("wait_ms")
+        return ("render_page", url, wait) if isinstance(wait, int) and not isinstance(wait, bool) else None
     if tool in SEARCH_KINDS:
-        return "search", text.lower(), normalize_domain(domain)
-    return str(tool), text.lower()
+        query = " ".join(str(route.get("route") or "").split()).lower()
+        count = route.get("count")
+        if (not query or not isinstance(count, int) or isinstance(count, bool) or not route.get("backend")
+                or "engine" not in route or "domain" not in route):
+            return None
+        return ("search", str(route["backend"]), str(route["engine"] or ""), query, normalize_domain(route["domain"]),
+                count)
+    return None
 
 
-def route_signature(tool: str, route: Any, domain: Any = None) -> str:
-    return _digest(list(normalize_route(tool, route, domain)), 16)
+def route_signature(route: dict) -> str | None:
+    identity = route_identity(route)
+    return _digest(list(identity), 16) if identity is not None else None
 
 
-def provider_routes(tool: str, args: dict, default_domains: list[str] | None = None,
-                    result: Any = None) -> list[dict]:
-    """The provider routes one web tool call makes: [{tool, route, domain?, signature, route_version}].
+def provider_routes(tool: str, args: dict, *, provider: tuple[Any, Any] | None = None,
+                    default_domains: list[str] | None = None, result: Any = None) -> list[dict]:
+    """The provider routes one web tool call makes, each {tool, route, ..., signature, route_version}.
 
-    search_web: one (query, domain) route. search_official_domains: one route per domain it searches (its own list,
-    else the manufacturer defaults, at most MAX_DOMAINS; no domain at all = one plain web search); with `result`,
-    a domain whose provider search errored is left out (a failed call says nothing about its route). Fetch tools: the
-    URL."""
-    from .tools.search import MAX_DOMAINS
+    Searches need the session's search `provider` (src/tools/search.search_provider: backend, engine); without it
+    nothing is identified. The searches come from src/tools/search.planned_searches, i.e. the query / effective count /
+    domain the tool executes: search_web one route; search_official_domains one per domain (count 5, or one plain
+    count-8 search without domains), and with `result` a domain whose provider search errored is left out (a failed
+    call says nothing about its route). Fetch tools: one route; render_page with its effective wait_ms."""
+    from .tools.search import planned_searches
 
     args = args if isinstance(args, dict) else {}
+    routes: list[dict] = []
     if tool in FETCH_KINDS:
-        url = args.get("url")
-        return [{"tool": tool, "route": str(url)[:300], "signature": route_signature(tool, url),
-                 "route_version": ROUTE_VERSION}] if url else []
-    if tool not in SEARCH_KINDS or not args.get("query"):
-        return []
-    query = str(args["query"])
-    if tool == "search_web":
-        domains: list[Any] = [args.get("domain") or None]
-    else:
-        listed = args.get("domains") or default_domains or []
-        if isinstance(listed, str):
-            listed = listed.split(",")
-        domains = [str(d).strip().lower() for d in listed if d and str(d).strip()][:MAX_DOMAINS] or [None]
+        route = {"tool": tool, "route": str(args.get("url") or "")}
+        if tool == "render_page":
+            route["wait_ms"] = effective_wait_ms(args.get("wait_ms"))
+        routes = [route]
+    elif tool in SEARCH_KINDS and provider is not None:
+        failed: set = set()
         per_domain = result.get("per_domain") if isinstance(result, dict) else None
-        if isinstance(per_domain, dict):
-            domains = [d for d in domains if d is None or not (per_domain.get(d) or {}).get("error")]
+        if tool == "search_official_domains" and isinstance(per_domain, dict):
+            failed = {d for d, v in per_domain.items() if isinstance(v, dict) and v.get("error")}
+        backend, engine = provider
+        routes = [{"tool": tool, "route": query, "domain": normalize_domain(domain), "count": count,
+                   "backend": backend, "engine": engine or ""}
+                  for query, count, domain in planned_searches(tool, args, default_domains) if domain not in failed]
     out = []
-    for domain in domains:
-        route = {"tool": tool, "route": query[:300], "signature": route_signature(tool, query, domain),
-                 "route_version": ROUTE_VERSION}
-        if normalize_domain(domain):
-            route["domain"] = normalize_domain(domain)
-        out.append(route)
+    for route in routes:
+        signature = route_signature(route)
+        if signature:
+            out.append({**route, "signature": signature, "route_version": ROUTE_VERSION})
     return out
 
 
+def route_applies(route: dict, provider: tuple[Any, Any] | None) -> bool:
+    """Can this recorded route stand for an operation of this session? A search only with the same provider."""
+    identity = route_identity(route)
+    if identity is None:
+        return False
+    return identity[0] != "search" or (provider is not None
+                                       and identity[1:3] == (str(provider[0]), str(provider[1] or "")))
+
+
 def route_label(route: dict) -> str:
-    """How a recorded route is shown to a model: the query or URL, plus its domain restriction if any."""
+    """How a recorded route is shown to a model: the query or URL plus what makes it this route (domain, a non-default
+    result count, the fetch mechanism, a non-default render wait). Derived from route_identity."""
+    identity = route_identity(route)
     text = str(route.get("route") or "")
-    return f"{text} (domain: {route['domain']})" if route.get("domain") else text
+    if identity is None:
+        return text
+    details = []
+    if identity[0] == "search":
+        if identity[4]:
+            details.append(f"domain: {identity[4]}")
+        if identity[5] != (5 if route.get("tool") == "search_official_domains" and identity[4] else 8):
+            details.append(f"results: {identity[5]}")
+    elif identity[0] != "fetch_url":
+        details.append(identity[0])
+        if identity[0] == "render_page" and identity[2] != DEFAULT_RENDER_WAIT_MS:
+            details.append(f"wait_ms: {identity[2]}")
+    return f"{text} ({', '.join(details)})" if details else text

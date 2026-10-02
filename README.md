@@ -456,14 +456,19 @@ run, each written atomically, so 50 concurrent workers never share an append tar
   whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
   fields keep no negative memory. A route is not recorded when the call itself failed (an HTTP error status, or every
   domain of a domain search erroring; a domain whose own provider search errored is left out). A route is a
-  PROVIDER route: a search is its query (apart from case and spacing) AND its domain restriction, so
-  "Corolla ground clearance" on `toyota.co.uk`, on `toyota.co.il` and with no domain are three different routes,
-  and a `search_official_domains` call is one route per domain it searches. Later runs see the routes as
-  `known_unproductive_routes`, and the runtime refuses, before execution, a request whose provider routes were ALL
-  recorded for the open fields it serves (the same query on the same domain; the same page by URL, whether fetched
-  or rendered; `NEGATIVE_ROUTE_BLOCKING`): a failed UK search never suppresses an IL one, and a domain search with
-  any domain not tried before runs. Routes recorded without their domain (an older format) refuse nothing. Only
-  the route is refused: the cluster's research still runs, and any new query or page is executed even when other
+  PROVIDER operation (`src/research_memory.route_identity`), never looser than what it stands for: a search is
+  its backend and engine, its query (apart from case and spacing), its domain restriction and its effective result
+  count (after the tool's default and clamp), the same identity the search cache keys on
+  (`src/tools/search.planned_searches` / `search_key`). So "Corolla ground clearance" on `toyota.co.uk`, on
+  `toyota.co.il` and with no domain are three routes, 8 and 20 results are two, and GLM and DuckDuckGo are two; a
+  `search_official_domains` call is one route per domain it searches (5 results each). A fetch is its mechanism
+  (`fetch_url`, `fetch_pdf` and `render_page` are different routes: a browser render can expose what a fetch did
+  not) and its URL, plus the effective `wait_ms` of a render. Later runs see the routes as
+  `known_unproductive_routes` (only those this session could repeat), and the runtime refuses, before execution, a
+  request whose provider routes were ALL recorded for the open fields it serves (`NEGATIVE_ROUTE_BLOCKING`): a
+  failed UK search never suppresses an IL one, a 20-result search or another provider always runs, and a domain
+  search with any domain not tried before runs. Records of an older route format, or missing any identity part,
+  refuse nothing. Only the route is refused: the cluster's research still runs, and any new query or page is executed even when other
   routes for the same field failed before. Failed routes are never evidence that a value does not exist. This is
   scheduling only: it never creates evidence, never changes a field state, never marks a field not_applicable and
   never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
