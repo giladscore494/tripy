@@ -1179,6 +1179,7 @@ class RunHarvester:
 
     def __init__(self, cache, specs: list[dict], run_log, enabled: bool = True):
         self.cache, self.specs, self.run_log, self.enabled = cache, specs, run_log, enabled
+        self.schema_hash = schema_hash(specs)
         self.done: set[str] = set()
         self.stats = {"documents_harvested": 0, "candidate_cache_hits": 0, "candidate_cache_misses": 0,
                       "candidates_total": 0, "harvest_errors": 0}
@@ -1205,4 +1206,5 @@ class RunHarvester:
                                url=meta.get("final_url") or meta.get("url"), cache_hit=hit,
                                candidate_count=len(cands),
                                fields=sorted({c.get("field") for c in cands if c.get("field")}),
+                               harvester_version=HARVESTER_VERSION, schema_hash=self.schema_hash,
                                candidates=cands)

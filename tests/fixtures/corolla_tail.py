@@ -129,9 +129,11 @@ class PolicyGLM:
 
     model = "glm-policy"
 
-    def __init__(self):
+    def __init__(self, primary=None, search_index=None, engine="1.8"):
         self.requests: list[dict] = []
-        self.primary = list(PRIMARY)
+        self.primary = list(PRIMARY if primary is None else primary)
+        self.search_index = SEARCH_INDEX if search_index is None else search_index
+        self.engine = engine
         self.searches: list[str] = []
         self.settings = SimpleNamespace(search_engine="fake-index",
                                         public=lambda: {"model": self.model, "search_engine": "fake-index"})
@@ -140,7 +142,7 @@ class PolicyGLM:
     def web_search(self, query, count=8, domain=None):
         self.searches.append(query)
         low = query.lower()
-        return next(results for key, results in SEARCH_INDEX if key in low)
+        return next(results for key, results in self.search_index if key in low)
 
     def chat(self, messages, tools=None, **kwargs):
         self.requests.append({"messages": messages, "tools": tools})
@@ -245,8 +247,9 @@ class PolicyGLM:
             if target:
                 return _turn(_call(f"c{len(made)}", "fetch_url", {"url": target}))
             queried = {a.get("query") for n, a in made if n == "search_web"}
+            queried |= {r for routes in (packet.get("known_unproductive_routes") or {}).values() for r in routes}
             for f in pending:
-                query = f"Toyota Corolla Touring Sports 2024 1.8 hybrid {label(f)}"
+                query = f"Toyota Corolla Touring Sports 2024 {self.engine} hybrid {label(f)}"
                 if query not in queried and not any(r.get("error") for r in results[-1:]):
                     return _turn(_call(f"c{len(made)}", "search_web", {"query": query}))
         statuses = [{"field": f, "status": "conflicting" if f in conflicting else "unresolved"} for f in open_now]
@@ -255,17 +258,20 @@ class PolicyGLM:
         return _say({"field": fields[0], "status": statuses[0]["status"] if statuses else "found"})
 
 
-def run_mode(mode: str, workdir: Path) -> dict:
-    cache = DocumentCache(workdir / "cache")
+def run_mode(mode: str, workdir: Path, *, client=None, payload=None, vehicle=None, routes=None, record_id="38626",
+             cache=None, batch=None, **cfg) -> dict:
+    cache = cache or DocumentCache(workdir / "cache")
     routes = {url: FakeResponse(body.encode("utf-8"), content_type=ctype, url=url)
-              for url, (body, ctype) in ROUTES.items()}
+              for url, (body, ctype) in (routes or ROUTES).items()}
     session = FakeSession(routes)
-    client = PolicyGLM()
-    log = RunLog(workdir / "runs", f"tail-{mode}", "38626")
-    config = AgentConfig(max_steps=4, no_new_research_turns=0, requested_fields=FIELDS, recovery_mode=mode,
-                         document_sweep_max_turns=0)
-    result = run_vehicle({"upstream_record_id": "38626"}, PAYLOAD, client=client, cache=cache, run_log=log,
-                         vehicle_meta=VEHICLE, config=config, tool_config=ToolConfig(), session=session)
+    client = client or PolicyGLM()
+    log = RunLog(workdir / "runs", batch or f"tail-{mode}", record_id)
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": FIELDS,
+                            "recovery_mode": mode, "document_sweep_max_turns": 0, "research_memory_enabled": False,
+                            **cfg})
+    result = run_vehicle({"upstream_record_id": record_id}, payload or PAYLOAD, client=client, cache=cache,
+                         run_log=log, vehicle_meta=vehicle or VEHICLE, config=config, tool_config=ToolConfig(),
+                         session=session)
     events = read_events(log.events_path)
     return {"result": result, "events": events, "client": client, "metrics": compute_metrics(result)}
 

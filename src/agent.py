@@ -73,6 +73,7 @@ from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_to
 from .tools.evidence import EvidenceStore
 from .candidate_harvest import RunHarvester
 from .evidence_admission import AdmissionContext
+from .research_memory import ResearchMemory
 from .variant_notes import record_id_of, variant_notes
 
 OUTPUT_SHAPE = """{
@@ -412,6 +413,9 @@ class AgentConfig:
     cluster_search_budget: int = 4            # billable provider searches per cluster attempt (cache hits are free)
     cluster_candidates_per_field: int = 6
     cluster_packet_max_chars: int = 30000
+    # Cross-run research memory (src/research_memory.py): verified fact reuse, negative routes, recovery yield.
+    research_memory_enabled: bool = True
+    negative_memory_skip: bool = True         # skip a cluster's web attempt when every open field's routes failed
 
 
 AGENT_ENV = {
@@ -471,6 +475,9 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     level3 = _env_bool(env("INCLUDE_LEVEL3"))
     if level3 is not None:
         values["include_level3"] = level3
+    memory = _env_bool(env("RESEARCH_MEMORY_ENABLED"))
+    if memory is not None:
+        values["research_memory_enabled"] = memory
     layered = _env_bool(env("LAYERED_HARVEST_ENABLED"))
     if layered is not None:
         values["layered_harvest_enabled"] = layered
@@ -998,7 +1005,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
                   "document_rereads_after_prior_excerpt": rereads}
         attempts_log.append(record)
         previous.append({k: record[k] for k in ("attempt", "state_after", "reply", "turns")})
-        run_log.event("field_recovery_finished", **record)
+        run_log.event("field_recovery_finished", **{k: v for k, v in record.items() if k != "_routes"})
 
     rounds = max((item["max_attempts"] for item in queue), default=0)
     for round_no in range(1, rounds + 1):
@@ -1108,6 +1115,73 @@ def _clamp(value: Any, default: int, low: int, high: int) -> int:
     return max(low, min(number, high))
 
 
+def _routes_of(calls: list[dict]) -> list[dict]:
+    """The web routes (search queries, fetched URLs) of executed tool calls."""
+    from .research_memory import route_signature
+
+    routes = []
+    for c in calls:
+        if c.get("blocked") or c.get("reused") or c["name"] not in trace.SEARCH_TOOLS + trace.FETCH_TOOLS:
+            continue
+        args = trace.parse_args(c.get("arguments"))
+        route = args.get("query") or args.get("url")
+        if route:
+            routes.append({"tool": c["name"], "route": str(route)[:300], "signature": route_signature(c["name"], route)})
+    return routes
+
+
+def _route_names_field(route: dict, spec: dict) -> bool:
+    """Is a failed SEARCH about this field (its query uses one of the field's labels)? A fetched URL is not tied to
+    one field, so it is remembered for display but never alone makes a field's routes 'exhausted'."""
+    if route.get("tool") not in trace.SEARCH_TOOLS:
+        return False
+    query = " " + " ".join(str(route.get("route") or "").lower().split()) + " "
+    labels = (spec.get("aliases_en") or []) + (spec.get("aliases_he") or []) + [spec.get("name", "").replace("_", " ")]
+    return any(f" {str(a).lower()} " in query for a in labels if a)
+
+
+def _record_recovery_memory(memory: ResearchMemory, attempts: list[dict], current: dict, route_keys: dict,
+                            target, run_log: RunLog, specs_by_name: dict) -> None:
+    """After a cluster recovery: failed routes (a web attempt with no novelty at all) per still-open field, and one
+    yield row per cluster attempt / field. Scheduling memory only."""
+    from .tail_planner import cluster_of
+
+    entries = []
+    for a in attempts:
+        if a.get("mode") != "web" or not a.get("_routes"):
+            continue
+        for f in a["fields"]:
+            spec = specs_by_name.get(f) or {"name": f}
+            searched = [r for r in a["_routes"] if _route_names_field(r, spec)]
+            if current[f]["retry_eligible"] and f in route_keys and searched:
+                entries.append({"scope_key": route_keys[f], "cluster": a["cluster"], "field": f,
+                                "routes": searched + [r for r in a["_routes"] if r["tool"] in trace.FETCH_TOOLS],
+                                "outcome": "no_new_material"})
+    run_key = str(run_log.dir)
+    memory.record_routes(entries, run_key)
+    base = {"manufacturer": getattr(target, "manufacturer", None), "propulsion": getattr(target, "propulsion", None)}
+    rows = [{"kind": "cluster", **base, "cluster": a["cluster"], "mode": a["mode"], "turns": a["turns"],
+             "searches": a.get("search_provider_calls", 0), "documents": a.get("documents_fetched", 0),
+             "resolutions": len(a.get("fields_resolved") or []),
+             "byproduct_resolutions": len(a.get("byproduct_resolutions") or []), "tokens": a.get("tokens", 0)}
+            for a in attempts]
+    from .source_authority import split_host
+
+    family: dict[str, str] = {}
+    for item in trace.evidence_items(trace_events(run_log)):
+        name = normalize_field_name(item.get("field"))
+        if item.get("source_domain") and name not in family:
+            family[name] = split_host(item["source_domain"])[1]       # registrable label: the source family
+    for name in sorted({f for a in attempts for f in a["fields"]}):
+        mine = [a for a in attempts if name in a["fields"]]
+        rows.append({"kind": "field", **base, "field": name, "cluster": cluster_of(specs_by_name.get(name) or {}),
+                     "source_family": family.get(name),
+                     "attempts": len(mine), "turns": sum(a["turns"] for a in mine),
+                     "searches": sum(a.get("search_provider_calls", 0) for a in mine),
+                     "resolved": not current[name]["retry_eligible"]})
+    memory.record_yield(rows, run_key)
+
+
 def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, search_calls: int,
                  billable_search_calls: int | None = None) -> dict:
     """Tail efficiency (observational; same definitions for legacy and cluster recovery). `search_calls` are
@@ -1139,7 +1213,8 @@ def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, se
 
 def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
                          config: AgentConfig, run_log: RunLog, cache, documents_dir: Path,
-                         operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None) -> dict:
+                         operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None,
+                         memory: ResearchMemory | None = None) -> dict:
     """Clustered tail recovery (see src/tail_planner.py). The recovery unit is a CLUSTER of related open fields.
 
     BREADTH-FIRST over clusters: every cluster gets attempt 1 before any cluster gets attempt 2, so one hard field
@@ -1177,7 +1252,21 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                   policy_blocked=[f for f, t in triaged.items() if t["triage"] == "policy_blocked"])
     current = {e["field"]: e for e in primary}
     state = {"total_steps": 0, "stopped": None, "cut_short": None, "early_count": 0, "budget_skipped": 0,
-             "no_novelty_stops": 0, "budget_extensions": 0, "searches": 0, "search_refusals": 0}
+             "no_novelty_stops": 0, "budget_extensions": 0, "searches": 0, "search_refusals": 0,
+             "negative_route_cache_hits": 0}
+    # Cross-run memory (scheduling only): routes that already failed for these fields in the same identity scope,
+    # and the historical yield of each cluster for this manufacturer / propulsion.
+    from .research_memory import reuse_level, route_signature, scope_key
+
+    target = getattr(adm, "identity", None)
+    route_keys = {f: k for f in queued
+                  if (k := scope_key(target, reuse_level(by_name[f]) or "exact_market_trim"))}
+    negative = memory.negative_routes(route_keys) if memory is not None else {}
+    history = memory.cluster_yield(getattr(target, "manufacturer", None), getattr(target, "propulsion", None)) \
+        if memory is not None else {}
+    if negative or history:
+        run_log.event("research_memory_consulted", negative_route_fields=sorted(negative),
+                      cluster_yield=history, note="scheduling only: never evidence, never a field state")
     attempts_log: list[dict] = []
     attempted_fields: set[str] = set()
     resolved_by_cluster: dict[str, list[str]] = {}
@@ -1251,6 +1340,10 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
             other_open_fields=other_open, conflicts=conflicts,
             candidates_per_field=config.cluster_candidates_per_field, operator_notes=operator_notes,
             candidates=ordered_cands)
+        known_dead = {f: [r["route"] for r in negative[f]["routes"]][:8] for f in open_fields if f in negative}
+        if known_dead and not local:
+            packet["known_unproductive_routes"] = known_dead      # earlier runs: these routes found nothing new
+            state["negative_route_cache_hits"] += len(known_dead)
         packet = _trim_packet(packet, config.cluster_packet_max_chars)
         shown = packet.get("deterministic_candidates") or {}
         presented = [candidate_key(c) for f in open_fields for c in (ordered_cands.get(f) or [])[:len(shown.get(f)
@@ -1269,6 +1362,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                                                 + json.dumps(packet, ensure_ascii=False, default=str)}]
         reply_text, turns, error, early, stop = None, 0, None, False, None
         turn_novelty: list[list[str]] = []
+        calls_before = len(session.tool_calls)
+        dead_routes: list[dict] = []
+        tokens_before = caller.usage["field_recovery"].get("total_tokens", 0)
         extensions = 0
         searches_before = session.ctx.counters["search_cache_misses"]
         label = f"cluster:{name}"
@@ -1299,6 +1395,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 if not calls:
                     reply_text = message.get("content") or ""
                     break
+                turn_start = len(session.tool_calls)
                 session.execute(calls, messages, phase="field_recovery",
                                 allowed=LOCAL_TOOLS if local else None, cluster=name, attempt=attempt)
                 # New documents were harvested for ALL fields by the session hook; re-evaluate EVERY requested field
@@ -1310,6 +1407,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                                  documents=list(session.ctx.documents_opened), open_fields=watched, matrix=matrix_now)
                 found = novelty(before, after, adm, cache)
                 turn_novelty.append(found)
+                if not found:      # this turn's web routes gave nothing new: remembered (scheduling only)
+                    dead_routes.extend(_routes_of(session.tool_calls[turn_start:]))
                 still_open = [f for f in open_fields if current[f]["retry_eligible"]]
                 run_log.event("cluster_turn_novelty", cluster=name, attempt=attempt, turn=turn_index, novelty=found,
                               fields_open=still_open)
@@ -1385,6 +1484,13 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                   "reply": reply, "reply_text": None if reply else reply_text, "error": error,
                   "packet_chars": packet_chars, "deterministic_candidates": sum(len(v) for v in shown.values()),
                   "ranked_documents": len(ranked), "search_hints": len(hints)}
+        executed = [c for c in session.tool_calls[calls_before:] if not c.get("blocked") and not c.get("reused")]
+        record["_routes"] = dead_routes
+        record["documents_fetched"] = sum(1 for c in executed if c["name"] in trace.FETCH_TOOLS)
+        record["tokens"] = caller.usage["field_recovery"].get("total_tokens", 0) - tokens_before
+        record["byproduct_resolutions"] = sorted(f for f, v in resolved_indirectly.items()
+                                                 if v.get("resolved_during_field") == label
+                                                 and v.get("attempt") == attempt)
         attempts_log.append(record)
         previous[name].append({k: record[k] for k in ("attempt", "mode", "states_after", "turns", "stop",
                                                       "search_provider_calls")})
@@ -1410,7 +1516,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         progressed = False
         # local passes first: no billable search is spent while unreviewed local material remains
         plans = [(plan, local_next(plan)) for plan in clusters]
-        for plan, _ in sorted(plans, key=lambda pl: 0 if pl[1] else 1):
+        rate = {c: v["resolutions_per_turn"] for c, v in history.items()}
+        for plan, _ in sorted(plans, key=lambda pl: (0 if pl[1] else 1, -rate.get(pl[0]["cluster"], 0.0))):
             name = plan["cluster"]
             open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
             if not open_fields or allowed_attempts[name] == 0:
@@ -1424,6 +1531,17 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                     skipped.add(name)
                     run_log.event("cluster_recovery_skipped", cluster=name, round=round_no, reason="low_yield",
                                   fields=open_fields)
+                continue
+            if not local and config.negative_memory_skip and not any(p["mode"] == "web" for p in previous[name]) \
+                    and all(f in negative for f in open_fields):
+                # every open field's routes already failed in this identity scope (earlier runs): an equivalent web
+                # attempt is skipped. The fields keep their state; nothing is marked not_applicable.
+                if name not in skipped:
+                    skipped.add(name)
+                    state["negative_route_cache_hits"] += len(open_fields)
+                    run_log.event("cluster_recovery_skipped", cluster=name, round=round_no,
+                                  reason="negative_route_memory", fields=open_fields,
+                                  routes={f: len(negative[f]["routes"]) for f in open_fields})
                 continue
             if cap_reached():
                 state["stopped"] = "max_total_steps"
@@ -1440,6 +1558,13 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
             break
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
+    if memory is not None:
+        try:
+            _record_recovery_memory(memory, attempts_log, current, route_keys, target, run_log, by_name)
+        except Exception as exc:  # memory problems never cost the run
+            run_log.event("research_memory_write_failed", error=_error_text(exc))
+    for a in attempts_log:
+        a.pop("_routes", None)
     total = state["total_steps"]
     cap = config.field_recovery_max_total_steps
     not_attempted = [f for f in queued if f not in attempted_fields and current[f]["retry_eligible"]]
@@ -1495,6 +1620,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         "no_novelty_stops": state["no_novelty_stops"],
         "budget_extensions": state["budget_extensions"],
         "search_budget_refusals": state["search_refusals"],
+        "negative_route_cache_hits": state["negative_route_cache_hits"],
         "local_only_attempts": sum(1 for a in attempts_log if a["mode"] == "local_only"),
         **metrics,
         "stopped": state["stopped"],
@@ -1620,6 +1746,31 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     return summary
 
 
+def apply_fact_reuse(ctx: ToolContext, memory: ResearchMemory, specs: list[dict], run_log: RunLog,
+                     target_market: str) -> dict:
+    """Bring verified facts of related variants into this run (deterministic, no model call, no search). Each one is
+    re-admitted against this target (tools/evidence.reuse_verified_fact); nothing else is trusted."""
+    from .tools.evidence import reuse_verified_fact
+
+    identity = getattr(ctx.admission, "identity", None)
+    records, skipped = memory.reusable_facts(specs, identity)
+    reused, rejected = [], {}
+    for record in records:
+        outcome = reuse_verified_fact(ctx, record)
+        if outcome["reused"]:
+            reused.append({"field": record["field"], "evidence_id": outcome["evidence_id"],
+                           "record_id": record.get("record_id"), "scope_type": record.get("scope_type")})
+        else:
+            for reason in outcome["reasons"] or ["unknown"]:
+                rejected[reason] = rejected.get(reason, 0) + 1
+    ok = sorted({e["field"] for e in current_evaluation(trace_events(run_log), specs, target_market)
+                 if e["state"] == "ok"} & {r["field"] for r in reused})
+    summary = {"candidates": len(records), "reused": len(reused), "items": reused, "fields_ok": ok,
+               "skipped": skipped, "not_readmitted": rejected}
+    run_log.event("fact_reuse", **summary)
+    return summary
+
+
 def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_log: RunLog,
                 config: AgentConfig, tool_config: ToolConfig, vehicle_meta: dict | None = None,
                 batch_id: str = "", ordinal: int | None = None, session=None,
@@ -1707,6 +1858,19 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
                   target_market=config.target_market, vehicle_label=vehicle_ctx,
                   tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode)
+    memory = ResearchMemory.for_cache(cache) if config.research_memory_enabled else None
+    fact_reuse: dict | None = None
+    if memory is not None:
+        try:
+            fact_reuse = apply_fact_reuse(ctx, memory, specs, run_log, config.target_market)
+        except Exception as exc:  # memory problems never cost the run
+            fact_reuse = {"error": _error_text(exc), "reused": 0}
+            run_log.event("fact_reuse_failed", error=fact_reuse["error"])
+        if fact_reuse.get("fields_ok"):
+            messages[1]["content"] += (
+                "\n\nAlready supported by verified evidence reused from related variants (re-checked against this "
+                "exact variant; their evidence ids are in the store): " + ", ".join(fact_reuse["fields_ok"])
+                + ". Do not research these fields again.")
 
     status: str | None = None
     stop_reason: str | None = None
@@ -1859,11 +2023,16 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         if status is None:
             phase["name"] = "field_detection"
             try:
-                recover = run_field_recovery if config.recovery_mode == "legacy" else run_cluster_recovery
-                recovery = recover(session=tools, caller=caller, specs=specs, payload=payload,
-                                   config=config, run_log=run_log, cache=cache,
-                                   documents_dir=documents_dir, operator_notes=notes_for_variant,
-                                   phase_ref=phase, vehicle=vehicle_ctx)
+                if config.recovery_mode == "legacy":
+                    recovery = run_field_recovery(session=tools, caller=caller, specs=specs, payload=payload,
+                                                  config=config, run_log=run_log, cache=cache,
+                                                  documents_dir=documents_dir, operator_notes=notes_for_variant,
+                                                  phase_ref=phase, vehicle=vehicle_ctx)
+                else:
+                    recovery = run_cluster_recovery(session=tools, caller=caller, specs=specs, payload=payload,
+                                                    config=config, run_log=run_log, cache=cache,
+                                                    documents_dir=documents_dir, operator_notes=notes_for_variant,
+                                                    phase_ref=phase, vehicle=vehicle_ctx, memory=memory)
             except Exception as exc:  # recovery problems never cost the primary research
                 recovery = {"error": _error_text(exc), "attempt_count": 0}
                 run_log.event("field_recovery_failed", error=recovery["error"])
@@ -1952,6 +2121,22 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                        target_market=config.target_market)
     result = assemble(status, events=events, research_bundle=bundle)
     result["duration_s"] = duration
+    result["fact_reuse"] = fact_reuse
+    if memory is not None and interrupted is None:
+        try:   # verified, exactly bound facts of this run become reusable for related variants
+            written = memory.record_facts(evidence.items, specs, getattr(ctx.admission, "identity", None),
+                                          {"batch_id": batch_id, "record_id": record_id, "run_started_at": started_at})
+            result["verified_facts_recorded"] = len(written)
+        except Exception as exc:
+            run_log.event("fact_record_failed", error=_error_text(exc))
+    try:   # labelled engineering feedback of this run (deterministic; this worker's own file)
+        from .training_feedback import feedback_examples, summarize, write_run_feedback
+
+        examples = feedback_examples(events, payload, specs, config.target_market)
+        write_run_feedback(run_log.dir, examples)
+        result["training_feedback"] = summarize(examples)
+    except Exception as exc:
+        run_log.event("training_feedback_failed", error=_error_text(exc))
     trace.apply_current_states(recovery, (bundle or {}).get("field_states"))
     # Persist first, then announce: a UI stop raised by the run_finished callback cannot lose the result.
     try:

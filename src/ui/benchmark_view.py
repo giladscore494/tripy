@@ -28,6 +28,8 @@ PER_VEHICLE_COLS = ["vehicle", "status", "result_source", "final_output", "final
                     "no_novelty_stops", "budget_extensions", "conflicts_normalized_without_search",
                     "portable_facts_accepted", "portable_facts_rejected", "fields_resolved_per_tail_turn",
                     "fields_resolved_per_tail_search", "tail_cost_usd", "cost_per_tail_field_resolved",
+                    "verified_fact_cache_hits", "verified_facts_recorded", "negative_route_cache_hits",
+                    "candidate_cache_hits", "training_feedback_examples",
                     "coverage_pct", "target_filled", "target_fields", "fields_with_value", "extra_fields",
                     "evidence_items", "evidence_rejected", "evidence_variant_exact", "evidence_variant_unclear",
                     "evidence_variant_different", "evidence_unbound", "evidence_official_source",
