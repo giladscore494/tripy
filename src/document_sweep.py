@@ -189,14 +189,15 @@ def sweep_packet(*, payload: dict, specs: list[dict], evaluation: list[dict], ma
         packet["local_snippets"] = local                    # deterministic label locations; not evidence
     absent = [n for n in not_found_locally or [] if n in packet["fields_without_candidates"] and n not in local]
     if absent:
-        # the deterministic inspection found no label for these in ANY usable cached document: searching the cached
-        # documents for them again is wasted; they go to targeted web recovery (nothing is implied about the value)
+        # the deterministic inspection found none of these fields' dictionary labels in the text of any usable cached
+        # document (fields without a dictionary entry are never listed): a plain re-search of the cache is unlikely
+        # to help; they go to targeted web recovery. Nothing is implied about the value.
         packet["fields_not_found_locally"] = absent
     if chunk:
         packet["chunk"] = chunk
     # Fit the size budget: drop the lowest-priority candidate of the longest list (never a field's first), then
     # local snippets beyond the first per field.
-    while packet_chars(packet) > max_chars:
+    while max_chars and packet_chars(packet) > max_chars:      # 0 = no limit (as in within())
         longest = max(candidates, key=lambda n: len(candidates[n]), default=None)
         if longest is not None and len(candidates[longest]) > 1:
             candidates[longest] = candidates[longest][:-1]

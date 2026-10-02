@@ -308,4 +308,4 @@ def inspect_document_for_fields(ctx, document_id: str, fields: list | None = Non
         fields = [f.strip() for f in fields.split(",") if f.strip()]
     return inspect_document(ctx.cache, document_id, specs, fields or None, context_chars=context_chars,
                             max_matches_per_field=max(1, min(int(max_matches_per_field or 2), 5)),
-                            max_chars=int(ctx.config.max_text_chars * 1.5))
+                            max_chars=int(ctx.config.max_text_chars * 1.4))   # under the default tool-output cap

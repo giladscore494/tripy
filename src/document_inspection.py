@@ -174,5 +174,17 @@ def _fit(result: dict, max_chars: int) -> None:
                 if len(m.get("snippet") or "") > 120:
                     m["snippet"] = m["snippet"][:120] + "…"
         result["snippets_shortened"] = True
+    if size() > max_chars and len(result["fields_without_matches"]) > 3:
+        result["fields_without_matches_count"] = len(result.pop("fields_without_matches"))
+    omitted: list[str] = []
+    while size() > max_chars and (result["matches"] or result["candidates"]):
+        # still too large (many fields requested): leave whole fields out, last ones first, and say which (the
+        # list and hint are part of the size being checked)
+        name = sorted(set(result["matches"]) | set(result["candidates"]))[-1]
+        result["matches"].pop(name, None)
+        result["candidates"].pop(name, None)
+        omitted.append(name)
+        result["fields_omitted_for_size"] = sorted(omitted)
+        result["hint"] = "Result capped: inspect the omitted fields with another call that names them in `fields`."
     if trimmed:
         result["trimmed_fields"] = sorted(trimmed)

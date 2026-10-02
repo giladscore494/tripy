@@ -64,7 +64,7 @@ from .field_recovery import (RETRY_STATES, current_evaluation, early_resolution_
 from .fields import normalize_field_name
 from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields, semantic_notes
 from .phase_settings import for_phase
-from .pricing import UNKNOWN_USAGE_NOTE, compute_cost, default_pricing, run_cost
+from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
 from .storage.cache import DocumentCache
@@ -291,7 +291,8 @@ Your job, for ALL requested fields at once, using ONLY what is already downloade
    with inspect_document_for_fields when the shown ones are not enough.
 6. For fields_without_candidates, local_snippets (when present) hold the text around the field's label in cached
    documents, found by deterministic code: read them first; store a value only from the document they cite.
-   fields_not_found_locally have no label in any cached document: do not search the cached documents for them.
+   fields_not_found_locally: none of their dictionary labels occurs in the text of any cached document; do not
+   search the cached documents for them again unless you have a specific reason (e.g. embedded structured data).
    For the rest (and fields whose candidates are all rejected) inspect the cached documents, preferably with ONE
    inspect_document_for_fields(document_id, fields) per document (else find_in_document / extract_tables /
    get_structured_data / extract_html / get_cached_document), and store any valid fact the parser missed.
@@ -1899,10 +1900,13 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     usable = sorted(usable, key=lambda d: -ROUTING_AUTHORITY.get(str(profiles[d].get("source_authority")), 0.0))
     snippets: dict[str, list[dict]] = {}
     inspected = []
+    searchable: set[str] = set()      # fields the dictionary can look for (no rule: never "not found")
     for doc in usable if no_candidates else []:
         found = inspect_document(cache, doc, specs, no_candidates, max_matches_per_field=1, context_chars=100,
                                  candidates_per_field=0)
         inspected.append({"document_id": doc, "fields_located": sorted(found.get("matches") or {})})
+        searchable |= set(no_candidates) - set(found.get("fields_without_dictionary") or []) \
+            - set(found.get("unknown_fields") or [])
         for name, items in (found.get("matches") or {}).items():
             for item in items:
                 if len(snippets.setdefault(name, [])) < max(1, config.document_sweep_candidates_per_field):
@@ -1925,7 +1929,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                             doc_metas=doc_metas, target_market=market, max_turns=max_turns,
                             per_field=max(1, config.document_sweep_candidates_per_field), max_chars=max_chars,
                             fields=fields, routed=routed, snippets=snippets, profiles=profiles, chunk=chunk,
-                            not_found_locally=[f for f in no_candidates if f not in snippets] if usable else None)
+                            not_found_locally=[f for f in no_candidates if f in searchable and f not in snippets])
 
     limits = {"chars": config.document_sweep_packet_max_chars, "fields": config.document_sweep_max_fields,
               "candidates": config.document_sweep_max_candidates}
@@ -2225,25 +2229,14 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         usage = trace.sum_usage(usage_research, usage_sweep, usage_recovery, usage_finalizer)
         search_calls = counters.get("search_api_calls", 0)
         # a sweep / recovery phase on its own model (src/phase_settings.py) is priced with that model's prices
-        own_priced = {}
-        for group, phase_usage in (("document_sweep", usage_sweep), ("field_recovery", usage_recovery)):
-            phase_model = for_phase(config, group)["model"]
-            if phase_model and phase_model != research_model:
-                own_priced[group] = (phase_usage, phase_model)
-        shared = [u for g, u in (("document_sweep", usage_sweep), ("field_recovery", usage_recovery))
-                  if g not in own_priced]
-        cost, cost_details = run_cost(trace.sum_usage(usage_research, *shared), usage_finalizer, search_calls, pricing,
-                                      pricing_finalizer, stats["unknown_usage_attempts"])
-        for group, (phase_usage, phase_model) in own_priced.items():
-            part = compute_cost(phase_usage, 0, default_pricing(phase_model))["tokens_usd"]
-            cost_details[f"{group}_tokens_usd"] = part
-            cost_details[f"{group}_model"] = phase_model
-            if part is None or cost["tokens_usd"] is None:
-                cost["tokens_usd"] = None
-            else:
-                cost["tokens_usd"] = round(cost["tokens_usd"] + part, 6)
-            parts = [x for x in (cost["tokens_usd"], cost["web_search_usd"]) if x is not None]
-            cost["total_usd"] = round(sum(parts), 6) if parts else None
+        phase_models = {g: m for g in ("document_sweep", "field_recovery")
+                        if (m := for_phase(config, g)["model"]) and m != research_model}
+        cost, cost_details = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep,
+                                            usage_recovery=usage_recovery, usage_finalizer=usage_finalizer,
+                                            search_api_calls=search_calls, pricing=pricing,
+                                            pricing_finalizer=pricing_finalizer,
+                                            unknown_usage_attempts=stats["unknown_usage_attempts"],
+                                            phase_models=phase_models)
         return {
             "record_id": record_id,
             "ordinal": ordinal,
@@ -2327,7 +2320,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 tools.execute(calls, messages, phase="research")
                 steps_done = step
                 remaining = config.max_steps - step
-                found = acq.after_turn(step)
+                found = acq.after_turn(step)          # never raises: a telemetry problem counts as progress
                 notes = []
                 limit = config.primary_research_no_artifact_stop
                 if limit and acq.streak >= limit and remaining > 0:

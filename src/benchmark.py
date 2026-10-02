@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from .concurrency import BatchCancelled
 from .agent import AgentConfig, effective_glm_config, finalizer_model_of, research_model_of, run_vehicle
 from .db import build_level15_payload
-from .pricing import run_cost
+from .pricing import default_pricing, phase_models_of, phase_run_cost, run_cost
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
 from .source_authority import OFFICIAL_CLASSES
 from .storage.run_log import RunLog, update_batch, utc_now, write_batch
@@ -111,13 +111,14 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     layered = result.get("candidate_summary") or {}
     primary = result.get("primary_research") or {}
     sweep = result.get("document_sweep") or {}
-    cost, _ = run_cost(sum_usage(usage_research, usage_sweep, usage_recovery), usage_finalizer, search_api_calls,
-                       pricing if pricing is not None else result.get("pricing"),
-                       pricing if pricing is not None else (result.get("pricing_finalizer") or result.get("pricing")),
-                       stats.get("unknown_usage_attempts", 0))
-    if pricing is None and any(k.endswith("_model") for k in (result.get("cost_details") or {})) \
-            and isinstance(result.get("cost"), dict):
-        cost = result["cost"]          # a phase ran on its own model (src/phase_settings.py): priced per phase
+    # a sweep / recovery phase that ran on its own model (src/phase_settings.py) keeps that model's prices
+    phase_models = phase_models_of(result.get("cost_details"))
+    cost, _ = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep, usage_recovery=usage_recovery,
+                             usage_finalizer=usage_finalizer, search_api_calls=search_api_calls,
+                             pricing=pricing if pricing is not None else result.get("pricing"),
+                             pricing_finalizer=pricing if pricing is not None else (result.get("pricing_finalizer")
+                                                                                   or result.get("pricing")),
+                             unknown_usage_attempts=stats.get("unknown_usage_attempts", 0), phase_models=phase_models)
     finalization = result.get("finalization") or {}
     tracking = result.get("research_tracking") or {}
     provenance = Counter(str(entry.get("provenance") or "not_stated") for _, entry in fields)
@@ -128,9 +129,13 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     variant_matches = Counter(str(item.get("variant_match") or "not_recorded") for item in evidence)
     sanity = (result.get("consistency_checks") or {}).get("summary") or {}
     # tail cost: the recovery stage's tokens + its billable searches (no finalizer), when pricing is known
+    tail_pricing = pricing if pricing is not None else result.get("pricing")
+    if phase_models.get("field_recovery"):
+        tail_pricing = {**(tail_pricing or {}), **{k: v for k, v in default_pricing(phase_models["field_recovery"]).items()
+                                                   if k in ("input_per_mtok", "output_per_mtok")}}
     tail_cost, _ = run_cost(usage_recovery, {}, int(recovery.get("tail_billable_search_calls",
                                                                 recovery.get("tail_search_calls")) or 0),
-                            pricing if pricing is not None else result.get("pricing"), None, 0)
+                            tail_pricing, None, 0)
     tail_resolved = int(recovery.get("tail_fields_resolved") or 0)
     tail_cost_usd = tail_cost["total_usd"] if usage_recovery.get("model_calls") or recovery.get("tail_search_calls") \
         else (0.0 if recovery else None)

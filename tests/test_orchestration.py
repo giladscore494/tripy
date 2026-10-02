@@ -552,3 +552,59 @@ def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
     ignores = report["policy_ignores_prompt"]
     assert ignores["research_model_calls"] < 12 and ignores["final_polluted_fields"] == []
     assert re.match(r"no_new_artifact|max_turns", ignores["primary_research_stop_reason"])
+
+
+# --- audit follow-ups ---------------------------------------------------------------------------------------------
+
+def test_fields_without_a_dictionary_entry_are_never_reported_as_not_found_locally(tmp_path):
+    custom = {"name": "engine_oil_capacity_l", "description": "engine oil capacity", "group": "technical"}
+    client = SweepGLM(PRIMARY_FETCH + [say({"summary": "p", "fields": {}})])
+    sweep_run(tmp_path, client, requested_fields=["ground_clearance_mm", custom])
+    packet = client.sweep_packets[0]
+    assert "engine_oil_capacity_l" in packet["fields_without_candidates"]
+    assert packet.get("fields_not_found_locally") == ["ground_clearance_mm"]
+
+
+def test_an_unpriced_phase_model_that_was_never_called_does_not_null_the_cost():
+    from src.pricing import default_pricing, phase_run_cost
+
+    used = {"prompt_tokens": 1000, "completion_tokens": 100, "model_calls": 1}
+    cost, details = phase_run_cost(usage_research=used, usage_sweep={}, usage_recovery=used, usage_finalizer={},
+                                   search_api_calls=2, pricing=default_pricing("glm-5.3-flash"),
+                                   phase_models={"document_sweep": "no-price-model", "field_recovery": "glm-5.3"})
+    assert cost["tokens_usd"] is not None and "document_sweep_model" not in details
+    assert details["field_recovery_model"] == "glm-5.3"
+    expected = round((1000 * 0.15 + 100 * 0.5) / 1e6 + (1000 * 1.40 + 100 * 4.40) / 1e6, 6)
+    assert cost["tokens_usd"] == expected
+
+
+def test_an_acquisition_snapshot_failure_never_fails_research(tmp_path, monkeypatch):
+    from src import acquisition
+
+    def broken(**kwargs):
+        raise RuntimeError("snapshot broke")
+
+    monkeypatch.setattr(acquisition, "snapshot", broken)
+    script = [turn(_call("a", "fetch_url", {"url": EU})), say({"summary": "s", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, EU_ROUTE)
+    assert result["status"] == "completed" and result["stop_reason"] == "model_finished"
+    assert any(e["kind"] == "primary_research_turn_unmeasured" for e in events)
+
+
+def test_a_zero_packet_char_limit_means_no_limit(tmp_path):
+    cache = DocumentCache(tmp_path / "c")
+    doc = cache_source(cache, "https://x.example/t", "Torque: 142 Nm\nMax torque: 185 Nm\nPeak torque: 205 Nm")
+    events = _matrix_events(cache, doc)
+    evaluation = [{"field": "torque_nm", "state": "missing", "retry_eligible": True}]
+    packet = sweep_packet(payload=PAYLOAD, specs=SPECS, evaluation=evaluation, matrix=candidate_matrix(events, SPECS),
+                          events=events, doc_metas=[], target_market="IL", max_turns=2, per_field=3, max_chars=0)
+    assert len(packet["deterministic_candidates"]["torque_nm"]) == 3
+
+
+def test_a_large_inspection_result_stays_valid_and_names_what_it_left_out(tmp_path, make_ctx):
+    ctx = make_ctx(max_text_chars=1500)
+    doc = cache_source(ctx.cache, EU, tail.EU_SPEC_HTML, doc_type="html")
+    out = dispatch(ctx, "inspect_document_for_fields", {"document_id": doc})
+    out.pop("_elapsed_ms", None)
+    assert len(json.dumps(out, ensure_ascii=False)) <= int(1500 * 1.4)
+    assert out.get("fields_omitted_for_size") and "hint" in out

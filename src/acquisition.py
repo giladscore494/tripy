@@ -130,7 +130,8 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
                   if str(c.get("document_id")) in good}
     covered = {name for name in applicable if any(str(c.get("document_id")) in good
                                                   for c in matrix["fields"].get(name) or [])}
-    settled = {e["field"] for e in evaluation if not e["retry_eligible"] and e["field"] in applicable}
+    # an evidence-backed ok counts as covered; a self-reported not_applicable never ends acquisition early
+    settled = {e["field"] for e in evaluation if e["state"] == "ok" and e["field"] in applicable}
     official = {_url(cache, d) for d in useful_docs if profiles[d].get("source_authority") in OFFICIAL_CLASSES}
     official |= {u for u in _search_urls(events)
                  if classify_source(u, manufacturer).get("source_authority") in OFFICIAL_CLASSES}
@@ -208,7 +209,15 @@ class AcquisitionTracker:
         self.turns: list[dict] = []
         self.streak = 0
         self.max_streak = 0
-        self.start = self.last = self.take()
+        try:
+            self.start = self.last = self.take()
+        except Exception as exc:     # never costs the run; an empty baseline only makes turn 1 look productive
+            run_log.event("primary_research_turn_unmeasured", turn=0, error=f"{type(exc).__name__}: {exc}"[:300])
+            self.start = self.last = {"useful_documents": [], "useful_urls": set(), "target_market_documents": [],
+                                      "target_market_urls": set(), "other_variant_documents": [],
+                                      "official_sources": set(), "candidates": set(), "evidence": set(),
+                                      "best_binding": {}, "covered_fields": set(), "applicable_fields": 0,
+                                      "fields_with_candidates": 0}
 
     def take(self) -> dict:
         from .candidate_harvest import candidate_matrix
@@ -222,7 +231,12 @@ class AcquisitionTracker:
                         cache=self.cache, target_market=self.market, manufacturer=self.manufacturer)
 
     def after_turn(self, step: int) -> list[str]:
-        now = self.take()
+        try:
+            now = self.take()
+        except Exception as exc:     # a scheduling snapshot must never cost the run: treat the turn as progress
+            self.run_log.event("primary_research_turn_unmeasured", turn=step, error=f"{type(exc).__name__}: {exc}"[:300])
+            self.streak = 0
+            return ["unmeasured"]
         found = artifacts(self.last, now)
         self.last = now
         self.streak = 0 if found else self.streak + 1
