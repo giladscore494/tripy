@@ -12,7 +12,7 @@ VEHICLE = {"manufacturer": "קאדילאק", "model": "LYRIQ", "year": 2025, "tr
 
 IL_SPEC = "https://www.cadillac.co.il/lyriq/specs"
 IL_REVIEW = "https://www.icar.co.il/lyriq-review"
-US_PAGE = "https://www.cadillac.com/electric/lyriq"
+US_PAGE = "https://www.cadillac.com/en-us/electric/lyriq"   # the path locale makes it a US page (server-side)
 EU_PAGE = "https://www.cadillaceurope.com/lyriq"
 IL_PRICE_PDF = "https://www.cadillac.co.il/lyriq/pricelist.pdf"
 

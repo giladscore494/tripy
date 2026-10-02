@@ -17,7 +17,7 @@ PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ES
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
                                  "power_hp": 750}}
 IL_URL = "https://www.cadillac.co.il/escalade-iq/spec"
-US_URL = "https://www.cadillac.com/escalade-iq"
+US_URL = "https://www.cadillac.com/en-us/escalade-iq"
 # Retrieved documents: evidence is admitted only from these, with a quote that occurs in them. The IL page names the
 # exact technical variant (model, propulsion, power), so its facts bind as variant_match=exact server-side.
 IL_TEXT = ('קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס AWD. מפרט טכני: סוללה 205 קוט"ש, 205 kWh battery, '

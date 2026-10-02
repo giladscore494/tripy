@@ -161,6 +161,62 @@ def test_portability_veto_and_policy_limits():
     assert evaluate("fuel_tank_l", [low])["portability"]["u1"]["portability_basis"] == "binding_below_portability_scope"
 
 
+# --- portability never reopens the "found" bypass (Reliability Foundation: server scope is authoritative) ---------
+
+FOUND = {"status": "found", "seq": 99, "evidence_ids": ["u1"]}
+
+
+def evaluate_declared(field, evidence, declared):
+    spec = {**SPECS[field], "applicable": True}
+    return evaluate_field(spec, evidence, declared, None, "IL", 1, portability=assess(spec, evidence, "IL",
+                                                                                         is_target_market))
+
+
+def test_found_cannot_make_non_portable_foreign_evidence_target_usable():
+    height = item("u1", "height_mm", 1460, market="UK", source_authority="official_manufacturer", document_id="h")
+    result = evaluate_declared("height_mm", [height], FOUND)          # exact UK binding, policy: not portable
+    assert result["state"] == "foreign_market_only" and result["portable_evidence_ids"] == []
+    assert "declaration_outside_server_scope:found" in result["info"]
+    agg = uk_tank(source_authority="aggregator")                     # portable field, but no official source
+    assert evaluate_declared("fuel_tank_l", [agg], FOUND)["state"] == "foreign_market_only"
+    unclear = uk_tank(variant_match="unclear")                       # portable field, binding not exact
+    assert evaluate_declared("fuel_tank_l", [unclear], FOUND)["state"] == "foreign_market_only"
+    other = uk_tank(variant_match="different")
+    assert evaluate_declared("fuel_tank_l", [other], FOUND)["state"] == "variant_not_exact"
+
+
+def test_found_with_policy_accepted_foreign_fact_is_ok_and_keeps_its_market():
+    evidence = [uk_tank("u1")]
+    result = evaluate_declared("fuel_tank_l", evidence, FOUND)
+    assert result["state"] == "ok" and result["portable_evidence_ids"] == ["u1"]
+    assert evidence[0]["market"] == "UK" and result["markets"] == ["UK"]          # never rewritten as IL
+
+
+def test_target_market_contradiction_vetoes_portability_without_any_vote():
+    # three official foreign items agreeing on 43 do not outvote ONE target-market item stating 45
+    foreign = [uk_tank("u1"), uk_tank("u2", document_id="uk2"), uk_tank("u3", market="DE", document_id="de")]
+    il = item("il", "fuel_tank_l", 45, market="IL", document_id="il", source_authority="aggregator")
+    result = evaluate_declared("fuel_tank_l", foreign + [il], FOUND)
+    assert result["portable_evidence_ids"] == [] and result["state"] == "ok" and 45 in result["values"]
+    assert all(v["portability_basis"] == "vetoed_by_target_market_evidence:il"
+               for v in result["portability"].values())
+    # and a conflict_resolved citing a vetoed foreign item resolves nothing between two IL values
+    il2 = item("il2", "fuel_tank_l", 50, market="IL", document_id="il2")
+    spec = {**SPECS["fuel_tank_l"], "applicable": True}
+    ev = foreign + [il, il2]
+    seq = {e["evidence_id"]: n for n, e in enumerate(ev, 1)}
+    res = evaluate_field(spec, ev, {"status": "conflict_resolved", "seq": 99, "evidence_ids": ["u1"]}, None, "IL",
+                         len(ev), evidence_seq=seq, portability=assess(spec, ev, "IL", is_target_market))
+    assert res["state"] == "conflicting" and "conflict_resolution_not_evidence_backed" in res["info"]
+
+
+def test_normalization_never_chooses_between_real_conflicts():
+    a = item("a", "height_mm", 1460, document_id="x", source_domain="a.example", binding_level="exact_market_trim")
+    b = item("b", "height_mm", 1435, document_id="y", source_domain="b.example", binding_level="exact_market_trim")
+    many = [dict(a, evidence_id=f"a{i}", document_id=f"x{i}", source_domain=f"s{i}.example") for i in range(4)]
+    assert evaluate("height_mm", many + [b], FOUND)["state"] == "conflicting"    # 4 vs 1 and a "found": no vote
+
+
 # --- planner primitives ------------------------------------------------------------------------------------------
 
 def test_triage_categories_are_scheduling_only():

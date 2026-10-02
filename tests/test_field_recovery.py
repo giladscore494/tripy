@@ -69,7 +69,9 @@ def test_detection_uses_only_the_models_research_state():
     assert state([], {"status": "unresolved"}) == "unresolved"
     assert state([], out={"value": None, "provenance": "unresolved"}) == "unresolved"
     assert state([ev("paint_code", "X1", market="MY")]) == "foreign_market_only"
-    assert state([ev("paint_code", "X1", market="MY")], {"status": "found"}) == "ok"  # model resolved applicability
+    # a model "found" cannot turn another market's evidence into target evidence (server scope is authoritative;
+    # until the Reliability Foundation this declaration returned ok)
+    assert state([ev("paint_code", "X1", market="MY")], {"status": "found"}) == "foreign_market_only"
     assert state([ev("paint_code", "X1", variant_match="different")]) == "variant_not_exact"
     assert state([ev("paint_code", "X1", variant_match="unclear")]) == "ok"
     assert state([ev("paint_code", "X1")], {"status": "conflicting"}) == "conflicting"
