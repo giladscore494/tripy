@@ -14,10 +14,13 @@ written atomically, so 50 concurrent vehicle workers never append to a shared fi
                      server-side binding to the new target) and must bind at the reuse level again. It keeps its
                      original source identity (`reused_from`); the same fact reused on twenty variants is still ONE
                      source.
-    NEGATIVE ROUTES  "this exact route (query / URL) already failed to give new usable material for this field in this
-                     identity scope". Scheduling only: it never creates evidence, never changes a field state, never
-                     marks a field not_applicable and never resolves a conflict. It only steers recovery away from
-                     equivalent wasted operations, and it expires.
+    NEGATIVE ROUTES  "this exact route already failed to give new usable material for this field in this identity
+                     scope". A route is a PROVIDER route: a search is (normalized query, normalized domain), so the
+                     same query restricted to toyota.co.uk and to toyota.co.il, or with no domain at all, are three
+                     different routes, and a search_official_domains call is one route per domain it searched; a
+                     fetch is its normalized URL. Scheduling only: it never creates evidence, never changes a field
+                     state, never marks a field not_applicable and never resolves a conflict. It only steers recovery
+                     away from equivalent wasted operations, and it expires.
     RECOVERY YIELD   per-run tail statistics (attempts, turns, searches, documents, resolutions, by-product
                      resolutions, cost) by field, cluster, manufacturer, propulsion and source family. Used only to
                      ORDER recovery work, only with enough samples, and never as a confidence in any value.
@@ -37,6 +40,9 @@ from .fields import normalize_field_name
 from .storage.atomic import atomic_write_json
 
 MEMORY_VERSION = "memory-v1"
+# route identity format: a recorded route without this version (e.g. a search recorded without its domain) is
+# ambiguous and never refuses anything
+ROUTE_VERSION = "route-v2"
 REUSE_LEVELS = ("exact_market_trim", "exact_technical_variant", "body_powertrain")
 # identity parts each reuse level needs (all present, else there is no safe scope key and nothing is reused). The FULL
 # government model code (letter suffixes included) and the transmission separate variants the other parts cannot
@@ -282,7 +288,8 @@ class ResearchMemory:
                 slot["attempts"] = len(slot["runs"])
                 known = {r.get("signature") for r in slot["routes"]}
                 slot["routes"] += [r for r in entry.get("routes") or []
-                                   if isinstance(r, dict) and r.get("signature") and r.get("signature") not in known]
+                                   if isinstance(r, dict) and r.get("signature") and r.get("signature") not in known
+                                   and r.get("route_version") == ROUTE_VERSION]
         return out
 
     # --- recovery yield ---------------------------------------------------------------------------------------
@@ -323,12 +330,20 @@ class ResearchMemory:
 
 
 FETCH_KINDS = ("fetch_url", "fetch_pdf", "render_page")
+SEARCH_KINDS = ("search_web", "search_official_domains")
 
 
-def normalize_route(tool: str, route: Any) -> tuple[str, str]:
-    """(kind, route) identifying EQUIVALENT operations: one search tool + the query with case and spacing removed;
-    any fetch tool + the URL without scheme, "www.", fragment or trailing slash (fetching a page as HTML or rendering
-    it is the same route)."""
+def normalize_domain(domain: Any) -> str:
+    """A search domain restriction without scheme, "www.", path, port or case ("" = no restriction)."""
+    text = str(domain or "").strip().lower().split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].strip(".")
+    return text[4:] if text.startswith("www.") else text
+
+
+def normalize_route(tool: str, route: Any, domain: Any = None) -> tuple[str, ...]:
+    """The identity of EQUIVALENT provider operations: a search (either search tool) is the query with case and
+    spacing removed PLUS its normalized domain restriction (no restriction is its own route, never equivalent to a
+    domain-specific one); any fetch tool is the URL without scheme, "www.", fragment or trailing slash (fetching a
+    page as HTML or rendering it is the same route)."""
     text = " ".join(str(route or "").split())
     if tool in FETCH_KINDS:
         url = text.split("#")[0].strip()
@@ -336,8 +351,54 @@ def normalize_route(tool: str, route: Any) -> tuple[str, str]:
         url = url[4:] if url.lower().startswith("www.") else url
         host, _, path = url.partition("/")
         return "fetch", host.lower() + ("/" + path.rstrip("/") if path.rstrip("/") else "")
+    if tool in SEARCH_KINDS:
+        return "search", text.lower(), normalize_domain(domain)
     return str(tool), text.lower()
 
 
-def route_signature(tool: str, route: Any) -> str:
-    return _digest(list(normalize_route(tool, route)), 16)
+def route_signature(tool: str, route: Any, domain: Any = None) -> str:
+    return _digest(list(normalize_route(tool, route, domain)), 16)
+
+
+def provider_routes(tool: str, args: dict, default_domains: list[str] | None = None,
+                    result: Any = None) -> list[dict]:
+    """The provider routes one web tool call makes: [{tool, route, domain?, signature, route_version}].
+
+    search_web: one (query, domain) route. search_official_domains: one route per domain it searches (its own list,
+    else the manufacturer defaults, at most MAX_DOMAINS; no domain at all = one plain web search); with `result`,
+    a domain whose provider search errored is left out (a failed call says nothing about its route). Fetch tools: the
+    URL."""
+    from .tools.search import MAX_DOMAINS
+
+    args = args if isinstance(args, dict) else {}
+    if tool in FETCH_KINDS:
+        url = args.get("url")
+        return [{"tool": tool, "route": str(url)[:300], "signature": route_signature(tool, url),
+                 "route_version": ROUTE_VERSION}] if url else []
+    if tool not in SEARCH_KINDS or not args.get("query"):
+        return []
+    query = str(args["query"])
+    if tool == "search_web":
+        domains: list[Any] = [args.get("domain") or None]
+    else:
+        listed = args.get("domains") or default_domains or []
+        if isinstance(listed, str):
+            listed = listed.split(",")
+        domains = [str(d).strip().lower() for d in listed if d and str(d).strip()][:MAX_DOMAINS] or [None]
+        per_domain = result.get("per_domain") if isinstance(result, dict) else None
+        if isinstance(per_domain, dict):
+            domains = [d for d in domains if d is None or not (per_domain.get(d) or {}).get("error")]
+    out = []
+    for domain in domains:
+        route = {"tool": tool, "route": query[:300], "signature": route_signature(tool, query, domain),
+                 "route_version": ROUTE_VERSION}
+        if normalize_domain(domain):
+            route["domain"] = normalize_domain(domain)
+        out.append(route)
+    return out
+
+
+def route_label(route: dict) -> str:
+    """How a recorded route is shown to a model: the query or URL, plus its domain restriction if any."""
+    text = str(route.get("route") or "")
+    return f"{text} (domain: {route['domain']})" if route.get("domain") else text

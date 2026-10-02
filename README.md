@@ -455,9 +455,14 @@ run, each written atomically, so 50 concurrent workers never share an append tar
   fields still open, per identity scope and field identity. The routes are search queries attributed to the field
   whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
   fields keep no negative memory. A route is not recorded when the call itself failed (an HTTP error status, or every
-  domain of a domain search erroring). Later runs see the routes as `known_unproductive_routes`, and the runtime
-  refuses, before execution, a request equivalent to a recorded route for the open fields it serves (the same query
-  apart from case and spacing; the same page by URL, whether fetched or rendered; `NEGATIVE_ROUTE_BLOCKING`). Only
+  domain of a domain search erroring; a domain whose own provider search errored is left out). A route is a
+  PROVIDER route: a search is its query (apart from case and spacing) AND its domain restriction, so
+  "Corolla ground clearance" on `toyota.co.uk`, on `toyota.co.il` and with no domain are three different routes,
+  and a `search_official_domains` call is one route per domain it searches. Later runs see the routes as
+  `known_unproductive_routes`, and the runtime refuses, before execution, a request whose provider routes were ALL
+  recorded for the open fields it serves (the same query on the same domain; the same page by URL, whether fetched
+  or rendered; `NEGATIVE_ROUTE_BLOCKING`): a failed UK search never suppresses an IL one, and a domain search with
+  any domain not tried before runs. Routes recorded without their domain (an older format) refuse nothing. Only
   the route is refused: the cluster's research still runs, and any new query or page is executed even when other
   routes for the same field failed before. Failed routes are never evidence that a value does not exist. This is
   scheduling only: it never creates evidence, never changes a field state, never marks a field not_applicable and

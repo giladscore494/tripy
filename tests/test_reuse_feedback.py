@@ -17,7 +17,7 @@ from test_tools_smoke import ScriptedGLM, _call
 from src.agent import AgentConfig, run_vehicle
 from src.document_binding import target_identity
 from src.fields import load_schema, resolve_requested_fields
-from src.research_memory import ResearchMemory, reuse_level, scope_key, spec_identity
+from src.research_memory import ResearchMemory, provider_routes, reuse_level, scope_key, spec_identity
 from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
@@ -282,7 +282,7 @@ def test_negative_memory_blocks_routes_never_research_and_never_truth(tmp_path):
         memory.record_routes([{"scope_key": scope_key(identity, reuse_level(spec) or "exact_market_trim"),
                                "spec_identity": spec_identity(spec), "cluster": "technical_spec", "field": field,
                                "outcome": "no_new_material",
-                               "routes": [{"tool": "search_web", "route": query, "signature": "x"}]}], run)
+                               "routes": provider_routes("search_web", {"query": query})}], run)
 
     dead("ground_clearance_mm", "Toyota Corolla Touring Sports 2024 1.8 hybrid ground clearance", "earlier-1")
     dead("ground_clearance_mm", "corolla minimum ground clearance", "earlier-2")   # a second, different route

@@ -861,6 +861,8 @@ class ToolSession:
                 "document_id": result.get("document_id") if isinstance(result, dict) else None,
                 "duplicate": duplicate,
                 "route_failed": _route_failed(result),
+                **({"routes": _call_routes(self.ctx, name, raw_args, result)}
+                   if name in trace.SEARCH_TOOLS + trace.FETCH_TOOLS else {}),
             })
             messages.append({
                 "role": "tool", "tool_call_id": call_id,
@@ -1156,52 +1158,63 @@ def _route_failed(result: Any) -> bool:
     return False
 
 
+def _call_routes(ctx: ToolContext, name: str, raw_args: Any, result: Any) -> list[dict]:
+    """The provider routes an executed web call made (src/research_memory.provider_routes)."""
+    from .research_memory import provider_routes
+    from .tools.search import default_domains
+
+    return provider_routes(name, trace.parse_args(raw_args), default_domains(ctx.vehicle), result)
+
+
 def _routes_of(calls: list[dict]) -> list[dict]:
-    """The web routes (search queries, fetched URLs) of executed tool calls that worked: a 429, an HTTP error or any
-    other failed call says nothing about the route and is never remembered as unproductive."""
-    from .research_memory import route_signature
+    """The provider routes (search (query, domain) pairs, fetched URLs) of executed tool calls that worked: a 429, an
+    HTTP error or any other failed call says nothing about the route and is never remembered as unproductive; a domain
+    search records only the domains whose provider search ran."""
+    from .research_memory import provider_routes
 
     routes = []
     for c in calls:
         if c.get("blocked") or c.get("reused") or c.get("error") or c.get("route_failed") \
                 or c["name"] not in trace.SEARCH_TOOLS + trace.FETCH_TOOLS:
             continue
-        args = trace.parse_args(c.get("arguments"))
-        route = args.get("query") or args.get("url")
-        if route:
-            routes.append({"tool": c["name"], "route": str(route)[:300], "signature": route_signature(c["name"], route)})
+        routes += c["routes"] if "routes" in c else provider_routes(c["name"], trace.parse_args(c.get("arguments")))
     return routes
 
 
-def _route_guard(negative: dict[str, dict], open_fields: list[str], specs_by_name: dict, all_specs: list[dict]):
-    """A dispatch guard for one cluster attempt. It refuses a web route only when an earlier run recorded the SAME or an
-    equivalent route (src/research_memory.normalize_route) as unproductive for every open field the route serves:
-    a search serves the open fields its query names (all of them when it names none); a fetched page serves them all.
-    Any other route runs. It never stops research as such, and implies nothing about a field's value."""
-    from .research_memory import route_signature
+def _route_guard(negative: dict[str, dict], open_fields: list[str], specs_by_name: dict, all_specs: list[dict],
+                 default_domains: list[str] | None = None):
+    """A dispatch guard for one cluster attempt. It refuses a web call only when an earlier run recorded EVERY provider
+    route the call would make (src/research_memory.provider_routes: a search is its normalized query AND domain, a
+    domain search one route per domain; a fetch its normalized URL) as unproductive for every open field the call
+    serves: a search serves the open fields its query names (all of them when it names none); a fetched page serves
+    them all. The same query on another domain, or without a domain, is another route and runs; so does a domain
+    search with any domain not recorded. It never stops research as such, and implies nothing about a field's value."""
+    from .research_memory import provider_routes, route_signature
 
     dead: dict[str, set[str]] = {}
     for field in open_fields:
         for route in (negative.get(field) or {}).get("routes") or []:
-            signature = route_signature(route.get("tool") or "", route.get("route"))
+            signature = route_signature(route.get("tool") or "", route.get("route"), route.get("domain"))
             dead.setdefault(signature, set()).add(field)
 
     def guard(name: str, args: dict) -> dict | None:
+        planned = provider_routes(name, args, default_domains)
+        if not planned:
+            return None
         route = args.get("query") if name in trace.SEARCH_TOOLS else args.get("url")
-        if not route:
-            return None
-        recorded = dead.get(route_signature(name, route))
-        if not recorded:
-            return None
         if name in trace.SEARCH_TOOLS:
             served = [f for f in open_fields
                       if _route_names_field({"tool": name, "route": route}, specs_by_name.get(f) or {"name": f},
                                             all_specs)] or list(open_fields)
         else:
             served = list(open_fields)
-        if not set(served) <= recorded:
-            return None                         # useful for an open field it was never tried for
-        return {"route": str(route)[:300], "fields": sorted(served)}
+        if not all(set(served) <= dead.get(r["signature"], set()) for r in planned):
+            return None                         # a route never tried for an open field (another domain, another query)
+        refusal = {"route": str(route)[:300], "fields": sorted(served)}
+        domains = [r["domain"] for r in planned if r.get("domain")]
+        if domains:
+            refusal["domains"] = domains
+        return refusal
 
     return guard
 
@@ -1342,7 +1355,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
              "negative_route_blocks": 0}
     # Cross-run memory (scheduling only): routes that already failed for these fields in the same identity scope,
     # and the historical yield of each cluster for this manufacturer / propulsion.
-    from .research_memory import reuse_level, scope_key, spec_identity
+    from .research_memory import reuse_level, route_label, scope_key, spec_identity
+    from .tools.search import default_domains
 
     target = getattr(adm, "identity", None)
     # time-sensitive fields (price, fees, warranty) keep no negative memory: a page that had nothing may have it now
@@ -1433,11 +1447,12 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
             other_open_fields=other_open, conflicts=conflicts,
             candidates_per_field=config.cluster_candidates_per_field, operator_notes=operator_notes,
             candidates=ordered_cands)
-        known_dead = {f: [r["route"] for r in negative[f]["routes"]][:8] for f in open_fields if f in negative}
+        known_dead = {f: [route_label(r) for r in negative[f]["routes"]][:8] for f in open_fields if f in negative}
         if known_dead and not local:
             packet["known_unproductive_routes"] = known_dead      # earlier runs: these routes found nothing new
             negative_shown.update(known_dead)
-        session.route_guard = _route_guard(negative, open_fields, by_name, specs) \
+        session.route_guard = _route_guard(negative, open_fields, by_name, specs,
+                                           default_domains(session.ctx.vehicle)) \
             if (negative and not local and config.negative_route_blocking) else None
         packet = _trim_packet(packet, config.cluster_packet_max_chars)
         shown = packet.get("deterministic_candidates") or {}
