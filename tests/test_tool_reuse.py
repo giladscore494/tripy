@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 
-from conftest import FakeResponse
+from conftest import FakeResponse, cache_source
 from test_tools_smoke import ScriptedGLM, _call
 
 import src.agent as agent_mod
@@ -157,6 +157,7 @@ def test_different_operations_are_never_suppressed(tmp_path, make_ctx, counted):
 
 def test_store_evidence_and_failed_calls_are_not_replayed(tmp_path, make_ctx, counted):
     ctx = make_ctx()
+    cache_source(ctx.cache, PAGE, "Cadillac Escalade IQ: battery 205 kWh")      # a retrieved source
     ev = {"field": "battery_gross_kwh", "value": 205, "source_url": PAGE, "quote": "205 kWh"}
     missing = {"document_id": "d_0000000000000000", "query": "kWh"}
     result, _, events = run(tmp_path, ctx, [turn(_call("c1", "store_evidence", ev), _call("c2", "find_in_document", missing)),

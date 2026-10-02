@@ -156,7 +156,8 @@ def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_
         assert note.startswith("Final document-sweep turn")
         hits = json.loads(body)["hits"]
         snippet = next(h["snippet"] for h in hits if "cooling function" in h["snippet"])
-        quote = snippet[snippet.index("cooling function"):snippet.index("seats") + len("seats")]
+        # the quote must state availability ("(standard)"), not just name a feature
+        quote = snippet[snippet.index("cooling function"):snippet.index("(standard)") + len("(standard)")]
         return turn(_call("s1", "store_evidence", {"field": "ventilated_seats", "value": True, "document_id": doc,
                                                    "quote": quote, "market": "IL", "variant_match": "exact"}))
 

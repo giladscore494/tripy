@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 from .candidate_harvest import candidates_from_events
 from .field_recovery import RETRY_STATES, material_key, vehicle_identity
-from .fields import normalize_field_name
+from .fields import normalize_field_name, semantic_notes
 from .storage import trace
 
 DOCUMENT_SWEEP_TOOLS = ("find_in_document", "extract_tables", "extract_html", "get_structured_data",
@@ -72,7 +72,7 @@ def compact_candidate(cand: dict, quote_chars: int = 200) -> dict:
 
 def compact_evidence(item: dict) -> dict:
     out = {k: item.get(k) for k in ("evidence_id", "field", "value", "unit", "market", "variant", "variant_match",
-                                    "document_id") if item.get(k) not in (None, "")}
+                                    "binding_level", "source_authority", "document_id") if item.get(k) not in (None, "")}
     if item.get("source_url"):
         out["source"] = _domain(item["source_url"])
     return out
@@ -97,6 +97,7 @@ def sweep_packet(*, payload: dict, specs: list[dict], evaluation: list[dict], ma
         "turn_rule": ("Promote valid candidates in turn 1 and finish. A second turn (if turn_budget allows) is given "
                       "only when turn 1 inspected cached documents and got content back."),
         "requested_fields": {s["name"]: s.get("description") or s["name"] for s in applicable},
+        "field_semantics": semantic_notes(applicable),
         "current_field_states": {s["name"]: states.get(s["name"]) for s in applicable},
         "fields_to_review": review,
         "deterministic_candidates": candidates,

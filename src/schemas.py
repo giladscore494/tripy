@@ -159,23 +159,35 @@ TOOL_SPECS: list[dict] = [
     ),
     _fn(
         "store_evidence",
-        "Record what you consider evidence for a value: field, exact value, source URL / document_id, a short "
-        "verbatim quote, the market and trim the source describes, and your note. This is a log, not a verifier. "
-        "Returns an evidence_id (e1, e2, ...) to cite in evidence_ids; document_ids are not evidence ids.",
+        "Store evidence for a value: field, exact value, the document_id of a document you FETCHED, and a short "
+        "VERBATIM quote from it that states the value. The runtime checks it before storing (no model involved): the "
+        "document must be in the document store, the quote must occur in it and literally state the value (or a "
+        "schema-approved unit conversion of it), and the field must apply to this vehicle. It computes the source's "
+        "market, its authority and whether it describes the exact target variant itself; your market / variant_match "
+        "are kept only as claims, and `note` is commentary that never counts as evidence. A rejected request returns "
+        "its reasons and stores nothing. Returns an evidence_id (e1, e2, ...) to cite; document_ids are not evidence "
+        "ids.",
         {
             "field": {"type": "string"},
-            "value": {"type": "string", "description": "Value as found (numbers may be given as numbers)."},
+            "value": {"type": "string", "description": "Value as the source states it, in the field's unit "
+                                                         "(numbers may be given as numbers; a range as '581-588')."},
             "unit": {"type": "string"},
             "source_url": {"type": "string"},
-            "document_id": {"type": "string"},
-            "quote": {"type": "string", "description": "Verbatim fragment from the source."},
+            "document_id": {"type": "string", "description": "document_id of the fetched document (preferred)."},
+            "quote": {"type": "string", "description": "Verbatim fragment of that document stating the value."},
             "market": {"type": "string",
-                       "description": "Market the source describes, e.g. IL, MY, UK, EU, DK, CN, global, unknown."},
-            "variant": {"type": "string", "description": "Trim/variant the source describes, as written there."},
+                       "description": "Your claim: market the source describes (IL, UK, EU, ...). Verified server-side."},
+            "variant": {"type": "string", "description": "Trim/variant the source names, as written there."},
             "variant_match": {"type": "string",
-                              "description": "Your judgement: exact | different | unclear (does the source "
-                                             "describe this exact variant?)"},
-            "note": {"type": "string", "description": "E.g. why a different market or trim is still relevant."},
+                              "description": "Your claim: exact | different | unclear. The runtime computes the "
+                                             "effective binding; 'different' is always respected."},
+            "condition": {"type": "string", "description": "Optional: a condition the quote itself states for the "
+                                                            "value (e.g. 'with roof rails', 'VDA')."},
+            "valid_as_of": {"type": "string", "description": "Optional: date (YYYY, YYYY-MM or YYYY-MM-DD) the source "
+                                                             "states for a time-sensitive value (price, fee, warranty)."},
+            "valid_from": {"type": "string", "description": "Optional: start date the source states."},
+            "valid_to": {"type": "string", "description": "Optional: end date the source states."},
+            "note": {"type": "string", "description": "Commentary only; never used as evidence."},
         },
         ["field", "value"],
     ),

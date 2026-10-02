@@ -32,6 +32,10 @@ DICTIONARY_KEYS = ("matcher", "component", "warranty_kind", "aliases_he", "alias
                    "negative_context_terms_en", "expected_units", "accepted_unit_variants", "normalized_unit",
                    "value_type", "patterns", "plausible_min", "plausible_max", "enum_values", "conversion_rules",
                    "ambiguity_rules", "exclusion_rules", "require_context")
+# Evidence-admission policy keys (src/evidence_admission.py, src/document_binding.py). Not harvester metadata (not
+# part of the harvest schema hash) and not sent to a model either. `semantic_definition`, `time_sensitive` and
+# `not_applicable_when` stay public: they tell the model what the field means.
+POLICY_KEYS = ("binding_requirement", "semantic_exclusions")
 
 
 def normalize_field_name(name: Any) -> str:
@@ -113,8 +117,17 @@ def grouped(specs: Iterable[dict]) -> dict[str, list[dict]]:
 
 
 def public_spec(spec: dict) -> dict:
-    """A field spec without its harvester dictionary (what models and event logs receive)."""
-    return {k: v for k, v in spec.items() if k not in DICTIONARY_KEYS}
+    """A field spec without its harvester dictionary and admission policy (what models and event logs receive)."""
+    return {k: v for k, v in spec.items() if k not in DICTIONARY_KEYS and k not in POLICY_KEYS}
+
+
+def semantic_notes(specs: Iterable[dict]) -> dict[str, str]:
+    """The semantic definitions a model must not get wrong: applicable fields whose schema restricts what quantity
+    counts (semantic exclusions) or when the field exists at all (not_applicable_when). Kept short on purpose:
+    every other field's definition travels with its own recovery packet."""
+    return {s["name"]: s["semantic_definition"] for s in specs
+            if s.get("applicable", True) and s.get("semantic_definition")
+            and (s.get("semantic_exclusions") or s.get("not_applicable_when"))}
 
 
 _DOC_CACHE: dict[str, tuple[float, dict]] = {}

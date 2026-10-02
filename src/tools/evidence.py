@@ -1,4 +1,8 @@
-"""Evidence journal. Stores whatever the model chooses to cite; verifies nothing.
+"""Evidence store. A store_evidence request becomes Evidence ONLY through the admission gate
+(src/evidence_admission.py): the cited document must be retrieved, the quote must occur in it and state the
+value, the field must apply, and market / variant binding / source authority are computed server-side. A
+rejected request is logged as `evidence_rejected` and returned to the model with its reasons; it never
+reaches the store. `EvidenceStore` itself refuses any payload that did not pass admission.
 
 Writes are idempotent per evidence FACT: the same field, value, unit, source, market, variant and
 variant_match stored again returns the original evidence id instead of creating a second item, so one
@@ -42,20 +46,21 @@ def evidence_fact_key(payload: dict) -> str:
     source = payload.get("document_id") or urldefrag(str(payload.get("source_url") or "").strip())[0]
     return json.dumps([normalize_field_name(payload.get("field")), _value_identity(payload.get("value")),
                        _text(payload.get("unit")), str(source or ""), _text(payload.get("market")),
-                       _text(payload.get("variant")), _text(payload.get("variant_match"))], ensure_ascii=False)
+                       _text(payload.get("variant")), _text(payload.get("variant_match")),
+                       _text(payload.get("condition"))], ensure_ascii=False)
+
+
+class EvidenceNotAdmitted(ValueError):
+    """Raised when something tries to store a payload that did not pass the admission gate."""
 
 
 class EvidenceStore:
     def __init__(self) -> None:
         self.items: list[dict] = []
         self.reuse_count = 0
+        self.rejected_count = 0
         self._by_key: dict[str, dict] = {}
         self._lock = threading.Lock()
-
-    def add(self, payload: dict) -> dict:
-        """Append unconditionally (kept for callers that need it); store_evidence uses add_or_reuse."""
-        with self._lock:
-            return self._append(payload)
 
     def _append(self, payload: dict) -> dict:
         evidence_id = f"e{len(self.items) + 1}"
@@ -67,7 +72,10 @@ class EvidenceStore:
         return item
 
     def add_or_reuse(self, payload: dict) -> tuple[dict, bool, dict | None]:
-        """(item, reused, supplementary). A repeat of an existing fact returns the original item."""
+        """(item, reused, supplementary). A repeat of an existing fact returns the original item.
+        Only admitted payloads (admission_status == "accepted") can be stored."""
+        if payload.get("admission_status") != "accepted":
+            raise EvidenceNotAdmitted("evidence must pass src/evidence_admission.admit() before it is stored")
         key = evidence_fact_key(payload)
         with self._lock:
             existing = self._by_key.get(key)
@@ -81,17 +89,42 @@ class EvidenceStore:
             return existing, True, extra or None
 
 
+ACCEPT_ECHO = ("variant_match", "binding_level", "binding_veto", "market", "source_authority", "entailment",
+               "valid_as_of", "temporal_status", "condition")
+
+
+def admission_context(ctx):
+    """The run's admission context (set by run_vehicle), else one built once from the tool context's vehicle."""
+    from ..evidence_admission import AdmissionContext
+
+    if getattr(ctx, "admission", None) is None:
+        ctx.admission = AdmissionContext.default(ctx.vehicle)
+    return ctx.admission
+
+
 def store_evidence(ctx, field: str, value: Any, unit: str | None = None, source_url: str | None = None,
                    document_id: str | None = None, quote: str | None = None, market: str | None = None,
-                   variant: str | None = None, variant_match: str | None = None, note: str | None = None) -> dict:
-    payload = {"field": field, "value": value, "unit": unit, "source_url": source_url,
-               "document_id": document_id, "quote": quote, "market": market, "variant": variant,
-               "variant_match": variant_match, "note": note}
-    if document_id and not source_url:
-        meta = ctx.cache.get(document_id)
-        if meta:
-            payload["source_url"] = meta.get("final_url") or meta.get("url")
-    item, reused, supplementary = ctx.evidence.add_or_reuse({k: v for k, v in payload.items() if v is not None})
+                   variant: str | None = None, variant_match: str | None = None, note: str | None = None,
+                   condition: str | None = None, valid_as_of: str | None = None, valid_from: str | None = None,
+                   valid_to: str | None = None) -> dict:
+    from ..evidence_admission import admit
+
+    request = {"field": field, "value": value, "unit": unit, "source_url": source_url, "document_id": document_id,
+               "quote": quote, "market": market, "variant": variant, "variant_match": variant_match, "note": note,
+               "condition": condition, "valid_as_of": valid_as_of, "valid_from": valid_from, "valid_to": valid_to}
+    decision = admit(admission_context(ctx), ctx.cache, {k: v for k, v in request.items() if v is not None},
+                     ctx.documents_opened)
+    if not decision["accepted"]:
+        ctx.evidence.rejected_count += 1
+        ctx.counters["evidence_rejected"] += 1
+        ctx.emit("evidence_rejected", request={k: v for k, v in request.items() if v is not None},
+                 field=field, value=value, reasons=decision["reasons"],
+                 document_id=decision.get("document_id") or document_id, source_url=source_url,
+                 semantic_note=decision.get("semantic_note"))
+        return {"stored": False, "rejected": True, "reasons": decision["reasons"], "message": decision["message"]}
+    item, reused, supplementary = ctx.evidence.add_or_reuse(decision["record"])
+    if item.get("document_id"):
+        ctx.note_document(item["document_id"])
     if reused:
         ctx.counters["duplicate_evidence_suppressed"] += 1
         ctx.emit("evidence_reused", evidence_id=item["evidence_id"], field=item.get("field"), value=item.get("value"),
@@ -101,7 +134,8 @@ def store_evidence(ctx, field: str, value: Any, unit: str | None = None, source_
                 "note": f"This evidence fact is already stored as {item['evidence_id']}; it was not stored again. "
                         "Cite that id. A repeat is not independent corroboration."}
     ctx.emit("evidence", evidence=item)
-    return {"evidence_id": item["evidence_id"], "stored": True}
+    return {"evidence_id": item["evidence_id"], "stored": True,
+            **{k: item[k] for k in ACCEPT_ECHO if item.get(k) not in (None, "", [])}}
 
 
 def report_field_status(ctx, field: str, status: str, note: str | None = None,

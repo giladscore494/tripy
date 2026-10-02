@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FakeResponse
+from conftest import FakeResponse, cache_source
 from test_tools_smoke import ScriptedGLM, _call
 
 from src.agent import FIELD_RECOVERY_SYSTEM_PROMPT, SYSTEM_PROMPT, AgentConfig, agent_config_from_env, run_vehicle
@@ -26,10 +26,18 @@ PAYLOAD = {"identity": {"manufacturer": "אקספנג", "commercial_name": "G6",
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
                                  "power_hp": 486}}
 PAGE = "https://www.xpeng.co.il/g6"
+SPECS = "https://www.xpeng.co.il/g6/specs"
+IDENTITY = 'XPeng G6 2026 MAX AWD רכב חשמלי 486 כ"ס'
+QUOTES = {"battery_usable_kwh": "Usable battery 80.8 kWh", "tire_size_front": "Front tyres 255/45 R20",
+          "paint_code": "Paint: Nebula White", "service_interval_km": "service every 20,000 km",
+          "rear_legroom_mm": "Rear legroom 950 mm"}
+# The retrieved spec page every primary-research quote comes from (evidence needs a retrieved source).
+SPECS_TEXT = IDENTITY + "\n" + "\n".join(QUOTES.values())
 
 
-def ev(field, value, market="IL", **extra):
-    return {"field": field, "value": value, "market": market, "source_url": PAGE, "quote": str(value), **extra}
+def ev(field, value, market="IL", url=SPECS, **extra):
+    return {"field": field, "value": value, "market": market, "source_url": url, "quote": QUOTES.get(field, str(value)),
+            **extra}
 
 
 def turn(*calls):
@@ -91,7 +99,8 @@ def test_recovery_engine_contains_no_field_names():
     names = {s["name"] for s in load_schema()} | set(FUTURE_FIELDS)
     for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py",
                    "src/candidate_harvest.py", "src/document_sweep.py", "src/ui/live_state.py", "src/ui/labels_he.py",
-                   "src/ui/live_dashboard.py"):
+                   "src/ui/live_dashboard.py", "src/evidence_admission.py", "src/document_binding.py",
+                   "src/source_authority.py", "src/typed_values.py"):
         code = (ROOT / module).read_text("utf-8")
         found = [n for n in names if re.search(rf"\b{re.escape(n)}\b", code)]
         assert not found, (module, found)
@@ -101,7 +110,9 @@ def test_recovery_engine_contains_no_field_names():
 # --- end to end ----------------------------------------------------------------------------------
 
 def scripted_run(tmp_path, make_ctx, script, **cfg):
-    ctx = make_ctx({PAGE: FakeResponse(b"<html><body>G6 service every 20,000 km</body></html>")})
+    ctx = make_ctx({PAGE: FakeResponse(f"<html><body>{IDENTITY}. G6 service every 20,000 km</body></html>"
+                                       .encode("utf-8"))})
+    cache_source(ctx.cache, SPECS, SPECS_TEXT)
     client = ScriptedGLM(script)
     config = AgentConfig(**{"max_steps": 3, "requested_fields": FUTURE_FIELDS, **cfg})
     result = run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache,
@@ -124,7 +135,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
         say({"reviewed": [], "notes": "no usable candidate in the cached page"}),
         # retry service_interval_km #1: inspects cached doc, stores evidence, reports found
         turn(_call("r1", "find_in_document", {"document_id": "PLACEHOLDER", "query": "service"}),
-             _call("r2", "store_evidence", ev("service_interval_km", 20000))),
+             _call("r2", "store_evidence", ev("service_interval_km", 20000, url=PAGE))),
         # (no "found" reply turn: the stored evidence already makes the field ok, so the attempt ends early)
         # retry rear_legroom_mm #1 and #2: unresolved both times
         say({"field": "rear_legroom_mm", "status": "unresolved", "value": None, "notes": "not published"}),

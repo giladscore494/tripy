@@ -3,6 +3,7 @@ Scripted GLM / fake HTTP only: no network, no paid calls."""
 
 import json
 
+from conftest import seed_evidence_sources
 from test_tools_smoke import ScriptedGLM, _call
 
 from src import cli
@@ -14,9 +15,12 @@ from src.tools import ToolConfig
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
                         "trim": "SPORT", "model_code": "X1", "government_record_id": "85095"},
-           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd"}}
+           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
+                                 "power_hp": 750}}
 IL_PAGE = "https://www.cadillac.co.il/escalade-iq"
 US_PAGE = "https://www.cadillac.com/escalade-iq"
+# Identity text of the retrieved pages (they name the exact technical variant: model, propulsion, power)
+HEADERS = {IL_PAGE: 'קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס AWD', US_PAGE: "2025 Cadillac Escalade IQ, all-electric, 750 hp AWD"}
 
 
 def ev(value, market="IL", **extra):
@@ -44,9 +48,12 @@ def store(cid, value, market="IL", **extra):
 
 def run(tmp_path, make_ctx, script, **cfg):
     ctx = make_ctx()
+    seed_evidence_sources(ctx.cache, script, HEADERS)
     client = ScriptedGLM(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": ["torque_nm"], **cfg})
+    # every model turn is scripted, so the layered document sweep (tested on its own) is off here
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": ["torque_nm"],
+                            "layered_harvest_enabled": False, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path)

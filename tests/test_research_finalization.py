@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from conftest import FakeResponse, FakeSession
+from conftest import FakeResponse, FakeSession, cache_source
 from test_run_config import API_KEY, PostResponse, ScriptedPostSession, chat_reply, tool_call
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -152,7 +152,8 @@ def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
                                                                                           "max_chars": 50000})]},
     ]
     turns += [{"role": "assistant", "content": "", "tool_calls": [
-        _call(f"c{i}", "store_evidence", {"field": f"f{i}", "value": i, "document_id": doc_id})]} for i in range(3, 9)]
+        _call(f"c{i}", "store_evidence", {"field": f"f{i}", "value": i * 7, "document_id": doc_id,
+                                          "quote": f"spec row {i}: value {i * 7} units"})]} for i in range(3, 9)]
     turns.append({"role": "assistant", "content": json.dumps(FINAL_JSON)})
     client = ScriptedGLM(turns)
     cfg = AgentConfig(field_recovery_enabled=False, max_steps=12, keep_recent_tool_results=2, max_tool_output_chars=5000, compact_tool_output_chars=600)
@@ -333,7 +334,8 @@ class InterruptingGLM(ScriptedGLM):
 
 def test_keyboard_interrupt_preserves_partial_artifacts(tmp_path):
     client = InterruptingGLM([{"role": "assistant", "content": "", "tool_calls": [
-        _call("c1", "fetch_url", {"url": BIG_PAGE}), _call("c2", "store_evidence", {"field": "torque_nm", "value": 660})]}])
+        _call("c1", "fetch_url", {"url": BIG_PAGE}),
+        _call("c2", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": BIG_PAGE, "quote": "660 Nm"})]}])
     runs = tmp_path / "runs"
     with pytest.raises(KeyboardInterrupt):
         research_one(vehicle44(), {"upstream_record_id": HANDSHAKE_RECORD_ID}, client=client,
@@ -605,11 +607,12 @@ def test_market_provenance_flows_from_evidence_to_finalizer_and_metrics(make_ctx
     ctx = make_ctx()
     ctx.log = lambda kind, **data: events.append({"kind": kind, **data})
     events: list[dict] = []
-    for market, value in (("IL", 2295), ("MY", 2220)):  # a foreign value is stored, never blocked
+    # a foreign value is stored, never blocked; the market is the SOURCE's (domain), not the model's word
+    for market, value, url in (("IL", 2295, "https://www.example.co.il/g6"), ("MY", 2220, "https://www.example.com.my/g6")):
+        cache_source(ctx.cache, url, f"XPeng G6 AWD: kerb weight {value} kg")
         out = dispatch(ctx, "store_evidence", {"field": "curb_weight_kg", "value": value, "market": market,
-                                               "variant": "AWD", "source_url": f"https://{market.lower()}.example",
-                                               "quote": f"{value} kg"})
-        assert out["stored"]
+                                               "variant": "AWD", "source_url": url, "quote": f"kerb weight {value} kg"})
+        assert out["stored"] and out["market"] == market
     bundle = build_research_bundle(events, payload44)
     assert bundle["evidence_by_market"] == {"IL": 1, "MY": 1}
     assert [f["market"] for f in bundle["candidate_facts"]["curb_weight_kg"]] == ["IL", "MY"]

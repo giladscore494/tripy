@@ -247,6 +247,39 @@ def render_target_status(bundle: dict) -> None:
         st.markdown("**Level 3 topics not researched / without evidence:** " + ", ".join(lines["level3"]))
 
 
+EVIDENCE_COLUMNS = ("evidence_id", "field", "value", "unit", "variant_match", "binding_level", "binding_veto", "market",
+                    "market_basis", "source_authority", "source_domain", "entailment", "condition", "valid_as_of",
+                    "quote", "document_id", "model_variant_claim", "model_market_claim", "note")
+
+
+def render_evidence(result: dict, runs_dir: Path) -> None:
+    """Admitted evidence with its server-side provenance, rejected requests and cross-field QA checks."""
+    evidence = result.get("evidence") or []
+    admission = result.get("evidence_admission") or {}
+    if admission:
+        st.caption(f"Admitted {admission.get('admitted', len(evidence))} · rejected {admission.get('rejected', 0)} · "
+                   f"variant match {admission.get('admitted_by_variant_match') or {}} · "
+                   f"authority {admission.get('admitted_by_source_authority') or {}}")
+    if evidence:
+        rows = [{k: item.get(k) for k in EVIDENCE_COLUMNS if k in item} for item in evidence]
+        st.dataframe(_frame(rows), hide_index=True, width="stretch")
+        st.caption("variant_match / binding_level / market / source_authority are computed by the runtime from the "
+                   "source; the model's claims are kept as model_*_claim. Notes are commentary, never evidence.")
+    else:
+        st.caption("No evidence stored.")
+    events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", "")) if runs_dir else []
+    rejected = [{"field": e.get("field"), "value": e.get("value"), "reasons": ", ".join(e.get("reasons") or []),
+                 "document_id": e.get("document_id"), "quote": (e.get("request") or {}).get("quote")}
+                for e in events if e.get("kind") == "evidence_rejected"]
+    if rejected:
+        st.markdown(f"**Rejected by the admission gate** ({len(rejected)})")
+        st.dataframe(_frame(rejected), hide_index=True, width="stretch")
+    checks = (result.get("consistency_checks") or {}).get("checks") or []
+    if checks:
+        st.markdown("**Cross-field consistency checks** (QA signals only; they never change a value)")
+        st.dataframe(_frame(checks), hide_index=True, width="stretch")
+
+
 def _responses_from_events(result: dict, runs_dir: Path) -> list[dict]:
     return trace.model_responses(load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", "")))
 
@@ -308,10 +341,7 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
         with tabs[2]:
             render_partial_research(result, runs_dir, cache, key=_key(result, "partial"))
         with tabs[3]:
-            if result.get("evidence"):
-                st.dataframe(_frame(result["evidence"]), hide_index=True, width="stretch")
-            else:
-                st.caption("No evidence stored.")
+            render_evidence(result, runs_dir)
         with tabs[4]:
             if result.get("tool_calls"):
                 df = _frame(result["tool_calls"])

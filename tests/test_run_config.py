@@ -116,7 +116,8 @@ def test_run_records_effective_config_trace_and_cost(tmp_path):
         "chat/completions": [
             chat_reply(tool_call("c1", "search_web", {"query": "XPeng G6 2026 MAX specs"})),
             chat_reply(tool_call("c2", "fetch_url", {"url": page}), cached=400),
-            chat_reply(tool_call("c3", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": page})),
+            chat_reply(tool_call("c3", "store_evidence", {"field": "torque_nm", "value": 660, "source_url": page,
+                                                          "quote": "660 Nm"})),
             chat_reply({"role": "assistant", "content": json.dumps({"summary": "ok", "fields": {
                 "torque_nm": {"value": 660, "unit": "Nm", "evidence_ids": ["e1"]}}})}),
         ],

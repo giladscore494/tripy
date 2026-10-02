@@ -144,9 +144,12 @@ def say(obj):
 def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx):
     ctx = make_ctx()
     rows = "".join(f"<tr><td>שורה {i}</td><td>ערך {i}</td></tr>" for i in range(30))
-    cm_html = (f"<html><body><p>קאדילאק אסקלייד IQ - טעינה ביתית</p><table><tr><th>מפרט</th><th>ערך</th></tr>{rows}"
+    # the importer page names the exact technical variant (model, propulsion, power): its facts bind exactly
+    title = 'קאדילאק אסקלייד IQ רכב חשמלי 750 כ"ס - טעינה ביתית'
+    cm_html = (f"<html><body><p>{title}</p><table><tr><th>מפרט</th><th>ערך</th></tr>{rows}"
                "<tr><td>טעינה AC</td><td>19.2 קילוואט, כ-10.5 שעות</td></tr></table></body></html>")
-    CM = put(ctx.cache, "https://www.cmotors.co.il/escalade-iq", "קאדילאק אסקלייד IQ - טעינה ביתית", cm_html)
+    CM = put(ctx.cache, "https://www.cmotors.co.il/escalade-iq", title + "\nטעינה AC\n19.2 קילוואט, כ-10.5 שעות",
+             cm_html)
     gadgety_text = "פתיח " * 340 + "טעינה AC במטען המובנה של 19.2 קילוואט נמשכת כ-10.5 שעות. " + "GADGETY-TAIL " * 600
     GD = put(ctx.cache, "https://www.gadgety.co.il/escalade-iq-review", gadgety_text)
     us_text = "Intro " * 250 + "The Escalade IQ supports 19.2 kW Level 2 AC charging. " + "US-TAIL " * 800
@@ -171,7 +174,7 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
     client = ScriptedGLM(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
     payload = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "government_record_id": "85095"},
-               "engine_drivetrain": {"propulsion_normalized": "battery_electric"}}
+               "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
     result = run_vehicle({"upstream_record_id": "85095"}, payload, client=client, cache=ctx.cache, run_log=log,
                          config=AgentConfig(max_steps=3, no_new_research_turns=0,
                                             requested_fields=["ac_charging_time", "rear_legroom_mm"]),

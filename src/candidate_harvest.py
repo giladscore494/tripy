@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 
 from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
 
-HARVESTER_VERSION = "harvest-v1"
+HARVESTER_VERSION = "harvest-v2"   # v2: booleans need a stated value (label-only is never true)
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -256,6 +256,8 @@ class Dictionary:
         self.negative_values = {normalize_term(x) for x in v.get("negative_values") or []}
         self.optional_values = {normalize_term(x) for x in v.get("optional_values") or []}
         self.optional_terms = compile_terms(x for x in v.get("optional_values") or [] if len(x) > 2)
+        negations = compile_terms(v.get("negation_prefixes") or [])
+        self.negation_prefix = re.compile(rf"(?:{negations.pattern})\s*$") if negations else None
         self.equipment = compile_terms(v.get("equipment_context_terms") or [])
         self.front = compile_terms(v.get("front_terms") or [])
         self.rear = compile_terms(v.get("rear_terms") or [])
@@ -272,6 +274,7 @@ class Dictionary:
         self.minute_units = [normalize_term(u) for u in v.get("time_minute_units") or []]
         self.hour_units = [normalize_term(u) for u in v.get("time_hour_units") or []]
         self.charging = compile_terms(v.get("charging_terms") or [])
+        self.trim_header = compile_terms(v.get("trim_header_terms") or [])
         self.currencies = {normalize_term(var): code for code, variants in (v.get("currencies") or {}).items()
                            for var in variants}
         self.hebrew_aliases = sorted({normalize_term(a) for r in self.rules for a, _, _ in r.aliases
@@ -308,7 +311,6 @@ class Segment:
     page: int | None = None
     header: str | None = None
     reversed: bool = False
-    section: bool = False     # inside an equipment-like section (lines)
     next_text: str = ""       # lines: the following line (label-on-one-line documents)
     next_quote: str = ""
 
@@ -345,16 +347,16 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
         reversed_ = bool(is_pdf and HEBREW.search(line) and looks_reversed(line, dictionary.hebrew_aliases))
         logical = reverse_hebrew_line(line) if reversed_ else line
         norms.append((normalize_text(logical), logical if reversed_ else line, reversed_))
-    section_until = -1
     for i, (norm, quote, reversed_) in enumerate(norms):
-        if _contains(dictionary.equipment, norm):
-            section_until = i + 8
         nxt = norms[i + 1] if i + 1 < len(norms) else ("", "", False)
-        segments.append(Segment("line", norm, quote, reversed=reversed_, section=i <= section_until,
-                                next_text=nxt[0], next_quote=nxt[1]))
+        segments.append(Segment("line", norm, quote, reversed=reversed_, next_text=nxt[0], next_quote=nxt[1]))
     for t_index, table in enumerate(tables or []):
         rows = table.get("rows") or []
-        header = rows[0] if rows and sum(1 for c in rows[0] if NUMBER.search(str(c))) <= 1 and len(rows[0]) > 2 else None
+        # a header row: at most one numeric cell, or a first cell that names the column dimension (version / trim),
+        # so variant columns such as "1.8 Hybrid 140 | 2.0 Hybrid 196" keep their names as variant hints
+        header = rows[0] if rows and len(rows[0]) > 2 and (
+            sum(1 for c in rows[0] if NUMBER.search(str(c))) <= 1
+            or _contains(dictionary.trim_header, normalize_text(str(rows[0][0] or "")))) else None
         for r_index, row in enumerate(rows):
             cells = [str(c or "").strip() for c in row]
             if len(cells) < 2 or not cells[0]:
@@ -549,22 +551,66 @@ def _bool_value(d: Dictionary, cell: str) -> tuple[Any, str] | None:
     return None
 
 
+def _stated_bool(d: Dictionary, rest: str) -> tuple[Any, str] | None:
+    """The availability value written right after a feature label ("label: אין", "label | ✓", "label - standard").
+    Only a whole vocabulary value counts; a single-letter marker ("s", "v", "o") only as the entire cell."""
+    rest = re.split(r"[;•\n]|\.\s", rest, maxsplit=1)[0]
+    rest = rest.lstrip(" :|=\t")
+    if rest.startswith("- ") and len(rest.strip()) > 1:
+        rest = rest[2:]
+    cell = re.split(r"\s\|\s|[,()\[\]]", rest, maxsplit=1)[0].strip()
+    if not cell:
+        return None
+    parsed = _bool_value(d, cell)
+    if parsed is not None and (len(cell) > 1 or not cell.isalpha() or cell == rest.strip()):
+        return parsed
+    words = cell.split()
+    for size in (3, 2, 1):
+        head = " ".join(words[:size])
+        if len(words) > size and len(head) > 1:
+            term = normalize_term(head)
+            if term in d.negative_values:
+                return False, "absent"
+            if term in d.affirmative and len(term) > 1:
+                return True, "standard"
+            if term in d.optional_values and len(term) > 1:
+                return True, "optional"
+    return None
+
+
+NEGATION_BEFORE = 14
+
+
 def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[int, int]) -> Hit | None:
+    """A feature in running text / a label line. Order: an explicitly stated value after the label (same line,
+    or the next line for a label-only line) > a negation right before the label > the field's negative context >
+    an optional term > equipment wording OUTSIDE the label itself. A label alone never implies `true`."""
     text = seg.text
-    bounds = _clause_bounds(text, anchor[0])
+    a, b = anchor
+    bounds = _clause_bounds(text, a)
     clause = text[bounds[0]:bounds[1]]
     for pattern, unless, reason in rule.exclusions:
         if pattern.search(_window(text, *anchor, EXCLUSION_PAD, bounds)) and not (unless and unless.search(clause)):
             return None
+    stated = _stated_bool(d, text[b:b + 80])
+    if stated is None and not text[b:].strip(" :|=-\t") and len(text) <= 80 and seg.next_text:
+        parsed = _bool_value(d, seg.next_text)          # "מושבים חשמליים" / "אין" on the next line
+        stated = parsed
+    if stated is not None:
+        value, availability = stated
+        return Hit(value, availability, confidence=0.8 if availability != "optional" else 0.65, span=anchor,
+                   hints={"availability": availability, "stated_value": True})
+    before = text[max(bounds[0], a - NEGATION_BEFORE):a]
+    if d.negation_prefix and d.negation_prefix.search(before):
+        return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
     if _contains(rule.negative, clause):
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
     if _contains(d.optional_terms, _window(text, *anchor, 25, bounds)):
         return Hit(True, "optional", confidence=0.6, span=anchor, hints={"availability": "optional"})
-    if _contains(d.equipment, clause):
+    outside = text[bounds[0]:a] + " " + text[b:bounds[1]]      # the label's own words are not equipment context
+    if _contains(d.equipment, outside):
         return Hit(True, "present", confidence=0.7, span=anchor, hints={"availability": "standard_or_unspecified"})
-    if seg.section and len(text) <= 120:
-        return Hit(True, "listed", confidence=0.55, span=anchor, hints={"availability": "listed_in_equipment_section"})
-    return None   # a bare mention (menu, navigation, article text) is not a candidate
+    return None   # a bare mention or a label without a value (menu, navigation, spec label) is not a candidate
 
 
 def _enum_hits(rule: FieldRule, text: str, context: str, confidence: float) -> list[Hit]:

@@ -7,6 +7,7 @@ import json
 import pytest
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
+from conftest import cache_source, seed_evidence_sources
 from test_conflict_and_budget import budget_script, FIELDS
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -19,8 +20,13 @@ from src.tools import ToolConfig, dispatch
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "trim": "PREMIUM SPORT",
                         "government_record_id": "85095"},
-           "engine_drivetrain": {"propulsion_normalized": "battery_electric"}}
+           "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
 IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/escalade-iq"
+IL_NEWS = "https://www.cadillac.co.il/news/escalade-iq"
+# Retrieved pages: IL and US name the exact technical variant (server binding -> exact); the IL news item names
+# only the model (server binding -> unclear), whatever variant_match the model claims.
+HEADERS = {IL: 'קאדילאק אסקלייד IQ רכב חשמלי 750 כ"ס', US: "Cadillac Escalade IQ all-electric 750 hp",
+           IL_NEWS: "קאדילאק אסקלייד IQ: כתבה"}
 SPEC = {"name": "torque_nm", "applicable": True}
 
 
@@ -37,16 +43,19 @@ def say(obj):
     return {"role": "assistant", "content": json.dumps(obj, ensure_ascii=False)}
 
 
-def store(cid, field, value, market="IL", **kw):
+def store(cid, field, value, market="IL", url=None, **kw):
     return _call(cid, "store_evidence", {"field": field, "value": value, "market": market,
-                                         "source_url": IL if market == "IL" else US, "quote": str(value), **kw})
+                                         "source_url": url or (IL if market == "IL" else US),
+                                         "quote": f"{field}: {value}", **kw})
 
 
 def run(tmp_path, make_ctx, script, client_cls=ScriptedGLM, **cfg):
     ctx = make_ctx()
+    seed_evidence_sources(ctx.cache, script, HEADERS)
     client = client_cls(script)
     log = RunLog(tmp_path / "runs", "b", "85095")
-    config = AgentConfig(**{"max_steps": 3, "no_new_research_turns": 0, **cfg})
+    # every model turn is scripted, so the layered document sweep (tested on its own) is off here
+    config = AgentConfig(**{"max_steps": 3, "no_new_research_turns": 0, "layered_harvest_enabled": False, **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path), log
@@ -100,8 +109,11 @@ def test_conflict_resolution_needs_valid_cited_evidence():
 
 def test_report_field_status_requires_evidence_for_conflict_resolved(make_ctx):
     ctx = make_ctx()
-    dispatch(ctx, "store_evidence", {"field": "torque_nm", "value": 1066, "market": "IL", "source_url": IL})
-    dispatch(ctx, "store_evidence", {"field": "gear_count", "value": 1, "market": "IL", "source_url": IL})
+    cache_source(ctx.cache, IL, "Torque 1066 Nm. Transmission: 8-speed automatic.")
+    assert dispatch(ctx, "store_evidence", {"field": "torque_nm", "value": 1066, "market": "IL", "source_url": IL,
+                                            "quote": "Torque 1066 Nm"})["stored"]
+    assert dispatch(ctx, "store_evidence", {"field": "gear_count", "value": 8, "market": "IL", "source_url": IL,
+                                            "quote": "8-speed automatic"})["stored"]
     for ids in (None, [], ["e999"], ["e2"]):
         out = dispatch(ctx, "report_field_status", {"field": "torque_nm", "status": "conflict_resolved",
                                                     "evidence_ids": ids})
@@ -152,7 +164,7 @@ def test_early_exit_rule(tmp_path, make_ctx):
 
 def test_unclear_variant_continues_the_attempt(tmp_path, make_ctx):
     script = [say({"summary": "primary", "fields": {}}),
-              turn(store("r1", "ac_max_charging_power_kw", 11.5, variant_match="unclear")),
+              turn(store("r1", "ac_max_charging_power_kw", 11.5, url=IL_NEWS, variant_match="exact")),  # server: unclear
               turn(store("r2", "ac_max_charging_power_kw", 19.2, variant="Premium Sport", variant_match="exact")),
               say({"field": "ac_max_charging_power_kw", "status": "conflict_resolved", "evidence_ids": ["e2"]}),
               say({"summary": "final", "fields": {}})]
@@ -196,7 +208,9 @@ def test_supplementary_evidence_is_rebuilt_from_events(tmp_path, make_ctx):
     result, _, _, log = run(tmp_path, make_ctx, script, field_recovery_enabled=False, requested_fields=["torque_nm"])
     live = result["evidence"]
     assert len(live) == 1 and live[0]["supplementary"] == [{"quote": "מומנט 1,066", "note": "Hebrew page"}]
-    assert result["research_bundle"]["evidence"] == live           # the bundle (built from events) agrees
+    bundle_items = result["research_bundle"]["evidence"]            # the bundle (built from events) agrees ...
+    assert [(e["evidence_id"], e["value"], e["quote"]) for e in bundle_items] == [("e1", 1066, "1,066 Nm")]
+    assert "supplementary" not in bundle_items[0] and "note" not in bundle_items[0]   # ... minus model notes
     (log.dir / "result.json").unlink()
     rebuilt = load_runs(tmp_path / "runs", "b")[0]
     assert rebuilt["evidence"] == live and len(rebuilt["evidence"]) == 1
@@ -215,7 +229,7 @@ class StopAtEnd(ScriptedGLM):
 def test_interrupt_after_target_evidence_before_attempt_finished(tmp_path, make_ctx):
     script = [turn(store("p1", "cargo_volume_l", 2523, market="US")),
               say({"summary": "primary", "fields": {}}),
-              turn(store("r1", "cargo_volume_l", 2523, variant_match="unclear"))]   # no early exit; then Stop
+              turn(store("r1", "cargo_volume_l", 2523, url=IL_NEWS))]   # server binding unclear: no early exit; Stop
     with pytest.raises(StopException):
         run(tmp_path, make_ctx, script, client_cls=StopAtEnd, requested_fields=["cargo_volume_l", "gear_count"])
     log_dir = tmp_path / "runs" / "b" / "85095"

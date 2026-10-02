@@ -1,5 +1,5 @@
 {
- "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review.",
+ "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in.",
  "version": "enrichment-v2",
  "dictionary_version": "field-dictionary-v1",
  "groups": {
@@ -29,7 +29,7 @@
   }
  },
  "harvest_vocabulary": {
-  "_about": "Shared vocabularies of the generic matchers in src/candidate_harvest.py. Field-specific wording lives on each field; these lists are reused across fields of the same kind.",
+  "_about": "Shared vocabularies of the generic matchers in src/candidate_harvest.py. Field-specific wording lives on each field; these lists are reused across fields of the same kind. number_words: written numbers the evidence admission gate reads as numbers (entailment only; the harvester does not use them). negation_prefixes: a negation written right before a feature label (ללא חלון גג, without sunroof) states the feature is absent. availability_statement_terms: words that explicitly state a feature is present; the admission gate accepts a model-promoted boolean only when its quote states availability (these terms or an affirmative / negative value) and the field's own parse does not contradict it.",
   "affirmative_values": [
    "✓",
    "✔",
@@ -302,6 +302,89 @@
    "starting from",
    "starting at",
    "prices from"
+  ],
+  "number_words": {
+   "1": [
+    "one",
+    "single",
+    "אחת",
+    "אחד"
+   ],
+   "2": [
+    "two",
+    "שתיים",
+    "שניים",
+    "שתי",
+    "שני"
+   ],
+   "3": [
+    "three",
+    "שלוש",
+    "שלושה",
+    "שלושת"
+   ],
+   "4": [
+    "four",
+    "ארבע",
+    "ארבעה",
+    "ארבעת"
+   ],
+   "5": [
+    "five",
+    "חמש",
+    "חמישה",
+    "חמשת"
+   ],
+   "6": [
+    "six",
+    "שש",
+    "שישה",
+    "ששת"
+   ],
+   "7": [
+    "seven",
+    "שבע",
+    "שבעה"
+   ],
+   "8": [
+    "eight",
+    "שמונה"
+   ],
+   "9": [
+    "nine",
+    "תשע",
+    "תשעה"
+   ],
+   "10": [
+    "ten",
+    "עשר",
+    "עשרה"
+   ]
+  },
+  "negation_prefixes": [
+   "ללא",
+   "אין",
+   "בלי",
+   "no",
+   "without",
+   "not"
+  ],
+  "availability_statement_terms": [
+   "includes",
+   "including",
+   "included",
+   "equipped with",
+   "comes with",
+   "standard",
+   "as standard",
+   "fitted as standard",
+   "כולל",
+   "כלול",
+   "מצויד",
+   "מגיע עם",
+   "בסטנדרט",
+   "סטנדרטי",
+   "סטנדרט"
   ]
  },
  "fields": [
@@ -362,6 +445,35 @@
       "pound-feet"
      ],
      "reason": "imperial torque value"
+    }
+   ],
+   "semantic_definition": "Peak torque in Nm, by propulsion class (never chosen per vehicle by the model): conventional = combustion engine peak torque; hybrid and plug_in = the COMBUSTION ENGINE's peak torque only (electric-motor and combined/system torque are different quantities and are not this field); battery_electric = total electric-motor peak torque as published.",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "applies_to": [
+      "hybrid",
+      "plug_in"
+     ],
+     "terms": [
+      "system torque",
+      "combined torque",
+      "total torque",
+      "system output",
+      "combined output",
+      "electric motor",
+      "e-motor",
+      "motor torque",
+      "front motor",
+      "rear motor",
+      "מומנט משולב",
+      "מומנט כולל",
+      "מומנט מערכת",
+      "מנוע חשמלי",
+      "המנוע החשמלי",
+      "מנוע החשמל"
+     ],
+     "reason": "for hybrids torque_nm is the combustion engine's torque; motor / system torque is a different quantity"
     }
    ]
   },
@@ -427,7 +539,9 @@
      ],
      "reason": "a different acceleration measure"
     }
-   ]
+   ],
+   "semantic_definition": "0-100 km/h time in seconds as published (0-60 mph is a different quantity).",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "top_speed_kmh",
@@ -472,6 +586,24 @@
       "mph"
      ],
      "reason": "imperial speed"
+    }
+   ],
+   "semantic_definition": "Maximum vehicle speed in km/h (the electric-only top speed of a plug-in hybrid is not this field).",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "applies_to": [
+      "plug_in"
+     ],
+     "terms": [
+      "electric only",
+      "electric-only",
+      "ev mode",
+      "in ev mode",
+      "במצב חשמלי",
+      "חשמלי בלבד"
+     ],
+     "reason": "electric-only top speed"
     }
    ]
   },
@@ -563,6 +695,22 @@
      ],
      "reason": "a partial test cycle, not the combined figure"
     }
+   ],
+   "semantic_definition": "Official combined-cycle fuel consumption in l/100km (WLTP where the source states it; plug-in hybrids: the weighted combined figure, not the charge-sustaining one).",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "applies_to": [
+      "plug_in"
+     ],
+     "terms": [
+      "charge sustaining",
+      "charge-sustaining",
+      "depleted battery",
+      "סוללה ריקה"
+     ],
+     "reason": "charge-sustaining consumption of a plug-in hybrid"
+    }
    ]
   },
   {
@@ -570,7 +718,6 @@
    "description": "EV energy consumption (kWh/100km, with test standard)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -627,7 +774,9 @@
      ],
      "reason": "fuel consumption, not electricity"
     }
-   ]
+   ],
+   "semantic_definition": "Combined electric energy consumption in kWh/100km of a plug-in vehicle (BEV, or a PHEV's electric consumption).",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "battery_gross_kwh",
@@ -710,7 +859,9 @@
      ],
      "reason": "an energy-consumption figure, not capacity"
     }
-   ]
+   ],
+   "semantic_definition": "Gross (total) traction-battery energy capacity in kWh.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "battery_usable_kwh",
@@ -768,14 +919,15 @@
      ],
      "reason": "an energy-consumption figure, not capacity"
     }
-   ]
+   ],
+   "semantic_definition": "Usable (net) traction-battery energy capacity in kWh.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "electric_range_km",
    "description": "Electric range (km)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -839,6 +991,19 @@
      ],
      "reason": "imperial range"
     }
+   ],
+   "semantic_definition": "All-electric driving range in km of a plug-in vehicle, combined cycle as published (city-only range is not this field); the cycle goes in electric_range_standard.",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "city",
+      "urban",
+      "עירוני",
+      "בעיר"
+     ],
+     "reason": "city-only range"
+    }
    ]
   },
   {
@@ -846,7 +1011,6 @@
    "description": "Range test standard (WLTP/EPA/CLTC/...)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -936,14 +1100,15 @@
      "hint_value": "consumption_cycle",
      "note": "the standard may refer to consumption"
     }
-   ]
+   ],
+   "semantic_definition": "Test cycle of electric_range_km (WLTP, EPA, CLTC, NEDC).",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "ac_charging_time",
    "description": "AC charging time (with % window)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -1016,14 +1181,15 @@
     "שעה"
    ],
    "plausible_min": 30,
-   "plausible_max": 3000
+   "plausible_max": 3000,
+   "semantic_definition": "AC (on-board charger) charging time of a plug-in vehicle as published, with its stated window/power when given.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "dc_charging_time",
    "description": "DC charging time (with % window)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -1090,14 +1256,15 @@
     "שעה"
    ],
    "plausible_min": 5,
-   "plausible_max": 300
+   "plausible_max": 300,
+   "semantic_definition": "DC fast-charging time of a plug-in vehicle as published, with its stated window.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "dc_charging_window_pct",
    "description": "DC charging percentage window",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -1158,14 +1325,15 @@
     "percent"
    ],
    "plausible_min": 0,
-   "plausible_max": 100
+   "plausible_max": 100,
+   "semantic_definition": "State-of-charge window (percent) of the published DC charging time.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "ac_max_charging_power_kw",
    "description": "Max AC charging power (kW)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -1249,14 +1417,15 @@
     "kilowatts"
    ],
    "plausible_min": 1,
-   "plausible_max": 30
+   "plausible_max": 30,
+   "semantic_definition": "Maximum AC charging power in kW of a plug-in vehicle.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "dc_max_charging_power_kw",
    "description": "Max DC charging power (kW)",
    "group": "electric_hybrid",
    "applies_to": [
-    "hybrid",
     "plug_in",
     "battery_electric"
    ],
@@ -1364,7 +1533,9 @@
     "kilowatts"
    ],
    "plausible_min": 3,
-   "plausible_max": 1000
+   "plausible_max": 1000,
+   "semantic_definition": "Maximum DC charging power in kW of a plug-in vehicle.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "length_mm",
@@ -1443,7 +1614,9 @@
      ],
      "reason": "a measurement of a part (cargo floor, seat, cable), not the vehicle body"
     }
-   ]
+   ],
+   "semantic_definition": "Overall body length in mm.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "width_mm",
@@ -1544,6 +1717,21 @@
      "hint_value": "stated",
      "note": "width with/without mirrors is stated in the source"
     }
+   ],
+   "semantic_definition": "Overall body width in mm EXCLUDING mirrors (width with mirrors is a different quantity).",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "including mirrors",
+      "incl. mirrors",
+      "with mirrors",
+      "mirrors unfolded",
+      "כולל מראות",
+      "עם מראות"
+     ],
+     "reason": "width with mirrors"
+    }
    ]
   },
   {
@@ -1640,7 +1828,9 @@
      ],
      "reason": "a different height measurement"
     }
-   ]
+   ],
+   "semantic_definition": "Overall height of the unladen vehicle in mm; when the source states a condition (with roof rails, with antenna) it is kept as the value's condition.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "wheelbase_mm",
@@ -1698,7 +1888,9 @@
     }
    ],
    "plausible_min": 1500,
-   "plausible_max": 5000
+   "plausible_max": 5000,
+   "semantic_definition": "Wheelbase in mm.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "curb_weight_kg",
@@ -1774,7 +1966,9 @@
      ],
      "reason": "gross / towing / payload weight, not the curb weight"
     }
-   ]
+   ],
+   "semantic_definition": "Curb (kerb) weight in kg as published (an EU 'mass in running order' includes a 75 kg driver; the source wording stays in the quote).",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "ground_clearance_mm",
@@ -1822,7 +2016,9 @@
     }
    ],
    "plausible_min": 50,
-   "plausible_max": 500
+   "plausible_max": 500,
+   "semantic_definition": "Minimum ground clearance of the unladen vehicle in mm.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "cargo_volume_l",
@@ -1894,6 +2090,27 @@
      "hint_value": "front_or_seats_folded",
      "note": "front trunk or seats-folded volume"
     }
+   ],
+   "semantic_definition": "Luggage-compartment volume in litres with all seats in use (seats-folded / maximum volume and a front trunk are not this field). Depends on body AND powertrain (battery packaging).",
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "seats folded",
+      "seats down",
+      "folded",
+      "rear seats folded",
+      "מקופלים",
+      "מושבים מקופלים",
+      "maximum",
+      "max.",
+      "מקסימלי",
+      "frunk",
+      "front trunk",
+      "תא מטען קדמי"
+     ],
+     "reason": "seats-folded / maximum / front-trunk volume"
+    }
    ]
   },
   {
@@ -1951,7 +2168,9 @@
      ],
      "reason": "a different tank"
     }
-   ]
+   ],
+   "semantic_definition": "Fuel tank capacity in litres.",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "gearbox_type",
@@ -2045,7 +2264,9 @@
       "רובוטית"
      ]
     }
-   ]
+   ],
+   "semantic_definition": "Transmission type (automatic, manual, dct, cvt, e-cvt, single-speed, amt).",
+   "binding_requirement": "exact_technical_variant"
   },
   {
    "name": "gear_count",
@@ -2068,7 +2289,19 @@
     "gears"
    ],
    "plausible_min": 1,
-   "plausible_max": 12
+   "plausible_max": 12,
+   "semantic_definition": "Number of discrete forward gear ratios, only when the source states it. Not applicable when the gearbox has no discrete stepped gear count (CVT, e-CVT). Never inferred from the gearbox type.",
+   "binding_requirement": "exact_technical_variant",
+   "not_applicable_when": [
+    {
+     "field": "gearbox_type",
+     "values": [
+      "cvt",
+      "e-cvt"
+     ],
+     "reason": "no discrete stepped gear count"
+    }
+   ]
   },
   {
    "name": "screen_size_in",
@@ -2179,6 +2412,21 @@
      "hint_value": "maybe_not_main_screen",
      "note": "instrument cluster / rear / passenger display"
     }
+   ],
+   "semantic_definition": "Diagonal of the central infotainment screen in inches (instrument cluster and head-up display are not this field).",
+   "binding_requirement": "exact_market_trim",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "instrument cluster",
+      "digital cockpit",
+      "driver display",
+      "לוח מחוונים",
+      "head-up",
+      "תצוגה עילית"
+     ],
+     "reason": "a different screen"
+    }
    ]
   },
   {
@@ -2210,7 +2458,9 @@
     "carplay not available",
     "without carplay",
     "carplay is not available"
-   ]
+   ],
+   "semantic_definition": "Apple CarPlay support on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "android_auto",
@@ -2237,7 +2487,9 @@
     "no android auto",
     "android auto not available",
     "android auto is not available"
-   ]
+   ],
+   "semantic_definition": "Android Auto support on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "wireless_phone_projection",
@@ -2292,7 +2544,9 @@
      ],
      "reason": "wireless phone charging, not phone projection"
     }
-   ]
+   ],
+   "semantic_definition": "Wireless CarPlay / Android Auto on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "power_seats",
@@ -2350,7 +2604,9 @@
      ],
      "reason": "another power-adjusted component"
     }
-   ]
+   ],
+   "semantic_definition": "Electrically adjustable front seat(s) on this trim, at least the driver's (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "heated_seats",
@@ -2401,7 +2657,9 @@
      ],
      "reason": "another heated component"
     }
-   ]
+   ],
+   "semantic_definition": "Heated front seats on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "ventilated_seats",
@@ -2435,7 +2693,9 @@
    "negative_context_terms_en": [
     "without ventilated seats",
     "no ventilated seats"
-   ]
+   ],
+   "semantic_definition": "Ventilated (cooled) front seats on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "climate_zones",
@@ -2502,10 +2762,17 @@
     {
      "regex": "מפוצל(?:ת)? ל[- ]?(\\d)",
      "value": "$1"
+    },
+    {
+     "regex": "(?:בקרת אקלים|מיזוג(?: אוויר)?)\\s*:?\\s*מפוצל(?:ת)?(?![ת\\w])(?!\\s*-?\\s*ל[- ]?\\d)",
+     "value": 2,
+     "note": "schema mapping: Hebrew 'split' (מפוצלת) climate control = dual-zone"
     }
    ],
    "plausible_min": 1,
-   "plausible_max": 6
+   "plausible_max": 6,
+   "semantic_definition": "Number of independently controlled climate zones on this trim. A word form maps to a number only through an explicit pattern in this schema.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "sunroof_panoramic",
@@ -2539,7 +2806,9 @@
     "without sunroof",
     "no sunroof",
     "without panoramic roof"
-   ]
+   ],
+   "semantic_definition": "Sunroof or panoramic glass roof on this trim (true / false).",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "other_comfort_features",
@@ -2558,7 +2827,9 @@
     "comfort",
     "convenience features",
     "convenience"
-   ]
+   ],
+   "semantic_definition": "Other comfort equipment of this trim, as listed by the source.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "rim_diameter_in",
@@ -2646,7 +2917,9 @@
      "confidence": 0.6,
      "note": "rim diameter as stated inside a tire size"
     }
-   ]
+   ],
+   "semantic_definition": "Standard wheel rim diameter of this trim in inches.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "tire_size_front",
@@ -2673,7 +2946,9 @@
     "front tyre",
     "front tires",
     "front tyres"
-   ]
+   ],
+   "semantic_definition": "Standard front tire size of this trim.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "tire_size_rear",
@@ -2700,7 +2975,9 @@
     "rear tyre",
     "rear tires",
     "rear tyres"
-   ]
+   ],
+   "semantic_definition": "Standard rear tire size of this trim.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "alternative_tire_sizes",
@@ -2723,7 +3000,9 @@
     "optional wheels",
     "alternative tyre sizes",
     "optional tyres"
-   ]
+   ],
+   "semantic_definition": "Optional / alternative tire sizes offered for this trim.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "local_trim_name",
@@ -2746,7 +3025,9 @@
     "grade",
     "version",
     "variant"
-   ]
+   ],
+   "semantic_definition": "Commercial trim name used in the target market.",
+   "binding_requirement": "exact_market_trim"
   },
   {
    "name": "list_price",
@@ -2836,7 +3117,10 @@
      "hint_value": "starting_price",
      "note": "a starting price may belong to another trim"
     }
-   ]
+   ],
+   "semantic_definition": "Importer list price of this exact local trim in the target market (time-sensitive: valid as of a date).",
+   "binding_requirement": "exact_market_trim",
+   "time_sensitive": true
   },
   {
    "name": "registration_licence_fee",
@@ -2888,7 +3172,10 @@
      ],
      "reason": "not the annual licence fee"
     }
-   ]
+   ],
+   "semantic_definition": "Annual registration/licence fee in the target market (time-sensitive: valid as of a date).",
+   "binding_requirement": "exact_market_trim",
+   "time_sensitive": true
   },
   {
    "name": "vehicle_warranty",
@@ -2915,7 +3202,10 @@
     "manufacturer warranty",
     "factory warranty",
     "bumper-to-bumper"
-   ]
+   ],
+   "semantic_definition": "Vehicle (basic) warranty terms in the target market (time-sensitive).",
+   "binding_requirement": "body_powertrain",
+   "time_sensitive": true
   },
   {
    "name": "battery_hybrid_warranty",
@@ -2941,7 +3231,10 @@
     "hv battery warranty",
     "ev battery warranty",
     "hybrid battery warranty"
-   ]
+   ],
+   "semantic_definition": "Traction-battery / hybrid-system warranty terms in the target market (time-sensitive).",
+   "binding_requirement": "body_powertrain",
+   "time_sensitive": true
   },
   {
    "name": "warranty_km",
@@ -2979,7 +3272,10 @@
     "kilometers"
    ],
    "plausible_min": 1000,
-   "plausible_max": 1000000
+   "plausible_max": 1000000,
+   "semantic_definition": "Vehicle warranty distance limit in km in the target market (time-sensitive).",
+   "binding_requirement": "body_powertrain",
+   "time_sensitive": true
   },
   {
    "name": "warranty_years",
@@ -3015,7 +3311,10 @@
     "שנות"
    ],
    "plausible_min": 1,
-   "plausible_max": 15
+   "plausible_max": 15,
+   "semantic_definition": "Vehicle warranty duration in years in the target market (time-sensitive).",
+   "binding_requirement": "body_powertrain",
+   "time_sensitive": true
   }
  ]
 }

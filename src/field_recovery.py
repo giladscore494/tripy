@@ -36,6 +36,10 @@ RETRY_STATES = ("unresolved", "missing", "conflicting", "foreign_market_only", "
                 "weak_provenance")
 NO_RETRY_STATES = ("ok", "not_applicable")
 UNKNOWN_MARKETS = {"", "unknown", "n/a", "na", "none", "unclear", "?"}
+# variant_match values that say a value is NOT about the target variant. "different" may come from the model or
+# from the server-side binding veto; "unbound" (the source does not even name the model family) only from the
+# server (src/document_binding.py).
+NON_TARGET_VARIANTS = ("different", "unbound")
 MARKET_ALIASES = {"il": {"il", "isr", "israel", "ישראל", "israeli"}}
 DEFAULT_TARGET_MARKET = "IL"
 
@@ -102,7 +106,7 @@ def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
     another market, or marked variant_match=different, never makes a same-scope conflict on its own.
     """
     scope = [e for e in evidence if _has_value(e.get("value")) and is_target_market(e.get("market"), target_market)
-             and str(e.get("variant_match") or "").lower() != "different"]
+             and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
 
@@ -152,14 +156,28 @@ def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: 
     return any(seqs.get(c) is not None and seqs[c] >= start for c in cited)
 
 
+def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dict]]) -> str | None:
+    """The schema's `not_applicable_when` rules: the field does not exist when admitted evidence of another field
+    (about the target variant) has one of the listed values (a gear count of a gearbox with no discrete gears)."""
+    for rule in spec.get("not_applicable_when") or []:
+        other = normalize_field_name(rule.get("field"))
+        values = {_value_key(v) for v in rule.get("values") or []}
+        for item in evidence_by_field.get(other, []):
+            if (str(item.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS
+                    and _value_key(item.get("value")) in values):
+                return f"{other}={item.get('value')} ({rule.get('reason') or 'schema rule'})"
+    return None
+
+
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
                    target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
-                   evidence_seq: dict | None = None) -> dict:
+                   evidence_seq: dict | None = None, not_applicable_rule: str | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
 
-    * not_applicable  - not applicable by the schema's `applies_to`, or the model said so;
+    * not_applicable  - not applicable by the schema's `applies_to` or `not_applicable_when` rule, or the model
+                        said so;
     * ok              - a candidate value backed by a stored evidence record, and the model
                         did not itself mark it unresolved / conflicting / wrong market or trim;
     * unresolved      - the model said unresolved (report_field_status or its own answer);
@@ -173,8 +191,9 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
     * foreign_market_only - every candidate is explicitly marked as another market and the model
                         has not declared the field found for the target;
-    * variant_not_exact   - every candidate is explicitly marked as another trim/variant
-                        (variant_match=different) and the model has not declared it found.
+    * variant_not_exact   - every candidate is about another trim/variant (variant_match=different, from the
+                        model or the server-side binding veto) or from a source that does not name the
+                        model at all (variant_match=unbound), and the model has not declared it found.
 
     Different values across markets, or with a candidate explicitly marked as another variant, are
     recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
@@ -201,8 +220,10 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if conflict and declared_status == "conflict_resolved":
         info.append("conflict_resolved_by_model" if resolved else "conflict_resolution_not_evidence_backed")
 
+    if not_applicable_rule:
+        info.append(f"not_applicable_by_schema_rule:{not_applicable_rule}")
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
-            or out_provenance == "not_applicable"):
+            or out_provenance == "not_applicable" or not_applicable_rule):
         state = "not_applicable"
     elif declared_status in RETRY_STATES:
         state = declared_status                       # the model's own (current) report wins
@@ -216,7 +237,7 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         state = "ok"                                  # the model resolved applicability itself
     elif not target_items and all(_market_key(e.get("market")) not in UNKNOWN_MARKETS for e in with_value):
         state = "foreign_market_only"
-    elif all(str(e.get("variant_match") or "").lower() == "different" for e in with_value):
+    elif all(str(e.get("variant_match") or "").lower() in NON_TARGET_VARIANTS for e in with_value):
         state = "variant_not_exact"
     else:
         state = "ok"
@@ -252,7 +273,7 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
-                           evidence_seq)
+                           evidence_seq, conditional_not_applicable(spec, evidence_by_field))
             for spec in specs]
 
 
@@ -264,7 +285,7 @@ def current_evaluation(events: list[dict], specs: list[dict], target_market: str
     return evaluate_fields(specs, events, market)
 
 
-UNSPECIFIC_VARIANT = {"unclear", "unknown", "different"}
+UNSPECIFIC_VARIANT = {"unclear", "unknown", "different", "unbound"}
 
 
 def early_resolution_check(spec: dict, events: list[dict], target_market: str) -> tuple[bool, dict]:
