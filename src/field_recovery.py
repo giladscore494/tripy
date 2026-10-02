@@ -146,15 +146,27 @@ def conflict_start_seq(conflict: list[dict], evidence_seq: dict) -> int | None:
     return None
 
 
+def in_server_scope(item: dict, target_market: str) -> bool:
+    """Server-side scope of one evidence item: not bound to another variant / no variant (variant_match is computed by
+    the server for admitted evidence) and not from a known other market. A model declaration never changes this."""
+    if str(item.get("variant_match") or "").lower() in NON_TARGET_VARIANTS:
+        return False
+    return is_target_market(item.get("market"), target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+
+
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
-                         evidence_seq: dict | None) -> bool:
+                         evidence_seq: dict | None, target_market: str | None = None) -> bool:
     """A conflict_resolved declaration closes a conflict only if it cites real evidence for this field:
-    evidence_ids non-empty, every id stored for this field, and (when ordering is known) at least one
-    cited item stored at or after the moment the conflict became active (citing only candidates that
+    evidence_ids non-empty, every id stored for this field, at least one cited item in the server-side target scope
+    (citing another variant's or another market's item resolves nothing for the target), and (when ordering is known)
+    at least one cited item stored at or after the moment the conflict became active (citing only candidates that
     predate the conflict is not a resolution). Code never decides which value is true."""
     cited = [str(i) for i in (declared or {}).get("evidence_ids") or []]
     field_ids = {str(e.get("evidence_id")) for e in evidence}
     if not cited or not set(cited) <= field_ids:
+        return False
+    if target_market is not None and not any(in_server_scope(e, target_market) for e in evidence
+                                             if str(e.get("evidence_id")) in cited):
         return False
     seqs = evidence_seq or {}
     start = conflict_start_seq(conflict, seqs)
@@ -206,11 +218,16 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         have materially different values and the model has not explicitly resolved
                         them (a `conflict_resolved` declaration newer than the latest evidence). A plain
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
-    * foreign_market_only - every candidate is explicitly marked as another market and the model
-                        has not declared the field found for the target;
+    * foreign_market_only - no candidate is in the server-side target scope and the ones that may apply to the
+                        variant are from a known other market;
     * variant_not_exact   - every candidate is about another trim/variant (variant_match=different, from the
                         model or the server-side binding veto) or from a source that does not name the
-                        model at all (variant_match=unbound), and the model has not declared it found.
+                        model at all (variant_match=unbound).
+
+    Server scope is authoritative. The two out-of-scope states are decided from the evidence (server-computed
+    variant_match and market) BEFORE any model declaration is read: a `found` or `conflict_resolved` declaration
+    cannot turn another variant's or another market's evidence into target evidence. A model declaration can still
+    make a field less settled (unresolved, conflicting, ...) or not_applicable.
 
     Different values across markets, or with a candidate explicitly marked as another variant, are
     recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
@@ -250,7 +267,7 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if not declaration_is_current(output_seq, last_evidence_seq):
         out_provenance = ""
     resolved = declared_status == "conflict_resolved" and (
-        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq))
+        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq, target_market))
     if conflict and declared_status == "conflict_resolved":
         info.append("conflict_resolved_by_model" if resolved else "conflict_resolution_not_evidence_backed")
 
@@ -269,14 +286,16 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         state = "weak_provenance" if _has_value(out_value) else "missing"
     elif conflict and not resolved:
         state = "conflicting"                         # same scope, different values, not explicitly resolved
-    elif declared_status in RESOLVED_STATUSES and (declared_status == "found" or resolved):
-        state = "ok"                                  # the model resolved applicability itself
-    elif not target_items and all(_market_key(e.get("market")) not in UNKNOWN_MARKETS for e in with_value):
-        state = "foreign_market_only"
-    elif all(str(e.get("variant_match") or "").lower() in NON_TARGET_VARIANTS for e in with_value):
-        state = "variant_not_exact"
+    elif not any(in_server_scope(e, target_market) for e in with_value):
+        # nothing in the server-side target scope: no declaration (found / conflict_resolved) can change that
+        if all(str(e.get("variant_match") or "").lower() in NON_TARGET_VARIANTS for e in with_value):
+            state = "variant_not_exact"
+        else:
+            state = "foreign_market_only"
+        if declared_status in RESOLVED_STATUSES:
+            info.append(f"declaration_outside_server_scope:{declared_status}")
     else:
-        state = "ok"
+        state = "ok"                                  # in-scope evidence (a found / backed resolution changes nothing)
     return {
         "field": name,
         "state": state,

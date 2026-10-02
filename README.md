@@ -265,7 +265,12 @@ is never exact by itself: the fact's context must name the target's technical va
 `different` (veto, or the model's own "different"), `unbound` (the source does not even name the model family),
 `exact` (level ≥ the field's `binding_requirement`) or `unclear`. The evaluator treats `different` and
 `unbound` as not about the target (`variant_not_exact`); only `exact` target-market evidence ends a recovery
-attempt early. Vocabulary (model families with Hebrew names, body / propulsion / drivetrain terms) lives in
+attempt early. Server scope is authoritative: these two states are decided from the server-computed
+`variant_match` and market BEFORE any model declaration, so a model's `found` (or a `conflict_resolved` citing an
+out-of-scope item) never turns another variant's or another market's evidence into target evidence. The model's
+`market` is a claim too: when the source itself does not establish a market (domain, regional site, path locale,
+Hebrew text), the evidence market is `unknown`, whichever market the model named; the claim is kept as
+`model_market_claim`. Vocabulary (model families with Hebrew names, body / propulsion / drivetrain terms) lives in
 `data/identity_vocabulary.json`.
 
 **Source authority** is `government | official_manufacturer | official_importer | official_media | aggregator |
@@ -439,11 +444,10 @@ A field **is** retried when:
 - `missing`: there is no candidate value and no evidence record;
 - `weak_provenance`: a value exists only in the model's answer, with no evidence record;
 - `unresolved`: the model said unresolved;
-- `foreign_market_only`: every candidate is explicitly marked as another market and the model has not
-  declared the field found;
+- `foreign_market_only`: no candidate is in the server-side target scope, and the ones that may apply to the
+  variant come from a known other market;
 - `variant_not_exact`: every candidate is about another variant (`variant_match=different`, by the server-side
-  binding veto or the model) or from a source that does not name the model (`unbound`)
-  and the model has not declared it found;
+  binding veto or the model) or from a source that does not name the model (`unbound`);
 - `conflicting`: the model reported an unresolved conflict.
 
 Several stored values for one field are recorded as info only. Nothing is removed, changed or ranked.

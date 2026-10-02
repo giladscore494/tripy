@@ -21,7 +21,7 @@ from src.tools import ToolConfig, dispatch
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "trim": "PREMIUM SPORT",
                         "government_record_id": "85095"},
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
-IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/escalade-iq"
+IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/en-us/escalade-iq"
 IL_NEWS = "https://www.cadillac.co.il/news/escalade-iq"
 # Retrieved pages: IL and US name the exact technical variant (server binding -> exact); the IL news item names
 # only the model (server binding -> unclear), whatever variant_match the model claims.
@@ -70,7 +70,9 @@ def test_declarations_only_count_while_newer_than_the_fields_evidence():
                                                                   **kw)["state"]
     # stale found: newer evidence is evaluated again (here: foreign only)
     assert state(foreign, {"status": "found", "seq": 5}, 9) == "foreign_market_only"
-    assert state(foreign, {"status": "found", "seq": 12}, 9) == "ok"                     # current found
+    # a CURRENT found still cannot turn foreign evidence into target evidence (server scope is authoritative)
+    assert state(foreign, {"status": "found", "seq": 12}, 9) == "foreign_market_only"
+    assert state([ev("e1", 1066)], {"status": "found", "seq": 12}, 9) == "ok"           # current found, in scope
     il = [ev("e1", 1066)]
     # stale not_applicable: real evidence stored afterwards wins
     assert state(il, {"status": "not_applicable", "seq": 5}, 9) == "ok"
