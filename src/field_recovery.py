@@ -148,10 +148,12 @@ def conflict_start_seq(conflict: list[dict], evidence_seq: dict) -> int | None:
 
 def in_server_scope(item: dict, target_market: str) -> bool:
     """Server-side scope of one evidence item: not bound to another variant / no variant (variant_match is computed by
-    the server for admitted evidence) and not from a known other market. A model declaration never changes this."""
+    the server for admitted evidence) and either from the target market, from a market the source does not establish,
+    or a foreign item the server-side portability policy accepted (`portable_to_target_market`, set by the evaluator
+    from src/market_portability.py, never by a model). A model declaration never changes this."""
     if str(item.get("variant_match") or "").lower() in NON_TARGET_VARIANTS:
         return False
-    return is_target_market(item.get("market"), target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+    return in_target_scope(item, target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
 
 
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
