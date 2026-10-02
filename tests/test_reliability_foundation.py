@@ -789,7 +789,8 @@ def _state(evidence, declared=None, last_seq=1):
     ([_scoped("e1", variant_match="unbound")], "variant_not_exact"),              # no variant at all + found
     ([_scoped("e1", market="UK")], "foreign_market_only"),                        # foreign (not portable) + found
     ([_scoped("e1")], "ok"),                                                      # exact target market + found
-    ([_scoped("e1", market="unknown")], "ok"),                                    # unverified market, exact variant
+    # an unknown source market is not the target market (no explicit unknown_market_policy on this spec)
+    ([_scoped("e1", market="unknown")], "foreign_market_only"),
     # an IL item of another variant next to an exact UK item: nothing is in the target scope
     ([_scoped("e1", variant_match="different"), _scoped("e2", market="UK")], "foreign_market_only"),
 ])

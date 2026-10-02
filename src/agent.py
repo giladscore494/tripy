@@ -1275,8 +1275,10 @@ def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, se
     remaining = {e["field"] for e in final if e["retry_eligible"]}
     resolved = sorted(start - remaining)
     # verdicts on fields whose policy allows portability at all (a never-portable field is not a "rejection")
+    from .market_portability import POLICY_ONLY_BASES
+
     portability = [v for e in final for v in (e.get("portability") or {}).values()
-                   if v.get("portability_basis") != "field_policy_not_portable"]
+                   if v.get("portability_basis") not in POLICY_ONLY_BASES]
     return {
         "tail_fields_at_start": len(start),
         "tail_fields_resolved": len(resolved),

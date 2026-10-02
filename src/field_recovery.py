@@ -27,6 +27,7 @@ import json
 import re
 from typing import Any, Iterable
 
+from .document_binding import DEFAULT_REQUIREMENT, LEVELS, level_index
 from .excerpts import select_prior_excerpts
 from .fields import normalize_field_name, public_spec
 from .schemas import iter_fields, parse_model_output
@@ -40,6 +41,9 @@ UNKNOWN_MARKETS = {"", "unknown", "n/a", "na", "none", "unclear", "?"}
 # from the server-side binding veto; "unbound" (the source does not even name the model family) only from the
 # server (src/document_binding.py).
 NON_TARGET_VARIANTS = ("different", "unbound")
+# variant_match values that say the server-side binding did NOT reach the field's binding_requirement ("unclear" from
+# src/document_binding.py: the source names the model, but not precisely enough). Never target-safe on their own.
+INSUFFICIENT_VARIANTS = ("unclear", "unknown")
 MARKET_ALIASES = {"il": {"il", "isr", "israel", "ישראל", "israeli"}}
 DEFAULT_TARGET_MARKET = "IL"
 
@@ -99,6 +103,10 @@ def declarations(events: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
+def _unknown_market(item: dict) -> bool:
+    return _market_key(item.get("market")) in UNKNOWN_MARKETS
+
+
 def in_target_scope(item: dict, target_market: str) -> bool:
     """A target-market item, or a foreign item the portability policy lets count for the target market (its own
     `market` is kept; see src/market_portability.py)."""
@@ -146,18 +154,57 @@ def conflict_start_seq(conflict: list[dict], evidence_seq: dict) -> int | None:
     return None
 
 
-def in_server_scope(item: dict, target_market: str) -> bool:
-    """Server-side scope of one evidence item: not bound to another variant / no variant (variant_match is computed by
-    the server for admitted evidence) and either from the target market, from a market the source does not establish,
-    or a foreign item the server-side portability policy accepted (`portable_to_target_market`, set by the evaluator
-    from src/market_portability.py, never by a model). A model declaration never changes this."""
-    if str(item.get("variant_match") or "").lower() in NON_TARGET_VARIANTS:
+def field_requirement(spec: dict | None, item: dict | None = None) -> str:
+    """The binding level a value of this field needs: the schema's `binding_requirement`, else the requirement the
+    admission gate recorded on the item, else the server default. Never a model value."""
+    for value in ((spec or {}).get("binding_requirement"), (item or {}).get("binding_requirement")):
+        if value in LEVELS:
+            return value
+    return DEFAULT_REQUIREMENT
+
+
+def binding_satisfies(item: dict, requirement: str | None = None) -> bool:
+    """Does the server-side binding of this evidence item reach the field's binding requirement?
+
+    * variant_match different / unbound (veto, or not even the model family)  -> no
+    * variant_match unclear / unknown (binding below the requirement)          -> no
+    * a server-computed binding_level                                         -> level >= requirement
+      (the stricter of the field's requirement and the one recorded at admission: evidence admitted under a weaker
+      requirement does not become exact for a field that now needs more)
+    * no binding recorded at all (legacy evidence / fields without a variant distinction) -> yes, unless one of
+      the negative variant_match values above says otherwise.
+    A model's variant claim is stored as model_variant_claim and is never read here."""
+    match = str(item.get("variant_match") or "").strip().lower()
+    if match in NON_TARGET_VARIANTS or match in INSUFFICIENT_VARIANTS:
         return False
-    return in_target_scope(item, target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+    level = item.get("binding_level")
+    if level is None:
+        return True
+    if level not in LEVELS:
+        return False
+    needed = max(level_index(requirement or DEFAULT_REQUIREMENT),
+                 level_index(item.get("binding_requirement")) if item.get("binding_requirement") in LEVELS else 0)
+    return level_index(level) >= needed
+
+
+def in_server_scope(item: dict, target_market: str, requirement: str | None = None) -> bool:
+    """Server-side scope of one evidence item: its server-computed binding reaches the field's binding requirement
+    (see binding_satisfies: `unclear` never does) and it is either from the target market or an item the server-side
+    portability policy accepted (`portable_to_target_market`, set by the evaluator from src/market_portability.py,
+    never by a model): a known foreign market, or a market the source does not establish where the field's schema
+    explicitly allows it. An unknown market is never the target market by default. A model declaration never
+    changes this."""
+    return binding_satisfies(item, requirement or field_requirement(None, item)) and market_in_scope(item, target_market)
+
+
+def market_in_scope(item: dict, target_market: str) -> bool:
+    """The item's server-side market is the target market, or a market the portability verdict lets count for it."""
+    return in_target_scope(item, target_market)
 
 
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
-                         evidence_seq: dict | None, target_market: str | None = None) -> bool:
+                         evidence_seq: dict | None, target_market: str | None = None,
+                         requirement: str | None = None) -> bool:
     """A conflict_resolved declaration closes a conflict only if it cites real evidence for this field:
     evidence_ids non-empty, every id stored for this field, at least one cited item in the server-side target scope
     (citing another variant's or another market's item resolves nothing for the target), and (when ordering is known)
@@ -167,7 +214,7 @@ def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: 
     field_ids = {str(e.get("evidence_id")) for e in evidence}
     if not cited or not set(cited) <= field_ids:
         return False
-    if target_market is not None and not any(in_server_scope(e, target_market) for e in evidence
+    if target_market is not None and not any(in_server_scope(e, target_market, requirement) for e in evidence
                                              if str(e.get("evidence_id")) in cited):
         return False
     seqs = evidence_seq or {}
@@ -221,8 +268,12 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         them (a `conflict_resolved` declaration newer than the latest evidence). A plain
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
     * foreign_market_only - no candidate is in the server-side target scope and the ones that may apply to the
-                        variant are from a known other market;
-    * variant_not_exact   - every candidate is about another trim/variant (variant_match=different, from the
+                        variant are from a known other market (not portable) or from a market the source does
+                        not establish (info `market_not_established`; an unknown market is never the target
+                        market unless the field's `unknown_market_policy` and the portability verdict allow it);
+    * variant_not_exact   - no candidate's server-side binding reaches the field's binding_requirement in the target
+                        scope: a target-market candidate bound only below it (variant_match=unclear), or
+                        every candidate is about another trim/variant (variant_match=different, from the
                         model or the server-side binding veto) or from a source that does not name the
                         model at all (variant_match=unbound).
 
@@ -242,13 +293,16 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     from .conflict_normalizer import classify_conflict
 
     name = spec["name"]
+    requirement = field_requirement(spec)
     info: list[str] = []
     portability = portability or {}
     evidence = [{**e, **portability[str(e.get("evidence_id"))]} if str(e.get("evidence_id")) in portability else e
                 for e in evidence]
     portable_ids = [str(e.get("evidence_id")) for e in evidence if e.get("portable_to_target_market") is True]
-    if portable_ids:
+    if any(e.get("portable_to_target_market") is True and not _unknown_market(e) for e in evidence):
         info.append("portable_foreign_fact")
+    if any(e.get("portable_to_target_market") is True and _unknown_market(e) for e in evidence):
+        info.append("portable_unknown_market_fact")
     declared_status = (declared or {}).get("status")
     out_provenance = str((output_entry or {}).get("provenance") or "").lower()
     out_value = (output_entry or {}).get("value", (output_entry or {}).get("values")) if output_entry else None
@@ -269,7 +323,7 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if not declaration_is_current(output_seq, last_evidence_seq):
         out_provenance = ""
     resolved = declared_status == "conflict_resolved" and (
-        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq, target_market))
+        not conflict or resolution_is_backed(declared, evidence, conflict, evidence_seq, target_market, requirement))
     if conflict and declared_status == "conflict_resolved":
         info.append("conflict_resolved_by_model" if resolved else "conflict_resolution_not_evidence_backed")
 
@@ -288,12 +342,18 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         state = "weak_provenance" if _has_value(out_value) else "missing"
     elif conflict and not resolved:
         state = "conflicting"                         # same scope, different values, not explicitly resolved
-    elif not any(in_server_scope(e, target_market) for e in with_value):
+    elif not any(in_server_scope(e, target_market, requirement) for e in with_value):
         # nothing in the server-side target scope: no declaration (found / conflict_resolved) can change that
         if all(str(e.get("variant_match") or "").lower() in NON_TARGET_VARIANTS for e in with_value):
             state = "variant_not_exact"
+        elif any(binding_satisfies(e, requirement) for e in with_value):
+            state = "foreign_market_only"             # the target variant, but only from another market
+        elif any(market_in_scope(e, target_market) for e in with_value):
+            state = "variant_not_exact"               # target-scope market, binding below the requirement
         else:
             state = "foreign_market_only"
+        if state == "foreign_market_only" and any(_unknown_market(e) for e in with_value):
+            info.append("market_not_established")    # an unknown source market is not the target market
         if declared_status in RESOLVED_STATUSES:
             info.append(f"declaration_outside_server_scope:{declared_status}")
     else:

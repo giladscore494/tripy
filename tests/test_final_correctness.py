@@ -157,7 +157,7 @@ def test_early_exit_rule(tmp_path, make_ctx):
     spec = {"name": "ac_max_charging_power_kw", "applicable": True}
     f = "ac_max_charging_power_kw"
     may, state = early_resolution_check(spec, events_for(ev("e1", 11.5, field=f, variant_match="unclear")), "IL")
-    assert state["state"] == "ok" and may is False                      # usable, but not enough to stop
+    assert state["state"] == "variant_not_exact" and may is False       # binding below the requirement: not ok
     assert early_resolution_check(spec, events_for(ev("e1", 19.2, field=f, variant_match="exact")), "IL")[0]
     assert early_resolution_check(spec, events_for(ev("e1", 19.2, field=f)), "IL")[0]   # no variant distinction
     may, state = early_resolution_check(spec, events_for(ev("e1", 19.2, field=f, variant_match="different")), "IL")
@@ -244,12 +244,17 @@ def test_interrupt_after_target_evidence_before_attempt_finished(tmp_path, make_
             (log_dir / "result.json").unlink()
             run_view = load_runs(tmp_path / "runs", "b")[0]
         bundle, rec = run_view["research_bundle"], run_view["field_recovery"]
-        assert bundle["field_states"]["cargo_volume_l"]["state"] == "ok"          # newest evidence counts
+        # newest evidence counts: the IL item stored mid-attempt is in the current state. Its server binding is
+        # only `unclear` (the news page names the model, not the variant), so it is NOT target-safe: the field stays
+        # out of the server scope (the US item binds exactly but is foreign) and remains retry-eligible.
+        assert bundle["field_states"]["cargo_volume_l"]["state"] == "foreign_market_only"
+        assert sorted((e["market"], e["variant_match"]) for e in bundle["evidence"]
+                      if e["field"] == "cargo_volume_l") == [("IL", "unclear"), ("US", "exact")]
         assert "cargo_volume_l" not in bundle["targets_without_stored_evidence"]
-        assert "cargo_volume_l" not in bundle["unresolved_targets"]
-        assert bundle["unresolved_target_states"] == [{"field": "gear_count", "state": "missing"}]
+        assert bundle["unresolved_target_states"] == [{"field": "cargo_volume_l", "state": "foreign_market_only"},
+                                                      {"field": "gear_count", "state": "missing"}]
         assert bundle["level2_targets_without_evidence"] == ["gear_count"]
-        assert rec["current_states"]["cargo_volume_l"] == "ok"
+        assert rec["current_states"]["cargo_volume_l"] == "foreign_market_only"
         assert rec["attempts"] == [] and rec["evaluation_primary"][0]["state"] == "foreign_market_only"  # history
 
 
