@@ -758,3 +758,80 @@ def test_candidate_backing_comes_from_the_same_place(corolla):
     assert store(corolla, field="warranty_years", value=7, document_id=_doc(
         corolla, "Toyota Corolla 1.8 Hybrid 2024\nSeven-year warranty", url="https://www.example.com/seven"),
         quote="Seven-year warranty")["stored"]
+
+
+# --- server scope is authoritative: a model declaration never turns non-target evidence into target evidence ---------
+
+SCOPE_SPEC = {"name": "fuel_tank_l", "applicable": True}
+
+
+def _scoped(eid, value=43, market="IL", variant_match="exact"):
+    return {"evidence_id": eid, "field": "fuel_tank_l", "value": value, "market": market,
+            "variant_match": variant_match, "admission_status": "accepted"}
+
+
+def _state(evidence, declared=None, last_seq=1):
+    from src.field_recovery import evaluate_field
+
+    return evaluate_field(SCOPE_SPEC, evidence, declared, None, "IL", last_seq)
+
+
+@pytest.mark.parametrize("evidence, expected", [
+    ([_scoped("e1", variant_match="different")], "variant_not_exact"),            # another variant + found
+    ([_scoped("e1", variant_match="unbound")], "variant_not_exact"),              # no variant at all + found
+    ([_scoped("e1", market="UK")], "foreign_market_only"),                        # foreign (not portable) + found
+    ([_scoped("e1")], "ok"),                                                      # exact target market + found
+    ([_scoped("e1", market="unknown")], "ok"),                                    # unverified market, exact variant
+    # an IL item of another variant next to an exact UK item: nothing is in the target scope
+    ([_scoped("e1", variant_match="different"), _scoped("e2", market="UK")], "foreign_market_only"),
+])
+def test_found_never_overrides_server_scope(evidence, expected):
+    result = _state(evidence, {"status": "found", "seq": 5, "evidence_ids": ["e1"]})
+    assert result["state"] == expected
+    if expected != "ok":
+        assert "declaration_outside_server_scope:found" in result["info"]
+
+
+def test_conflict_resolved_citing_out_of_scope_evidence_resolves_nothing():
+    other = _scoped("e1", variant_match="different")
+    cited = {"status": "conflict_resolved", "seq": 5, "evidence_ids": ["e1"]}
+    assert _state([other], cited)["state"] == "variant_not_exact"                  # no conflict: still not target
+    # a real same-scope conflict (43 vs 50, both IL exact) cannot be "resolved" by citing another variant's item
+    evidence = [_scoped("e2", 43), _scoped("e3", 50), _scoped("e4", 43, variant_match="different")]
+    seq = {"e2": 1, "e3": 2, "e4": 3}
+    from src.field_recovery import evaluate_field
+
+    result = evaluate_field(SCOPE_SPEC, evidence, {"status": "conflict_resolved", "seq": 9, "evidence_ids": ["e4"]},
+                            None, "IL", 3, evidence_seq=seq)
+    assert result["state"] == "conflicting" and "conflict_resolution_not_evidence_backed" in result["info"]
+    backed = evaluate_field(SCOPE_SPEC, evidence, {"status": "conflict_resolved", "seq": 9, "evidence_ids": ["e3"]},
+                            None, "IL", 3, evidence_seq=seq)
+    assert backed["state"] == "ok"                                                 # PR #18: an in-scope resolution
+
+
+def test_model_found_after_the_2_0_cargo_store_stays_variant_not_exact(corolla):
+    stored = store(corolla, field="cargo_volume_l", value=581, document_id=corolla.docs[TWO_LITRE],
+                   quote="Boot space: 581 litres", market="IL", variant_match="exact")
+    assert item(corolla, stored["evidence_id"])["variant_match"] == "different"
+    dispatch(corolla, "report_field_status", {"field": "cargo_volume_l", "status": "found",
+                                              "evidence_ids": [stored["evidence_id"]]})
+    result = state(corolla, "cargo_volume_l")
+    assert result["state"] == "variant_not_exact" and result["retry_eligible"]
+
+
+# --- the model's market is a claim: only the source establishes the evidence market ---------------------------------
+
+@pytest.mark.parametrize("doc, claim, market, basis", [
+    (GENERIC, "IL", "unknown", "unverified_model_claim"),       # source cannot establish a market + model IL
+    (GENERIC, "UK", "unknown", "unverified_model_claim"),       # source cannot establish a market + model UK
+    (TOYOTA_UK, "IL", "UK", "domain_tld:.uk"),                  # known UK source + model IL
+    (CARTUBE, "UK", "IL", "domain_tld:.il"),                    # known IL source + model UK
+])
+def test_source_market_always_wins_over_the_model_claim(corolla, doc, claim, market, basis):
+    quotes = {GENERIC: "Boot space: 596 litres", TOYOTA_UK: "Fuel tank capacity 43 l", CARTUBE: "תיבת הילוכים: e-CVT"}
+    fields = {GENERIC: ("cargo_volume_l", 596), TOYOTA_UK: ("fuel_tank_l", 43), CARTUBE: ("gearbox_type", "e-CVT")}
+    field, value = fields[doc]
+    stored = store(corolla, field=field, value=value, document_id=corolla.docs[doc], quote=quotes[doc], market=claim)
+    ev = item(corolla, stored["evidence_id"])
+    assert (ev["market"], ev["market_basis"]) == (market, basis)
+    assert ev.get("model_market_claim") == (claim if claim != market else None)    # the claim is kept for diagnostics

@@ -18,7 +18,7 @@ PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ES
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd",
                                  "power_hp": 750}}
 IL_PAGE = "https://www.cadillac.co.il/escalade-iq"
-US_PAGE = "https://www.cadillac.com/escalade-iq"
+US_PAGE = "https://www.cadillac.com/en-us/escalade-iq"
 # Identity text of the retrieved pages (they name the exact technical variant: model, propulsion, power)
 HEADERS = {IL_PAGE: 'קאדילאק אסקלייד IQ 2025 רכב חשמלי 750 כ"ס AWD', US_PAGE: "2025 Cadillac Escalade IQ, all-electric, 750 hp AWD"}
 

@@ -23,7 +23,7 @@ from src.ui.run_view import target_status_lines
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "government_record_id": "85095"},
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
-IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/escalade-iq"
+IL, US = "https://www.cadillac.co.il/escalade-iq", "https://www.cadillac.com/en-us/escalade-iq"
 HEADERS = {IL: 'קאדילאק אסקלייד IQ רכב חשמלי 750 כ"ס', US: "Cadillac Escalade IQ all-electric 750 hp"}
 QUOTES = {"gear_count": "Transmission: single-speed"}       # a gear count is admitted only when stated
 REQUESTED = [{"name": "electric_range_standard", "recovery_attempts": 1}, "ac_max_charging_power_kw",

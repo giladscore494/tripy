@@ -903,11 +903,10 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     model_market = args.get("market")
     market, market_basis = material.market, material.market_basis
     if market is None:
+        # the source does not establish a market: the model's market is a claim (kept as model_market_claim), never
+        # the evidence market, whichever market it names (a claim must not manufacture foreign or IL provenance)
         claimed = normalize_market(model_market)
-        if claimed and claimed != adm.target_market:
-            market, market_basis = claimed, "model_claim_other_market"
-        else:
-            market, market_basis = "unknown", "unverified_model_claim" if claimed else "not_determinable"
+        market, market_basis = "unknown", "unverified_model_claim" if claimed else "not_determinable"
     requirement = spec.get("binding_requirement")
     # most specific first: the value's own words, the table column, the stating fragment, its source line (other
     # numbers' bracket groups removed), the section heading above; the quote's OTHER fragments can only veto
