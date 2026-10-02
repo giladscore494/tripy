@@ -20,7 +20,7 @@ from src.ui import run_view
 
 PAGE = "https://www.cadillac.example/escalade-iq"
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
-                        "trim": "SPORT", "model_code": "X1", "government_record_id": "85095"},
+                        "trim": "SPORT", "model_code": "6EQ26", "government_record_id": "85095"},
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "drivetrain_normalized": "awd"}}
 
 
@@ -260,7 +260,7 @@ def cadillac(make_ctx):
     ctx = make_ctx()
     d = put_doc(ctx.cache, "https://www.cadillac.co.il/escalade-iq", "אסקלייד IQ מחיר 1,190,000 ש\"ח")
     a = put_doc(ctx.cache, "https://www.cadillac.co.il/escalade-iq/spec.pdf",
-                "מפרט טכני: סוללה 205 קוט\"ש. טווח נסיעה 742 ק\"מ WLTP.")
+                "מפרט טכני אסקלייד IQ 2025 6EQ26 חשמלי AWD: סוללה 205 קוט\"ש. טווח נסיעה 742 ק\"מ WLTP.")
     b = put_doc(ctx.cache, "https://www.cadillac.com/escalade-iq", "Battery: 205 kWh usable. EPA range 460 miles.")
     return ctx, d, a, b
 

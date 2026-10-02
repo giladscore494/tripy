@@ -129,7 +129,8 @@ def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches
 
 # The parser misses it (the label stands alone on its line, the availability is on the next line, not a bare value
 # cell); the label + stated availability make it admissible evidence once the model has read it.
-INTERIOR = "LYRIQ Luxury interior: climate and cooling overview.\nSeat ventilation\nFront row: standard"
+INTERIOR = ("Cadillac LYRIQ 2025 Luxury חשמלית AWD 528 כ\"ס interior: climate and cooling overview.\nSeat ventilation\n"
+            "Front row: standard")
 INTERIOR_URL = "https://www.cadillac.co.il/lyriq/interior"
 
 
@@ -354,7 +355,10 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     sweep = result["document_sweep"]
     layered = result["candidate_summary"]
     assert sweep["model_calls"] == 1 and sweep["external_calls"] == 0
-    assert sweep["fields_unresolved_before"] == 43 and sweep["fields_unresolved_after"] <= 18
+    # 8 before the variant_match=unclear fix: IL equipment / tyre / price values whose server-side binding stays
+    # below the field's exact_market_trim requirement (the trim is not bound for that fact) are no longer usable
+    # evidence, so they enter web recovery instead of counting as resolved.
+    assert sweep["fields_unresolved_before"] == 43 and sweep["fields_unresolved_after"] <= 22
     assert layered["fields_entering_web_recovery"] == sweep["fields_unresolved_after"]
     rec = result["field_recovery"]
     assert len(rec["queue"]) == sweep["fields_unresolved_after"]
