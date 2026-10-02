@@ -43,10 +43,10 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _stated_bool,
+from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 normalize_text, parse_number, reverse_hebrew_line)
-from .document_binding import TargetIdentity, bind, document_profile, target_identity
+from .document_binding import TargetIdentity, about_target, bind, document_profile, target_identity
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
 from .typed_values import as_boolean, numbers_in, typed_value
@@ -54,6 +54,7 @@ from .typed_values import as_boolean, numbers_in, typed_value
 ADMISSION_VERSION = "admission-v2"
 MIN_QUOTE_TOKENS, MIN_QUOTE_CHARS = 2, 4
 NUMERIC_MATCHERS = ("numeric", "price")
+COMPOUND_MATCHERS = ("warranty", "charging_time", "charging_window", "tire_size", "gearbox")
 FRAGMENT_WINDOW = 400          # squashed characters a "…"-joined quote may span in the source
 SHARED_TEXT_CACHE = 256        # documents whose target-independent material is shared by all runs
 REASON_TEXT = {
@@ -104,10 +105,14 @@ DATE_KEYS = (("json_ld", "dateModified"), ("meta", "article:modified_time"), ("m
 H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
 
 
+HEBREW_CONJUNCTION = re.compile(r"(?<![\w])ו(?=[א-ת]{2,})")
+
+
 def squash(text: Any) -> str:
     """Comparison form for quotes: normalized characters, lowercase, words and WHOLE numbers ("4,150", "146.0" stay
-    one token) separated by single spaces."""
-    return " ".join(TOKEN.findall(normalize_text(str(text or ""))))
+    one token) separated by single spaces; a Hebrew conjunction prefix (ו) is dropped on both sides, so a quote of
+    "חימום מושבים: יש" matches "וחימום מושבים: יש"."""
+    return " ".join(TOKEN.findall(HEBREW_CONJUNCTION.sub("", normalize_text(str(text or "")))))
 
 
 def _tokens(text: str) -> list[str]:
@@ -247,8 +252,11 @@ class AdmissionContext:
         vocab = harvest_vocabulary()
         self.number_words = {normalize_term(w): float(n) for n, words in (vocab.get("number_words") or {}).items()
                              for w in words}
-        boolean_rules = [r for r in self.dictionary.rules if r.matcher == "boolean"]
-        self.feature_labels = compile_terms(a for r in boolean_rules for a, _, _ in r.aliases)
+        self.feature_labels = self.dictionary.feature_labels
+        # every field label that can precede a number: the nearest one before a value names the field it belongs to
+        self.value_labels = [(r.name, pattern) for r in self.dictionary.rules
+                             if r.matcher in NUMERIC_MATCHERS + COMPOUND_MATCHERS for _, pattern, _ in r.aliases]
+        self.matcher_of = {r.name: r.matcher for r in self.dictionary.rules}
 
     @classmethod
     def for_run(cls, payload: dict | None, vehicle: dict | None, specs: list[dict],
@@ -321,10 +329,10 @@ def _in_order(haystack: str, parts: list[str], window: int) -> bool:
         first = haystack.find(f" {parts[0]} ", start)
         if first < 0:
             return False
-        end, ok = first + len(parts[0]) + 1, True
+        end, ok, limit = first + len(parts[0]) + 1, True, first + window + 2
         for part in parts[1:]:
-            pos = haystack.find(f" {part} ", end)
-            if pos < 0 or pos + len(part) - first > window:
+            pos = haystack.find(f" {part} ", end, limit)      # bounded: never a scan of the rest of the document
+            if pos < 0:
                 ok = False
                 break
             end = pos + len(part) + 1
@@ -360,16 +368,66 @@ def _same_value(spec: dict, claimed: Any, candidate: Any) -> bool:
     return squash(claimed) == squash(candidate) or normalize_term(str(claimed)) == normalize_term(str(candidate))
 
 
-def value_clause(text: str, position: int | None) -> str:
+def clause_span(text: str, position: int | None, breaks: re.Pattern = CLAUSE_BREAK) -> tuple[int, int]:
     if position is None:
-        return text
+        return 0, len(text)
     start = 0
-    for m in CLAUSE_BREAK.finditer(text):      # (an endpos would cut the lookaheads: ", 185" is no break)
+    for m in breaks.finditer(text):            # (an endpos would cut the lookaheads: ", 185" is no break)
         if m.start() >= position:
             break
         start = m.end()
-    end_match = CLAUSE_BREAK.search(text, position)
-    return text[start:end_match.start() if end_match else len(text)]
+    end_match = breaks.search(text, position)
+    return start, end_match.start() if end_match else len(text)
+
+
+def value_clause(text: str, position: int | None, breaks: re.Pattern = CLAUSE_BREAK) -> str:
+    start, end = clause_span(text, position, breaks)
+    return text[start:end]
+
+
+NOUN_AFTER = re.compile(r"\s*-?\s*(?!(?:at|from|to|and|or|with|in|on|for|by|per|each|approx|up)\b)[a-z]{3,}")
+PAREN_GROUP = re.compile(r"[(\[][^()\[\]]*[)\]]")
+
+
+def semantic_clause(text: str, position: int | None) -> str:
+    """What a value's own words are: its clause, up to the next number after it ("596 litres, 1,526 litres with
+    seats folded" -> "596 litres, "), inside its bracket group when it sits in one ("(system 185 Nm)"), and without
+    other bracket groups that hold numbers (qualifiers such as "(system)" before it stay)."""
+    if position is None:
+        return text
+    start, end = clause_span(text, position)
+    number = NUMBER.match(text, position) or re.match(r"\S+", text[position:])
+    after = position + (number.end() - number.start() if number else 0)
+    nxt = NUMBER.search(text, after, end)
+    end = nxt.start() if nxt else end
+    for group in PAREN_GROUP.finditer(text, start, end):
+        if group.start() <= position < group.end():
+            return text[group.start() + 1:group.end() - 1]
+    segment = text[start:end]
+    return PAREN_GROUP.sub(lambda g: " " if re.search(r"\d", g.group(0)) else g.group(0), segment)
+
+
+def _nearest_label(adm: AdmissionContext, lead: str) -> str | None:
+    """The field whose label ends closest before a value (the longest label wins at the same end)."""
+    best: tuple[int, int, str] | None = None
+    for name, pattern in adm.value_labels:
+        for m in pattern.finditer(lead):
+            key = (m.end(), m.end() - m.start(), name)
+            if best is None or key[:2] > best[:2]:
+                best = key
+    return best[2] if best else None
+
+
+def _backing_candidates(material: DocumentMaterial, spec: dict, value: Any, fragment: str) -> list[dict]:
+    """The parser's own pairing of this field and value, from the SAME place in the document as the quote."""
+    frag = " " + squash(fragment) + " "
+    lines = [" " + squash(line) + " " for line in _source_lines(material, fragment)]
+    out = []
+    for cand in _matching_candidates(material, spec["name"], value, spec):
+        cq = " " + squash(cand.get("quote")) + " "
+        if frag.strip() and (frag in cq or cq in frag or any(cq.strip() and cq in line for line in lines)):
+            out.append(cand)
+    return out
 
 
 def _unit_token(d, text: str, end: int) -> tuple[str | None, int]:
@@ -408,8 +466,8 @@ def _quote_numbers(text: str, number_words: dict[str, float], d, rule) -> list[t
     warranty_units = set(d.km_units) | {normalize_term(u) for u in d.vocabulary.get("year_units") or []}
     if rule is not None and (rule.units or rule.conversions or rule.matcher == "warranty"):
         for word, value in number_words.items():
-            for m in re.finditer(rf"(?<![\wא-ת-])(?:[ובהלמשכ]{{1,2}})?{re.escape(word)}(?![\wא-ת-])", text):
-                unit, _ = _unit_token(d, text, m.end())
+            for m in re.finditer(rf"(?<![\wא-ת-])(?:[ובהלמשכ]{{1,2}})?{re.escape(word)}(?![\wא-ת])", text):
+                unit, _ = _unit_token(d, text, m.end() + (1 if text[m.end():m.end() + 1] == "-" else 0))
                 if unit and (_classify_unit(rule, unit)[0] in ("ok", "convert")
                              or (rule.matcher == "warranty" and not rule.units and unit in warranty_units)):
                     out.append((value, m.start(), m.end()))
@@ -449,18 +507,24 @@ def _stated_availability(adm: AdmissionContext, d, rule, text: str) -> list[bool
     values: list[bool] = []
     for start, end in _alias_positions(rule, text):
         rest = text[end:end + 80]
-        if not rest.split("\n", 1)[0].strip(" :|=-\t"):      # a label alone on its line: the value is below
+        first = rest.split("\n", 1)[0].strip(" :|=\t")
+        if first in d.negative_values:                       # "Ventilated seats -", "Sunroof | ✗": the cell itself
+            values.append(False)
+            continue
+        if not first.strip(" -"):                             # a label alone on its line: the value is below
             rest = rest.split("\n", 1)[1] if "\n" in rest else ""
+        rest = rest.lstrip(" :|=-\t")
         other = adm.feature_labels.search(rest) if adm.feature_labels else None
         rest = rest[:other.start()] if other else rest
-        rest = FEATURE_BREAK.split(rest, maxsplit=1)[0] if not rest.lstrip(" :|=-\t").startswith(("(", "[")) \
-            else rest.split(")")[0]
-        stated = (False, "absent") if d.negative_terms and d.negative_terms.search(rest) else _stated_bool(d, rest)
+        rest = rest.split(")")[0] if rest.startswith(("(", "[")) else FEATURE_BREAK.split(rest, maxsplit=1)[0]
+        stated = _stated_bool(d, rest)                        # the value written first wins
         if stated is None:
             cell = rest.strip(" :|=-\t()[]")
             parsed = _bool_value(d, cell) if cell else None
             if parsed is not None:
                 stated = parsed
+            elif d.negative_terms and d.negative_terms.search(rest):
+                stated = (False, "absent")
             elif statement and statement.search(rest):
                 stated = (True, "standard")
         if stated is not None:
@@ -482,6 +546,13 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
     d = adm.dictionary
     matcher = spec.get("matcher") or (rule.matcher if rule else None)
     text = PER_100.sub(_per_100, normalize_text(fragment))
+    if spec.get("value_type") == "boolean" or matcher == "boolean":
+        # booleans only through the statement rules (a parse of a flattened quote can lend a neighbour's "yes")
+        stated = _stated_availability(adm, d, rule, text)
+        claimed = as_boolean(value)
+        if stated and claimed in stated and (not claimed) not in stated:
+            return Entailment(True, "stated_availability" if claimed else "stated_absence", fragment=text)
+        return Entailment(False, reason="value_not_stated")
     parse_text = _gear_words(text, adm.number_words) if matcher == "gearbox" else text
     parsed = harvest_text(parse_text, adm.parse_specs, dictionary=d)
     own = [c for c in parsed if normalize_field_name(c.get("field")) == spec["name"]]
@@ -489,15 +560,15 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
         if _same_value(spec, value, cand.get("value")):
             raw = normalize_text(str(cand.get("raw_value") or ""))
             hit = parse_text.find(raw) if raw else -1
+            if hit >= 0 and matcher in NUMERIC_MATCHERS:
+                # "length x width x height 4650 x 1790 x 1460 mm": the nearest label before a value names its field
+                start, _ = clause_span(parse_text, hit)
+                nearest = _nearest_label(adm, parse_text[start:hit])
+                if nearest is not None and nearest != spec["name"]:
+                    continue
             return Entailment(True, f"deterministic_parse:{cand.get('extraction_method')}",
                               position=hit if hit >= 0 else None, fragment=parse_text,
                               details={"unit": cand.get("unit")})
-    if spec.get("value_type") == "boolean" or matcher == "boolean":
-        stated = _stated_availability(adm, d, rule, text)
-        claimed = as_boolean(value)
-        if stated and claimed in stated and (not claimed) not in stated:
-            return Entailment(True, "stated_availability" if claimed else "stated_absence", fragment=text)
-        return Entailment(False, reason="value_not_stated")
     if matcher == "tire_size":
         sizes = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(text)}
         claimed = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(normalize_text(str(value)))}
@@ -528,6 +599,8 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
         found = None
         for q, start, end in quote_numbers:
             kind, unit, operation = _number_unit_kind(d, rule, text, end, matcher)
+            if kind == "none" and rule is not None and rule.units and NOUN_AFTER.match(text, end):
+                kind = "other"          # "6 speakers": a count of something else, not this field's unit
             if _close(q, number):
                 if kind in ("other", "convert"):
                     found = found or ("unit", kind)
@@ -546,12 +619,34 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
         first_position = found[1] if first_position is None else first_position
     # the number must be stated FOR THIS FIELD: its label in the value's clause, or the parser's own pairing of this
     # field and value in this document; and not a number the quote's own parse gives to another field
+    start, _ = clause_span(text, first_position)
     clause = value_clause(text, first_position)
-    # compound matchers anchor on their shared vocabulary ("אחריות: שלוש שנים", "AC charging 11 kW"), not field aliases
-    anchors = {"warranty": d.warranty_terms, "charging_time": d.charging, "charging_window": d.charging}.get(matcher)
-    labelled = bool(rule is None or not rule.aliases or _alias_positions(rule, clause)
+    # The number must be stated FOR THIS FIELD. The nearest field label before it names its field
+    # ("length / width / height: 4,650 / 1,790 / 1,460" gives 1,460 to height, never to width).
+    nearest = _nearest_label(adm, text[start:first_position])
+    # components of one compound statement share their label ("אחריות" heads years, km and the warranty text);
+    # the kind / AC-DC checks below decide between them
+    sibling = nearest is not None and matcher in COMPOUND_MATCHERS and adm.matcher_of.get(nearest) == matcher
+    if nearest is not None and nearest != spec["name"] and not sibling:
+        return Entailment(False, reason="value_belongs_to_other_field")
+    # compound matchers anchor on their shared vocabulary ("אחריות: שלוש שנים", "AC charging 11 kW"), and must
+    # still be THIS component: the warranty kind (vehicle vs battery) and the charging side (AC vs DC)
+    anchors = {"warranty": d.warranty_terms, "charging_time": d.charging, "charging_window": d.charging,
+               "numeric": d.charging if rule is not None and rule.require_context else None}.get(matcher)
+    # the parser's own pairing of this field and value at the same place (a table row whose label cell the quote
+    # does not repeat) already settled label, kind and AC/DC side
+    backed = bool(material and _backing_candidates(material, spec, value, fragment))
+    if matcher == "warranty" and not backed:
+        kind = "battery" if _contains(d.warranty_battery, clause) else "vehicle"
+        if kind != (rule.warranty_kind if rule is not None and rule.warranty_kind else "vehicle"):
+            return Entailment(False, reason="value_belongs_to_other_field")
+    if not backed and (matcher in ("charging_time", "charging_window")
+                       or (rule is not None and rule.require_context and rule.positive and rule.negative)):
+        if not _owner(rule, text, first_position, first_position):
+            return Entailment(False, reason="value_belongs_to_other_field")
+    labelled = bool(rule is None or not rule.aliases or nearest == spec["name"] or sibling
+                    or _alias_positions(rule, clause)
                     or (anchors is not None and anchors.search(clause)))
-    backed = bool(material and _matching_candidates(material, spec["name"], value, spec))
     if not (labelled or backed):
         others = [c for c in parsed if normalize_field_name(c.get("field")) != spec["name"]
                   and _same_value(spec, value, c.get("value"))]
@@ -672,17 +767,55 @@ def _matching_candidates(material: DocumentMaterial, name: str, value: Any, spec
             if normalize_field_name(c.get("field")) == name and _same_value(spec, value, c.get("value"))]
 
 
-def _source_lines(material: DocumentMaterial, fragment: str, around: int = 0) -> list[str]:
-    """The document line(s) holding a quote fragment (whole tokens: "596 litres" is not inside "1,596 litres"),
-    optionally with `around` neighbouring lines."""
+def _line_index(material: DocumentMaterial, fragment: str) -> int | None:
     probe = " " + squash(fragment) + " "
     if probe.strip() == "":
-        return []
+        return None
     for index, (_, squashed) in enumerate(material.lines):
         if probe in squashed or squashed in probe and len(squashed) > 8:
-            lo, hi = max(0, index - around), min(len(material.lines), index + around + 1)
-            return [orig for orig, _ in material.lines[lo:hi]]
+            return index
+    return None
+
+
+def _source_lines(material: DocumentMaterial, fragment: str, around: int = 0) -> list[str]:
+    """The document line(s) holding a quote fragment (whole tokens: "596 litres" is not inside "1,596 litres"),
+    optionally with `around` neighbouring lines. A fragment found only in page source / structured data (not a
+    visible line) gets the surrounding window of that source instead, so it keeps its context."""
+    index = _line_index(material, fragment)
+    if index is not None:
+        lo, hi = max(0, index - around), min(len(material.lines), index + around + 1)
+        return [orig for orig, _ in material.lines[lo:hi]]
+    probe = squash(fragment)
+    pos = material.haystack.find(" " + probe + " ") if probe else -1
+    return [material.haystack[max(0, pos - 80):pos + len(probe) + 40]] if pos >= 0 else []   # its own object
+
+
+def _section_headings(material: DocumentMaterial, fragment: str, adm: AdmissionContext) -> list[str]:
+    """The nearest heading-like line above the fragment's line, within a few lines ("2.0 Hybrid", "Electric motor"
+    above "Max. power 95 hp" / "Max. torque 185 Nm"): short, no value with a unit, not a menu."""
+    index = _line_index(material, fragment)
+    if not index:
+        return []
+    for orig, _ in material.lines[max(0, index - 6):index][::-1]:
+        norm = normalize_text(orig)
+        if any(adm.dictionary.unit_after.match(norm, m.end()) for m in NUMBER.finditer(norm)):
+            continue                                   # another value row of the same section
+        menu = bool(re.search(r"[|•·]", norm)) or not about_target(orig, adm.identity).strip()
+        return [orig] if len(norm) <= 40 and not menu else []
     return []
+
+
+def _line_context(line: str, value: Any) -> str:
+    """A source line without the bracket groups that hold OTHER numbers ("596 litres (581 for the 2.0)")."""
+    norm = normalize_text(line)
+    numbers = numbers_in(value)
+
+    def keep(group: re.Match) -> str:
+        inside = [parse_number(m.group(1)) for m in NUMBER.finditer(group.group(0))]
+        if not inside or any(n is not None and any(_close(n, v) for v in numbers) for n in inside):
+            return group.group(0)
+        return " "
+    return PAREN_GROUP.sub(keep, norm)
 
 
 def _clause_in_line(line: str, value: Any) -> str:
@@ -692,7 +825,7 @@ def _clause_in_line(line: str, value: Any) -> str:
         for m in NUMBER.finditer(norm):
             parsed = parse_number(m.group(1))
             if parsed is not None and _close(parsed, number):
-                return value_clause(norm, m.start(1))
+                return semantic_clause(norm, m.start(1))
     return norm
 
 
@@ -753,10 +886,12 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if not _plausible(spec, value):
         return reject(["implausible_value"])
     fragment = entailment.fragment or normalize_text(quote)
-    clause = value_clause(fragment, entailment.position)
+    clause = semantic_clause(fragment, entailment.position)
     source_lines = _source_lines(material, fragment)
     line_clauses = [_clause_in_line(line, value) for line in source_lines]
-    violation = semantic_violation(adm, spec, [clause, *line_clauses])
+    headings = _section_headings(material, fragment, adm)
+    violation = semantic_violation(adm, spec, [clause, *line_clauses,
+                                               *[h for h in headings if not re.search(r"\d", h)]])
     if violation:
         return reject(["semantic_mismatch"], semantic_note=violation)
     checks["semantics"] = "ok"
@@ -774,10 +909,16 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         else:
             market, market_basis = "unknown", "unverified_model_claim" if claimed else "not_determinable"
     requirement = spec.get("binding_requirement")
-    layers = [("value_clause", clause if clause != fragment else ""), ("quote", quote),
-              ("source_line", " ".join(line_clauses)), ("column_header", " | ".join(dict.fromkeys(hints)))]
+    # most specific first: the value's own words, the table column, the stating fragment, its source line (other
+    # numbers' bracket groups removed), the section heading above; the quote's OTHER fragments can only veto
+    other_fragments = [f for f in quote_fragments(quote) if normalize_text(f) != fragment]
+    layers = [("value_clause", clause if clause != fragment else ""),
+              ("column_header", " | ".join(dict.fromkeys(hints))), ("quote", _line_context(fragment, value)),
+              ("source_line", " ".join(_line_context(line, value) for line in source_lines)),
+              ("section_heading", " ".join(headings))]
     binding = bind(adm.identity, material.profile["statuses"], layers,
-                   [("model_variant", _text_arg(args.get("variant")))], market=market, requirement=requirement,
+                   [("model_variant", _text_arg(args.get("variant"))),
+                    *[("other_quote_fragment", f) for f in other_fragments]], market=market, requirement=requirement,
                    model_declared_different=claim == "different",
                    trim_named_in_document=material.profile.get("trim_named_in_document", False))
 

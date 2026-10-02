@@ -471,7 +471,10 @@
       "מומנט מערכת",
       "מנוע חשמלי",
       "המנוע החשמלי",
-      "מנוע החשמל"
+      "מנוע החשמל",
+      "hybrid system",
+      "מערכת היברידית",
+      "מערכת ההנעה ההיברידית"
      ],
      "reason": "for hybrids torque_nm is the combustion engine's torque; motor / system torque is a different quantity"
     }
@@ -593,6 +596,7 @@
    "semantic_exclusions": [
     {
      "applies_to": [
+      "hybrid",
       "plug_in"
      ],
      "terms": [
@@ -601,7 +605,9 @@
       "ev mode",
       "in ev mode",
       "במצב חשמלי",
-      "חשמלי בלבד"
+      "חשמלי בלבד",
+      "electric mode",
+      "במצב חשמלי טהור"
      ],
      "reason": "electric-only top speed"
     }
@@ -710,6 +716,24 @@
       "סוללה ריקה"
      ],
      "reason": "charge-sustaining consumption of a plug-in hybrid"
+    },
+    {
+     "terms": [
+      "urban",
+      "city",
+      "עירוני",
+      "עירונית",
+      "בעיר",
+      "extra-urban",
+      "extra urban",
+      "highway",
+      "motorway",
+      "בינעירוני",
+      "בין עירוני",
+      "low phase",
+      "high phase"
+     ],
+     "reason": "a single-cycle figure, not combined"
     }
    ]
   },
@@ -861,7 +885,20 @@
     }
    ],
    "semantic_definition": "Gross (total) traction-battery energy capacity in kWh.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "usable",
+      "net",
+      "נטו",
+      "שימושית",
+      "שמישה",
+      "זמינה"
+     ],
+     "reason": "usable (net) capacity, not gross"
+    }
+   ]
   },
   {
    "name": "battery_usable_kwh",
@@ -921,7 +958,18 @@
     }
    ],
    "semantic_definition": "Usable (net) traction-battery energy capacity in kWh.",
-   "binding_requirement": "exact_technical_variant"
+   "binding_requirement": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "gross",
+      "total",
+      "ברוטו",
+      "כוללת"
+     ],
+     "reason": "gross capacity, not usable"
+    }
+   ]
   },
   {
    "name": "electric_range_km",

@@ -51,6 +51,13 @@ VETO_CAP = {"model": "unknown", "body": "generation", "propulsion": "generation"
 NON_TARGET_MATCHES = ("different", "unbound")
 _VOCAB: dict[str, tuple[float, dict]] = {}
 _COMPILED: dict[tuple, Any] = {}
+# "<X> version / trim", "version / trim / גרסת / רמת גימור <X>": the text names a trim
+NAMED_TRIM = re.compile(r"(?:\b(?:version|trim)\s*:?\s*|(?:גרסת|גרסה|רמת גימור)\s*:?\s*(?:ה-?)?)([a-zא-ת][\w-]{2,})"
+                        r"|\b([a-z][\w-]{2,})\s+(?:version|trim)\b")
+GENERIC_NAMED = {"the", "this", "that", "each", "every", "all", "base", "entry", "top", "new", "old", "other", "same",
+                 "hybrid", "היברידית", "היברידי", "חשמלית", "הבסיס", "הבסיסית", "העליונה", "החדשה", "level", "line"}
+NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout\b|(?<![א-ת])לא(?![א-ת])|ללא|למעט|"
+                          r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
 YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
                   r"l\b|ליטר|kw|hp|כ\"ס|ש\"ח|₪|€|\$|lb|wh))")
 
@@ -99,6 +106,7 @@ class TargetIdentity:
     drivetrain: str | None = None
     model_code_tokens: list[str] = field(default_factory=list)
     trim_tokens: list[str] = field(default_factory=list)
+    trim_words: list[str] = field(default_factory=list)      # every word of the government trim (generic ones too)
     target_market: str = "IL"
 
     def as_dict(self) -> dict:
@@ -192,6 +200,7 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         drivetrain=_drivetrain(engine.get("drivetrain_normalized") or vehicle.get("drivetrain")),
         model_code_tokens=_code_tokens(ident.get("model_code") or vehicle.get("model_code")),
         trim_tokens=_trim_tokens(ident.get("trim") or vehicle.get("trim"), vocab),
+        trim_words=[t for t in re.split(r"[^\wא-ת]+", str(ident.get("trim") or vehicle.get("trim") or "").lower()) if t],
         target_market=target_market or "IL")
 
 
@@ -287,6 +296,15 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     codes = [c for c in identity.model_code_tokens if re.search(rf"(?<![a-z0-9]){re.escape(c)}(?![a-z0-9])", norm)]
     phrase = " ".join(identity.trim_tokens)
     trims = _terms(("trim", phrase), [phrase]) if phrase else None
+    trim = ""
+    named = [w for w in NAMED_TRIM.findall(norm) for w in w if w]
+    if identity.trim_words and any(w not in identity.trim_words and w not in GENERIC_NAMED for w in named):
+        trim = "negated"        # "the Premium version", "גרסת ה-Premium": a fact about ANOTHER named trim
+    for m in trims.finditer(norm) if trims else ():
+        # "not available on Business", "לא בגרסת Business": the trim is named to EXCLUDE it
+        trim = "negated" if NEGATED_TRIM.search(norm[max(0, m.start() - 25):m.start()]) else "match"
+        if trim == "match":
+            break
     return {
         "manufacturer": bool(man and man.search(norm)),
         "model": _family_status(norm, identity, vocab),
@@ -299,7 +317,7 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
         "power": _powers(norm, vocab),
         "drivetrain": _keys_found(norm, "drivetrain_terms", vocab),
         "model_code": bool(codes),
-        "trim": bool(trims and trims.search(norm)),
+        "trim": trim,
     }
 
 
@@ -315,8 +333,10 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
         if found == {"target"}:
             return "match"
         return "mixed" if "target" in found else "mismatch"
-    if dim in ("model_code", "trim", "manufacturer"):
-        return "match" if found else "absent"   # (a column header can still make the trim a mismatch, see bind)
+    if dim == "trim":
+        return {"match": "match", "negated": "mismatch"}.get(found or "", "absent")
+    if dim in ("model_code", "manufacturer"):
+        return "match" if found else "absent"
     if not found:
         return "absent"
     if dim == "year":
@@ -397,18 +417,47 @@ def identity_zone(*, title: str | None, url: str | None, headings: list[str] | N
     return "\n".join(segments)
 
 
+def zone_names_target(zone: str, identity: TargetIdentity) -> bool:
+    return "target" in _family_status(normalize_text(zone), identity, vocabulary())
+
+
+def _other_family_pattern(identity: TargetIdentity):
+    families = vocabulary().get("model_families") or {}
+    terms = [t for name, aliases in families.items() if name != identity.family for t in aliases]
+    return _terms(("other_families", identity.family), terms) if terms else None
+
+
+def about_target(text: str, identity: TargetIdentity) -> str:
+    """The lines of a text that do not name ANOTHER model family without naming the target (menus, teasers and
+    related-model boxes say nothing about this vehicle)."""
+    other = _other_family_pattern(identity)
+    if other is None:
+        return text
+    kept = []
+    for line in (text or "").splitlines():
+        norm = normalize_text(line)
+        if other.search(norm) and "target" not in _family_status(norm, identity, vocabulary()):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def document_profile(*, text: str, title: str | None, url: str | None, identity: TargetIdentity,
                      headings: list[str] | None = None) -> dict:
     """Document-level dimension statuses. The identity zone (title, URL, headings) decides first; the full text
     only confirms (see FULL_TEXT_MISMATCH). The trim counts only when the identity zone names it."""
     zone = identity_zone(title=title, url=url, headings=headings, text=text, identity=identity)
+    named = zone_names_target(zone, identity)
     zone_found = mentions(zone, identity)
-    full_found = mentions(f"{zone}\n{text or ''}", identity)
+    full_found = mentions(f"{zone}\n{about_target(text or '', identity)}", identity)
     combined: dict[str, str] = {}
     zone_statuses = {dim: dimension_status(dim, zone_found[dim], identity) for dim in DIMENSIONS}
     full_statuses = {dim: dimension_status(dim, full_found[dim], identity) for dim in DIMENSIONS}
     for dim in DIMENSIONS:
-        if zone_statuses[dim] != "absent" or dim == "trim":
+        if dim == "trim":
+            combined[dim] = zone_statuses[dim] if named else "absent"
+        elif zone_statuses[dim] != "absent" and (named or zone_statuses[dim] != "mismatch"):
+            # a zone that never names the target family (a price list headed by another model) cannot veto
             combined[dim] = zone_statuses[dim]
         elif full_statuses[dim] == "mismatch":
             combined[dim] = FULL_TEXT_MISMATCH.get(dim, "absent")
@@ -435,11 +484,29 @@ def _layer_statuses(name: str, text: str, identity: TargetIdentity, trim_named_i
     if name == "column_header":
         found = mentions(text, identity)
         technical = found["displacement"] or found["power"] or found["propulsion"]
-        # a header naming none of the target trim, on a page that names the target trim elsewhere, is ANOTHER trim
-        # (Business | Premium | Executive); a technical header (1.8 Hybrid 140) says nothing about trims
-        if st["trim"] == "absent" and trim_named_in_document and not technical:
+        # a header with words beyond technical terms and the target trim's own words names ANOTHER trim
+        # ("Premium", "1.8 Hybrid Premium", "Business Plus"); a technical header (1.8 Hybrid 140) names none
+        if _header_extra_words(text, identity):
+            st["trim"] = "mismatch"
+        elif st["trim"] == "absent" and trim_named_in_document and not technical:
             st["trim"] = "mismatch"
     return st
+
+
+def _header_extra_words(header: str, identity: TargetIdentity) -> list[str]:
+    vocab = vocabulary()
+    known: set[str] = set(identity.trim_words) | {w.lower() for w in vocab.get("header_noise_words") or []}
+    own_names = [*(vocab.get("model_families") or {}).get(identity.family or "", []),
+                 *(vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])]
+    for terms in [own_names] + [t for group in ("propulsion_terms", "propulsion_weak_terms", "body_terms",
+                                                "drivetrain_terms") for t in (vocab.get(group) or {}).values()]:
+        for term in terms:
+            known |= set(re.split(r"[^\wא-ת]+", normalize_text(term)))
+    for key in ("displacement_suffixes", "power_units", "cc_units", "engine_words", "generic_trim_words"):
+        for term in vocab.get(key) or []:
+            known |= set(re.split(r"[^\wא-ת]+", normalize_text(term)))
+    words = [w for w in re.split(r"[^\wא-ת]+", normalize_text(header)) if w and not re.search(r"\d", w)]
+    return [w for w in words if w not in known and len(w) > 1]
 
 
 def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tuple[str, str]] | None = None,

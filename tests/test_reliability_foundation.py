@@ -480,7 +480,7 @@ def page(corolla):
     ("battery_usable_kwh", 5, "5 kWh", "quote_not_in_source"),                         # not inside "13.5 kWh"
     ("cargo_volume_l", 43, "Boot space … 43 litres", "field_label_not_in_quote"),     # no stitching across lines
     ("cargo_volume_l", 43, "Fuel tank: 43 litres; boot space 596 litres", "value_belongs_to_other_field"),
-    ("top_speed_kmh", 100, "Acceleration 0-100 km/h: 9.2 s", "field_label_not_in_quote"),
+    ("top_speed_kmh", 100, "Acceleration 0-100 km/h: 9.2 s", "value_belongs_to_other_field"),
     ("warranty_years", 5, "Warranty: 3 years; 5 seats", "unit_mismatch"),
     ("torque_nm", 185, "185 Nm", "semantic_mismatch"),                                 # the source line says system
     ("torque_nm", 185, "Combined torque, 185 Nm", "semantic_mismatch"),
@@ -596,6 +596,8 @@ def test_schema_not_applicable_rule_never_overrules_target_evidence():
     assert state_of(foreign_cvt) == "missing"                     # a foreign / unclear gearbox decides nothing
     assert state_of(exact_ecvt) == "not_applicable"
     assert state_of(exact_ecvt, six) == "ok"                      # the field's own target evidence is judged as usual
+    info = evaluate_fields([spec], events(exact_ecvt, six), "IL")[0]["info"]
+    assert any(i.startswith("schema_rule_conflict:gearbox_type") for i in info)      # ... and the clash is visible
 
 
 def test_fields_outside_the_requested_subset_keep_their_policy(make_ctx):
@@ -627,3 +629,132 @@ def test_odd_argument_types_are_rejected_not_crashing(corolla):
                  quote="נפח תא מטען 581-588 ליטר")["reasons"] == ["invalid_value_type"]
     out = store(corolla, field="gearbox_type", value="e-CVT", document_id=doc, quote=["תיבת הילוכים: e-CVT"], unit=5)
     assert out["stored"]
+
+
+# --- regressions found by the second adversarial review ---------------------------------------------------------
+
+def _doc(corolla, text, url="https://www.example.com/review", doc_type="text"):
+    from conftest import cache_source
+
+    return cache_source(corolla.cache, url, text, doc_type=doc_type)
+
+
+def test_another_variant_mentioned_in_the_same_line_or_section_still_vetoes(corolla):
+    review = _doc(corolla, "Toyota Corolla Touring Sports 1.8 Hybrid 2024 review\nThe 1.8 Hybrid remains the volume seller."
+                           "\nFor comparison, the 2.0 Hybrid: bigger battery, boot space 581 litres.\n2.0 Hybrid\n"
+                           "Boot volume 581 litres")
+    for quote in ("boot space 581 litres", "The 1.8 Hybrid remains the volume seller … boot space 581 litres",
+                  "Boot volume 581 litres"):                 # same line / "…" from another line / section heading
+        corolla.evidence = EvidenceStore()                  # each quote judged on its own (no fact reuse)
+        out = store(corolla, field="cargo_volume_l", value=581, document_id=review, quote=quote)
+        assert out["variant_match"] == "different", (quote, out)
+    aside = _doc(corolla, "Toyota Corolla Touring Sports 1.8 Hybrid 2024\nBoot space 596 litres (581 litres for the "
+                          "2.0 Hybrid)", url="https://www.example.com/aside")
+    out = store(corolla, field="cargo_volume_l", value=596, document_id=aside,
+                quote="Boot space 596 litres (581 litres for the 2.0 Hybrid)")
+    assert out["variant_match"] == "exact"                   # another number's bracket group is not this value's
+
+
+@pytest.mark.parametrize("field, value, quote", [
+    ("width_mm", 1460, "Overall length x width x height 4650 x 1790 x 1460 mm"),
+    ("height_mm", 1790, 'רוחב: 1,790 מ"מ גובה: 1,460 מ"מ'),
+    ("warranty_years", 10, "Hybrid battery warranty: 10 years / 200,000 km"),
+    ("warranty_km", 200000, "Hybrid battery warranty: 10 years / 200,000 km"),
+    ("screen_size_in", 6, "Touchscreen with 6 speakers, 8 inch"),
+])
+def test_values_of_another_field_or_component_are_rejected(corolla, field, value, quote):
+    doc = _doc(corolla, "Toyota Corolla Touring Sports 1.8 Hybrid 2024\n" + quote, url=f"https://www.example.com/{field}")
+    out = store(corolla, field=field, value=value, document_id=doc, quote=quote)
+    assert out["stored"] is False, out
+
+
+def test_charging_values_stay_on_their_side(make_ctx):
+    import json as json_
+    from pathlib import Path
+
+    from conftest import cache_source
+    from src.db import build_level15_payload
+
+    rows = json_.loads((Path(__file__).resolve().parent.parent / "data" / "benchmark_v1_level15_snapshot.json")
+                       .read_text("utf-8"))["rows"]
+    payload = build_level15_payload(next(r for r in rows if r["upstream_record_id"] == "29053"))   # Kona EV
+    ctx = make_ctx()
+    ctx.admission = AdmissionContext.for_run(payload, None, resolve_requested_fields(None, propulsion="battery_electric"))
+    quote = "AC charging (0-100%, 11 kW): 6 h 5 min; DC charging (10-80%): 41 min"
+    doc = cache_source(ctx.cache, "https://www.example.co.il/kona", "Hyundai Kona Electric 2024\n" + quote)
+    swap = lambda f, v: dispatch(ctx, "store_evidence", {"field": f, "value": v, "document_id": doc, "quote": quote})
+    assert swap("ac_charging_time", "41 min")["stored"] is False and swap("dc_charging_time", "6 h 5 min")["stored"] is False
+    assert swap("dc_charging_time", "41 min")["stored"] and swap("ac_charging_time", "6 h 5 min")["stored"]
+
+
+def test_boolean_neighbours_and_negations_do_not_leak(corolla):
+    doc = _doc(corolla, "Toyota Corolla Touring Sports 1.8 Hybrid 2024\nHeated seats\nVentilated seats: yes\n"
+                        "Heated seats standard - ventilated seats not available\nVentilated seats -",
+               url="https://www.example.com/seats")
+    assert store(corolla, field="heated_seats", value=True, document_id=doc,
+                 quote="Heated seats Ventilated seats: yes")["stored"] is False
+    assert store(corolla, field="heated_seats", value=False, document_id=doc,
+                 quote="Heated seats standard - ventilated seats not available")["stored"] is False
+    assert store(corolla, field="ventilated_seats", value=False, document_id=doc, quote="Ventilated seats -")["stored"]
+    parsed = {(c["field"], c["value"]) for c in harvest_text("Heated seats standard - ventilated seats not available",
+                                                             load_schema())}
+    assert ("heated_seats", True) in parsed and ("heated_seats", False) not in parsed
+
+
+@pytest.mark.parametrize("header, text", [
+    ("1.8 Hybrid Business | 1.8 Hybrid Premium", None),
+    ("Business | Business Plus", None),
+    (None, "Ventilated seats: optional, not available on Business"),
+    (None, "The Premium version gets ventilated seats as standard"),
+])
+def test_other_trims_never_bind_as_the_target_trim(corolla, header, text):
+    if header:
+        first, second = header.split(" | ")
+        html = (f"<html><head><title>טויוטה קורולה טורינג ספורט 2024 1.8 היברידי</title></head><body><table>"
+                f"<tr><th>גרסה</th><th>{first}</th><th>{second}</th></tr>"
+                f"<tr><td>אוורור מושבים</td><td>אין</td><td>יש</td></tr></table></body></html>")
+        doc = _doc(corolla, html, url=f"https://www.cartube.co.il/{len(header)}", doc_type="html")
+        out = store(corolla, field="ventilated_seats", value=True, document_id=doc)
+    else:
+        doc = _doc(corolla, "טויוטה קורולה טורינג ספורט 2024 1.8 היברידי Business\n" + text,
+                   url=f"https://www.cartube.co.il/{len(text)}")
+        out = store(corolla, field="ventilated_seats", value=True, document_id=doc, quote=text)
+    assert out["stored"] and out["variant_match"] == "different", out
+
+
+def test_hybrid_torque_under_an_electric_motor_or_hybrid_system_heading_is_not_engine_torque(corolla):
+    doc = _doc(corolla, "\n".join(["Toyota Corolla Touring Sports 1.8 Hybrid 2024", "Petrol engine", "Max. power 98 hp",
+                                   "Max. torque 142 Nm", "Electric motor", "Max. power 95 hp", "Max. torque 185 Nm",
+                                   "Hybrid system", "Max torque: 205 Nm"]), url="https://www.example.com/torque")
+    assert store(corolla, field="torque_nm", value=142, document_id=doc, quote="Max. torque 142 Nm")["stored"]
+    for value, quote in ((185, "Max. torque 185 Nm"), (205, "Max torque: 205 Nm")):
+        assert store(corolla, field="torque_nm", value=value, document_id=doc,
+                     quote=quote)["reasons"] == ["semantic_mismatch"]
+
+
+def test_hidden_page_source_keeps_its_variant_context(corolla):
+    html = ("<html><head><title>Toyota Corolla Touring Sports 1.8 Hybrid 2024</title></head><body>"
+            "<h1>Toyota Corolla Touring Sports 1.8 Hybrid 2024</h1><p>Specifications below.</p>"
+            '<script>var other = {"name": "Corolla Touring Sports 2.0 Hybrid", "specs": "Boot volume 581 litres"};'
+            "</script></body></html>")
+    doc = _doc(corolla, html, url="https://www.example.com/hidden", doc_type="html")
+    out = store(corolla, field="cargo_volume_l", value=581, document_id=doc, quote="Boot volume 581 litres")
+    assert out["variant_match"] == "different", out
+
+
+def test_a_zone_that_never_names_the_target_cannot_veto(corolla):
+    doc = _doc(corolla, "מחירון טויוטה 2024\nיאריס היברידית 1.5 האצ'בק\nמחיר קורולה 1.8 היברידי Business: 159,990 ש\"ח",
+               url="https://www.example.co.il/pricelist")
+    out = store(corolla, field="list_price", value=159990, document_id=doc,
+                quote='מחיר קורולה 1.8 היברידי Business: 159,990 ש"ח')
+    assert out["stored"] and out["variant_match"] != "different", out
+
+
+def test_candidate_backing_comes_from_the_same_place(corolla):
+    doc = _doc(corolla, "Toyota Corolla Touring Sports 1.8 Hybrid 2024\nWarranty: 3 years\nThree years of free servicing",
+               url="https://www.example.com/service")
+    assert store(corolla, field="warranty_years", value=3, document_id=doc,
+                 quote="Three years of free servicing")["stored"] is False
+    assert store(corolla, field="warranty_years", value=7, document_id=_doc(
+        corolla, "Toyota Corolla 1.8 Hybrid 2024\nSeven-year warranty", url="https://www.example.com/seven"),
+        quote="Seven-year warranty")["stored"]

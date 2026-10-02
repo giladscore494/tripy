@@ -157,7 +157,7 @@ def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: 
 
 
 def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dict]],
-                               target_market: str = DEFAULT_TARGET_MARKET) -> str | None:
+                               target_market: str = DEFAULT_TARGET_MARKET, ignore_own: bool = False) -> str | None:
     """The schema's `not_applicable_when` rules: the field does not exist when target-market evidence of another
     field that binds EXACTLY to the target variant has one of the listed values (a gear count of a gearbox with no
     discrete gears). Never when the field has target evidence of its own: then the evaluator judges that evidence
@@ -165,7 +165,7 @@ def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dic
     own = [e for e in evidence_by_field.get(spec["name"], []) if _has_value(e.get("value"))
            and is_target_market(e.get("market"), target_market)
            and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
-    if own:
+    if own and not ignore_own:
         return None
     for rule in spec.get("not_applicable_when") or []:
         other = normalize_field_name(rule.get("field"))
@@ -180,7 +180,8 @@ def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dic
 
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
                    target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
-                   evidence_seq: dict | None = None, not_applicable_rule: str | None = None) -> dict:
+                   evidence_seq: dict | None = None, not_applicable_rule: str | None = None,
+                   schema_rule_conflict: str | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -231,6 +232,8 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
 
     if not_applicable_rule:
         info.append(f"not_applicable_by_schema_rule:{not_applicable_rule}")
+    elif schema_rule_conflict:
+        info.append(f"schema_rule_conflict:{schema_rule_conflict}")   # own target evidence vs the N/A rule
     if (not spec.get("applicable", True) or declared_status == "not_applicable"
             or out_provenance == "not_applicable" or not_applicable_rule):
         state = "not_applicable"
@@ -282,7 +285,8 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
-                           evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market))
+                           evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
+                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True))
             for spec in specs]
 
 

@@ -227,8 +227,9 @@ store_evidence request
                                                                                       field_label_not_in_quote /
                                                                                       value_belongs_to_other_field
   → semantics       unit (a USD price stays USD), plausible range, the field's semantic exclusions for this
-                    propulsion in the value's clause of the quote AND of its source line (a hybrid's
-                    torque_nm is the combustion engine's)                           → unit_* / implausible_value /
+                    propulsion in the value's own words (its clause up to the next number, its bracket group)
+                    in the quote AND in its source line, and in the section heading above it ("Electric
+                    motor" / "Max. torque 185 Nm" is not a hybrid's engine torque)  → unit_* / implausible_value /
                                                                                       semantic_mismatch
   → identity        binding level + variant_match (src/document_binding.py), market from the source
   → authority       source_authority (src/source_authority.py, data/source_rules.json)
@@ -241,11 +242,13 @@ family, model year, body, propulsion, engine displacement in cc, power, drivetra
 Each document gets a profile: its identity zone (title, URL, H1 headings or the first lines, keeping only the
 list segments that name the target model family) decides; the full text only confirms, so a navigation menu
 listing hybrids or SUVs never vetoes a page (another displacement / power / drivetrain in the full text only
-leaves the dimension unresolved). Each fact is bound through its own context, most specific first: the clause
-around the value in the quote, the quote, the source line's clause, the table column header of the value (years
-inside a fact are never read as model years). The trim counts only when the identity zone names it; a column
-header naming none of the target trim on a page that names it elsewhere is another trim, which vetoes
-`exact` for trim-sensitive fields (price, equipment). Levels: `unknown < model_family < generation < body_powertrain < exact_technical_variant
+leaves the dimension unresolved). Each fact is bound through its own context, most specific first: the value's own
+words, the table column header of the value, the quote fragment that states it, its source line (other numbers'
+bracket groups removed; a value found only in page source keeps the surrounding source), the section heading above
+it; the quote's other "…" fragments can only veto (years inside a fact are never read as model years). The trim counts only when the identity zone names it; another trim vetoes `exact`
+for trim-sensitive fields (price, equipment): a column header with words beyond technical terms and the target
+trim's own words ("Premium", "Business Plus"), a fact naming another trim ("the Premium version"), or the target
+trim named to exclude it ("not available on Business"). Levels: `unknown < model_family < generation < body_powertrain < exact_technical_variant
 < exact_market_trim`. An explicit contradiction vetoes exact binding (another displacement, body, propulsion,
 drivetrain, or the system power of a BEV / combustion car; a longer model family such as "Corolla Cross" for a
 "Corolla"), even when manufacturer, model, body and year all match. A multi-variant page (1.8 AND 2.0 Hybrid)

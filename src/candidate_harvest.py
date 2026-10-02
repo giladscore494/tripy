@@ -257,6 +257,7 @@ class Dictionary:
         self.optional_values = {normalize_term(x) for x in v.get("optional_values") or []}
         self.optional_terms = compile_terms(x for x in v.get("optional_values") or [] if len(x) > 2)
         self.negative_terms = compile_terms(x for x in v.get("negative_values") or [] if len(x) > 2)
+        self.feature_labels = compile_terms(a for r in self.rules if r.matcher == "boolean" for a, _, _ in r.aliases)
         negations = compile_terms(v.get("negation_prefixes") or [])
         self.negation_prefix = re.compile(rf"(?:{negations.pattern})\s*$") if negations else None
         self.equipment = compile_terms(v.get("equipment_context_terms") or [])
@@ -545,12 +546,12 @@ def _bool_value(d: Dictionary, cell: str) -> tuple[Any, str] | None:
         return None
     if cell in d.negative_values:
         return False, "absent"
+    if cell in d.affirmative or cell.startswith(("standard", "סטנדרט", "כן", "yes", "✓", "✔")):
+        return True, "standard"                    # the value written first wins ("standard - X not available")
     if _contains(d.negative_terms, cell):          # "not available" is not the optional "available"
         return False, "absent"
     if cell in d.optional_values or _contains(d.optional_terms, cell):
         return True, "optional"
-    if cell in d.affirmative or cell.startswith(("standard", "סטנדרט", "כן", "yes", "✓", "✔")):
-        return True, "standard"
     return None
 
 
@@ -608,7 +609,9 @@ def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[in
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
     if _contains(rule.negative, clause):
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
-    if _contains(d.negative_terms, text[b:bounds[1]]):          # "heated seats are not available on Business"
+    after = text[b:bounds[1]]
+    other = d.feature_labels.search(after) if d.feature_labels else None
+    if _contains(d.negative_terms, after[:other.start()] if other else after):   # "... are not available on X"
         return Hit(False, "absent", confidence=0.7, span=anchor, hints={"availability": "absent"})
     if _contains(d.optional_terms, _window(text, *anchor, 25, bounds)):
         return Hit(True, "optional", confidence=0.6, span=anchor, hints={"availability": "optional"})

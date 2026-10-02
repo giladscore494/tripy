@@ -431,7 +431,8 @@
   "petrol",
   "בנזין",
   "דיזל",
-  "diesel"
+  "diesel",
+  "היברידית"
  ],
  "cc_units": [
   "cc",
@@ -471,7 +472,6 @@
  "generic_trim_words": [
   "edi",
   "edition",
-  "plus",
   "pack",
   "line",
   "the",
@@ -481,5 +481,39 @@
   "max",
   "base",
   "pro"
+ ],
+ "header_noise_words": [
+  "spec",
+  "specs",
+  "specification",
+  "specifications",
+  "מפרט",
+  "value",
+  "values",
+  "ערך",
+  "ערכים",
+  "feature",
+  "features",
+  "מאפיין",
+  "model",
+  "דגם",
+  "version",
+  "גרסה",
+  "גרסת",
+  "trim",
+  "רמת",
+  "גימור",
+  "price",
+  "מחיר",
+  "data",
+  "נתונים",
+  "standard",
+  "optional",
+  "סטנדרט",
+  "אופציה",
+  "yes",
+  "no",
+  "כן",
+  "לא"
  ]
 }
