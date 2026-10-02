@@ -92,6 +92,17 @@ def _same_value(a: Any, b: Any) -> bool:
     return material_key(a) == material_key(b)
 
 
+def _squash(text: Any) -> str:
+    return " ".join(str(text or "").lower().split())
+
+
+def _same_place(a: Any, b: Any) -> bool:
+    """Do two quotes come from the same place (one contains the other)? A refusal of one quote says nothing about a
+    candidate read from another line of the same page."""
+    x, y = _squash(a), _squash(b)
+    return bool(x and y) and (x in y or y in x)
+
+
 def _phase_finder(events: list[dict]):
     responses = [(e.get("seq") or 0, e.get("phase")) for e in events if e.get("kind") == "model_response"]
 
@@ -150,6 +161,7 @@ def feedback_examples(events: list[dict], payload: dict | None = None, specs: li
     by_doc_field: dict[tuple[str, str], list[dict]] = {}
     candidate_events: list[tuple[dict, dict]] = []
     seen_docs: set[str] = set()
+    harvested_docs = {str(e.get("document_id")) for e in harvested if e.get("harvester_version")}
     for event in harvested:
         if event.get("document_id") in seen_docs:
             continue
@@ -188,10 +200,11 @@ def feedback_examples(events: list[dict], payload: dict | None = None, specs: li
         base = common_candidate(cand, event)
         field, doc = base["field"], str(base["document_id"])
         match = next((item for item, _ in admitted if normalize_field_name(item.get("field")) == field
-                      and str(item.get("document_id")) == doc and _same_value(item.get("value"), cand.get("value"))),
-                     None)
+                      and str(item.get("document_id")) == doc and _same_value(item.get("value"), cand.get("value"))
+                      and not item.get("reused_from")), None)    # a reused fact was admitted in another run
         refusal = next((r for r in rejected if normalize_field_name(r.get("field")) == field
-                        and str(r.get("document_id")) == doc and _same_value(r.get("value"), cand.get("value"))), None)
+                        and str(r.get("document_id")) == doc and _same_value(r.get("value"), cand.get("value"))
+                        and _same_place((r.get("request") or {}).get("quote"), cand.get("quote"))), None)
         if match is not None:
             out.append(_example("candidate_accepted", vehicle, versions, **base, accepted_value=match.get("value"),
                                 binding_level=match.get("binding_level"), variant_match=match.get("variant_match"),
@@ -218,7 +231,9 @@ def feedback_examples(events: list[dict], payload: dict | None = None, specs: li
                 "reason_code": ",".join(reasons), "pattern": pattern_of(request.get("quote")),
                 "phase": phase_at(event.get("seq")), "timestamp": event.get("ts")}
         out.append(_example("evidence_admission_rejected", vehicle, versions, **base))
-        is_candidate = any(_same_value(c.get("value"), event.get("value")) for c in by_doc_field.get((field, doc), []))
+        is_candidate = any(_same_value(c.get("value"), event.get("value")) and _same_place(c.get("quote"),
+                                                                                          request.get("quote"))
+                           for c in by_doc_field.get((field, doc), []))
         other = doc_states_other(field, doc, event.get("value")) if doc else None
         if not is_candidate and any(r in CONTRADICTION_REASONS for r in reasons) and (
                 other is not None or any(r in ("value_belongs_to_other_field", "semantic_mismatch") for r in reasons)):
@@ -241,8 +256,10 @@ def feedback_examples(events: list[dict], payload: dict | None = None, specs: li
             out.append(_example("variant_binding_rejected", vehicle, versions, **base,
                                 reason_code=",".join(veto) if isinstance(veto, list) else (veto or variant),
                                 pattern=pattern_of(item.get("quote"))))
-        if item.get("reused_from") or not doc or not item.get("admission_status"):
-            continue          # a reused fact was not read from a document in this run; legacy items have no gate data
+        if item.get("reused_from") or not doc or not item.get("admission_status") or variant in NON_TARGET_VARIANTS:
+            continue          # reused / legacy / other-variant items are not "supported evidence" for a miss label
+        if doc not in harvested_docs:
+            continue          # the parser never ran on this document: nothing was missed
         if not any(_same_value(c.get("value"), item.get("value")) for c in by_doc_field.get((field, doc), [])):
             out.append(_example("deterministic_miss", vehicle, versions, **base, reason_code=item.get("entailment"),
                                 pattern=pattern_of(item.get("quote"))))

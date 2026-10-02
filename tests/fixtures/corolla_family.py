@@ -123,7 +123,7 @@ def summarize(run: dict) -> dict:
     values = {}
     for item in result["evidence"]:
         values.setdefault(item["field"], []).append(item["value"])
-    return {"model_calls": m["model_calls"], "tail_model_calls": m["tail_model_calls"],
+    return {"model_calls": m["model_calls"], "total_tokens": m["total_tokens"], "tail_model_calls": m["tail_model_calls"],
             "search_calls": m["search_api_calls"], "documents_fetched": m["tool_calls_by_name"].get("fetch_url", 0),
             "verified_fact_cache_hits": m["verified_fact_cache_hits"], "search_cache_hits": m["search_cache_hits"],
             "document_cache_hits": m["document_cache_hits"], "candidate_cache_hits": m["candidate_cache_hits"],

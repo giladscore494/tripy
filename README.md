@@ -420,9 +420,12 @@ Related variants (the same technical family in one batch, or a re-run) get cheap
 `<cache>/memory/` (`src/research_memory.py`, `RESEARCH_MEMORY_ENABLED`, default on). One file per fact and one per
 run, each written atomically, so 50 concurrent workers never share an append target.
 
-- **Verified facts.** At the end of a run, an admitted fact is recorded only when the field's schema `reuse_scope`
+- **Verified facts.** At the end of a run, an admitted fact is recorded only when its own run settled the field
+  (final state `ok`, no conflict, the item among the field's evidence), the field's schema `reuse_scope`
   (`none | exact_market_trim | exact_technical_variant | body_powertrain`) allows it, the item bound exactly at that
   level, and the target identity at that level is complete (a key built from missing parts would collide). The
+  technical-variant key includes the government model code (battery size, gearbox and driven axle at equal power
+  differ there). The market-trim key uses every word of the trim, so "GR SPORT" is not "SPORT". The
   record carries its scope key, source, quote, binding, authority and a schema identity (the field's meaning,
   units and policy plus the admission / binding / harvester versions); stale, expired or colliding records are
   ignored. Price, fees, warranty, equipment, multimedia, tyres and every time-sensitive field are never reused;
@@ -433,9 +436,11 @@ run, each written atomically, so 50 concurrent workers never share an append tar
   page about the 1.8 Hybrid therefore never reaches a 2.0 Hybrid. A reused item keeps its original source and
   `reused_from`. The same fact on twenty variants is one source, never corroboration. The research prompt lists
   the fields already supported so they are not researched again.
-- **Negative routes.** A web recovery turn without novelty records its routes (the search queries naming a field,
-  and fetched URLs) as "no new material" for the fields still open, per identity scope. Later runs see them as
-  `known_unproductive_routes`, and a cluster whose open fields have all failed this way skips its web attempt.
+- **Negative routes.** A web recovery turn without novelty records its working routes as "no new material" for the
+  fields still open, per identity scope and field identity. The routes are search queries attributed to the field
+  whose label matches most specifically, plus fetched URLs. Errors and 429s are never recorded, and time-sensitive
+  fields keep no negative memory. Later runs see the routes as `known_unproductive_routes`. A cluster whose open
+  fields have each failed in at least two earlier attempts skips its web attempt (`NEGATIVE_MEMORY_SKIP`).
   This is scheduling only: it never creates evidence, never changes a field state, never marks a field
   not_applicable and never resolves a conflict. The routes expire after `NEGATIVE_ROUTE_MAX_AGE_DAYS` (30).
 - **Historical recovery yield** (by cluster / field, manufacturer, propulsion and source family: attempts, turns,
@@ -470,14 +475,18 @@ policy model as the tail benchmark:
 | | A 1.8 Business (cold) | A again (re-run) | A2 1.8 Premium (warm) | B 2.0 Business (warm cache) | A2 without memory |
 | --- | --- | --- | --- | --- | --- |
 | model calls | 13 | 8 | 8 | 16 | 16 |
+| tokens (fixed 1,100 per fake call) | 14,300 | 8,800 | 8,800 | 17,600 | 17,600 |
 | recovery turns | 9 | 4 | 4 | 12 | 12 |
 | searches | 2 | 1 | 0 | 3 | 2 |
-| verified facts reused | 0 | 10 | 9 | 0 | 0 |
+| verified facts reused | 0 | 9 | 8 | 0 | 0 |
 | negative route hits | 0 | 1 | 0 | 0 | 0 |
 | fields ok (of 14) | 11 | 11 | 11 | 10 | 9 |
 
 A2 reuses the technical facts (tank, battery, torque, performance, dimensions) but not price, warranty, height or
-curb weight. B reuses nothing, and its boot stays 581 L, never A's 596 L. The scale metrics are
+curb weight. It also does not reuse the boot volume, because A left that field foreign-market-only. B reuses nothing,
+and its boot stays 581 L, never A's 596 L. The re-run's saved search comes from the model following
+`known_unproductive_routes` (the policy model in the benchmark does). The engine itself only skips a cluster after
+two earlier failed attempts per field. The scale metrics are
 `verified_fact_cache_hits`, `negative_route_cache_hits`, search / document / candidate cache hits,
 `verified_facts_recorded` and `training_feedback_examples`.
 

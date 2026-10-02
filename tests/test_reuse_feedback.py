@@ -71,6 +71,11 @@ def _evidence(**kw):
     return {**base, **kw}
 
 
+def ok(*fields, ids=("e1", "e2", "e3", "e4", "e5", "e6", "e9")):
+    """A final evaluation where these fields ended ok with these evidence ids."""
+    return [{"field": f, "state": "ok", "evidence_ids": list(ids), "conflict_evidence_ids": []} for f in fields]
+
+
 def test_only_admitted_exactly_bound_policy_facts_are_recorded_once(tmp_path):
     memory = ResearchMemory(tmp_path)
     identity = target_identity(PAYLOAD, VEHICLE)
@@ -78,10 +83,11 @@ def test_only_admitted_exactly_bound_policy_facts_are_recorded_once(tmp_path):
                 _evidence(evidence_id="e3", field="list_price", value=179990, unit="ILS", quote="price 179,990"),
                 _evidence(evidence_id="e4", admission_status=None), _evidence(evidence_id="e5", reused_from={"x": 1}),
                 _evidence(evidence_id="e6", binding_level="body_powertrain")]
-    written = memory.record_facts(evidence, HEV, identity, {"record_id": "38626"})
+    written = memory.record_facts(evidence, HEV, identity, {"record_id": "38626"}, ok("fuel_tank_l", "list_price"))
     assert [r["origin"]["evidence_id"] for r in written] == ["e1"]
     # the same fact from the same source recorded again (another run / variant) is still ONE record = one source
-    assert memory.record_facts([_evidence(evidence_id="e9")], HEV, identity, {"record_id": "99999"}) == []
+    assert memory.record_facts([_evidence(evidence_id="e9")], HEV, identity, {"record_id": "99999"},
+                               ok("fuel_tank_l")) == []
     records, skipped = memory.reusable_facts(HEV, identity)
     assert len(records) == 1 and records[0]["origin"]["record_id"] == "38626" and skipped == {}
 
@@ -89,7 +95,7 @@ def test_only_admitted_exactly_bound_policy_facts_are_recorded_once(tmp_path):
 def test_stale_expired_and_colliding_records_are_never_reused(tmp_path):
     memory = ResearchMemory(tmp_path)
     identity = target_identity(PAYLOAD, VEHICLE)
-    memory.record_facts([_evidence()], HEV, identity, {})
+    memory.record_facts([_evidence()], HEV, identity, {}, ok("fuel_tank_l"))
     changed = [{**s, "semantic_definition": "a different meaning"} if s["name"] == "fuel_tank_l" else s for s in HEV]
     assert spec_identity(changed[[s["name"] for s in HEV].index("fuel_tank_l")]) != spec_identity(SPECS["fuel_tank_l"])
     assert memory.reusable_facts(changed, identity) == ([], {"stale_schema_or_gate_version": 1})
@@ -110,7 +116,7 @@ def test_a_colliding_record_from_another_powertrain_fails_readmission(tmp_path, 
     identity = target_identity(PAYLOAD, VEHICLE)
     rogue = _evidence(field="cargo_volume_l", value=581, document_id=docs[TWO_LITRE], quote="Boot space: 581 litres",
                       market="unknown")
-    memory.record_facts([rogue], HEV, identity, {"record_id": "forged"})
+    memory.record_facts([rogue], HEV, identity, {"record_id": "forged"}, ok("cargo_volume_l"))
     client = ScriptedGLM([{"role": "assistant", "content": json.dumps({"summary": "p", "fields": {}})},
                           {"role": "assistant", "content": json.dumps({"summary": "f", "fields": {}})}])
     result = run_vehicle({"upstream_record_id": "38626"}, PAYLOAD, client=client, cache=ctx.cache,
@@ -131,9 +137,9 @@ def corolla_family(tmp_path_factory):
 def test_warm_related_variant_reuses_only_what_its_scope_allows(corolla_family):
     a, a2, cold = corolla_family["A"], corolla_family["A2"], corolla_family["A2_no_memory"]
     assert a["verified_fact_cache_hits"] == 0                                    # cold
-    assert {"fuel_tank_l", "battery_gross_kwh", "torque_nm", "top_speed_kmh", "cargo_volume_l"} <= set(
-        a2["reused_fields"])
+    assert {"fuel_tank_l", "battery_gross_kwh", "torque_nm", "top_speed_kmh"} <= set(a2["reused_fields"])
     assert not {"list_price", "warranty_years", "height_mm", "curb_weight_kg"} & set(a2["reused_fields"])   # trim/commercial
+    assert "cargo_volume_l" not in a2["reused_fields"]          # A left it foreign_market_only: never handed on as settled
     assert a2["values"]["list_price"] == [189990]                              # never A's 179,990-183,990
     assert a2["model_calls"] < cold["model_calls"] and a2["tail_model_calls"] < cold["tail_model_calls"]
     assert a2["fields_ok"] >= cold["fields_ok"]
@@ -175,10 +181,14 @@ def test_negative_memory_skips_equivalent_work_but_never_touches_field_state(tmp
     cache = DocumentCache(tmp_path / "cache")
     memory = ResearchMemory(cache.root / "memory")
     identity = target_identity(family.variant("A")["payload"], family.variant("A")["vehicle"])
-    entries = [{"scope_key": scope_key(identity, reuse_level(SPECS[f]) or "exact_market_trim"), "cluster": "technical_spec",
+    entries = [{"scope_key": scope_key(identity, reuse_level(SPECS[f]) or "exact_market_trim"),
+                "spec_identity": spec_identity(SPECS[f]), "cluster": "technical_spec",
                 "field": f, "routes": [{"tool": "search_web", "route": f"corolla {f}", "signature": f}],
                 "outcome": "no_new_material"} for f in family.FIELDS if SPECS[f]["recovery_cluster"] == "technical_spec"]
     memory.record_routes(entries, "earlier-run")
+    once = family.run_variant("A", tmp_path / "A1", DocumentCache(tmp_path / "copy"))   # control: no memory there
+    assert not [e for e in once["events"] if e.get("reason") == "negative_route_memory"]
+    memory.record_routes(entries, "another-earlier-run")        # two failed attempts per field: now equivalent
     run = family.run_variant("A", tmp_path / "A", cache)
     rec = run["result"]["field_recovery"]
     skipped = [e for e in run["events"] if e.get("kind") == "cluster_recovery_skipped"]
@@ -208,7 +218,8 @@ def test_concurrent_writers_never_corrupt_memory(tmp_path):
 
     def write(i):
         try:
-            memory.record_facts([_evidence(evidence_id=f"e{i}")], HEV, identity, {"record_id": str(i)})
+            memory.record_facts([_evidence(evidence_id=f"e{i}")], HEV, identity, {"record_id": str(i)},
+                                ok("fuel_tank_l", ids=[f"e{i}"]))
             memory.record_routes([{"scope_key": "k", "field": "f", "outcome": "no_new_material", "routes": []}], f"r{i}")
         except Exception as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
@@ -349,3 +360,98 @@ def test_feedback_from_events_matches_the_live_file(tmp_path):
     derived = feedback_examples(read_events(log.events_path), PAYLOAD)
     assert {e["example_id"] for e in derived} >= {e["example_id"] for e in examples
                                                  if not e["example_type"].startswith(("conflict", "portability"))}
+
+
+# --- review regressions -----------------------------------------------------------------------------------------
+
+def test_a_fact_its_own_run_left_unsettled_is_never_recorded(tmp_path):
+    memory = ResearchMemory(tmp_path)
+    identity = target_identity(PAYLOAD, VEHICLE)
+    conflicting = [{"field": "fuel_tank_l", "state": "conflicting", "evidence_ids": ["e1", "e2"],
+                    "conflict_evidence_ids": ["e1", "e2"]}]
+    assert memory.record_facts([_evidence()], HEV, identity, {}, conflicting) == []
+    unresolved = [{"field": "fuel_tank_l", "state": "unresolved", "evidence_ids": ["e1"]}]
+    assert memory.record_facts([_evidence()], HEV, identity, {}, unresolved) == []
+    assert memory.record_facts([_evidence()], HEV, identity, {}) == []          # no evaluation: nothing
+
+
+def _identity(trim="BUSINESS EDI", code="ZWE211L DWXNBW", **engine):
+    payload = copy.deepcopy(PAYLOAD)
+    payload["identity"].update({"trim": trim, "model_code": code})
+    payload["engine_drivetrain"].update(engine)
+    return target_identity(payload, {**VEHICLE, "trim": trim, "model_code": code})
+
+
+def test_trim_and_model_code_keep_scope_keys_apart():
+    assert scope_key(_identity("GR SPORT"), "exact_market_trim") != scope_key(_identity("SPORT"), "exact_market_trim")
+    assert scope_key(_identity("LIMITED 7 SEATS"), "exact_market_trim") != \
+        scope_key(_identity("LIMITED 5 SEATS"), "exact_market_trim")
+    assert scope_key(_identity("EDITION"), "exact_market_trim") is None         # only generic words: no scope
+    # the model code separates variants the engine figures cannot (battery size, gearbox, driven axle)
+    assert scope_key(_identity(code="AAA1"), "exact_technical_variant") != \
+        scope_key(_identity(code="BBB2"), "exact_technical_variant")
+    assert scope_key(_identity(code=""), "exact_technical_variant") is None
+
+
+def test_miss_and_false_positive_labels_need_their_basis(tmp_path):
+    from src.training_feedback import feedback_examples
+
+    def ev(seq, kind, **data):
+        return {"seq": seq, "kind": kind, "ts": "t", **data}
+
+    item = {"evidence_id": "e1", "field": "warranty_years", "value": 3, "document_id": "d1", "quote": "אחריות: שלוש שנים",
+            "admission_status": "accepted", "variant_match": "exact"}
+    no_harvest = [ev(1, "evidence", evidence=item)]
+    assert not [e for e in feedback_examples(no_harvest) if e["example_type"] == "deterministic_miss"]
+    harvested = [ev(0, "candidates_harvested", document_id="d1", harvester_version="h", candidates=[])]
+    other = {**item, "variant_match": "different", "model_variant_claim": "exact"}
+    labels = [e["example_type"] for e in feedback_examples(harvested + [ev(1, "evidence", evidence=other)])]
+    assert "deterministic_miss" not in labels and "variant_binding_rejected" in labels
+    assert [e["example_type"] for e in feedback_examples(harvested + [ev(1, "evidence", evidence=item)])] == \
+        ["deterministic_miss"]
+    # a refusal of one quote is never pinned on a candidate read from another line
+    cand = {"field": "heated_seats", "value": True, "document_id": "d2", "quote": "חימום מושבים: יש"}
+    events = [ev(0, "candidates_harvested", document_id="d2", harvester_version="h", candidates=[cand]),
+              ev(1, "evidence_rejected", field="heated_seats", value=True, document_id="d2",
+                 reasons=["value_not_stated"], request={"quote": "Business: חימום מושבים: אין", "document_id": "d2"})]
+    labels = [e["example_type"] for e in feedback_examples(events)]
+    assert labels == ["evidence_admission_rejected"]
+
+
+def test_failed_calls_and_other_fields_never_become_negative_routes():
+    from src.agent import _route_names_field, _routes_of
+
+    calls = [{"name": "search_web", "arguments": json.dumps({"query": "corolla ground clearance"}), "error": "http_429"},
+             {"name": "fetch_url", "arguments": json.dumps({"url": "https://x"}), "error": "http_503"},
+             {"name": "search_web", "arguments": json.dumps({"query": "corolla ground clearance"}), "error": None}]
+    assert [r["route"] for r in _routes_of(calls)] == ["corolla ground clearance"]
+    specs = list(SPECS.values())
+    dc = {"tool": "search_web", "route": "lyriq dc charging time"}
+    assert not _route_names_field(dc, SPECS["ac_charging_time"], specs)
+    warranty = {"tool": "search_web", "route": "corolla battery warranty"}
+    assert not _route_names_field(warranty, SPECS["battery_gross_kwh"], specs)
+
+
+def test_malformed_memory_files_are_ignored(tmp_path):
+    memory = ResearchMemory(tmp_path)
+    (tmp_path / "routes").mkdir(parents=True)
+    (tmp_path / "routes" / "a.json").write_text("null", "utf-8")
+    (tmp_path / "routes" / "b.json").write_text(json.dumps({"recorded_at": "2999-01-01T00:00:00", "entries": []}))
+    (tmp_path / "routes" / "c.json").write_text(json.dumps({"recorded_at": "2026-01-01T00:00:00",
+                                                            "entries": [None, {"field": "f", "scope_key": "k",
+                                                                               "outcome": "no_new_material",
+                                                                               "routes": [{"route": "x"}]}]}))
+    (tmp_path / "yield").mkdir()
+    (tmp_path / "yield" / "y.json").write_text("[1, 2]", "utf-8")
+    assert memory.negative_routes({"f": "k"}).get("f", {}).get("routes", []) == []
+    assert memory.cluster_yield("M", "hybrid") == {}
+
+
+def test_reused_facts_are_not_relabelled_as_accepted_candidates(tmp_path):
+    cache = DocumentCache(tmp_path / "cache")
+    family.run_variant("A", tmp_path / "A", cache)
+    run = family.run_variant("A2", tmp_path / "A2", cache)
+    reused = {e["field"] for e in run["result"]["evidence"] if e.get("reused_from")}
+    examples = [json.loads(line) for line in (Path(run["result"]["documents_dir"]).parent
+                                              / "training_feedback.jsonl").read_text("utf-8").splitlines()]
+    assert reused and not [e for e in examples if e["example_type"] == "candidate_accepted" and e["field"] in reused]
