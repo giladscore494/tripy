@@ -42,6 +42,11 @@ def put_doc(cache, url, text):
                                                          "content_type": "text/plain"}, text)["document_id"]
 
 
+# These cases test foreign-market / conflict early-exit semantics, so the market-portability policy (an official
+# foreign fact counting for IL, tested on its own) is switched off for the field.
+NOT_PORTABLE = {"portability_scope": "none"}
+
+
 def run(tmp_path, ctx, script, **cfg):
     put_doc(ctx.cache, IL_URL, IL_TEXT)
     put_doc(ctx.cache, US_URL, US_TEXT)
@@ -49,7 +54,8 @@ def run(tmp_path, ctx, script, **cfg):
     log = RunLog(tmp_path / "runs", "b", "85095")
     # Early-exit tests script every model turn; admitted evidence now records its document, which would schedule
     # a document sweep turn, so the layered stage is off here (it has its own tests).
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "layered_harvest_enabled": False, **cfg})
+    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "layered_harvest_enabled": False,
+                            "recovery_mode": "legacy", **cfg})
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ToolConfig(), session=ctx.session)
     return result, client, read_events(log.events_path)
@@ -160,7 +166,8 @@ def test_cadillac_duplicate_store_and_early_resolution(tmp_path, make_ctx):
         turn(store("r3", **il_205), store("r4", **il_205)),                                 # recovery turn 3
         say({"summary": "final", "fields": {"battery_gross_kwh": {"value": 205}}}),          # finalizer
     ]
-    result, client, events = run(tmp_path, ctx, script, requested_fields=["battery_gross_kwh"])
+    result, client, events = run(tmp_path, ctx, script,
+                                 requested_fields=[{"name": "battery_gross_kwh", **NOT_PORTABLE}])
     rec = result["field_recovery"]
     assert rec["primary_states"] == {"foreign_market_only": 1}
     assert [e["evidence_id"] for e in result["evidence"]] == ["e1", "e2"]                    # no e3
@@ -203,7 +210,8 @@ def test_no_early_exit_while_still_foreign_or_conflicting(tmp_path, make_ctx):
         say({"field": "battery_gross_kwh", "status": "conflicting"}),                       # attempt 2
         say({"summary": "final", "fields": {}}),
     ]
-    result, client, events = run(tmp_path, ctx, script, requested_fields=["battery_gross_kwh"])
+    result, client, events = run(tmp_path, ctx, script,
+                                 requested_fields=[{"name": "battery_gross_kwh", **NOT_PORTABLE}])
     first = result["field_recovery"]["attempts"][0]
     assert first["turns"] == 3 and not first["early_resolved"] and first["state_after"] == "conflicting"
     assert first["reply"]["status"] == "conflicting"                                         # final reply path kept

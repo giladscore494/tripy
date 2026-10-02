@@ -103,13 +103,24 @@ def declarations(events: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
+def _unknown_market(item: dict) -> bool:
+    return _market_key(item.get("market")) in UNKNOWN_MARKETS
+
+
+def in_target_scope(item: dict, target_market: str) -> bool:
+    """A target-market item, or a foreign item the portability policy lets count for the target market (its own
+    `market` is kept; see src/market_portability.py)."""
+    return is_target_market(item.get("market"), target_market) or item.get("portable_to_target_market") is True
+
+
 def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
-    """Target-market candidates (not explicitly another variant) whose values materially differ.
+    """Target-scope candidates (not explicitly another variant) whose values materially differ.
 
     Returns those candidates when there are at least two different values, else []. A candidate from
-    another market, or marked variant_match=different, never makes a same-scope conflict on its own.
+    another market (unless portable), or marked variant_match=different, never makes a same-scope conflict
+    on its own.
     """
-    scope = [e for e in evidence if _has_value(e.get("value")) and is_target_market(e.get("market"), target_market)
+    scope = [e for e in evidence if _has_value(e.get("value")) and in_target_scope(e, target_market)
              and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS]
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
@@ -178,14 +189,17 @@ def binding_satisfies(item: dict, requirement: str | None = None) -> bool:
 
 def in_server_scope(item: dict, target_market: str, requirement: str | None = None) -> bool:
     """Server-side scope of one evidence item: its server-computed binding reaches the field's binding requirement
-    (see binding_satisfies: `unclear` never does) and it is not from a known other market. A model declaration never
+    (see binding_satisfies: `unclear` never does) and it is either from the target market or an item the server-side
+    portability policy accepted (`portable_to_target_market`, set by the evaluator from src/market_portability.py,
+    never by a model): a known foreign market, or a market the source does not establish where the field's schema
+    explicitly allows it. An unknown market is never the target market by default. A model declaration never
     changes this."""
     return binding_satisfies(item, requirement or field_requirement(None, item)) and market_in_scope(item, target_market)
 
 
 def market_in_scope(item: dict, target_market: str) -> bool:
-    """The item's server-side market is the target market (or not established)."""
-    return is_target_market(item.get("market"), target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+    """The item's server-side market is the target market, or a market the portability verdict lets count for it."""
+    return in_target_scope(item, target_market)
 
 
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
@@ -235,7 +249,7 @@ def conditional_not_applicable(spec: dict, evidence_by_field: dict[str, list[dic
 def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, output_entry: dict | None,
                    target_market: str, last_evidence_seq: int | None = None, output_seq: int | None = None,
                    evidence_seq: dict | None = None, not_applicable_rule: str | None = None,
-                   schema_rule_conflict: str | None = None) -> dict:
+                   schema_rule_conflict: str | None = None, portability: dict | None = None) -> dict:
     """Did primary research obtain a usable candidate for this requested field?
 
     Operational, from the model's own research state only (never a truth check):
@@ -254,7 +268,9 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         them (a `conflict_resolved` declaration newer than the latest evidence). A plain
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
     * foreign_market_only - no candidate is in the server-side target scope and the ones that may apply to the
-                        variant are from a known other market;
+                        variant are from a known other market (not portable) or from a market the source does
+                        not establish (info `market_not_established`; an unknown market is never the target
+                        market unless the field's `unknown_market_policy` and the portability verdict allow it);
     * variant_not_exact   - no candidate's server-side binding reaches the field's binding_requirement in the target
                         scope: a target-market candidate bound only below it (variant_match=unclear), or
                         every candidate is about another trim/variant (variant_match=different, from the
@@ -268,18 +284,37 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
 
     Different values across markets, or with a candidate explicitly marked as another variant, are
     recorded as info (`multiple_values`), not a trigger: the model decides how to handle them.
+
+    Portability (`portability`, from src/market_portability.py): a foreign item the field's policy lets count for
+    the target market is treated as target-scope; its market is not rewritten. Conflict classification
+    (src/conflict_normalizer.py): same-scope values that are the same number in other units, or a trim-bound
+    scalar inside a model-line range, are not a conflict; every other class keeps the field conflicting.
     """
+    from .conflict_normalizer import classify_conflict
+
     name = spec["name"]
     requirement = field_requirement(spec)
     info: list[str] = []
+    portability = portability or {}
+    evidence = [{**e, **portability[str(e.get("evidence_id"))]} if str(e.get("evidence_id")) in portability else e
+                for e in evidence]
+    portable_ids = [str(e.get("evidence_id")) for e in evidence if e.get("portable_to_target_market") is True]
+    if any(e.get("portable_to_target_market") is True and not _unknown_market(e) for e in evidence):
+        info.append("portable_foreign_fact")
+    if any(e.get("portable_to_target_market") is True and _unknown_market(e) for e in evidence):
+        info.append("portable_unknown_market_fact")
     declared_status = (declared or {}).get("status")
     out_provenance = str((output_entry or {}).get("provenance") or "").lower()
     out_value = (output_entry or {}).get("value", (output_entry or {}).get("values")) if output_entry else None
     with_value = [e for e in evidence if _has_value(e.get("value"))]
-    target_items = [e for e in with_value if is_target_market(e.get("market"), target_market)]
+    target_items = [e for e in with_value if in_target_scope(e, target_market)]
     if len({material_key(e.get("value")) for e in (target_items or with_value)}) > 1:
         info.append("multiple_values")
     conflict = same_scope_conflict(evidence, target_market)
+    conflict_class = classify_conflict(spec, conflict, target_market) if conflict else None
+    if conflict_class and conflict_class["normalized"]:
+        info.append(f"conflict_normalized:{conflict_class['class']}")
+        conflict = []
     # Freshness: every declaration (and the primary JSON) only counts while no newer evidence exists.
     declared_current = declaration_is_current((declared or {}).get("seq"), last_evidence_seq)
     if declared_status and not declared_current:
@@ -317,6 +352,8 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
             state = "variant_not_exact"               # target-scope market, binding below the requirement
         else:
             state = "foreign_market_only"
+        if state == "foreign_market_only" and any(_unknown_market(e) for e in with_value):
+            info.append("market_not_established")    # an unknown source market is not the target market
         if declared_status in RESOLVED_STATUSES:
             info.append(f"declaration_outside_server_scope:{declared_status}")
     else:
@@ -333,6 +370,9 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         "declared_current": declared_current,
         "primary_output": output_entry,
         "conflict_evidence_ids": [e.get("evidence_id") for e in conflict],
+        "conflict_class": conflict_class,
+        "portable_evidence_ids": portable_ids,
+        "portability": portability,
     }
 
 
@@ -348,13 +388,16 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
             if isinstance(event.get("seq"), int):
                 last_seq[name] = event["seq"]
                 evidence_seq[str(item.get("evidence_id"))] = event["seq"]
+    from .market_portability import assess
+
     declared = declarations(events)
     parsed, output_seq = primary_output(events, with_seq=True)
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
     return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
                            output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
                            evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
-                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True))
+                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True),
+                           assess(spec, evidence_by_field.get(spec["name"], []), target_market, is_target_market))
             for spec in specs]
 
 
@@ -379,9 +422,10 @@ def early_resolution_check(spec: dict, events: list[dict], target_market: str) -
     evaluation = current_evaluation(events, [spec], target_market)[0]
     if evaluation["state"] != "ok":
         return False, evaluation
+    portable = set(evaluation.get("portable_evidence_ids") or [])
     for item in trace.evidence_items(events):
         if (normalize_field_name(item.get("field")) == spec["name"] and _has_value(item.get("value"))
-                and is_target_market(item.get("market"), target_market)
+                and (is_target_market(item.get("market"), target_market) or str(item.get("evidence_id")) in portable)
                 and str(item.get("variant_match") or "").strip().lower() not in UNSPECIFIC_VARIANT):
             return True, evaluation
     return False, evaluation

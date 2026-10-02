@@ -106,6 +106,26 @@ WHY_BY_FAILURE_HE = {
     "variant_not_exact": "נמצא ערך עבור {field}, אבל לגרסה אחרת של הרכב; נדרש מקור לגרסה המדויקת.",
     "weak_provenance": "יש ערך עבור {field} אך ללא ראיה שמורה מאחוריו; נדרש מקור מתועד.",
 }
+# Recovery clusters (data/enrichment_fields.json recovery_cluster) and tail-triage categories (scheduling only).
+CLUSTER_HE = {
+    "technical_spec": "מפרט טכני",
+    "performance": "ביצועים וצריכה",
+    "charging_ev": "טעינה וטווח חשמלי",
+    "equipment": "אבזור ונוחות",
+    "multimedia": "מולטימדיה",
+    "tires_wheels": "צמיגים וחישוקים",
+    "commercial": "מחיר ואגרה",
+    "warranty": "אחריות",
+}
+CLUSTER_MODE_HE = {"local_only": "רק במסמכים שכבר הורדו", "web": "כולל חיפוש ברשת"}
+WHY_CLUSTER_HE = ("השלמה מקובצת של {count} שדות פתוחים בקבוצה \"{cluster}\" ({mode}): מקור טוב אחד עונה בדרך כלל "
+                  "על כמה שדות יחד.")
+
+
+def cluster_label(name: str | None) -> str:
+    return CLUSTER_HE.get(str(name or ""), str(name or ""))
+
+
 WHY_BY_PHASE_HE = {
     "research": "המערכת אוספת מקורות: מזהה את הגרסה המדויקת ומחפשת מסמכי מפרט רשמיים וישראליים.",
     "deterministic_harvest": "הקוד סורק כל מסמך שכבר הורד ומחלץ ערכים אפשריים לכל השדות, בלי קריאה למודל.",

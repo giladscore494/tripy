@@ -82,7 +82,7 @@ def interrupted_run(tmp_path, make_ctx):
     log = RunLog(tmp_path / "runs", "b", "85095")
     with pytest.raises(StopException):                       # re-raised, never swallowed
         run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED,
+                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED, recovery_mode="legacy",
                                        layered_harvest_enabled=False),
                     tool_config=ToolConfig(), session=ctx.session)
     return json.loads((log.dir / "result.json").read_text("utf-8")), client, read_events(log.events_path), log
@@ -155,7 +155,7 @@ def test_stop_raised_by_the_ui_callback_is_not_swallowed(tmp_path, make_ctx):
     client = ScriptedGLM(list(SCRIPT) + [say({"field": "cargo_volume_l", "status": "unresolved"})])
     with pytest.raises(StopException):
         run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED,
+                    config=AgentConfig(max_steps=3, no_new_research_turns=0, requested_fields=REQUESTED, recovery_mode="legacy",
                                        layered_harvest_enabled=False),
                     tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))

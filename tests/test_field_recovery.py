@@ -58,7 +58,10 @@ def test_detection_uses_only_the_models_research_state():
     s = spec("paint_code")
     state = lambda evidence, declared=None, out=None: evaluate_field(s, evidence, declared, out, "IL")["state"]
     assert state([ev("paint_code", "X1")]) == "ok"                                   # candidate + evidence record
-    assert state([ev("paint_code", "X1", market=None)]) == "ok"                      # unrecorded market is fine
+    # an unrecorded market is not the target market: retry-eligible, flagged as such
+    assert state([ev("paint_code", "X1", market=None)]) == "foreign_market_only"
+    assert "market_not_established" in evaluate_field(s, [ev("paint_code", "X1", market=None)], None, None,
+                                                      "IL")["info"]
     # Two different target-market values that may apply to the target: an unresolved same-scope conflict.
     assert state([ev("paint_code", "X1"), ev("paint_code", "X2")]) == "conflicting"
     assert state([ev("paint_code", "X1"), ev("paint_code", "X2", market="MY")]) == "ok"   # other market: info only
@@ -104,7 +107,8 @@ def test_recovery_engine_contains_no_field_names():
     for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py",
                    "src/candidate_harvest.py", "src/document_sweep.py", "src/ui/live_state.py", "src/ui/labels_he.py",
                    "src/ui/live_dashboard.py", "src/evidence_admission.py", "src/document_binding.py",
-                   "src/source_authority.py", "src/typed_values.py"):
+                   "src/source_authority.py", "src/typed_values.py", "src/tail_planner.py",
+                   "src/conflict_normalizer.py", "src/market_portability.py"):
         code = (ROOT / module).read_text("utf-8")
         found = [n for n in names if re.search(rf"\b{re.escape(n)}\b", code)]
         assert not found, (module, found)
@@ -118,7 +122,7 @@ def scripted_run(tmp_path, make_ctx, script, **cfg):
                                        .encode("utf-8"))})
     cache_source(ctx.cache, SPECS, SPECS_TEXT)
     client = ScriptedGLM(script)
-    config = AgentConfig(**{"max_steps": 3, "requested_fields": FUTURE_FIELDS, **cfg})
+    config = AgentConfig(**{"max_steps": 3, "requested_fields": FUTURE_FIELDS, "recovery_mode": "legacy", **cfg})
     result = run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path / "runs", "b", "101122"), config=config, tool_config=ToolConfig(),
                          session=ctx.session)
@@ -274,7 +278,7 @@ def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path
     log = RunLog(tmp_path / "runs", "b", "101122")
     with pytest.raises(KeyboardInterrupt):
         run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(requested_fields=FUTURE_FIELDS), tool_config=ToolConfig(), session=ctx.session)
+                    config=AgentConfig(requested_fields=FUTURE_FIELDS, recovery_mode="legacy"), tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
     assert saved["status"] == "interrupted" and saved["error"] is None   # an interruption is not an error
     assert (saved["partial"], saved["interrupted"], saved["interrupted_phase"], saved["interruption_type"]) == \

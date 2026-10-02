@@ -67,7 +67,8 @@ def put_doc(cache, url, text):
 
 def run(tmp_path, ctx, script, client_cls=ScriptedGLM, **cfg):
     client = client_cls(script)
-    config = AgentConfig(**{"field_recovery_enabled": False, "max_steps": 6, "no_new_research_turns": 0, **cfg})
+    config = AgentConfig(**{"field_recovery_enabled": False, "max_steps": 6, "no_new_research_turns": 0,
+                            "recovery_mode": "legacy", **cfg})
     log = RunLog(tmp_path / "runs", "b", "85095")
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
                          config=config, tool_config=ctx.config, session=ctx.session)

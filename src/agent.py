@@ -15,9 +15,13 @@
     FIELD DETECTION     every REQUESTED enrichment field (schema-driven, src/fields.py) is
                         evaluated from the model's own evidence/declarations (current_evaluation)
           ↓
-    FIELD RETRIES       focused, compact-context web recovery for the fields still unresolved,
-                        BREADTH-FIRST: every field gets attempt 1 before any field gets attempt 2
-                        (src/field_recovery.py); successful fields are never re-researched
+    TAIL RECOVERY       deterministic tail triage + recovery clusters (src/tail_planner.py; conflicts first
+                        classified by src/conflict_normalizer.py): one compact attempt per CLUSTER of related
+                        fields, BREADTH-FIRST over clusters, local-first (cached documents only while unreviewed
+                        local material exists), adaptive turns (2, up to 4 only on real novelty), a billable
+                        search budget per attempt counting provider calls. Every new document is harvested for
+                        ALL fields and every cluster is pruned via current_evaluation() before the next paid turn.
+                        RECOVERY_MODE=legacy keeps the per-field retries (src/field_recovery.py).
           ↓
     COMPACT BUNDLE      identity, targets, evidence, candidate facts, document metadata,
                         excerpts, concise actions, missing targets (src/bundle.py)
@@ -55,8 +59,9 @@ from .concurrency import BatchCancelled
 from .glm_client import GLMError
 from .context import ResearchTracker, call_signature, compact_stub, model_view, replay_result
 from .storage.trace import FETCH_TOOLS
-from .field_recovery import (current_evaluation, early_resolution_check, parse_retry_reply, retry_packet,
-                             retry_queue)
+from .field_recovery import (RETRY_STATES, current_evaluation, early_resolution_check, parse_retry_reply,
+                             retry_packet, retry_queue)
+from .fields import normalize_field_name
 from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields, semantic_notes
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
@@ -64,7 +69,7 @@ from .storage import trace
 from .storage.cache import DocumentCache
 from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
-from .tools import ToolConfig, ToolContext, dispatch, tool_specs
+from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_tools
 from .tools.evidence import EvidenceStore
 from .candidate_harvest import RunHarvester
 from .evidence_admission import AdmissionContext
@@ -193,7 +198,10 @@ its research actions, targets with no stored evidence, and its last notes.
 You cannot browse or call tools. Organize the research into the final answer. Evidence items with an
 admission_status carry runtime-computed provenance: variant_match / binding_level (does the source describe the
 exact target variant; "different" and "unbound" items are NOT about the target), market, source_authority and, for
-time-sensitive values, valid_as_of (older items without admission_status carry the research model's own claims). Report a time-sensitive value with its valid_as_of, never as timeless. You decide how to use
+time-sensitive values, valid_as_of (older items without admission_status carry the research model's own claims). Report a time-sensitive value with its valid_as_of, never as timeless. An item with
+portable_to_target_market=true is an official foreign-market fact that the field's portability policy lets count for
+the target market (portability_basis says why): use it, but report its own market, never as a target-market
+source. field_states[field].conflict_class says why same-field values differ. You decide how to use
 the material and which values to report; cite evidence_ids (e1, e2, ... from the bundle's evidence list,
 never document_ids) where they support a value. If sources disagree, report it in `conflicts` (you may
 still pick a value in `fields`). If a value comes from your own background knowledge or only from a
@@ -284,11 +292,64 @@ When done (or out of turns), reply with ONLY a JSON object:
 {"reviewed": [{"field": "<name>", "decision": "promoted | rejected | conflict | not_found", "reason": "..."}],
  "notes": "..."}"""
 
+CLUSTER_RECOVERY_SYSTEM_PROMPT = """You are performing a focused recovery attempt for ONE CLUSTER of related enrichment
+fields (e.g. the technical specification fields) on ONE exact vehicle variant. Earlier research and a review of the
+downloaded documents did not settle these fields. Do not research the vehicle generally.
+
+Objective: find or exploit the best source for this cluster and resolve EVERY field of the cluster it supports.
+- `fields` lists the cluster's open fields with their meaning (semantic_definition), current state and triage.
+- `deterministic_candidates` are values the runtime's parser located in cached documents; they are not evidence.
+  If one is valid for the exact target variant, store it with store_evidence (document_id + short verbatim quote).
+- `ranked_documents` are the cached documents ranked for this cluster (source_yield_score is a scheduling rank,
+  not a truth score). Inspect the best ones with find_in_document / extract_tables / get_structured_data before
+  anything else.
+- mode "local_only": only cached-document tools are available in this attempt; web calls are refused.
+- mode "web": `search_hints` are results of searches already paid for and not yet fetched (routing hints, not
+  evidence): fetching a strong hint is cheaper than a new search. Each attempt has a budget of billable provider
+  searches (search_budget_provider_calls); search_official_domains costs one search per domain and a cached query
+  costs nothing. A search beyond the budget is refused.
+- After each turn the runtime harvests every new document for ALL open fields, re-evaluates every field and tells
+  you which fields are resolved (do not research those again) and which new candidates appeared.
+- `conflicts` holds a compact packet per conflicting field (competing evidence with quotes, sources, binding and
+  conflict_class). Keep every candidate; reply conflict_resolved only when stored evidence settles which value
+  applies to the exact target variant, citing its evidence_ids.
+- Evidence is admitted by deterministic checks: the quote must occur in the cited document and state the value for
+  that field. Never store inferred values. Store values for other open fields you meet in the same source too.
+- Turn budget: turn_budget.base turns; more turns (up to turn_budget.max) are given only when a turn produced real
+  novelty (a new official document, new candidates, newly admitted evidence, better binding or field state).
+When done (or when nothing more can be found), reply with ONLY one JSON object (no tool call):
+{"cluster": "<cluster>", "fields": [{"field": "<name>", "status": "found | conflict_resolved | not_applicable |
+ unresolved | conflicting | foreign_market_only | variant_not_exact", "evidence_ids": ["e12"], "notes": "..."}],
+ "notes": "..."}"""
+
 REPAIR_PROMPT = ("Your last reply could not be parsed as JSON. Return the same content as ONE valid JSON object "
                  "and nothing else.")
 
 PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT + FIELD_RECOVERY_SYSTEM_PROMPT
-                                 + DOCUMENT_SWEEP_SYSTEM_PROMPT + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
+                                 + DOCUMENT_SWEEP_SYSTEM_PROMPT + CLUSTER_RECOVERY_SYSTEM_PROMPT
+                                 + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
+CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
+
+
+def research_system_prompt() -> str:
+    """The research system prompt without tools this host cannot run (e.g. render_page without Playwright)."""
+    prompt = SYSTEM_PROMPT
+    for name in unavailable_tools():
+        prompt = prompt.replace(f" {name},", "").replace(f" / {name}", "")
+    return prompt
+
+
+@dataclass
+class SearchBudget:
+    """Billable provider searches one cluster attempt may make. Charged with the underlying provider calls a tool
+    call actually made (search_official_domains = one per uncached domain); cache hits cost nothing."""
+    limit: int
+    used: int = 0
+    refused: int = 0
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.limit - self.used)
 
 STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "user_cancelled", "api_failure",
                 "research_exception")
@@ -343,6 +404,14 @@ class AgentConfig:
     document_sweep_max_turns: int = 2
     document_sweep_candidates_per_field: int = 6
     document_sweep_packet_max_chars: int = 40000
+    # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
+    recovery_mode: str = "cluster"
+    cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
+    cluster_base_turns: int = 2               # turns every cluster attempt may use
+    cluster_max_turns: int = 4                # ceiling (never above 4): extra turns only after real novelty
+    cluster_search_budget: int = 4            # billable provider searches per cluster attempt (cache hits are free)
+    cluster_candidates_per_field: int = 6
+    cluster_packet_max_chars: int = 30000
 
 
 AGENT_ENV = {
@@ -359,6 +428,10 @@ AGENT_ENV = {
     "field_recovery_prior_excerpts_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPTS_MAX_CHARS",
     "field_recovery_prior_excerpt_max_chars": "FIELD_RECOVERY_PRIOR_EXCERPT_MAX_CHARS",
     "document_sweep_max_turns": "DOCUMENT_SWEEP_MAX_TURNS",
+    "cluster_max_attempts": "CLUSTER_MAX_ATTEMPTS",
+    "cluster_base_turns": "CLUSTER_BASE_TURNS",
+    "cluster_max_turns": "CLUSTER_MAX_TURNS",
+    "cluster_search_budget": "CLUSTER_SEARCH_BUDGET",
 }
 TOOL_ENV = {
     "preview_chars": "TOOL_PREVIEW_CHARS",
@@ -405,6 +478,8 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
         values["requested_fields"] = parse_field_list(env("ENRICHMENT_FIELDS"))
     if (env("TARGET_MARKET") or "").strip():
         values["target_market"] = env("TARGET_MARKET").strip()
+    if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
+        values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
     return AgentConfig(**{**values, **overrides})
 
 
@@ -660,6 +735,7 @@ class ToolSession:
         self.on_documents = on_documents   # e.g. the deterministic harvester (every phase, every new document)
         self.blocked = 0
         self.turn_results: list[dict] = []
+        self.search_budget: SearchBudget | None = None   # set per cluster attempt; None = no per-attempt budget
 
     def execute(self, calls: list[dict], messages: list[dict], *, phase: str, allowed: tuple | None = None,
                 **tags: Any):
@@ -708,10 +784,34 @@ class ToolSession:
                     "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
                 })
                 continue
+            budget = self.search_budget if name in trace.SEARCH_TOOLS else None
+            if budget is not None:
+                from .tools.search import planned_provider_calls
+
+                planned = planned_provider_calls(self.ctx, name, trace.parse_args(raw_args))
+                if planned > budget.remaining:
+                    budget.refused += 1
+                    self.blocked += 1
+                    result = {"error": "search_budget_exhausted", "planned_provider_calls": planned,
+                              "remaining_provider_calls": budget.remaining,
+                              "message": (f"{name} would make {planned} billable search(es); this attempt has "
+                                          f"{budget.remaining} left. Use cached documents or the search_hints.")}
+                    self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                       arguments=raw_args, reason="search_budget_exhausted", planned=planned,
+                                       remaining=budget.remaining, **tags)
+                    self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name,
+                                            "arguments": raw_args, "duration_ms": 0, "cache_hit": None,
+                                            "error": result["error"], "document_id": None, "duplicate": False,
+                                            "blocked": True})
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
+                    continue
+            misses_before = self.ctx.counters["search_cache_misses"]
             self.run_log.event("tool_call", step=step, phase=phase, call_id=call.get("id"), name=name,
                                arguments=raw_args, **tags)
             t_tool = time.monotonic()
             result = dispatch(self.ctx, name, raw_args)
+            if budget is not None:
+                budget.used += self.ctx.counters["search_cache_misses"] - misses_before
             elapsed = int((time.monotonic() - t_tool) * 1000)
             self.run_log.event("tool_result", step=step, phase=phase, call_id=call.get("id"), name=name,
                                result=result, **tags)
@@ -762,6 +862,8 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     from .document_sweep import compact_candidate
 
     events = trace_events(run_log)
+    searches_before = session.ctx.counters["search_cache_misses"]
+    billable_before = session.ctx.counters["search_api_calls"]
     primary = current_evaluation(events, specs, config.target_market)
     run_log.event("field_evaluation", stage="primary", fields=primary,
                   summary=_state_counts(primary))
@@ -927,6 +1029,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
     resolved_queue = [f for f in queued if not current[f]["retry_eligible"]]
     return {
         "enabled": config.field_recovery_enabled,
+        "mode": "legacy",
         "order": "breadth_first",
         "field_recovery_turn_budget": cap or None,
         "field_recovery_turns_used": total_steps,
@@ -963,11 +1066,443 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "recovery_unique_fields_resolved": len(resolved_queue),
         "recovery_resolution_per_turn": round(len(resolved_queue) / total_steps, 3) if total_steps else None,
         "fields_never_attempted_due_to_budget": not_attempted if stopped == "max_total_steps" else [],
+        **tail_metrics(primary, final, model_calls=total_steps,
+                       search_calls=session.ctx.counters["search_cache_misses"] - searches_before,
+                       billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before),
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
 
+
+def _trim_packet(packet: dict, max_chars: int) -> dict:
+    """Fit a cluster packet under its size cap: drop the lowest-ranked documents, then search hints, then the
+    oldest operations, then candidates beyond the first per field. Fields, conflicts and evidence are kept."""
+    def size() -> int:
+        return len(json.dumps(packet, ensure_ascii=False, default=str))
+
+    for key, floor in (("ranked_documents", 3), ("search_hints", 2), ("already_attempted_operations", 5)):
+        while size() > max_chars and len(packet.get(key) or []) > floor:
+            packet[key] = packet[key][:-1] if key != "already_attempted_operations" else packet[key][1:]
+    cands = packet.get("deterministic_candidates") or {}
+    while size() > max_chars and any(len(v) > 1 for v in cands.values()):
+        name = max(cands, key=lambda n: len(cands[n]))
+        cands[name] = cands[name][:-1]
+    return packet
+
+
+def _cluster_reply(text: str | None, cluster: str) -> dict | None:
+    parsed, _ = parse_model_output(text)
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("cluster") and str(parsed["cluster"]) != cluster:
+        return None
+    return parsed
+
+
+def _clamp(value: Any, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        number = default
+    return max(low, min(number, high))
+
+
+def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, search_calls: int,
+                 billable_search_calls: int | None = None) -> dict:
+    """Tail efficiency (observational; same definitions for legacy and cluster recovery). `search_calls` are
+    provider searches made (cache misses, including errors and keyless backends); `billable_search_calls` the
+    priced web_search calls."""
+    start = {e["field"] for e in primary if e["retry_eligible"]}
+    remaining = {e["field"] for e in final if e["retry_eligible"]}
+    resolved = sorted(start - remaining)
+    # verdicts on fields whose policy allows portability at all (a never-portable field is not a "rejection")
+    from .market_portability import POLICY_ONLY_BASES
+
+    portability = [v for e in final for v in (e.get("portability") or {}).values()
+                   if v.get("portability_basis") not in POLICY_ONLY_BASES]
+    return {
+        "tail_fields_at_start": len(start),
+        "tail_fields_resolved": len(resolved),
+        "tail_fields_remaining": len(remaining),
+        "tail_fields_resolved_list": resolved,
+        "tail_model_calls": model_calls,
+        "tail_search_calls": search_calls,
+        "tail_billable_search_calls": search_calls if billable_search_calls is None else billable_search_calls,
+        # conflicts the evaluator already normalized when the tail started: no recovery search was spent on them
+        "conflicts_normalized_without_search": sum(1 for e in primary if any(
+            str(i).startswith("conflict_normalized:") for i in e.get("info") or [])),
+        "portable_facts_accepted": sum(1 for v in portability if v.get("portable_to_target_market")),
+        "portable_facts_rejected": sum(1 for v in portability if not v.get("portable_to_target_market")),
+        "fields_resolved_per_tail_turn": round(len(resolved) / model_calls, 3) if model_calls else None,
+        "fields_resolved_per_tail_search": round(len(resolved) / search_calls, 3) if search_calls else None,
+    }
+
+
+def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
+                         config: AgentConfig, run_log: RunLog, cache, documents_dir: Path,
+                         operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None) -> dict:
+    """Clustered tail recovery (see src/tail_planner.py). The recovery unit is a CLUSTER of related open fields.
+
+    BREADTH-FIRST over clusters: every cluster gets attempt 1 before any cluster gets attempt 2, so one hard field
+    cannot spend the global budget first. Each attempt is local-only (cached-document tools) while the cluster has
+    candidates no model has reviewed, else web. An attempt starts with `cluster_base_turns` turns and gets another
+    (up to `cluster_max_turns`, never above 4) only after a turn with real novelty; a base budget that ends without
+    novelty stops the attempt. Billable searches are budgeted per attempt in provider calls. After every turn all
+    requested fields are re-evaluated with current_evaluation() (new documents were already harvested for ALL fields
+    by the session hook), every cluster is pruned, and the model is told which fields are resolved and which new
+    candidates appeared, before any further paid turn. Field states come only from current_evaluation().
+    """
+    from .candidate_harvest import candidate_matrix
+    from .conflict_normalizer import resolver_packet
+    from .document_sweep import compact_candidate
+    from .field_recovery import related_searches, vehicle_identity
+    from .tail_planner import (LOCAL_TOOLS, candidate_key, candidates_fresh_first, cluster_packet, fresh_candidates,
+                               novelty, plan_clusters, rank_documents, search_hints, snapshot, triage)
+
+    market = config.target_market
+    adm = session.ctx.admission
+    billable_before = session.ctx.counters["search_api_calls"]
+    by_name = {s["name"]: s for s in specs}
+    identity = vehicle_identity(payload, market)
+    events = trace_events(run_log)
+    primary = current_evaluation(events, specs, market)
+    run_log.event("field_evaluation", stage="primary", fields=primary, summary=_state_counts(primary))
+    matrix = candidate_matrix(events, specs, vehicle)
+    triaged = triage(primary, specs, matrix, events, config.field_recovery_max_attempts) \
+        if config.field_recovery_enabled else {}
+    clusters = plan_clusters(triaged, specs)
+    queued = [f for c in clusters for f in c["fields"]]
+    run_log.event("field_retry_queue", fields=queued, enabled=config.field_recovery_enabled,
+                  order="breadth_first_clusters", mode="cluster",
+                  queue=[{"field": f, **triaged[f]} for f in queued], clusters=clusters,
+                  policy_blocked=[f for f, t in triaged.items() if t["triage"] == "policy_blocked"])
+    current = {e["field"]: e for e in primary}
+    state = {"total_steps": 0, "stopped": None, "cut_short": None, "early_count": 0, "budget_skipped": 0,
+             "no_novelty_stops": 0, "budget_extensions": 0, "searches": 0, "search_refusals": 0}
+    attempts_log: list[dict] = []
+    attempted_fields: set[str] = set()
+    resolved_by_cluster: dict[str, list[str]] = {}
+    resolved_indirectly: dict[str, dict] = {}
+    low_yield: set[str] = set()
+    local_done: set[str] = set()
+    previous: dict[str, list[dict]] = {c["cluster"]: [] for c in clusters}
+    ceiling = _clamp(config.cluster_max_turns, CLUSTER_TURN_CEILING, 1, CLUSTER_TURN_CEILING)
+    base = _clamp(config.cluster_base_turns, 2, 1, ceiling)
+    allowed_attempts = {c["cluster"]: min(max(0, int(config.cluster_max_attempts)),
+                                          max(triaged[f]["max_attempts"] for f in c["fields"])) for c in clusters}
+
+    def cap_reached() -> bool:
+        cap = config.field_recovery_max_total_steps
+        return bool(cap and state["total_steps"] >= cap)
+
+    def reevaluate(cluster: str, attempt: int) -> None:
+        latest = current_evaluation(trace_events(run_log), specs, market)
+        for entry in latest:
+            name = entry["field"]
+            was = current[name]
+            current[name] = entry
+            if name in queued and was["retry_eligible"] and not entry["retry_eligible"]:
+                resolved_by_cluster.setdefault(cluster, []).append(name)
+                if name not in by_cluster.get(cluster, ()):
+                    resolved_indirectly.setdefault(name, {"resolved_during_field": f"cluster:{cluster}",
+                                                          "attempt": attempt, "state": entry["state"]})
+                    run_log.event("field_recovery_queue_resolved_indirectly", field=name,
+                                  resolved_during_field=f"cluster:{cluster}", attempt=attempt, state=entry["state"])
+
+    by_cluster = {c["cluster"]: set(c["fields"]) for c in clusters}
+
+    def run_attempt(plan: dict, attempt: int, round_no: int, local: bool) -> None:
+        name = plan["cluster"]
+        open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
+        events = trace_events(run_log)
+        matrix = candidate_matrix(events, specs, vehicle)
+        tri = triage(list(current.values()), specs, matrix, events, config.field_recovery_max_attempts, low_yield)
+        mode = "local_only" if local else "web"
+        attempted_fields.update(open_fields)
+        budget = None if local else SearchBudget(max(0, int(config.cluster_search_budget)))
+        session.search_budget = budget
+        model_tools = [s for s in tool_specs() if s["function"]["name"] in LOCAL_TOOLS] if local else tool_specs()
+        conflicts = {}
+        for f in open_fields:
+            if current[f]["state"] == "conflicting":
+                ids = {str(i) for i in current[f].get("conflict_evidence_ids") or []}
+                items = [i for i in trace.evidence_items(events) if str(i.get("evidence_id")) in ids]
+                conflicts[f] = resolver_packet(spec=by_name[f], items=items,
+                                               classification=current[f].get("conflict_class") or {},
+                                               identity=identity, prior_queries=related_searches(events, by_name[f]))
+        doc_metas = _doc_metas(events, cache, documents_dir)
+        ranked = rank_documents(doc_metas=doc_metas, matrix=matrix, fields=open_fields, events=events, adm=adm,
+                                cache=cache, target_market=market)
+        hints = [] if local else search_hints(
+            events=events, specs=[by_name[f] for f in open_fields], identity=identity,
+            manufacturer=(adm.manufacturer if adm is not None else None),
+            opened_urls=[m.get("final_url") or m.get("url") for m in doc_metas] + [m.get("url") for m in doc_metas])
+        other_open = [f for f in queued if f not in open_fields and current[f]["retry_eligible"]]
+        turn_budget = {"base": base, "max": ceiling,
+                       "rule": "turns beyond base only after a turn with real novelty; none at all after base "
+                               "without novelty"}
+        # unseen candidates first: the candidates that justify a local pass are the ones it shows
+        ordered_cands = candidates_fresh_first(matrix, events, open_fields)
+        max_attempts = allowed_attempts[name] + (1 if name in local_done else 0)
+        packet = cluster_packet(
+            cluster=name, fields=open_fields, specs=specs, evaluation=list(current.values()), triaged=tri,
+            events=events, payload=payload, target_market=market, matrix=matrix, ranked_documents=ranked,
+            hints=hints, mode=mode, attempt=attempt, max_attempts=max_attempts, turn_budget=turn_budget,
+            search_budget=budget.limit if budget else None, previous_attempts=previous[name],
+            other_open_fields=other_open, conflicts=conflicts,
+            candidates_per_field=config.cluster_candidates_per_field, operator_notes=operator_notes,
+            candidates=ordered_cands)
+        packet = _trim_packet(packet, config.cluster_packet_max_chars)
+        shown = packet.get("deterministic_candidates") or {}
+        presented = [candidate_key(c) for f in open_fields for c in (ordered_cands.get(f) or [])[:len(shown.get(f)
+                                                                                                        or [])]]
+        packet_chars = len(json.dumps(packet, ensure_ascii=False, default=str))
+        states_before = {f: current[f]["state"] for f in open_fields}
+        run_log.event("cluster_recovery_started", cluster=name, attempt=attempt, round=round_no, mode=mode,
+                      fields=open_fields, triage={f: (tri.get(f) or {}).get("triage") for f in open_fields},
+                      max_attempts=max_attempts, turn_budget=base, turn_ceiling=ceiling,
+                      search_budget=budget.limit if budget else 0, presented_candidate_keys=presented,
+                      ranked_documents=[{k: d.get(k) for k in ("document_id", "source_yield_score")} for d in ranked],
+                      search_hints=len(hints), conflicts=sorted(conflicts), packet_chars=packet_chars)
+        phase_ref["name"] = "field_recovery"
+        messages = [{"role": "system", "content": CLUSTER_RECOVERY_SYSTEM_PROMPT},
+                    {"role": "user", "content": "Cluster recovery task (JSON):\n"
+                                                + json.dumps(packet, ensure_ascii=False, default=str)}]
+        reply_text, turns, error, early, stop = None, 0, None, False, None
+        turn_novelty: list[list[str]] = []
+        extensions = 0
+        searches_before = session.ctx.counters["search_cache_misses"]
+        label = f"cluster:{name}"
+        try:
+            for turn_index in range(1, ceiling + 1):
+                if cap_reached():
+                    state["stopped"], state["cut_short"] = "max_total_steps", label
+                    break
+                if turn_index > base:
+                    extensions += 1
+                    state["budget_extensions"] += 1
+                    run_log.event("cluster_recovery_budget_extended", cluster=name, attempt=attempt,
+                                  turn=turn_index, novelty=turn_novelty[-1])
+                events = trace_events(run_log)
+                watched = [f for f in queued if current[f]["retry_eligible"]]
+                before = snapshot(events=events, evaluation=list(current.values()),
+                                  documents=list(session.ctx.documents_opened), open_fields=watched,
+                                  matrix=candidate_matrix(events, specs, vehicle))
+                meta = {"field": label, "cluster": name, "fields": open_fields, "attempt": attempt,
+                        "max_attempts": max_attempts, "turn": turn_index, "turn_budget": base,
+                        "turn_ceiling": ceiling, "mode": mode}
+                message = caller(outgoing_messages(messages, config), phase="field_recovery", tools=model_tools,
+                                 meta=meta)
+                turns += 1
+                state["total_steps"] += 1
+                messages.append(_assistant_echo(message))
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    reply_text = message.get("content") or ""
+                    break
+                session.execute(calls, messages, phase="field_recovery",
+                                allowed=LOCAL_TOOLS if local else None, cluster=name, attempt=attempt)
+                # New documents were harvested for ALL fields by the session hook; re-evaluate EVERY requested field
+                # (admitted evidence -> current_evaluation) and prune every cluster before any further paid turn.
+                reevaluate(name, attempt)
+                events = trace_events(run_log)
+                matrix_now = candidate_matrix(events, specs, vehicle)
+                after = snapshot(events=events, evaluation=list(current.values()),
+                                 documents=list(session.ctx.documents_opened), open_fields=watched, matrix=matrix_now)
+                found = novelty(before, after, adm, cache)
+                turn_novelty.append(found)
+                still_open = [f for f in open_fields if current[f]["retry_eligible"]]
+                run_log.event("cluster_turn_novelty", cluster=name, attempt=attempt, turn=turn_index, novelty=found,
+                              fields_open=still_open)
+                resolved_now = [f for f in open_fields if f not in still_open]
+                if not still_open and all(early_resolution_check(by_name[f], events, market)[0]
+                                          for f in resolved_now if current[f]["state"] == "ok"):
+                    early = True
+                    state["early_count"] += 1
+                    state["budget_skipped"] += max(0, base - turn_index)
+                    run_log.event("field_recovery_early_resolved", field=label, cluster=name, attempt=attempt,
+                                  after_turn=turn_index, state="ok", turn_budget=base,
+                                  turn_budget_skipped=max(0, base - turn_index), fields=resolved_now)
+                    break
+                if turn_index >= base and not found:
+                    stop = "no_novelty"
+                    state["no_novelty_stops"] += 1
+                    run_log.event("cluster_recovery_no_novelty_stop", cluster=name, attempt=attempt,
+                                  after_turn=turn_index, fields_open=still_open)
+                    break
+                announced = {f: [c for c in matrix_now["fields"].get(f) or []
+                                 if candidate_key(c) not in before["candidates"]][:4] for f in still_open}
+                announced = {f: v for f, v in announced.items() if v}
+                fresh = {f: [compact_candidate(c) for c in v] for f, v in announced.items()}
+                note = [f"Fields still open: {', '.join(still_open)}."]
+                if resolved_now:
+                    note.append(f"Resolved now (do not research again): {', '.join(resolved_now)}.")
+                if fresh:
+                    note.append("New candidates harvested from documents of this turn: "
+                                + json.dumps(fresh, ensure_ascii=False, default=str)[:3000])
+                if budget is not None:
+                    note.append(f"Billable searches left in this attempt: {budget.remaining}.")
+                if turn_index >= base:
+                    note.append("This turn produced novelty, so one more turn is allowed; reply with the JSON when "
+                                "done.")
+                messages[-1]["content"] += "\n[operational note] " + " ".join(note)
+                if announced:     # shown to the model now: never again a reason for a local-only pass
+                    run_log.event("cluster_candidates_announced", cluster=name, attempt=attempt, turn=turn_index,
+                                  presented_candidate_keys=[candidate_key(c) for v in announced.values() for c in v])
+        except GLMError as exc:  # stop spending on recovery; finalize with what we have
+            error = _error_text(exc)
+            state["stopped"] = "api_failure"
+            run_log.event("field_recovery_failed", field=label, attempt=attempt, error=error,
+                          api_error=exc.as_dict())
+        finally:
+            session.search_budget = None
+        reply = _cluster_reply(reply_text, name)
+        for entry in (reply or {}).get("fields") or []:
+            field_name = normalize_field_name((entry or {}).get("field")) if isinstance(entry, dict) else None
+            if field_name in open_fields and entry.get("status"):
+                cited = entry.get("evidence_ids")
+                run_log.event("field_status", field=field_name, status=str(entry["status"]).lower(),
+                              note=entry.get("notes"), source=f"cluster_recovery_{name}_attempt_{attempt}",
+                              evidence_ids=[str(i) for i in cited] if isinstance(cited, list) else [])
+        reevaluate(name, attempt)
+        searched = session.ctx.counters["search_cache_misses"] - searches_before
+        state["searches"] += searched
+        if budget is not None:
+            state["search_refusals"] += budget.refused
+        if not any(turn_novelty) and mode == "web":
+            low_yield.update(f for f in open_fields if current[f]["retry_eligible"])
+        record = {"field": label, "cluster": name, "fields": open_fields, "attempt": attempt, "round": round_no,
+                  "mode": mode, "states_before": states_before,
+                  "states_after": {f: current[f]["state"] for f in open_fields},
+                  "state_before": states_before[open_fields[0]] if len(open_fields) == 1 else
+                  f"{sum(1 for f in open_fields if states_before[f] in RETRY_STATES)} open",
+                  "state_after": current[open_fields[0]]["state"] if len(open_fields) == 1 else
+                  f"{sum(1 for f in open_fields if current[f]['retry_eligible'])} open",
+                  "turns": turns, "turn_budget": base, "turn_ceiling": ceiling, "budget_extensions": extensions,
+                  "novelty": turn_novelty, "stop": stop or ("early_resolved" if early else None),
+                  "early_resolved": early, "search_provider_calls": searched,
+                  "search_budget": budget.limit if budget else 0, "search_refused": budget.refused if budget else 0,
+                  "fields_resolved": [f for f in open_fields if not current[f]["retry_eligible"]],
+                  "reply": reply, "reply_text": None if reply else reply_text, "error": error,
+                  "packet_chars": packet_chars, "deterministic_candidates": sum(len(v) for v in shown.values()),
+                  "ranked_documents": len(ranked), "search_hints": len(hints)}
+        attempts_log.append(record)
+        previous[name].append({k: record[k] for k in ("attempt", "mode", "states_after", "turns", "stop",
+                                                      "search_provider_calls")})
+        run_log.event("field_recovery_finished", **record)
+
+    def local_next(plan: dict) -> bool:
+        """THE local-first predicate: this cluster has not had its local pass and its open fields (any state,
+        conflicting included) have candidates no model has seen. Used for ordering AND for the attempt's mode."""
+        if plan["cluster"] in local_done:
+            return False
+        events = trace_events(run_log)
+        fresh = fresh_candidates(candidate_matrix(events, specs, vehicle), events,
+                                 [f for f in plan["fields"] if current[f]["retry_eligible"]])
+        return bool(fresh)
+
+    # Breadth-first rounds: each round gives every cluster at most one attempt. A cluster's one local-only pass is
+    # free of its web attempt budget (allowed_attempts counts web attempts only).
+    web_done = {c["cluster"]: 0 for c in clusters}
+    skipped: set[str] = set()
+    round_no = 0
+    while not state["stopped"]:
+        round_no += 1
+        progressed = False
+        # local passes first: no billable search is spent while unreviewed local material remains
+        plans = [(plan, local_next(plan)) for plan in clusters]
+        for plan, _ in sorted(plans, key=lambda pl: 0 if pl[1] else 1):
+            name = plan["cluster"]
+            open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
+            if not open_fields or allowed_attempts[name] == 0:
+                continue
+            local = local_next(plan)            # re-checked: an earlier attempt this round may have changed it
+            if not local and web_done[name] >= allowed_attempts[name]:
+                continue
+            if not local and previous[name] and previous[name][-1]["mode"] == "web" \
+                    and all(f in low_yield for f in open_fields):
+                if name not in skipped:
+                    skipped.add(name)
+                    run_log.event("cluster_recovery_skipped", cluster=name, round=round_no, reason="low_yield",
+                                  fields=open_fields)
+                continue
+            if cap_reached():
+                state["stopped"] = "max_total_steps"
+                break
+            if local:
+                local_done.add(name)
+            else:
+                web_done[name] += 1
+            run_attempt(plan, len(previous[name]) + 1, round_no, local)
+            progressed = True
+            if state["stopped"]:
+                break
+        if not progressed:
+            break
+    final = [current[e["field"]] for e in primary]
+    run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
+    total = state["total_steps"]
+    cap = config.field_recovery_max_total_steps
+    not_attempted = [f for f in queued if f not in attempted_fields and current[f]["retry_eligible"]]
+    cut_short = state["cut_short"]
+    if cut_short and not any(current[f]["retry_eligible"] for f in by_cluster.get(cut_short[8:], ())):
+        cut_short = None
+    if state["stopped"] == "max_total_steps":
+        run_log.event("field_recovery_budget_exhausted", turn_budget=cap, turns_used=total,
+                      fields_not_attempted=not_attempted, field_cut_short=cut_short)
+    retried = sorted(attempted_fields)
+    resolved_queue = [f for f in queued if not current[f]["retry_eligible"]]
+    metrics = tail_metrics(primary, final, model_calls=total, search_calls=state["searches"],
+                           billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before)
+    return {
+        "enabled": config.field_recovery_enabled,
+        "mode": "cluster",
+        "order": "breadth_first_clusters",
+        "planner_version": "tail-planner-v1",
+        "field_recovery_turn_budget": cap or None,
+        "field_recovery_turns_used": total,
+        "field_recovery_turns_remaining": max(0, cap - total) if cap else None,
+        "fields_not_attempted_due_to_budget": not_attempted if state["stopped"] == "max_total_steps" else [],
+        "field_cut_short_by_budget": cut_short,
+        "requested": len(specs),
+        "primary_states": _state_counts(primary),
+        "final_states": _state_counts(final),
+        "queue": queued,
+        "triage": triaged,
+        "clusters": clusters,
+        "fields_retried": retried,
+        "fields_recovered": [f for f in retried if not current[f]["retry_eligible"]],
+        "fields_still_failed": [f for f in retried if current[f]["retry_eligible"]],
+        "fields_resolved_directly": [f for f in retried if not current[f]["retry_eligible"]
+                                     and f not in resolved_indirectly],
+        "fields_resolved_indirectly": resolved_indirectly,
+        "fields_not_attempted": not_attempted,
+        "attempts": attempts_log,
+        "attempt_count": len(attempts_log),
+        "attempt_order": [f"{a['field']}#{a['attempt']}" for a in attempts_log],
+        "turns": total,
+        "early_resolution_count": state["early_count"],
+        "turn_budget_skipped_by_early_resolution": state["budget_skipped"],
+        "turns_saved_by_early_resolution": state["early_count"],
+        "recovery_fields_given_first_attempt": len({f for a in attempts_log if a["attempt"] == 1 for f in a["fields"]}),
+        "recovery_fields_never_attempted": len([f for f in queued if f not in attempted_fields]),
+        "recovery_second_attempts_started": sum(1 for a in attempts_log if a["attempt"] >= 2),
+        "recovery_unique_fields_touched": len(retried),
+        "recovery_unique_fields_resolved": len(resolved_queue),
+        "recovery_resolution_per_turn": round(len(resolved_queue) / total, 3) if total else None,
+        "fields_never_attempted_due_to_budget": not_attempted if state["stopped"] == "max_total_steps" else [],
+        "cluster_attempts": len(attempts_log),
+        "fields_resolved_by_cluster": {c: sorted(set(v)) for c, v in resolved_by_cluster.items()},
+        "no_novelty_stops": state["no_novelty_stops"],
+        "budget_extensions": state["budget_extensions"],
+        "search_budget_refusals": state["search_refusals"],
+        "local_only_attempts": sum(1 for a in attempts_log if a["mode"] == "local_only"),
+        **metrics,
+        "stopped": state["stopped"],
+        "evaluation_primary": primary,
+        "evaluation_final": final,
+    }
 
 def _call_document(call: dict) -> str | None:
     args = trace.parse_args(call.get("arguments"))
@@ -1020,11 +1555,15 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                           per_field=config.document_sweep_candidates_per_field,
                           max_chars=config.document_sweep_packet_max_chars)
     presented = sum(len(v) for v in packet["deterministic_candidates"].values())
+    from .tail_planner import candidate_key
+
+    presented_keys = [candidate_key(c) for name, shown in packet["deterministic_candidates"].items()
+                      for c in (matrix["fields"].get(name) or [])[:len(shown)]]
     start_seq = run_log.seq
     run_log.event("document_sweep_started", turn_budget=max_turns, fields_to_review=packet["fields_to_review"],
                   candidates_presented=presented, fields_without_candidates=packet["fields_without_candidates"],
                   documents=len(doc_metas), packet_chars=len(json.dumps(packet, ensure_ascii=False, default=str)),
-                  allowed_tools=list(DOCUMENT_SWEEP_TOOLS))
+                  allowed_tools=list(DOCUMENT_SWEEP_TOOLS), presented_candidate_keys=presented_keys)
     messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
                 {"role": "user", "content": "Document sweep task (JSON):\n"
                                             + json.dumps(packet, ensure_ascii=False, default=str)}]
@@ -1156,7 +1695,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     if cancel_event is not None and hasattr(client, "cancel_event"):
         client.cancel_event = cancel_event
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": research_system_prompt()},
         {"role": "user", "content": build_user_message(payload, config.include_level3, config.max_steps,
                                                        notes_for_variant, specs)},
     ]
@@ -1168,7 +1707,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   agent_config=asdict(config), tool_config=asdict(tool_config), pricing=pricing,
                   pricing_finalizer=pricing_finalizer, variant_notes=notes_for_variant,
                   requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
-                  target_market=config.target_market, vehicle_label=vehicle_ctx)
+                  target_market=config.target_market, vehicle_label=vehicle_ctx,
+                  tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode)
 
     status: str | None = None
     stop_reason: str | None = None
@@ -1321,10 +1861,11 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         if status is None:
             phase["name"] = "field_detection"
             try:
-                recovery = run_field_recovery(session=tools, caller=caller, specs=specs, payload=payload,
-                                              config=config, run_log=run_log, cache=cache,
-                                              documents_dir=documents_dir, operator_notes=notes_for_variant,
-                                              phase_ref=phase, vehicle=vehicle_ctx)
+                recover = run_field_recovery if config.recovery_mode == "legacy" else run_cluster_recovery
+                recovery = recover(session=tools, caller=caller, specs=specs, payload=payload,
+                                   config=config, run_log=run_log, cache=cache,
+                                   documents_dir=documents_dir, operator_notes=notes_for_variant,
+                                   phase_ref=phase, vehicle=vehicle_ctx)
             except Exception as exc:  # recovery problems never cost the primary research
                 recovery = {"error": _error_text(exc), "attempt_count": 0}
                 run_log.event("field_recovery_failed", error=recovery["error"])

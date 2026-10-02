@@ -27,7 +27,7 @@ from .fields import normalize_field_name
 from .storage import trace
 from .variant_notes import record_id_of, variant_notes
 
-BUNDLE_VERSION = "bundle-v3"   # v3: admitted evidence with provenance; notes are not facts; QA checks
+BUNDLE_VERSION = "bundle-v4"   # v4: + market portability verdicts and conflict classes; v3: admitted evidence
 EXCERPT_CHARS = 1500
 EXCERPTS_PER_DOCUMENT_CHARS = 5000
 ACTION_LINE_CHARS = 220
@@ -265,9 +265,15 @@ def current_field_states(events: list[dict], specs: list[dict], target_market: s
     stale snapshot: evidence stored mid-attempt, as a by-product or after the last finished attempt counts."""
     from .field_recovery import current_evaluation
 
-    return {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets", "conflict_evidence_ids")
+    return {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets", "conflict_evidence_ids",
+                                               "conflict_class", "portable_evidence_ids", "portability")
                          if f.get(k) not in (None, [], {})}
             for f in current_evaluation(events, specs, target_market)}
+
+
+def portability_of(field_states: dict) -> dict[str, dict]:
+    """{evidence_id: portability verdict} from the current field states (derived, never stored on the record)."""
+    return {eid: verdict for state in field_states.values() for eid, verdict in (state.get("portability") or {}).items()}
 
 
 def build_research_bundle(events: list[dict], payload: dict | None, *, cache=None,
@@ -295,6 +301,7 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
     targets = {"requested_fields": requested, "level3": dict(LEVEL3_TOPICS) if include_level3 else None}
     recovery = trace.field_recovery_summary(events)   # attempt HISTORY (state_before/after, replies)
     field_states = current_field_states(events, specs, target_market)  # CURRENT state, from all events
+    portable = portability_of(field_states)
     with_evidence = {normalize_field_name(item.get("field")) for item in evidence}
     # Strict: requested applicable fields with zero evidence records (no state interpretation).
     no_evidence = [name for name in requested if name not in with_evidence]
@@ -337,7 +344,8 @@ def build_research_bundle(events: list[dict], payload: dict | None, *, cache=Non
         "field_recovery": [{k: a.get(k) for k in ("field", "attempt", "state_before", "state_after", "reply", "error")
                             if a.get(k) is not None} for a in (recovery or {}).get("attempts") or []],
         "primary_output": _primary_output(events),
-        "evidence": [finalizer_evidence(item, sanity) for item in evidence],
+        "evidence": [{**finalizer_evidence(item, sanity), **portable.get(str(item.get("evidence_id")), {})}
+                     for item in evidence],
         "evidence_by_market": markets,
         "candidate_facts": facts,
         "fields_with_multiple_stored_values": multi,

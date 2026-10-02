@@ -228,6 +228,10 @@ class DocumentCache:
             self.stats["search_hits" if value is not None else "search_misses"] += 1
         return value
 
+    def has_search(self, key: str) -> bool:
+        """Is this search already cached? (a peek for budgeting: no hit/miss statistics)"""
+        return self._read_search(key) is not None
+
     def put_search(self, key: str, value: Any) -> None:
         atomic_write_text(self._search_path(key),
                           json.dumps({"key": key, "stored_at": _now(), "value": value}, ensure_ascii=False))

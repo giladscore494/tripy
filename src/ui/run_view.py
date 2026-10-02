@@ -472,7 +472,19 @@ def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
     final = {f["field"]: f for f in recovery.get("evaluation_final") or []}
     attempts: dict[str, int] = {}
     for a in recovery.get("attempts") or []:
-        attempts[a.get("field")] = attempts.get(a.get("field"), 0) + 1
+        for name in a.get("fields") or [a.get("field")]:     # a cluster attempt covers several fields
+            attempts[name] = attempts.get(name, 0) + 1
+    if recovery.get("mode") == "cluster":
+        st.caption(f"Clustered tail recovery · cluster attempts {recovery.get('cluster_attempts', 0)} · "
+                   f"tail fields {recovery.get('tail_fields_at_start', 0)} → resolved "
+                   f"{recovery.get('tail_fields_resolved', 0)} · tail searches {recovery.get('tail_search_calls', 0)} · "
+                   f"no-novelty stops {recovery.get('no_novelty_stops', 0)} · turn extensions "
+                   f"{recovery.get('budget_extensions', 0)} · conflicts normalized without search "
+                   f"{recovery.get('conflicts_normalized_without_search', 0)} · portable facts accepted / rejected "
+                   f"{recovery.get('portable_facts_accepted', 0)} / {recovery.get('portable_facts_rejected', 0)}")
+        if recovery.get("triage"):
+            st.dataframe(pd.DataFrame([{"field": f, **v} for f, v in recovery["triage"].items()]),
+                         hide_index=True, width="stretch")
     current = recovery.get("current_states") or {}
     rows = [{"field": name, "primary_state": (primary.get(name) or {}).get("state"),
              "retry_attempts": attempts.get(name, 0), "last_attempt_state": (final.get(name) or {}).get("state"),
@@ -488,6 +500,9 @@ def render_field_recovery(result: dict, runs_dir: Path | None = None) -> None:
         st.dataframe(pd.DataFrame([{"field": a.get("field"), "attempt": a.get("attempt"),
                                     "before": a.get("state_before"), "after": a.get("state_after"),
                                     "turns": a.get("turns"), "early_resolved": a.get("early_resolved"),
+                                    "mode": a.get("mode"), "stop": a.get("stop"),
+                                    "searches": a.get("search_provider_calls"),
+                                    "resolved": ", ".join(a.get("fields_resolved") or []),
                                     "prior_excerpts": a.get("prior_excerpt_items"),
                                     "prior_excerpt_chars": a.get("prior_excerpt_chars"),
                                     "packet_chars": a.get("packet_chars"),

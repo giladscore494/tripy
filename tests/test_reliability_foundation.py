@@ -227,7 +227,12 @@ def test_market_comes_from_the_source_and_foreign_official_facts_keep_their_mark
     ev = item(corolla, uk["evidence_id"])
     assert (ev["market"], ev["market_basis"], ev["model_market_claim"]) == ("UK", "domain_tld:.uk", "IL")
     assert ev["source_authority"] == "official_manufacturer" and ev["variant_match"] == "exact"
-    assert state(corolla, "fuel_tank_l")["state"] == "foreign_market_only"     # never rewritten as IL
+    # the market is never rewritten as IL; the official UK fact counts for IL only through the field's
+    # portability policy (PR 2), which keeps market=UK and says why
+    fuel = state(corolla, "fuel_tank_l")
+    assert fuel["state"] == "ok" and fuel["portable_evidence_ids"] == [uk["evidence_id"]]
+    assert fuel["portability"][uk["evidence_id"]]["portable_to_target_market"] is True
+    assert item(corolla, uk["evidence_id"])["market"] == "UK"
     unknown = store(corolla, field="cargo_volume_l", value=596, document_id=corolla.docs[GENERIC],
                     quote="Boot space: 596 litres", market="IL")
     assert item(corolla, unknown["evidence_id"])["market"] == "unknown"        # an IL claim is not verified
@@ -437,7 +442,10 @@ def test_corolla_run_rejects_the_polluted_evidence_end_to_end(tmp_path, make_ctx
     assert result["evidence_admission"]["rejected_by_reason"] == {"unsupported_inference": 2, "value_not_stated": 1}
     states = {name: s["state"] for name, s in result["research_bundle"]["field_states"].items()}
     assert (states["cargo_volume_l"], states["gear_count"], states["power_seats"], states["fuel_tank_l"]) == \
-        ("variant_not_exact", "not_applicable", "missing", "foreign_market_only")
+        ("variant_not_exact", "not_applicable", "missing", "ok")     # fuel tank: portable official UK fact
+    assert result["research_bundle"]["field_states"]["fuel_tank_l"]["portable_evidence_ids"]
+    uk_tank = next(e for e in result["research_bundle"]["evidence"] if e["field"] == "fuel_tank_l")
+    assert uk_tank["market"] == "UK" and uk_tank["portable_to_target_market"] is True
     assert states["electric_range_km"] == "not_applicable" and len(result["requested_fields"]) == 37   # HEV: no plug
     m = compute_metrics(result)
     assert (m["target_fields"], m["evidence_rejected"], m["evidence_variant_exact"], m["evidence_variant_different"]) \
@@ -781,7 +789,8 @@ def _state(evidence, declared=None, last_seq=1):
     ([_scoped("e1", variant_match="unbound")], "variant_not_exact"),              # no variant at all + found
     ([_scoped("e1", market="UK")], "foreign_market_only"),                        # foreign (not portable) + found
     ([_scoped("e1")], "ok"),                                                      # exact target market + found
-    ([_scoped("e1", market="unknown")], "ok"),                                    # unverified market, exact variant
+    # an unknown source market is not the target market (no explicit unknown_market_policy on this spec)
+    ([_scoped("e1", market="unknown")], "foreign_market_only"),
     # an IL item of another variant next to an exact UK item: nothing is in the target scope
     ([_scoped("e1", variant_match="different"), _scoped("e2", market="UK")], "foreign_market_only"),
 ])

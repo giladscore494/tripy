@@ -30,6 +30,13 @@ Supabase Level 1.5 → benchmark loader → GLM research phase → research tool
   still decides how to present conflicts.
 - Cross-field consistency checks (CO2 vs fuel, curb vs gross mass, rim vs tire, ...) are QA signals only:
   they never create, replace or rank a value.
+- Conflict classification (`src/conflict_normalizer.py`) only recognises when same-field values are the same
+  number (another unit, or a trim-bound scalar inside a model-line range); it never votes or picks a value.
+  Market portability (`src/market_portability.py`) lets an official foreign fact count for the target market
+  only where the field's schema policy allows it and no target-market source contradicts it; the source
+  market is never rewritten.
+- Tail scheduling (`src/tail_planner.py`: triage, clusters, source_yield_score, search hints, novelty) decides
+  only what recovery to spend money on, never what is true. Search hints and candidates are not evidence.
 - Operational controls (duplicate/novelty tracking, research budget, context compaction, attempt limits)
   only manage cost and context.
 
@@ -56,7 +63,9 @@ and every one of them stays configurable.
 | `GLM_CHAT_TIMEOUT_S` | Read timeout per attempt in seconds (default 240). |
 | `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
-| `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
+| `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
+| `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`cluster` default, or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt). See [Clustered tail recovery](#clustered-tail-recovery-default). |
+| `DISABLED_TOOLS` | Comma-separated tools never offered to the model (tools whose runtime capability is missing, such as `render_page` without Playwright, are left out automatically). |
 | `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `2` = adaptive: a 2nd turn only after a turn-1 cached-document inspection returned content; absolute max 2). See [Layered field harvesting](#layered-field-harvesting). |
 | `INCLUDE_LEVEL3` | Level 3 open research (default **off**; UI checkbox / `--level3`). It is opt-in so it cannot take research turns from the Level 2 benchmark. |
 | `BATCH_MAX_WORKERS`, `GLM_CHAT_MAX_INFLIGHT`, `GLM_CHAT_MAX_INFLIGHT_BY_MODEL`, `GLM_SEARCH_MAX_INFLIGHT`, `GLM_UNKNOWN_MODEL_MAX_INFLIGHT` | Vehicle workers and in-flight request limits (defaults 50; Flash 48/50, FlashX 18/20, GLM-5.3 5/5; search 5; unknown model 1). See [Concurrent batches](#concurrent-batches). |
@@ -331,7 +340,93 @@ phase, API attempt statistics, the partial research bundle and the last model co
 fabricated structured fields. Ctrl+C makes no further model call. The CLI saves the partial result
 and exits with code 130.
 
-### Targeted field recovery
+### Clustered tail recovery (default)
+
+After the document sweep, the fields that are still open (the "tail") are recovered in **clusters**, not one
+field at a time (`RECOVERY_MODE=cluster`, the default; `RECOVERY_MODE=legacy` keeps the per-field retries
+described in the next section). Field detection, the evaluator and every PR #18 rule are shared by both modes.
+
+```
+current_evaluation() → tail triage → recovery clusters → breadth-first cluster attempts → finalizer
+                         (scheduling)   (schema)            local-first · adaptive turns · search budget
+```
+
+- **Triage** (`src/tail_planner.py`) puts each open field in a scheduling category, never a field state:
+  `candidate_rich_local` (harvested candidates no model has seen yet), `conflicting`, `foreign_only`,
+  `low_yield` (an earlier web attempt for it found nothing new), `policy_blocked` (no recovery attempts in the
+  schema, or own evidence contradicting a schema rule) and `true_missing`.
+- **Clusters** come from the schema's `recovery_cluster` (`technical_spec`, `performance`, `charging_ev`,
+  `equipment`, `multimedia`, `tires_wheels`, `commercial`, `warranty`). One attempt asks for the best source
+  for the whole cluster: one official spec page usually answers a dozen technical fields.
+- **Every new document benefits every open field before the next paid turn.** A fetched document is
+  harvested for ALL applicable fields, every field is re-evaluated with `current_evaluation()`, every cluster
+  is pruned, and the model's next turn is told which fields are now resolved and which new candidates
+  appeared. Candidates are still promoted only through `store_evidence` and the admission gate (the
+  reliability rules allow no automatic promotion).
+- **Local-first.** While a cluster has candidates no model has seen, it first gets one pass with cached-document
+  tools only (the packet shows those unseen candidates first), and every round runs such local passes before any
+  web attempt. The local pass does not use up the cluster's web attempts. With no unseen local material that
+  model pass is skipped and web research starts directly.
+- **Ranking, not truth.** Cached documents are ranked per cluster by `source_yield_score` (open fields with
+  candidates, binding level, authority, target market, tables, evidence already yielded, identity, parser
+  confidence). Already-paid search results that were not fetched are passed as `search_hints` (title, snippet,
+  URL), so fetching a strong result replaces a new search. Hints are routing metadata, never evidence.
+- **Adaptive turns.** An attempt starts with `CLUSTER_BASE_TURNS` (2) and gets another turn, up to
+  `CLUSTER_MAX_TURNS` (never above 4), only after a turn with real novelty: a new official document, a new
+  candidate for an open field, newly admitted evidence, a better binding, a better field state or a narrower
+  conflict. An error page (403/404), a repeated query, a cached re-read, a rejected store, evidence bound to
+  another variant or commentary is not novelty. When the
+  base turns end without novelty the attempt stops (`no_novelty_stops`); a web attempt that found nothing marks
+  its fields `low_yield`, and the cluster is not retried for them.
+- **Billable search budget per attempt** (`CLUSTER_SEARCH_BUDGET`, 4) counts the provider calls a search makes
+  (`search_official_domains` makes one per uncached domain); cache hits are free; a search that would exceed
+  the budget is refused before execution.
+- **Breadth-first over clusters**: every cluster gets attempt 1 before any cluster gets attempt 2
+  (`CLUSTER_MAX_ATTEMPTS`, 2), and `FIELD_RECOVERY_MAX_TOTAL_STEPS` still caps all recovery turns of a vehicle.
+- **Conflicts are classified before research** (`src/conflict_normalizer.py`): `unit_equivalent`,
+  `scalar_inside_range`, `market_difference`, `variant_scope_difference`, `internal_source_inconsistency`,
+  `true_conflict`. Only the first two can clear a conflict, and `scalar_inside_range` only when the scalar is
+  bound to the exact market trim (179,990 inside 179,990-183,990 for the Business trim); otherwise the field
+  stays `conflicting`. A conflicting field gets a compact resolver packet (identity, the field's meaning, each
+  competing item with quote, source, binding and authority, recent queries), not the research bundle.
+- **Market portability**: `market_sensitivity` (high | medium | low) and `portability_scope` (none |
+  exact_technical_variant) per field. A foreign item counts for the target market only when the policy allows
+  it, it binds exactly at that level, an official source states the value, all such foreign items agree and
+  no target-market evidence contradicts it (any contradiction vetoes). The item keeps its market; the bundle
+  shows `portable_to_target_market`, `portability_basis` and `portability_policy`. Price, fees, warranty and
+  trim equipment are never portable, and neither are height, ground clearance, weight or boot volume.
+- **Unknown market is not the target market**: `market = unknown` means the server could not establish the
+  source market. Such an item is never target-scope by itself (state `foreign_market_only`, info
+  `market_not_established`). Only a field with an explicit `unknown_market_policy: portable` (the
+  low-sensitivity technical fields) lets it count, and only through the same portability verdict as an official
+  foreign fact (verdict `market_established: false`; the market stays `unknown`). High-sensitivity and
+  `portability_scope: none` fields never accept it.
+- **Tools the host cannot run are never offered**: `render_page` is left out of every tool schema (and the
+  research prompt) when Playwright is missing; `DISABLED_TOOLS` switches tools off by configuration.
+
+Metrics (`result.json` `field_recovery`, the benchmark tab): `tail_fields_at_start / _resolved / _remaining`,
+`tail_model_calls`, `tail_search_calls`, `cluster_attempts`, `fields_resolved_by_cluster`, `no_novelty_stops`,
+`budget_extensions`, `conflicts_normalized_without_search`, `portable_facts_accepted / _rejected`,
+`fields_resolved_per_tail_turn / _search`, `tail_cost_usd` and `cost_per_tail_field_resolved` (when pricing is
+known). Legacy recovery reports the same tail metrics.
+
+Offline benchmark (`python tests/fixtures/corolla_tail.py`): the Corolla Touring Sports 1.8 Hybrid tail
+(height conflict inside one aggregator page, no ground-clearance source, fuel tank only on an official EU
+page, a price range) played by the same deterministic policy model in both modes:
+
+| | legacy | cluster |
+| --- | --- | --- |
+| tail fields at start (of 14 requested) | 11 | 11 |
+| fields ok after recovery | 10 | 10 |
+| recovery model turns | 24 (cap reached) | 9 |
+| recovery searches | 2 | 2 |
+| documents fetched in recovery | 2 | 2 |
+| fields resolved per turn | 0.29 | 0.78 |
+
+Both modes leave height conflicting, ground clearance unresolved and curb weight / boot volume foreign-only:
+coverage is not bought by loosening truth.
+
+### Targeted field recovery (legacy per-field mode)
 
 Between research and finalization, the requested enrichment fields that primary research did not obtain
 get focused retries:
@@ -798,7 +893,7 @@ vehicles is measured honestly.
 | `search_official_domains` | Same, biased to manufacturer/importer domains (defaults per manufacturer, or any list). |
 | `fetch_url` | Downloads a URL; stores status, headers, content-type, final URL and body (detects PDFs). |
 | `fetch_pdf` | Downloads a PDF; stores bytes, extracted text (pdfplumber) and metadata. |
-| `render_page` | Headless Chromium render for JS/SPA pages; returns text and links. |
+| `render_page` | Headless Chromium render for JS/SPA pages; returns text and links. Offered only when Playwright is installed. |
 | `extract_html` | Headings, lists, links and paged readable text. |
 | `extract_tables` | HTML tables, `<dl>` spec grids and PDF tables as rows/columns. |
 | `find_in_document` | Focused search in visible text, raw source or embedded structured data. |
@@ -924,5 +1019,8 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 - the reliability foundation (`tests/test_reliability_foundation.py`, Corolla fixture in
   `tests/fixtures/corolla_touring.py`): 2.0-vs-1.8 cargo contamination, server binding over model claims,
   e-CVT gear count, boolean statements, notes, typed ranges, propulsion applicability, source authority,
-  valid_as_of and the consistency checks.
+  valid_as_of and the consistency checks;
+- clustered tail recovery (`tests/test_tail_recovery.py`, offline benchmark in `tests/fixtures/corolla_tail.py`):
+  conflict classes, market portability and its veto, triage, local-first, novelty-based turn extensions,
+  search budgets in provider calls, breadth-first clusters and the legacy-vs-cluster comparison.
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).
