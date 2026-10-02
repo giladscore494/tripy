@@ -58,7 +58,10 @@ def test_detection_uses_only_the_models_research_state():
     s = spec("paint_code")
     state = lambda evidence, declared=None, out=None: evaluate_field(s, evidence, declared, out, "IL")["state"]
     assert state([ev("paint_code", "X1")]) == "ok"                                   # candidate + evidence record
-    assert state([ev("paint_code", "X1", market=None)]) == "ok"                      # unrecorded market is fine
+    # an unrecorded market is not the target market: retry-eligible, flagged as such
+    assert state([ev("paint_code", "X1", market=None)]) == "foreign_market_only"
+    assert "market_not_established" in evaluate_field(s, [ev("paint_code", "X1", market=None)], None, None,
+                                                      "IL")["info"]
     # Two different target-market values that may apply to the target: an unresolved same-scope conflict.
     assert state([ev("paint_code", "X1"), ev("paint_code", "X2")]) == "conflicting"
     assert state([ev("paint_code", "X1"), ev("paint_code", "X2", market="MY")]) == "ok"   # other market: info only

@@ -103,6 +103,10 @@ def declarations(events: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
+def _unknown_market(item: dict) -> bool:
+    return _market_key(item.get("market")) in UNKNOWN_MARKETS
+
+
 def in_target_scope(item: dict, target_market: str) -> bool:
     """A target-market item, or a foreign item the portability policy lets count for the target market (its own
     `market` is kept; see src/market_portability.py)."""
@@ -185,15 +189,17 @@ def binding_satisfies(item: dict, requirement: str | None = None) -> bool:
 
 def in_server_scope(item: dict, target_market: str, requirement: str | None = None) -> bool:
     """Server-side scope of one evidence item: its server-computed binding reaches the field's binding requirement
-    (see binding_satisfies: `unclear` never does) and it is either from the target market, from a market the source
-    does not establish, or a foreign item the server-side portability policy accepted (`portable_to_target_market`,
-    set by the evaluator from src/market_portability.py, never by a model). A model declaration never changes this."""
+    (see binding_satisfies: `unclear` never does) and it is either from the target market or an item the server-side
+    portability policy accepted (`portable_to_target_market`, set by the evaluator from src/market_portability.py,
+    never by a model): a known foreign market, or a market the source does not establish where the field's schema
+    explicitly allows it. An unknown market is never the target market by default. A model declaration never
+    changes this."""
     return binding_satisfies(item, requirement or field_requirement(None, item)) and market_in_scope(item, target_market)
 
 
 def market_in_scope(item: dict, target_market: str) -> bool:
-    """The item's server-side market is the target market, a portable foreign market, or not established."""
-    return in_target_scope(item, target_market) or _market_key(item.get("market")) in UNKNOWN_MARKETS
+    """The item's server-side market is the target market, or a market the portability verdict lets count for it."""
+    return in_target_scope(item, target_market)
 
 
 def resolution_is_backed(declared: dict | None, evidence: list[dict], conflict: list[dict],
@@ -262,7 +268,9 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
                         them (a `conflict_resolved` declaration newer than the latest evidence). A plain
                         `found` does not resolve it. Both candidates are always kept; no value is chosen;
     * foreign_market_only - no candidate is in the server-side target scope and the ones that may apply to the
-                        variant are from a known other market;
+                        variant are from a known other market (not portable) or from a market the source does
+                        not establish (info `market_not_established`; an unknown market is never the target
+                        market unless the field's `unknown_market_policy` and the portability verdict allow it);
     * variant_not_exact   - no candidate's server-side binding reaches the field's binding_requirement in the target
                         scope: a target-market candidate bound only below it (variant_match=unclear), or
                         every candidate is about another trim/variant (variant_match=different, from the
@@ -291,8 +299,10 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     evidence = [{**e, **portability[str(e.get("evidence_id"))]} if str(e.get("evidence_id")) in portability else e
                 for e in evidence]
     portable_ids = [str(e.get("evidence_id")) for e in evidence if e.get("portable_to_target_market") is True]
-    if portable_ids:
+    if any(e.get("portable_to_target_market") is True and not _unknown_market(e) for e in evidence):
         info.append("portable_foreign_fact")
+    if any(e.get("portable_to_target_market") is True and _unknown_market(e) for e in evidence):
+        info.append("portable_unknown_market_fact")
     declared_status = (declared or {}).get("status")
     out_provenance = str((output_entry or {}).get("provenance") or "").lower()
     out_value = (output_entry or {}).get("value", (output_entry or {}).get("values")) if output_entry else None
@@ -342,6 +352,8 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
             state = "variant_not_exact"               # target-scope market, binding below the requirement
         else:
             state = "foreign_market_only"
+        if state == "foreign_market_only" and any(_unknown_market(e) for e in with_value):
+            info.append("market_not_established")    # an unknown source market is not the target market
         if declared_status in RESOLVED_STATUSES:
             info.append(f"declaration_outside_server_scope:{declared_status}")
     else:

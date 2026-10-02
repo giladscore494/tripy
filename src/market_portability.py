@@ -16,6 +16,13 @@ foreign-market evidence item is portable ONLY when all of these hold:
 The item keeps its source market (a UK fact stays UK: `market` is never rewritten); the evaluator only reads the
 derived `portable_to_target_market`, `portability_basis` and `portability_policy`. This is a policy decision about
 applicability, never a truth score, and it never removes or reorders evidence.
+
+An item whose market the source does not establish (`market` = unknown) is NOT a target-market item either: it
+means the server could not establish the source market, not "valid for the target". It is usable for the target
+only when the field's schema says so explicitly (`unknown_market_policy: portable`) AND it passes the same
+deterministic checks as a portable foreign fact (1-5 above, judged together with the foreign items). Without that
+policy (the default, `not_target`), or on a high-sensitivity / portability_scope=none field, it never counts for
+the target market. Its verdict carries `market_established: false`.
 """
 
 from __future__ import annotations
@@ -28,6 +35,19 @@ from .source_authority import OFFICIAL_CLASSES
 PORTABILITY_VERSION = "portability-v1"
 NON_TARGET = ("different", "unbound")
 UNKNOWN_MARKETS = {"", "unknown", "n/a", "na", "none", "unclear", "?"}
+UNKNOWN_MARKET_POLICIES = ("not_target", "portable")
+# verdict bases that only restate the field's policy: not a rejected portability candidate (see agent.tail_metrics)
+POLICY_ONLY_BASES = ("field_policy_not_portable", "unknown_market_not_target")
+
+
+def unknown_market_policy(spec: dict) -> str:
+    """The schema's explicit policy for items whose market the source does not establish (default not_target)."""
+    value = str(spec.get("unknown_market_policy") or "not_target").strip().lower()
+    return value if value in UNKNOWN_MARKET_POLICIES else "not_target"
+
+
+def market_unknown(item: dict) -> bool:
+    return str(item.get("market") or "").strip().lower() in UNKNOWN_MARKETS
 
 
 def policy_of(spec: dict) -> str:
@@ -46,26 +66,38 @@ def _value_key(item: dict, spec: dict):
 
 
 def assess(spec: dict, evidence: list[dict], target_market: str, is_target) -> dict[str, dict]:
-    """{evidence_id: {portable_to_target_market, portability_basis, portability_policy}} for every foreign-market
-    item with a value. `is_target(market, target_market)` is the evaluator's own market test."""
+    """{evidence_id: {portable_to_target_market, portability_basis, portability_policy}} for every item with a value
+    that is not from the target market: a known foreign market, or a market the source does not establish
+    (those also get `market_established: false`). `is_target(market, target_market)` is the evaluator's own
+    market test."""
     spec = with_dictionary(spec)
     policy = policy_of(spec)
     with_value = [e for e in evidence if e.get("value") not in (None, "", [], {})]
-    foreign = [e for e in with_value if str(e.get("market") or "").strip().lower() not in UNKNOWN_MARKETS
-               and not is_target(e.get("market"), target_market)]
-    if not foreign:
+    unknown = [e for e in with_value if market_unknown(e)]
+    foreign = [e for e in with_value if not market_unknown(e) and not is_target(e.get("market"), target_market)]
+    if not foreign and not unknown:
         return {}
 
-    def verdict(portable: bool, basis: str) -> dict:
-        return {"portable_to_target_market": portable, "portability_basis": basis, "portability_policy": policy}
+    def verdict(portable: bool, basis: str, item: dict | None = None) -> dict:
+        out = {"portable_to_target_market": portable, "portability_basis": basis, "portability_policy": policy}
+        if item is not None and market_unknown(item):
+            out["market_established"] = False
+        return out
 
     scope = spec.get("portability_scope") or "none"
     if scope == "none" or scope not in LEVELS or spec.get("market_sensitivity") == "high":
-        return {str(e.get("evidence_id")): verdict(False, "field_policy_not_portable") for e in foreign}
+        return {str(e.get("evidence_id")): verdict(False, "field_policy_not_portable", e) for e in foreign + unknown}
+    out: dict[str, dict] = {}
+    if unknown_market_policy(spec) != "portable":
+        out.update({str(e.get("evidence_id")): verdict(False, "unknown_market_not_target", e) for e in unknown})
+        unknown = []
+    foreign = foreign + unknown
+    if not foreign:
+        return out
     eligible = [e for e in foreign if str(e.get("variant_match") or "").lower() == "exact"
                 and _level(e.get("binding_level")) >= _level(scope)]
-    out = {str(e.get("evidence_id")): verdict(False, "binding_below_portability_scope") for e in foreign
-           if e not in eligible}
+    out.update({str(e.get("evidence_id")): verdict(False, "binding_below_portability_scope", e) for e in foreign
+                if e not in eligible})
     if not eligible:
         return out
     target = [e for e in with_value if is_target(e.get("market"), target_market)
@@ -83,7 +115,7 @@ def assess(spec: dict, evidence: list[dict], target_market: str, is_target) -> d
         lead = official[0]
         basis = (f"official {lead.get('source_authority')} source ({lead.get('market')}) binds at "
                  f"{lead.get('binding_level')}; policy {policy}; no target-market contradiction")
-        out.update({str(e.get("evidence_id")): verdict(True, basis) for e in eligible})
+        out.update({str(e.get("evidence_id")): verdict(True, basis, e) for e in eligible})
         return out
-    out.update({str(e.get("evidence_id")): verdict(False, basis) for e in eligible})
+    out.update({str(e.get("evidence_id")): verdict(False, basis, e) for e in eligible})
     return out

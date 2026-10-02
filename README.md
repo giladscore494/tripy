@@ -395,6 +395,12 @@ current_evaluation() → tail triage → recovery clusters → breadth-first clu
   no target-market evidence contradicts it (any contradiction vetoes). The item keeps its market; the bundle
   shows `portable_to_target_market`, `portability_basis` and `portability_policy`. Price, fees, warranty and
   trim equipment are never portable, and neither are height, ground clearance, weight or boot volume.
+- **Unknown market is not the target market**: `market = unknown` means the server could not establish the
+  source market. Such an item is never target-scope by itself (state `foreign_market_only`, info
+  `market_not_established`). Only a field with an explicit `unknown_market_policy: portable` (the
+  low-sensitivity technical fields) lets it count, and only through the same portability verdict as an official
+  foreign fact (verdict `market_established: false`; the market stays `unknown`). High-sensitivity and
+  `portability_scope: none` fields never accept it.
 - **Tools the host cannot run are never offered**: `render_page` is left out of every tool schema (and the
   research prompt) when Playwright is missing; `DISABLED_TOOLS` switches tools off by configuration.
 

@@ -1,5 +1,5 @@
 {
- "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in. Recovery / market keys: recovery_cluster (technical_spec | performance | charging_ev | equipment | multimedia | tires_wheels | commercial | warranty: fields one kind of source usually answers together; the tail recovery unit), market_sensitivity (high | medium | low: how much the value can differ between markets for the same technical variant), portability_scope (none | exact_technical_variant: the binding level at which an official foreign-market fact may count for the target market when no target-market source contradicts it; the source market is never rewritten).",
+ "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in. Recovery / market keys: recovery_cluster (technical_spec | performance | charging_ev | equipment | multimedia | tires_wheels | commercial | warranty: fields one kind of source usually answers together; the tail recovery unit), market_sensitivity (high | medium | low: how much the value can differ between markets for the same technical variant), portability_scope (none | exact_technical_variant: the binding level at which an official foreign-market fact may count for the target market when no target-market source contradicts it; the source market is never rewritten), unknown_market_policy (not_target | portable; default not_target: an item whose market the source does not establish is never target-market evidence by itself; portable lets it count for the target market only through the same deterministic portability verdict as an official foreign fact, and only on a field whose portability_scope is not none and market_sensitivity is not high; its market stays unknown).",
  "version": "enrichment-v2",
  "dictionary_version": "field-dictionary-v1",
  "groups": {
@@ -452,6 +452,7 @@
    "recovery_cluster": "performance",
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable",
    "semantic_exclusions": [
     {
      "applies_to": [
@@ -550,7 +551,8 @@
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "performance",
    "market_sensitivity": "low",
-   "portability_scope": "exact_technical_variant"
+   "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable"
   },
   {
    "name": "top_speed_kmh",
@@ -602,6 +604,7 @@
    "recovery_cluster": "performance",
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable",
    "semantic_exclusions": [
     {
      "applies_to": [
@@ -904,6 +907,7 @@
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable",
    "semantic_exclusions": [
     {
      "terms": [
@@ -980,6 +984,7 @@
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable",
    "semantic_exclusions": [
     {
      "terms": [
@@ -1709,7 +1714,8 @@
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
-   "portability_scope": "exact_technical_variant"
+   "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable"
   },
   {
    "name": "width_mm",
@@ -1992,7 +1998,8 @@
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
-   "portability_scope": "exact_technical_variant"
+   "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable"
   },
   {
    "name": "curb_weight_kg",
@@ -2288,7 +2295,8 @@
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
-   "portability_scope": "exact_technical_variant"
+   "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable"
   },
   {
    "name": "gearbox_type",
@@ -2387,7 +2395,8 @@
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
-   "portability_scope": "exact_technical_variant"
+   "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable"
   },
   {
    "name": "gear_count",
@@ -2416,6 +2425,7 @@
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
+   "unknown_market_policy": "portable",
    "not_applicable_when": [
     {
      "field": "gearbox_type",
