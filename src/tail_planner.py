@@ -69,7 +69,7 @@ def presented_keys(events: Iterable[dict]) -> set[str]:
     """Candidates already put in front of a model (document sweep or an earlier cluster pass)."""
     out: set[str] = set()
     for event in events:
-        if event.get("kind") in ("document_sweep_started", "cluster_recovery_started"):
+        if event.get("kind") in ("document_sweep_started", "cluster_recovery_started", "cluster_candidates_announced"):
             out.update(event.get("presented_candidate_keys") or [])
     return out
 
@@ -91,6 +91,22 @@ def fresh_candidates(matrix: dict, events: list[dict], fields: Iterable[str]) ->
         cands = [c for c in matrix["fields"].get(name) or [] if candidate_key(c) not in seen]
         if cands:
             out[name] = cands
+    return out
+
+
+def candidates_fresh_first(matrix: dict, events: list[dict], fields: Iterable[str]) -> dict[str, list[dict]]:
+    """Per field: candidates no model has seen first, then the rest (already stored or rejected ones last out)."""
+    fields = list(fields)
+    fresh = fresh_candidates(matrix, events, fields)
+    gone = rejected_keys(events) | stored_keys(events)
+    out = {}
+    for name in fields:
+        first = fresh.get(name) or []
+        keys = {candidate_key(c) for c in first}
+        rest = [c for c in matrix["fields"].get(name) or [] if candidate_key(c) not in keys
+                and candidate_key(c) not in gone]
+        if first or rest:
+            out[name] = first + rest
     return out
 
 
@@ -197,6 +213,8 @@ def rank_documents(*, doc_metas: list[dict], matrix: dict, fields: list[str], ev
     ranked = []
     for meta in doc_metas:
         doc_id = str(meta.get("document_id"))
+        if not usable_document(cache, doc_id):
+            continue
         cands = by_doc.get(doc_id, [])
         profile = document_profile_for(adm, cache, doc_id)
         quality = (sum(float(c.get("parser_confidence") or 0) for c in cands) / len(cands)) if cands else 0.0
@@ -258,6 +276,15 @@ def search_hints(*, events: list[dict], specs: list[dict], identity: dict, manuf
 
 # --- novelty -----------------------------------------------------------------------------------------------
 
+def usable_document(cache, document_id: str) -> bool:
+    """A retrieved page with content: a 4xx/5xx error page (e.g. a 403 from an official domain) is no material."""
+    meta = (cache.get(str(document_id)) if cache is not None else None) or {}
+    status = meta.get("status")
+    if isinstance(status, int) and not 200 <= status < 300:
+        return False
+    return bool(meta.get("text_chars", 1))
+
+
 def snapshot(*, events: list[dict], evaluation: list[dict], documents: list[str], open_fields: Iterable[str],
              matrix: dict) -> dict:
     """What a turn could change: documents, candidates for open fields, admitted evidence, best binding,
@@ -272,7 +299,9 @@ def snapshot(*, events: list[dict], evaluation: list[dict], documents: list[str]
     return {
         "documents": list(documents),
         "candidates": {candidate_key(c) for n in open_fields for c in matrix["fields"].get(n) or []},
-        "evidence": {str(i.get("evidence_id")) for i in trace.evidence_items(events)},
+        # evidence bound to another variant / unbound is ignored by the evaluator, so it is no novelty either
+        "evidence": {str(i.get("evidence_id")) for i in trace.evidence_items(events)
+                     if str(i.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS},
         "best_binding": best,
         "states": {e["field"]: e["state"] for e in evaluation},
         "conflict_sizes": {e["field"]: len({str(x) for x in e.get("conflict_evidence_ids") or []})
@@ -283,7 +312,13 @@ def snapshot(*, events: list[dict], evaluation: list[dict], documents: list[str]
 def novelty(before: dict, after: dict, adm=None, cache=None) -> list[str]:
     """Reasons a turn produced real novelty (empty list: none)."""
     reasons = []
-    new_docs = [d for d in after["documents"] if d not in set(before["documents"])]
+    def url(doc_id: str) -> str:
+        meta = (cache.get(str(doc_id)) if cache is not None else None) or {}
+        return str(meta.get("final_url") or meta.get("url") or doc_id).split("#")[0].rstrip("/")
+
+    seen_urls = {url(d) for d in before["documents"]}
+    new_docs = [d for d in after["documents"] if d not in set(before["documents"]) and url(d) not in seen_urls
+                and usable_document(cache, d)]
     official = [d for d in new_docs
                 if document_profile_for(adm, cache, d).get("source_authority") in OFFICIAL_CLASSES]
     if official:
@@ -316,7 +351,7 @@ def cluster_packet(*, cluster: str, fields: list[str], specs: list[dict], evalua
                    matrix: dict, ranked_documents: list[dict], hints: list[dict], mode: str, attempt: int,
                    max_attempts: int, turn_budget: dict, search_budget: int | None, previous_attempts: list[dict],
                    other_open_fields: list[str], conflicts: dict[str, dict], candidates_per_field: int,
-                   operator_notes: dict | None = None) -> dict:
+                   operator_notes: dict | None = None, candidates: dict[str, list[dict]] | None = None) -> dict:
     """The compact context of ONE cluster attempt: only this cluster's open fields, their candidates, the best
     cached documents for them, already-paid search hints, compact conflict packets and the operational memory.
     Never the full research bundle."""
@@ -324,6 +359,7 @@ def cluster_packet(*, cluster: str, fields: list[str], specs: list[dict], evalua
 
     by_name = {s["name"]: s for s in specs}
     states = {e["field"]: e for e in evaluation}
+    cands = candidates if candidates is not None else matrix["fields"]
     keys = ("description", "unit", "normalized_unit", "semantic_definition", "value_type", "binding_requirement",
             "market_sensitivity", "portability_scope")
     open_specs = [by_name[f] for f in fields]
@@ -345,8 +381,8 @@ def cluster_packet(*, cluster: str, fields: list[str], specs: list[dict], evalua
                     "state": states[f]["state"], "triage": triaged.get(f, {}).get("triage"),
                     "info": states[f].get("info") or []} for f in fields],
         "field_semantics": semantic_notes(open_specs),
-        "deterministic_candidates": {f: [compact_candidate(c) for c in (matrix["fields"].get(f) or [])
-                                         [:candidates_per_field]] for f in fields if matrix["fields"].get(f)},
+        "deterministic_candidates": {f: [compact_candidate(c) for c in (cands.get(f) or [])[:candidates_per_field]]
+                                     for f in fields if cands.get(f)},
         "ranked_documents": ranked_documents,
         "existing_evidence": [compact_evidence(e) for e in trace.evidence_items(events)
                               if normalize_field_name(e.get("field")) in set(fields)],

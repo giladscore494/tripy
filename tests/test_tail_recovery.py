@@ -284,8 +284,10 @@ def test_corolla_cluster_run_details(corolla):
     result, events = run["result"], run["events"]
     rec = result["field_recovery"]
     order = [(a["cluster"], a["attempt"], a["mode"]) for a in rec["attempts"]]
-    assert order == [("technical_spec", 1, "local_only"), ("performance", 1, "web"), ("technical_spec", 2, "web")]
-    assert rec["no_novelty_stops"] == 1 and rec["budget_extensions"] >= 1
+    # the local pass does not use up the web attempts: technical_spec still gets its 2 web attempts
+    assert order == [("technical_spec", 1, "local_only"), ("performance", 1, "web"), ("technical_spec", 2, "web"),
+                     ("technical_spec", 3, "web")]
+    assert rec["no_novelty_stops"] == 2 and rec["budget_extensions"] >= 1
     assert rec["conflicts_normalized_without_search"] == 1                       # the price range
     fields = result["research_bundle"]["field_states"]
     assert fields["height_mm"]["conflict_class"]["class"] == "internal_source_inconsistency"
@@ -297,7 +299,8 @@ def test_corolla_cluster_run_details(corolla):
     assert {"fuel_tank_l", "battery_gross_kwh"} <= set(second["fields_resolved"])
     m = compute_metrics(result)
     assert (m["recovery_mode"], m["tail_fields_at_start"], m["tail_fields_resolved"]) == ("cluster", 11, 7)
-    assert m["cluster_attempts"] == 3 and m["portable_facts_accepted"] >= 3
+    assert m["cluster_attempts"] == 4 and m["portable_facts_accepted"] >= 3
+    assert m["portable_facts_rejected"] == 0        # curb weight / boot volume are never portable: not "rejections"
     assert m["tail_model_calls"] == rec["turns"] and m["tail_search_calls"] == 2
 
 
@@ -453,3 +456,69 @@ def test_recovery_mode_from_env():
     config = agent_config_from_env(env.get)
     assert (config.recovery_mode, config.cluster_search_budget, config.cluster_max_turns) == ("legacy", 2, 3)
     assert Path(tail.__file__).name == "corolla_tail.py"
+
+
+# --- review regressions ----------------------------------------------------------------------------------------
+
+def test_error_pages_and_other_variant_evidence_are_not_novelty(tmp_path):
+    from src.storage.cache import DocumentCache
+
+    cache = DocumentCache(tmp_path)
+    blocked = cache.put("fetch", "https://www.toyota.co.il/blocked", b"Forbidden",
+                        {"status": 403, "final_url": "https://www.toyota.co.il/blocked", "doc_type": "text"},
+                        "Forbidden")["document_id"]
+    base = {"documents": [], "candidates": set(), "evidence": set(), "best_binding": {}, "states": {},
+            "conflict_sizes": {}}
+    assert novelty(base, {**base, "documents": [blocked]}, None, cache) == []
+    events = [{"kind": "evidence", "seq": 1, "evidence": {"evidence_id": "e1", "field": "length_mm", "value": 1,
+                                                          "variant_match": "different"}}]
+    snap = snapshot(events=events, evaluation=[], documents=[], open_fields=[], matrix={"fields": {}})
+    assert snap["evidence"] == set()
+
+
+def test_a_local_pass_shows_the_candidates_that_justified_it():
+    from src.tail_planner import candidate_key, candidates_fresh_first
+
+    cands = [{"field": "length_mm", "value": 4600 + i, "document_id": "d", "parser_confidence": 1 - i / 100}
+             for i in range(8)]
+    presented = [candidate_key(c) for c in cands[:6]]
+    events = [{"kind": "document_sweep_started", "presented_candidate_keys": presented}]
+    ordered = candidates_fresh_first({"fields": {"length_mm": cands}}, events, ["length_mm"])
+    assert [c["value"] for c in ordered["length_mm"][:2]] == [4606, 4607]
+    announced = events + [{"kind": "cluster_candidates_announced", "presented_candidate_keys":
+                           [candidate_key(c) for c in cands[6:]]}]
+    spec = [{**SPECS["length_mm"], "applicable": True}]
+    entry = [{"field": "length_mm", "state": "missing", "retry_eligible": True}]
+    assert triage(entry, spec, {"fields": {"length_mm": cands}}, announced, 2)["length_mm"]["triage"] == "true_missing"
+
+
+def test_one_web_attempt_still_follows_a_local_pass(tmp_path):
+    result, events, client = run_scripted(tmp_path, lambda packet, turn_no, messages: _say(
+        {"cluster": packet["cluster"], "fields": []}), cluster_max_attempts=1)
+    modes = [(a["cluster"], a["mode"]) for a in result["field_recovery"]["attempts"]]
+    assert ("technical_spec", "local_only") in modes and ("technical_spec", "web") in modes
+
+
+def test_old_runs_are_not_judged_by_the_new_portability_policy():
+    from src.fields import public_spec, with_dictionary
+
+    old = {k: v for k, v in public_spec(SPECS["fuel_tank_l"]).items()
+           if k not in ("portability_scope", "market_sensitivity", "recovery_cluster")}
+    completed = with_dictionary(old)
+    assert completed.get("accepted_unit_variants") and "portability_scope" not in completed
+    assert assess(old, [uk_tank()], "IL", is_target_market)["u1"]["portable_to_target_market"] is False
+
+
+def test_target_market_spellings_are_one_market():
+    spec = SPECS["height_mm"]
+    items = [item("a", "height_mm", 1460, market="IL", document_id="x"),
+             item("b", "height_mm", 1435, market="Israel", document_id="y")]
+    assert classify_conflict(spec, items, "IL")["class"] != "market_difference"
+
+
+def test_reconstructed_cluster_runs_keep_their_tail_metrics(corolla):
+    summary = trace.field_recovery_summary(corolla["cluster"]["events"])
+    live = corolla["cluster"]["result"]["field_recovery"]
+    for key in ("tail_fields_at_start", "tail_fields_resolved", "cluster_attempts", "no_novelty_stops",
+                "budget_extensions", "tail_search_calls", "tail_model_calls"):
+        assert summary[key] == live[key], key

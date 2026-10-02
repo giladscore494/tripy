@@ -128,24 +128,30 @@ def classify_conflict(spec: dict, items: Iterable[dict], target_market: str | No
                 "detail": f"the same value in the field's normalized unit ({spec.get('normalized_unit')}); "
                           f"stated units {units}"}
     if groups is not None:
-        spans = {str(i.get("evidence_id")): interval(i, spec) for i in items}
-        scalars = [i for i in items if spans[str(i.get("evidence_id"))][0] == spans[str(i.get("evidence_id"))][1]]
-        ranges = [i for i in items if i not in scalars]
-        if scalars and ranges and len(_classes(scalars, spec) or []) == 1:
-            point = spans[str(scalars[0].get("evidence_id"))][0]
-            inside = all(spans[str(r.get("evidence_id"))][0] - 1e-9 <= point <= spans[str(r.get("evidence_id"))][1]
-                         + 1e-9 for r in ranges)
+        spans = [interval(i, spec) for i in items]            # by position: ids are not trusted to be unique
+        scalars = [n for n, s in enumerate(spans) if s[0] == s[1]]
+        ranges = [n for n, s in enumerate(spans) if s[0] != s[1]]
+        if scalars and ranges and len({spans[n] for n in scalars}) == 1:
+            point = spans[scalars[0]][0]
+            inside = all(spans[n][0] - 1e-9 <= point <= spans[n][1] + 1e-9 for n in ranges)
             if inside:
-                trim_bound = all(s.get("binding_level") == "exact_market_trim" for s in scalars)
+                trim_bound = all(items[n].get("binding_level") == "exact_market_trim" for n in scalars)
                 return {**out, "class": "scalar_inside_range", "normalized": trim_bound,
                         "detail": (f"{point:g} lies inside every stated range; " +
-                                   ("the scalar is bound to the exact market trim, so the range is the wider "
-                                    "model-line span" if trim_bound else
+                                   ("the scalar is bound to the exact market trim and no range excludes it, so "
+                                    "the values do not disagree" if trim_bound else
                                     "the scalar's exact-trim scope is not established, so the field stays "
                                     "conflicting"))}
     groups = groups or [[i] for i in items]
-    markets = {str(i.get("market") or "unknown") for i in items}
-    if len(markets) > 1 and _partition_by(groups, lambda m: str(m.get("market") or "unknown")):
+    from .field_recovery import DEFAULT_TARGET_MARKET, is_target_market
+
+    target = target_market or DEFAULT_TARGET_MARKET
+
+    def market_of(item: dict) -> str:       # spellings of the target market (IL / Israel) are one market
+        return "target" if is_target_market(item.get("market"), target) else str(item.get("market") or "unknown")
+
+    markets = {market_of(i) for i in items}
+    if len(markets) > 1 and _partition_by(groups, market_of):
         return {**out, "class": "market_difference", "normalized": False,
                 "detail": f"each value comes from its own market: {sorted(markets)}"}
     docs = [{str(m.get("document_id") or m.get("source_url")) for m in members} for members in groups]

@@ -863,6 +863,7 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
 
     events = trace_events(run_log)
     searches_before = session.ctx.counters["search_cache_misses"]
+    billable_before = session.ctx.counters["search_api_calls"]
     primary = current_evaluation(events, specs, config.target_market)
     run_log.event("field_evaluation", stage="primary", fields=primary,
                   summary=_state_counts(primary))
@@ -1066,7 +1067,8 @@ def run_field_recovery(*, session: ToolSession, caller: ModelCaller, specs: list
         "recovery_resolution_per_turn": round(len(resolved_queue) / total_steps, 3) if total_steps else None,
         "fields_never_attempted_due_to_budget": not_attempted if stopped == "max_total_steps" else [],
         **tail_metrics(primary, final, model_calls=total_steps,
-                       search_calls=session.ctx.counters["search_cache_misses"] - searches_before),
+                       search_calls=session.ctx.counters["search_cache_misses"] - searches_before,
+                       billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before),
         "stopped": stopped,
         "evaluation_primary": primary,
         "evaluation_final": final,
@@ -1098,12 +1100,25 @@ def _cluster_reply(text: str | None, cluster: str) -> dict | None:
     return parsed
 
 
-def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, search_calls: int) -> dict:
-    """Tail efficiency (observational; same definitions for legacy and cluster recovery)."""
+def _clamp(value: Any, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        number = default
+    return max(low, min(number, high))
+
+
+def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, search_calls: int,
+                 billable_search_calls: int | None = None) -> dict:
+    """Tail efficiency (observational; same definitions for legacy and cluster recovery). `search_calls` are
+    provider searches made (cache misses, including errors and keyless backends); `billable_search_calls` the
+    priced web_search calls."""
     start = {e["field"] for e in primary if e["retry_eligible"]}
     remaining = {e["field"] for e in final if e["retry_eligible"]}
     resolved = sorted(start - remaining)
-    portability = [v for e in final for v in (e.get("portability") or {}).values()]
+    # verdicts on fields whose policy allows portability at all (a never-portable field is not a "rejection")
+    portability = [v for e in final for v in (e.get("portability") or {}).values()
+                   if v.get("portability_basis") != "field_policy_not_portable"]
     return {
         "tail_fields_at_start": len(start),
         "tail_fields_resolved": len(resolved),
@@ -1111,7 +1126,9 @@ def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, se
         "tail_fields_resolved_list": resolved,
         "tail_model_calls": model_calls,
         "tail_search_calls": search_calls,
-        "conflicts_normalized_without_search": sum(1 for e in final if any(
+        "tail_billable_search_calls": search_calls if billable_search_calls is None else billable_search_calls,
+        # conflicts the evaluator already normalized when the tail started: no recovery search was spent on them
+        "conflicts_normalized_without_search": sum(1 for e in primary if any(
             str(i).startswith("conflict_normalized:") for i in e.get("info") or [])),
         "portable_facts_accepted": sum(1 for v in portability if v.get("portable_to_target_market")),
         "portable_facts_rejected": sum(1 for v in portability if not v.get("portable_to_target_market")),
@@ -1138,11 +1155,12 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     from .conflict_normalizer import resolver_packet
     from .document_sweep import compact_candidate
     from .field_recovery import related_searches, vehicle_identity
-    from .tail_planner import (LOCAL_TOOLS, candidate_key, cluster_packet, fresh_candidates, novelty, plan_clusters,
-                               rank_documents, search_hints, snapshot, triage)
+    from .tail_planner import (LOCAL_TOOLS, candidate_key, candidates_fresh_first, cluster_packet, fresh_candidates,
+                               novelty, plan_clusters, rank_documents, search_hints, snapshot, triage)
 
     market = config.target_market
     adm = session.ctx.admission
+    billable_before = session.ctx.counters["search_api_calls"]
     by_name = {s["name"]: s for s in specs}
     identity = vehicle_identity(payload, market)
     events = trace_events(run_log)
@@ -1167,8 +1185,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     low_yield: set[str] = set()
     local_done: set[str] = set()
     previous: dict[str, list[dict]] = {c["cluster"]: [] for c in clusters}
-    ceiling = max(1, min(int(config.cluster_max_turns or CLUSTER_TURN_CEILING), CLUSTER_TURN_CEILING))
-    base = max(1, min(int(config.cluster_base_turns or 2), ceiling))
+    ceiling = _clamp(config.cluster_max_turns, CLUSTER_TURN_CEILING, 1, CLUSTER_TURN_CEILING)
+    base = _clamp(config.cluster_base_turns, 2, 1, ceiling)
     allowed_attempts = {c["cluster"]: min(max(0, int(config.cluster_max_attempts)),
                                           max(triaged[f]["max_attempts"] for f in c["fields"])) for c in clusters}
 
@@ -1192,17 +1210,13 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
 
     by_cluster = {c["cluster"]: set(c["fields"]) for c in clusters}
 
-    def run_attempt(plan: dict, attempt: int, round_no: int) -> None:
+    def run_attempt(plan: dict, attempt: int, round_no: int, local: bool) -> None:
         name = plan["cluster"]
         open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
         events = trace_events(run_log)
         matrix = candidate_matrix(events, specs, vehicle)
         tri = triage(list(current.values()), specs, matrix, events, config.field_recovery_max_attempts, low_yield)
-        local = name not in local_done and any((tri.get(f) or {}).get("triage") == "candidate_rich_local"
-                                               for f in open_fields)
         mode = "local_only" if local else "web"
-        if local:
-            local_done.add(name)
         attempted_fields.update(open_fields)
         budget = None if local else SearchBudget(max(0, int(config.cluster_search_budget)))
         session.search_budget = budget
@@ -1226,22 +1240,26 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         turn_budget = {"base": base, "max": ceiling,
                        "rule": "turns beyond base only after a turn with real novelty; none at all after base "
                                "without novelty"}
+        # unseen candidates first: the candidates that justify a local pass are the ones it shows
+        ordered_cands = candidates_fresh_first(matrix, events, open_fields)
+        max_attempts = allowed_attempts[name] + (1 if name in local_done else 0)
         packet = cluster_packet(
             cluster=name, fields=open_fields, specs=specs, evaluation=list(current.values()), triaged=tri,
             events=events, payload=payload, target_market=market, matrix=matrix, ranked_documents=ranked,
-            hints=hints, mode=mode, attempt=attempt, max_attempts=allowed_attempts[name], turn_budget=turn_budget,
+            hints=hints, mode=mode, attempt=attempt, max_attempts=max_attempts, turn_budget=turn_budget,
             search_budget=budget.limit if budget else None, previous_attempts=previous[name],
             other_open_fields=other_open, conflicts=conflicts,
-            candidates_per_field=config.cluster_candidates_per_field, operator_notes=operator_notes)
+            candidates_per_field=config.cluster_candidates_per_field, operator_notes=operator_notes,
+            candidates=ordered_cands)
         packet = _trim_packet(packet, config.cluster_packet_max_chars)
         shown = packet.get("deterministic_candidates") or {}
-        presented = [candidate_key(c) for f in open_fields for c in (matrix["fields"].get(f) or [])[:len(shown.get(f)
-                                                                                                         or [])]]
+        presented = [candidate_key(c) for f in open_fields for c in (ordered_cands.get(f) or [])[:len(shown.get(f)
+                                                                                                        or [])]]
         packet_chars = len(json.dumps(packet, ensure_ascii=False, default=str))
         states_before = {f: current[f]["state"] for f in open_fields}
         run_log.event("cluster_recovery_started", cluster=name, attempt=attempt, round=round_no, mode=mode,
                       fields=open_fields, triage={f: (tri.get(f) or {}).get("triage") for f in open_fields},
-                      max_attempts=allowed_attempts[name], turn_budget=base, turn_ceiling=ceiling,
+                      max_attempts=max_attempts, turn_budget=base, turn_ceiling=ceiling,
                       search_budget=budget.limit if budget else 0, presented_candidate_keys=presented,
                       ranked_documents=[{k: d.get(k) for k in ("document_id", "source_yield_score")} for d in ranked],
                       search_hints=len(hints), conflicts=sorted(conflicts), packet_chars=packet_chars)
@@ -1270,7 +1288,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                                   documents=list(session.ctx.documents_opened), open_fields=watched,
                                   matrix=candidate_matrix(events, specs, vehicle))
                 meta = {"field": label, "cluster": name, "fields": open_fields, "attempt": attempt,
-                        "max_attempts": allowed_attempts[name], "turn": turn_index, "turn_budget": base,
+                        "max_attempts": max_attempts, "turn": turn_index, "turn_budget": base,
                         "turn_ceiling": ceiling, "mode": mode}
                 message = caller(outgoing_messages(messages, config), phase="field_recovery", tools=model_tools,
                                  meta=meta)
@@ -1311,9 +1329,10 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                     run_log.event("cluster_recovery_no_novelty_stop", cluster=name, attempt=attempt,
                                   after_turn=turn_index, fields_open=still_open)
                     break
-                fresh = {f: [compact_candidate(c) for c in matrix_now["fields"].get(f) or []
-                             if candidate_key(c) not in before["candidates"]][:4] for f in still_open}
-                fresh = {f: v for f, v in fresh.items() if v}
+                announced = {f: [c for c in matrix_now["fields"].get(f) or []
+                                 if candidate_key(c) not in before["candidates"]][:4] for f in still_open}
+                announced = {f: v for f, v in announced.items() if v}
+                fresh = {f: [compact_candidate(c) for c in v] for f, v in announced.items()}
                 note = [f"Fields still open: {', '.join(still_open)}."]
                 if resolved_now:
                     note.append(f"Resolved now (do not research again): {', '.join(resolved_now)}.")
@@ -1326,6 +1345,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                     note.append("This turn produced novelty, so one more turn is allowed; reply with the JSON when "
                                 "done.")
                 messages[-1]["content"] += "\n[operational note] " + " ".join(note)
+                if announced:     # shown to the model now: never again a reason for a local-only pass
+                    run_log.event("cluster_candidates_announced", cluster=name, attempt=attempt, turn=turn_index,
+                                  presented_candidate_keys=[candidate_key(c) for v in announced.values() for c in v])
         except GLMError as exc:  # stop spending on recovery; finalize with what we have
             error = _error_text(exc)
             state["stopped"] = "api_failure"
@@ -1369,7 +1391,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         run_log.event("field_recovery_finished", **record)
 
     def local_next(plan: dict) -> bool:
-        """Would this cluster's next attempt be a local-only pass (unreviewed candidates in the cache)?"""
+        """THE local-first predicate: this cluster has not had its local pass and its open fields (any state,
+        conflicting included) have candidates no model has seen. Used for ordering AND for the attempt's mode."""
         if plan["cluster"] in local_done:
             return False
         events = trace_events(run_log)
@@ -1377,26 +1400,43 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                                  [f for f in plan["fields"] if current[f]["retry_eligible"]])
         return bool(fresh)
 
-    rounds = max(allowed_attempts.values(), default=0)
-    for round_no in range(1, rounds + 1):
+    # Breadth-first rounds: each round gives every cluster at most one attempt. A cluster's one local-only pass is
+    # free of its web attempt budget (allowed_attempts counts web attempts only).
+    web_done = {c["cluster"]: 0 for c in clusters}
+    skipped: set[str] = set()
+    round_no = 0
+    while not state["stopped"]:
+        round_no += 1
+        progressed = False
         # local passes first: no billable search is spent while unreviewed local material remains
-        ordered = sorted(clusters, key=lambda p: 0 if local_next(p) else 1)
-        for plan in ordered:
+        plans = [(plan, local_next(plan)) for plan in clusters]
+        for plan, _ in sorted(plans, key=lambda pl: 0 if pl[1] else 1):
             name = plan["cluster"]
             open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
-            if allowed_attempts[name] < round_no or not open_fields:
+            if not open_fields or allowed_attempts[name] == 0:
                 continue
-            if previous[name] and previous[name][-1]["mode"] == "web" and all(f in low_yield for f in open_fields):
-                run_log.event("cluster_recovery_skipped", cluster=name, round=round_no, reason="low_yield",
-                              fields=open_fields)
+            local = local_next(plan)            # re-checked: an earlier attempt this round may have changed it
+            if not local and web_done[name] >= allowed_attempts[name]:
+                continue
+            if not local and previous[name] and previous[name][-1]["mode"] == "web" \
+                    and all(f in low_yield for f in open_fields):
+                if name not in skipped:
+                    skipped.add(name)
+                    run_log.event("cluster_recovery_skipped", cluster=name, round=round_no, reason="low_yield",
+                                  fields=open_fields)
                 continue
             if cap_reached():
                 state["stopped"] = "max_total_steps"
                 break
-            run_attempt(plan, round_no, round_no)
+            if local:
+                local_done.add(name)
+            else:
+                web_done[name] += 1
+            run_attempt(plan, len(previous[name]) + 1, round_no, local)
+            progressed = True
             if state["stopped"]:
                 break
-        if state["stopped"]:
+        if not progressed:
             break
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
@@ -1411,7 +1451,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                       fields_not_attempted=not_attempted, field_cut_short=cut_short)
     retried = sorted(attempted_fields)
     resolved_queue = [f for f in queued if not current[f]["retry_eligible"]]
-    metrics = tail_metrics(primary, final, model_calls=total, search_calls=state["searches"])
+    metrics = tail_metrics(primary, final, model_calls=total, search_calls=state["searches"],
+                           billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before)
     return {
         "enabled": config.field_recovery_enabled,
         "mode": "cluster",

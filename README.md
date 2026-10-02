@@ -356,8 +356,10 @@ current_evaluation() → tail triage → recovery clusters → breadth-first clu
   is pruned, and the model's next turn is told which fields are now resolved and which new candidates
   appeared. Candidates are still promoted only through `store_evidence` and the admission gate (the
   reliability rules allow no automatic promotion).
-- **Local-first.** While a cluster has unreviewed candidates, its first attempt offers only cached-document
-  tools. With no useful local material that model pass is skipped and web research starts directly.
+- **Local-first.** While a cluster has candidates no model has seen, it first gets one pass with cached-document
+  tools only (the packet shows those unseen candidates first), and every round runs such local passes before any
+  web attempt. The local pass does not use up the cluster's web attempts. With no unseen local material that
+  model pass is skipped and web research starts directly.
 - **Ranking, not truth.** Cached documents are ranked per cluster by `source_yield_score` (open fields with
   candidates, binding level, authority, target market, tables, evidence already yielded, identity, parser
   confidence). Already-paid search results that were not fetched are passed as `search_hints` (title, snippet,
@@ -365,7 +367,8 @@ current_evaluation() → tail triage → recovery clusters → breadth-first clu
 - **Adaptive turns.** An attempt starts with `CLUSTER_BASE_TURNS` (2) and gets another turn, up to
   `CLUSTER_MAX_TURNS` (never above 4), only after a turn with real novelty: a new official document, a new
   candidate for an open field, newly admitted evidence, a better binding, a better field state or a narrower
-  conflict. A 403, a repeated query, a cached re-read, a rejected store or commentary is not novelty. When the
+  conflict. An error page (403/404), a repeated query, a cached re-read, a rejected store, evidence bound to
+  another variant or commentary is not novelty. When the
   base turns end without novelty the attempt stops (`no_novelty_stops`); a web attempt that found nothing marks
   its fields `low_yield`, and the cluster is not retried for them.
 - **Billable search budget per attempt** (`CLUSTER_SEARCH_BUDGET`, 4) counts the provider calls a search makes
@@ -402,10 +405,13 @@ page, a price range) played by the same deterministic policy model in both modes
 | --- | --- | --- |
 | tail fields at start (of 14 requested) | 11 | 11 |
 | fields ok after recovery | 10 | 10 |
-| recovery model turns | 24 (cap reached) | 7 |
+| recovery model turns | 24 (cap reached) | 9 |
 | recovery searches | 2 | 2 |
-| documents fetched in recovery | 2 | 1 |
-| fields resolved per turn | 0.29 | 1.0 |
+| documents fetched in recovery | 2 | 2 |
+| fields resolved per turn | 0.29 | 0.78 |
+
+Both modes leave height conflicting, ground clearance unresolved and curb weight / boot volume foreign-only:
+coverage is not bought by loosening truth.
 
 ### Targeted field recovery (legacy per-field mode)
 

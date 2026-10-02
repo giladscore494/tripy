@@ -123,7 +123,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     variant_matches = Counter(str(item.get("variant_match") or "not_recorded") for item in evidence)
     sanity = (result.get("consistency_checks") or {}).get("summary") or {}
     # tail cost: the recovery stage's tokens + its billable searches (no finalizer), when pricing is known
-    tail_cost, _ = run_cost(usage_recovery, {}, int(recovery.get("tail_search_calls") or 0),
+    tail_cost, _ = run_cost(usage_recovery, {}, int(recovery.get("tail_billable_search_calls",
+                                                                recovery.get("tail_search_calls")) or 0),
                             pricing if pricing is not None else result.get("pricing"), None, 0)
     tail_resolved = int(recovery.get("tail_fields_resolved") or 0)
     tail_cost_usd = tail_cost["total_usd"] if usage_recovery.get("model_calls") or recovery.get("tail_search_calls") \
@@ -245,6 +246,7 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "tail_fields_remaining": recovery.get("tail_fields_remaining") or 0,
         "tail_model_calls": recovery.get("tail_model_calls") or 0,
         "tail_search_calls": recovery.get("tail_search_calls") or 0,
+        "tail_billable_search_calls": recovery.get("tail_billable_search_calls") or 0,
         "cluster_attempts": recovery.get("cluster_attempts") or 0,
         "fields_resolved_by_cluster": sum(len(v) for v in (recovery.get("fields_resolved_by_cluster") or {}).values()),
         "no_novelty_stops": recovery.get("no_novelty_stops") or 0,

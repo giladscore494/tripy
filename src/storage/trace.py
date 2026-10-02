@@ -347,7 +347,28 @@ def field_recovery_summary(events: list[dict]) -> dict | None:
     # a cluster attempt (clustered tail recovery) lists its fields; a per-field attempt names one
     retried = sorted({f for a in attempts for f in (a.get("fields") or [a.get("field")]) if f})
     early = [e for e in events if e.get("kind") == "field_recovery_early_resolved"]
+    cluster_attempts = [a for a in attempts if a.get("cluster")]
+    start = {f["field"] for f in (primary or {}).get("fields") or [] if f.get("retry_eligible")}
+    left = {f["field"] for f in (final or {}).get("fields") or [] if f.get("retry_eligible")} if final else start
+    tail_turns = sum(int(a.get("turns") or 0) for a in attempts)
+    tail = {
+        "tail_fields_at_start": len(start), "tail_fields_resolved": len(start - left),
+        "tail_fields_remaining": len(left), "tail_model_calls": tail_turns,
+        "fields_resolved_per_tail_turn": round(len(start - left) / tail_turns, 3) if tail_turns else None,
+        "conflicts_normalized_without_search": sum(1 for f in (primary or {}).get("fields") or [] if any(
+            str(i).startswith("conflict_normalized:") for i in f.get("info") or [])),
+    }
+    if cluster_attempts:
+        searches = sum(int(a.get("search_provider_calls") or 0) for a in cluster_attempts)
+        tail.update({
+            "tail_search_calls": searches,
+            "cluster_attempts": len(cluster_attempts),
+            "no_novelty_stops": sum(1 for e in events if e.get("kind") == "cluster_recovery_no_novelty_stop"),
+            "budget_extensions": sum(1 for e in events if e.get("kind") == "cluster_recovery_budget_extended"),
+            "fields_resolved_per_tail_search": round(len(start - left) / searches, 3) if searches else None,
+        })
     return {
+        **tail,
         "enabled": queue.get("enabled"),
         "requested": len((primary or {}).get("fields") or []),
         "primary_states": (primary or {}).get("summary"),
