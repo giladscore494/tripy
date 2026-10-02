@@ -389,6 +389,8 @@ class RunManager:
         started = utc_now()
 
         def begin(r: RunRecord) -> None:
+            if r.status != QUEUED:       # never resurrect a run another process already finished or reconciled
+                return
             r.status, r.started_at, r.heartbeat_at, r.owner = STARTING, started, started, dict(self.owner)
             r.jobs = list(r.jobs) + [{"kind": "research", "started_at": started}]
         try:

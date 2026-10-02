@@ -338,7 +338,9 @@ def test_run_executes_in_the_background_and_survives_a_new_reader(tmp_path):
     manager = make_manager(tmp_path, scripted_research(gate))
     started = manager.start(request(key="k"))
     assert started.created
-    time.sleep(0.2)
+    deadline = time.monotonic() + 10
+    while manager.get(started.run_id).status != M.SWEEPING and time.monotonic() < deadline:
+        time.sleep(0.02)
     # a different "browser session" (or a fresh repository) sees the active run from disk only
     other = FileRunRepository(manager.runs_dir).get(started.run_id)
     assert other.active and other.status == M.SWEEPING and other.owner["boot_id"] == manager.boot_id
@@ -392,7 +394,9 @@ def test_restart_marks_orphaned_runs_interrupted_and_keeps_the_checkpoint(tmp_pa
     gate = threading.Event()
     manager = make_manager(tmp_path, scripted_research(gate))
     run_id = manager.start(request()).run_id
-    time.sleep(0.2)
+    deadline = time.monotonic() + 10
+    while manager.get(run_id).status != M.SWEEPING and time.monotonic() < deadline:
+        time.sleep(0.02)
     # the process dies: only its files remain (simulate the checkpoint the engine writes before the finalizer)
     run_dir = manager.runs_dir / run_id / "1"
     (run_dir / "result.json").write_text(json.dumps({"record_id": "1", "status": "finalization_pending",
