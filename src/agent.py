@@ -1138,8 +1138,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     from .conflict_normalizer import resolver_packet
     from .document_sweep import compact_candidate
     from .field_recovery import related_searches, vehicle_identity
-    from .tail_planner import (LOCAL_TOOLS, candidate_key, cluster_packet, novelty, plan_clusters, rank_documents,
-                               search_hints, snapshot, triage)
+    from .tail_planner import (LOCAL_TOOLS, candidate_key, cluster_packet, fresh_candidates, novelty, plan_clusters,
+                               rank_documents, search_hints, snapshot, triage)
 
     market = config.target_market
     adm = session.ctx.admission
@@ -1368,9 +1368,20 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                                                       "search_provider_calls")})
         run_log.event("field_recovery_finished", **record)
 
+    def local_next(plan: dict) -> bool:
+        """Would this cluster's next attempt be a local-only pass (unreviewed candidates in the cache)?"""
+        if plan["cluster"] in local_done:
+            return False
+        events = trace_events(run_log)
+        fresh = fresh_candidates(candidate_matrix(events, specs, vehicle), events,
+                                 [f for f in plan["fields"] if current[f]["retry_eligible"]])
+        return bool(fresh)
+
     rounds = max(allowed_attempts.values(), default=0)
     for round_no in range(1, rounds + 1):
-        for plan in clusters:
+        # local passes first: no billable search is spent while unreviewed local material remains
+        ordered = sorted(clusters, key=lambda p: 0 if local_next(p) else 1)
+        for plan in ordered:
             name = plan["cluster"]
             open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
             if allowed_attempts[name] < round_no or not open_fields:

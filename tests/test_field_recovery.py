@@ -100,7 +100,8 @@ def test_recovery_engine_contains_no_field_names():
     for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py",
                    "src/candidate_harvest.py", "src/document_sweep.py", "src/ui/live_state.py", "src/ui/labels_he.py",
                    "src/ui/live_dashboard.py", "src/evidence_admission.py", "src/document_binding.py",
-                   "src/source_authority.py", "src/typed_values.py"):
+                   "src/source_authority.py", "src/typed_values.py", "src/tail_planner.py",
+                   "src/conflict_normalizer.py", "src/market_portability.py"):
         code = (ROOT / module).read_text("utf-8")
         found = [n for n in names if re.search(rf"\b{re.escape(n)}\b", code)]
         assert not found, (module, found)
