@@ -52,7 +52,8 @@ and every one of them stays configurable.
 | `AGENT_MAX_STEPS` | Soft research budget in model turns (default **12**). |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery). |
-| `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `1`; max 2). See [Layered field harvesting](#layered-field-harvesting). |
+| `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `2` = adaptive: a 2nd turn only after a turn-1 cached-document inspection returned content; absolute max 2). See [Layered field harvesting](#layered-field-harvesting). |
+| `INCLUDE_LEVEL3` | Level 3 open research (default **off**; UI checkbox / `--level3`). It is opt-in so it cannot take research turns from the Level 2 benchmark. |
 | `BATCH_MAX_WORKERS`, `GLM_CHAT_MAX_INFLIGHT`, `GLM_CHAT_MAX_INFLIGHT_BY_MODEL`, `GLM_SEARCH_MAX_INFLIGHT`, `GLM_UNKNOWN_MODEL_MAX_INFLIGHT` | Vehicle workers and in-flight request limits (defaults 50; Flash 48/50, FlashX 18/20, GLM-5.3 5/5; search 5; unknown model 1). See [Concurrent batches](#concurrent-batches). |
 | `AGENT_NO_NEW_RESEARCH_TURNS` | Finalize after N consecutive turns with no new research artifact (default 2; 0 = off). |
 | `AGENT_MAX_TOOL_OUTPUT_CHARS`, `AGENT_KEEP_RECENT_TOOL_RESULTS`, `AGENT_COMPACT_TOOL_OUTPUT_CHARS`, `AGENT_FINALIZER_BUNDLE_MAX_CHARS` | Context limits (see [Research and finalization](#research-and-finalization)). |
@@ -135,7 +136,7 @@ The full per-vehicle pipeline is now:
 ```
 PRIMARY RESEARCH (source acquisition)      model turns, tools
 DETERMINISTIC HARVEST                      0 model calls: every document -> candidates for ALL fields
-MODEL DOCUMENT SWEEP                       <= DOCUMENT_SWEEP_MAX_TURNS (default 1) model turn, cached tools only
+MODEL DOCUMENT SWEEP                       1 model turn; a 2nd ONLY to read turn-1 cached inspections; cached tools only
 current_evaluation()                       the one shared field evaluator
 TARGETED WEB RECOVERY                      only fields still unresolved, breadth-first
 current_evaluation()
@@ -184,10 +185,28 @@ FINALIZER
   `fields_unresolved_after_harvest_review`, `fields_entering_web_recovery`, and model calls per stage
   (`primary_model_calls`, `document_sweep_model_calls`, `field_recovery_model_calls`,
   `finalizer_model_calls`) next to `search_api_calls`.
+- **Adaptive turn budget** (absolute maximum 2). A sweep that can promote or reject the candidates it was
+  given ends after ONE model turn. Only when turn 1 called a cached-document inspection tool
+  (`find_in_document`, `extract_tables`, `extract_html`, `get_structured_data`, `get_cached_document`)
+  that returned content (hits, tables, data or text; not an error or zero hits) does the model get ONE
+  follow-up turn to read those results and store evidence (`document_sweep_follow_up` event). This is
+  what lets the sweep store a fact the parser missed: a tool result is only visible on the next turn.
+  `DOCUMENT_SWEEP_MAX_TURNS=1` never grants the follow-up.
 - `LAYERED_HARVEST_ENABLED=false` restores the previous pipeline; `DOCUMENT_SWEEP_MAX_TURNS=0` keeps the
   zero-cost harvest but skips the sweep.
 
 ### Durable pre-finalization checkpoint
+
+`result.json`, `batch.json` and `input.json` are written through one atomic primitive
+(`src/storage/atomic.py`): serialize completely, write a temporary file in the same folder, flush and
+`fsync`, `os.replace` onto the destination, `fsync` the folder; on any failure the temporary file is removed
+and the previous file stays intact. A crash mid-write therefore leaves the old or the new file, never a
+truncated one. The shared document cache uses the same primitive without `fsync`.
+
+**Fail closed:** the finalizer request is made only after the checkpoint below was persisted. If writing
+it fails, the run logs `result_write_failed` (stage `checkpoint`) and `finalization_not_started`, makes no
+finalizer call, and ends `finalization_failed` with `finalization.status = not_started` (still eligible for
+`--finalize-existing` once the disk problem is fixed).
 
 Right before the paid finalizer request, `result.json` is written with `status: finalization_pending`,
 `partial: true`, `output: null`, the evidence, field recovery, candidate summary, current field states

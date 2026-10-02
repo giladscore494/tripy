@@ -204,3 +204,26 @@ def test_cli_dry_run_for_vehicle_44_needs_no_key(monkeypatch, capsys, tmp_path):
     assert out["glm_config"]["thinking"] == {"type": "enabled"}
     assert out["pricing"]["input_per_mtok"] == 1.40
     assert not any(tmp_path.iterdir())  # a dry run writes nothing
+
+
+def test_level3_is_opt_in_everywhere(monkeypatch):
+    from src.agent import agent_config_from_env, build_user_message
+
+    assert AgentConfig().include_level3 is False
+    assert agent_config_from_env(env=lambda name: None).include_level3 is False
+    assert agent_config_from_env(env=lambda name: "true" if name == "INCLUDE_LEVEL3" else None).include_level3
+    assert "Level 3 research is disabled for this run" in build_user_message({}, False)
+    for name in ("GLM_MODEL", "INCLUDE_LEVEL3"):
+        monkeypatch.delenv(name, raising=False)
+    assert cli._agent_cfg(cli._parse([]), {}).include_level3 is False
+    assert cli._agent_cfg(cli._parse(["--level3"]), {}).include_level3 is True
+    monkeypatch.setenv("INCLUDE_LEVEL3", "true")
+    assert cli._agent_cfg(cli._parse([]), {}).include_level3 is True
+    assert cli._agent_cfg(cli._parse(["--no-level3"]), {}).include_level3 is False
+
+
+def test_israeli_cadillac_domain_is_an_official_hint_not_an_allowlist():
+    from src.tools.search import default_domains
+
+    domains = default_domains({"manufacturer": "קאדילאק"})
+    assert domains[0] == "cadillac.co.il" and "cadillac.com" in domains

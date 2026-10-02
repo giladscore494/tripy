@@ -163,7 +163,9 @@ with st.sidebar:
                                      int(env_agent.field_recovery_max_total_steps), disabled=not recovery_on,
                                      help="FIELD_RECOVERY_MAX_TOTAL_STEPS (default 24): hard cap across all fields, "
                                           "attempts and turns; the run still finalizes when it is reached.")
-    include_level3 = st.checkbox("Include Level 3 open research", value=True)
+    include_level3 = st.checkbox("Include Level 3 open research", value=bool(env_agent.include_level3),
+                                 help="INCLUDE_LEVEL3 (default off): Level 3 topics compete with the Level 2 "
+                                      "benchmark for research turns, so they are opt-in.")
     use_temp = st.checkbox("Set temperature")
     temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, disabled=not use_temp) if use_temp else None
     max_tokens = st.number_input("max_tokens per model turn (0 = provider default)", 0, 131072, 0, step=1024)

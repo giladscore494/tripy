@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .atomic import atomic_write_json
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -42,8 +44,9 @@ def new_batch_id(label: str = "", runs_root: Path | str | None = None) -> str:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=1, default=str), "utf-8")
+    """Atomic and durable (temp file in the same folder, fsync, os.replace): a crash mid-write leaves the
+    previous file or the new one, never a truncated result.json / batch.json / input.json."""
+    atomic_write_json(path, value, durable=True)
 
 
 class RunLog:
@@ -84,6 +87,7 @@ class RunLog:
         _write_json(self.dir / "input.json", payload)
 
     def write_result(self, result: dict) -> None:
+        """Atomic + durable. Raises on failure (the destination keeps its previous content)."""
         _write_json(self.dir / "result.json", result)
 
 
@@ -138,9 +142,7 @@ def update_batch(runs_root: Path | str, batch_id: str, updates: dict) -> dict:
     with _BATCH_LOCK:
         info = json.loads(path.read_text("utf-8")) if path.is_file() else {"batch_id": batch_id}
         info.update(updates)
-        tmp = path.with_name(f".batch.json.{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(info, ensure_ascii=False, indent=1, default=str), "utf-8")
-        tmp.replace(path)
+        _write_json(path, info)
     return info
 
 

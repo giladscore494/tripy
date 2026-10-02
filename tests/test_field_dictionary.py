@@ -123,9 +123,23 @@ def test_representative_positive_phrases(specs, text, expected):
     ("Heated steering wheel", "heated_seats"),
     ("Length of the cargo floor 1,100 mm", "length_mm"),
     ("0-60 mph in 4.9 seconds", "acceleration_0_100_s"),
+    ("Acceleration 0-60 mph: 4.9 s", "acceleration_0_100_s"),
+    ("Battery 95 kWh usable", "battery_gross_kwh"),            # usable stated AFTER the value
+    ("Battery capacity 95 kWh net", "battery_gross_kwh"),
+    ("Energy consumption 6.1 l/100km", "energy_consumption_kwh_100km"),
+    ("Combined fuel consumption 18.5 kWh/100km", "fuel_consumption_combined_l_100km"),
+    ("Charging cable length 5 m", "length_mm"),
+    ("Max towing weight 1,500 kg", "curb_weight_kg"),
+    ("Consumption 22.5 kWh/100km (WLTP)", "electric_range_standard"),
 ])
 def test_deterministic_false_positives_are_rejected(specs, text, forbidden):
     assert forbidden not in {field for field, _ in run(text, specs)}
+
+
+def test_gross_and_usable_battery_stay_apart(specs):
+    both = run("Battery capacity: 102 kWh (usable 95 kWh)", specs)
+    assert ("battery_gross_kwh", "102") in both and ("battery_gross_kwh", "95") not in both
+    assert ("battery_usable_kwh", "95") in run("Usable battery capacity 95 kWh", specs)
 
 
 def test_battery_warranty_is_never_the_vehicle_warranty(specs):

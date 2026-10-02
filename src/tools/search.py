@@ -24,7 +24,7 @@ DEFAULT_OFFICIAL_DOMAINS: dict[str, list[str]] = {
     "ב מ וו": ["bmw.co.il", "bmw.com", "bmwgroup.com", "mini.co.il", "mini.com"],
     "מרצדס": ["mercedes-benz.co.il", "mercedes-benz.com", "mercedes-benz.de", "group.mercedes-benz.com"],
     "יונדאי": ["hyundai.co.il", "hyundai.com", "hyundai.news"],
-    "קאדילאק": ["cadillac.com", "cadillaceurope.com", "news.gm.com"],
+    "קאדילאק": ["cadillac.co.il", "cadillac.com", "cadillaceurope.com", "news.gm.com"],
     "אקספנג": ["xpeng.com", "heyxpeng.com"],
 }
 MAX_DOMAINS = 6

@@ -807,7 +807,10 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
         if structured:
             return text, text
         bounds = _clause_bounds(text, span[0])
-        near = text[max(bounds[0], span[0] - EXCLUSION_PAD):min(bounds[1], span[1] + 3)]
+        # after the value, look only to the end of its own phrase: "95 kWh usable" is excluded, while the
+        # bracketed "(usable 95 kWh)" after "102 kWh" belongs to another value and is not
+        tail = re.match(r"[^(\[,;\d]{0,20}", text[span[1]:min(bounds[1], span[1] + 20)])
+        near = text[max(bounds[0], span[0] - EXCLUSION_PAD):span[1] + (tail.end() if tail else 0)]
         return near, _window(text, *span, POSITIVE_PAD, bounds)
 
     def accept(hit: Hit | None, method: str, alias: str | None, abbr: bool = False) -> None:

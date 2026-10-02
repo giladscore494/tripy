@@ -66,7 +66,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--max-tokens", type=int, default=0, help="0 = provider default")
     p.add_argument("--search-backend", choices=["glm", "duckduckgo"], default=env("SEARCH_BACKEND") or "glm")
     p.add_argument("--data-source", choices=["auto", "database", "snapshot"], default="auto")
-    p.add_argument("--no-level3", action="store_true", help="Skip Level 3 open research")
+    p.add_argument("--level3", action="store_true",
+                   help="Include Level 3 open research (off by default; INCLUDE_LEVEL3=true also enables it)")
+    p.add_argument("--no-level3", action="store_true", help="Skip Level 3 open research (the default)")
     p.add_argument("--runs-dir", default=env("MILO_RUNS_DIR") or "runs")
     p.add_argument("--dry-run", action="store_true", help="Print the plan and effective config; call nothing")
     p.add_argument("--finalize-existing", action="store_true",
@@ -77,8 +79,10 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _agent_cfg(args: argparse.Namespace, extra_body: dict):
-    overrides = dict(max_steps=args.max_steps, max_tokens=args.max_tokens or None,
-                     include_level3=not args.no_level3, thinking=args.thinking, extra_body=extra_body)
+    overrides = dict(max_steps=args.max_steps, max_tokens=args.max_tokens or None, thinking=args.thinking,
+                     extra_body=extra_body)
+    if args.level3 or args.no_level3:            # otherwise INCLUDE_LEVEL3 / the default (off) decides
+        overrides["include_level3"] = bool(args.level3 and not args.no_level3)
     if args.no_new_research_turns is not None:
         overrides["no_new_research_turns"] = args.no_new_research_turns
     if args.fields:

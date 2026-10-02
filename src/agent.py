@@ -7,7 +7,7 @@
     HARVEST             ALL applicable fields (src/candidate_harvest.py). 0 model calls. Candidates
                         are never evidence and never change a field state.
           ↓
-    DOCUMENT SWEEP      <= DOCUMENT_SWEEP_MAX_TURNS (default 1) model turn(s) over the candidate
+    DOCUMENT SWEEP      1 model turn (a 2nd only to read turn-1 cached inspections; max 2) over the candidate
                         matrix with cached-document tools only (src/document_sweep.py): review and
                         promote candidates with store_evidence, catch what the parser missed.
                         0 searches, 0 fetches.
@@ -22,8 +22,9 @@
     COMPACT BUNDLE      identity, targets, evidence, candidate facts, document metadata,
                         excerpts, concise actions, missing targets (src/bundle.py)
           ↓
-    CHECKPOINT          result.json with status finalization_pending is written BEFORE the paid
-                        finalizer request starts (a hard process death leaves a finalizable run)
+    CHECKPOINT          result.json with status finalization_pending is written atomically and durably
+                        BEFORE the paid finalizer request starts (a hard process death leaves a
+                        finalizable run). If it cannot be written, the finalizer is NOT called.
           ↓
     FINALIZATION PHASE  ONE no-tools call with GLM_FINALIZER_MODEL (default GLM_MODEL)
           ↓
@@ -60,6 +61,7 @@ from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
 from .storage.cache import DocumentCache
+from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs
 from .tools.evidence import EvidenceStore
@@ -256,8 +258,12 @@ Your job, for ALL requested fields at once, using ONLY what is already downloade
    store any valid fact the parser missed.
 6. If a field does not exist for this vehicle, report_field_status(field, "not_applicable").
 You cannot search the web or fetch pages in this step; such calls are refused. Fields that remain open get a
-targeted web follow-up later. You have a small turn budget (turn_budget): results of tool calls made in your
-LAST turn are not shown to you, so put all the store_evidence calls you can justify into the same turn.
+targeted web follow-up later. Turn budget: at most turn_budget turns (never more than 2), used adaptively.
+If the candidates are enough, put every store_evidence / report_field_status call you can justify into your
+FIRST turn and the sweep ends there. A second turn is given ONLY when your first turn inspected cached
+documents (find_in_document / extract_tables / extract_html / get_structured_data / get_cached_document) and
+those calls returned content, so you can read the results and then store evidence. Results of tool calls made
+in your last turn are never shown to you.
 When done (or out of turns), reply with ONLY a JSON object:
 {"reviewed": [{"field": "<name>", "decision": "promoted | rejected | conflict | not_found", "reason": "..."}],
  "notes": "..."}"""
@@ -297,7 +303,7 @@ class AgentConfig:
     finalizer_bundle_max_chars: int = 60000   # cap on the compact research bundle
     temperature: float | None = None
     max_tokens: int | None = None
-    include_level3: bool = True
+    include_level3: bool = False              # Level 3 open research is opt-in (INCLUDE_LEVEL3 / UI / --level3)
     thinking: str = ""                        # "" = provider default (not sent), "enabled", "disabled"
     extra_body: dict = field(default_factory=dict)
     # Requested enrichment fields: names or specs; empty = every field of the enrichment schema.
@@ -315,7 +321,10 @@ class AgentConfig:
     field_recovery_candidates_per_field: int = 8   # deterministic candidates handed to a field retry
     # Layered harvesting: deterministic candidates from every document + one bounded model document sweep.
     layered_harvest_enabled: bool = True
-    document_sweep_max_turns: int = 1          # 0 = no sweep; capped at 2
+    # Adaptive: up to N turns (absolute max 2). Turn 2 happens ONLY when turn 1 inspected cached documents and got
+    # content back to interpret; a sweep that just promotes candidates ends after 1 turn. 1 = never a follow-up;
+    # 0 = no sweep.
+    document_sweep_max_turns: int = 2
     document_sweep_candidates_per_field: int = 6
     document_sweep_packet_max_chars: int = 40000
 
@@ -370,6 +379,9 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     enabled = _env_bool(env("FIELD_RECOVERY_ENABLED"))
     if enabled is not None:
         values["field_recovery_enabled"] = enabled
+    level3 = _env_bool(env("INCLUDE_LEVEL3"))
+    if level3 is not None:
+        values["include_level3"] = level3
     layered = _env_bool(env("LAYERED_HARVEST_ENABLED"))
     if layered is not None:
         values["layered_harvest_enabled"] = layered
@@ -564,9 +576,8 @@ def run_finalization(caller: ModelCaller, *, run_log: RunLog, payload: dict, con
                             "evidence_items": len(bundle.get("evidence") or []),
                             "started_at": utc_now(), "request_path": str(request_path) if request_path else None}
     if request_path is not None:
-        request_path.parent.mkdir(parents=True, exist_ok=True)
-        request_path.write_text(json.dumps({"model": model, "phase": phase, "created_at": info["started_at"],
-                                            "messages": messages}, ensure_ascii=False, indent=1), "utf-8")
+        atomic_write_json(request_path, {"model": model, "phase": phase, "created_at": info["started_at"],
+                                         "messages": messages})
     run_log.event("finalization_started", **{k: v for k, v in info.items() if k != "started_at"})
     t0 = time.monotonic()
     output, parse_note, text, repair_text, error, api_error = None, None, None, None, None, None
@@ -628,6 +639,7 @@ class ToolSession:
         self.cancel_event = cancel_event
         self.on_documents = on_documents   # e.g. the deterministic harvester (every phase, every new document)
         self.blocked = 0
+        self.turn_results: list[dict] = []
 
     def execute(self, calls: list[dict], messages: list[dict], *, phase: str, allowed: tuple | None = None,
                 **tags: Any):
@@ -638,6 +650,7 @@ class ToolSession:
         self.step += 1
         step = self.step
         self.tracker.begin_turn(step)
+        self.turn_results = []             # (name, result) of every call answered this turn, replayed or executed
         for call in calls:
             check_cancelled(self.cancel_event)
             fn = call.get("function") or {}
@@ -658,6 +671,7 @@ class ToolSession:
             prior = self.tracker.lookup(signature)
             if prior is not None:
                 result = replay_result(prior)
+                self.turn_results.append({"name": name, "result": result, "reused": True})
                 self.tracker.note_reused(name)
                 self.run_log.event("tool_reused", step=step, phase=phase, call_id=call.get("id"), name=name,
                                    arguments=raw_args, **tags, original_step=prior["step"],
@@ -686,6 +700,7 @@ class ToolSession:
                 self.run_log.event("duplicate_work", step=step, phase=phase, name=name, arguments=raw_args,
                                    note=note, detected="after_execution", **tags)
             self.tracker.remember(signature, {"step": step, "phase": phase, **tags, "result": result})
+            self.turn_results.append({"name": name, "result": result, "reused": False})
             if self.on_documents is not None:
                 self.on_documents(self.ctx.documents_opened, phase)
             self.tool_calls.append({
@@ -954,8 +969,8 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     Returns the sweep summary; GLMError ends the sweep (recovery still runs), control-flow exceptions
     propagate."""
     from .candidate_harvest import candidate_matrix
-    from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, promoted_or_missed,
-                                 sweep_packet, sweep_summary, sweep_tool_specs)
+    from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, inspection_has_content,
+                                 promoted_or_missed, sweep_packet, sweep_summary, sweep_tool_specs)
 
     events = trace_events(run_log)
     before = current_evaluation(events, specs, config.target_market)
@@ -997,6 +1012,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     calls_before = len(session.tool_calls)
     blocked_before = session.blocked
     reply_text, turns, error = None, 0, None
+    follow_up: dict | None = None
     try:
         for turn_index in range(1, max_turns + 1):
             message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
@@ -1008,6 +1024,19 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                 reply_text = message.get("content") or ""
                 break
             session.execute(calls, messages, phase="document_sweep", allowed=DOCUMENT_SWEEP_TOOLS)
+            if turn_index >= max_turns:
+                break
+            # Adaptive budget: another (paid) turn only when this one read cached documents and got content the
+            # model has not seen yet. Promoting/rejecting candidates needs no follow-up.
+            inspected = [r for r in session.turn_results if inspection_has_content(r["name"], r["result"])]
+            if not inspected:
+                break
+            follow_up = {"after_turn": turn_index, "inspection_results": len(inspected),
+                         "tools": sorted({r["name"] for r in inspected})}
+            run_log.event("document_sweep_follow_up", **follow_up)
+            messages[-1]["content"] += ("\n[operational note] Final document-sweep turn: read the inspection "
+                                        "results above, then store_evidence / report_field_status. Results of "
+                                        "calls made in this turn will not be shown to you.")
     except GLMError as exc:
         error = _error_text(exc)
         run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict())
@@ -1028,6 +1057,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                             blocked=session.blocked - blocked_before, external_calls=external,
                             reply=reply if reply is not None else (reply_text or None))
     summary["error"] = error
+    summary["follow_up_turn"] = follow_up
     run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
                   reply=summary["reply"])
     return summary
@@ -1278,6 +1308,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         if status is None:
             retried = bool(recovery and recovery.get("attempt_count"))
             swept = bool(sweep and sweep.get("model_calls"))
+            fin = None
             if stop_reason == "model_finished" and not retried and not swept:
                 output, parse_note = parse_model_output(final_text)
                 if output is not None:
@@ -1292,17 +1323,30 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                                target_market=config.target_market)
                 # Durable checkpoint BEFORE the paid finalizer request: a hard process death from here on
                 # leaves a run that --finalize-existing can finish without repeating any research.
+                # FAIL CLOSED: if the checkpoint cannot be persisted, the finalizer is never called.
                 finalization = {"status": "started", "model": finalizer_model, "checkpoint_at": utc_now()}
+                checkpoint_error = None
                 try:
                     persist(assemble("finalization_pending", events=events_now, research_bundle=bundle))
+                except Exception as exc:
+                    checkpoint_error = _error_text(exc)
+                    run_log.event("result_write_failed", error=checkpoint_error, stage="checkpoint")
+                if checkpoint_error is not None:
+                    finalization = {"status": "not_started", "model": finalizer_model,
+                                    "reason": "checkpoint_write_failed", "error": checkpoint_error}
+                    status, error = "finalization_failed", f"checkpoint_write_failed: {checkpoint_error}"
+                    parse_note = "finalization_not_started"
+                    run_log.event("finalization_not_started", reason="checkpoint_write_failed",
+                                  error=checkpoint_error, model=finalizer_model)
+                    fin = None
+                else:
                     run_log.event("finalization_checkpoint_written", status="finalization_pending",
                                   evidence_items=len(evidence.items), bundle_chars=bundle.get("bundle_chars"))
-                except Exception as exc:  # a disk problem must not prevent the finalization itself
-                    run_log.event("result_write_failed", error=_error_text(exc), stage="checkpoint")
-                fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
-                                       documents_dir=documents_dir, stop_reason=stop_reason,
-                                       model=finalizer_model, request_path=run_log.dir / "finalizer_request.json",
-                                       bundle=bundle)
+                    fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
+                                           documents_dir=documents_dir, stop_reason=stop_reason,
+                                           model=finalizer_model,
+                                           request_path=run_log.dir / "finalizer_request.json", bundle=bundle)
+            if output is None and fin is not None:
                 finalization, bundle = fin["info"], fin["bundle"]
                 if stop_reason != "model_finished":
                     final_text = fin["text"]

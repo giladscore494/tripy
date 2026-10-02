@@ -29,6 +29,7 @@ from .agent import (AgentConfig, ModelCaller, effective_glm_config, finalizer_me
 from .bundle import build_research_bundle
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, run_cost
 from .storage import trace
+from .storage.atomic import atomic_write_json
 from .storage.run_loader import reconstruct_run
 from .storage.run_log import RunLog, load_batch, read_events, utc_now
 from .tools import ToolConfig
@@ -165,8 +166,7 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
         raise
     client.hook = previous_hook
     client.activity_hook = previous_activity
-    (recovery_dir / "research_bundle.json").write_text(json.dumps(fin["bundle"], ensure_ascii=False, indent=1),
-                                                       "utf-8")
+    atomic_write_json(recovery_dir / "research_bundle.json", fin["bundle"])
 
     events = read_events(run_dir / "events.jsonl")
     chat_path = glm_config.get("chat_path") or "chat/completions"

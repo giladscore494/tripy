@@ -52,6 +52,7 @@ class PhaseGLM:
         if system in (DOCUMENT_SWEEP_SYSTEM_PROMPT, FIELD_RECOVERY_SYSTEM_PROMPT):
             packet = json.loads(messages[1]["content"].split("\n", 1)[1])
         turn_no = sum(1 for m in messages if m["role"] == "assistant") + 1
+        self.last_messages = messages          # what the model actually sees this turn (tool results included)
         if system == SYSTEM_PROMPT:
             self.calls["research"] += 1
             message = self.research.pop(0)
@@ -90,6 +91,8 @@ def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches
     seen = {}
 
     def sweep(packet, turn_no):
+        if turn_no == 2:                                   # follow-up granted by the cached inspection below
+            return say({"reviewed": [], "notes": "read the wheelbase hits; nothing else to store"})
         seen["packet"] = packet
         torque = next(c for c in packet["deterministic_candidates"]["torque_nm"] if c.get("market_hint") == "IL")
         return turn(_call("s1", "store_evidence", {"field": "torque_nm", "value": torque["value"], "unit": "Nm",
@@ -106,41 +109,141 @@ def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches
     assert {t["function"]["name"] for t in sweep_request["tools"]} == set(DOCUMENT_SWEEP_TOOLS)
     assert ctx.session.calls == [] and result["search_api_calls"] == 0          # zero searches, zero fetches
     blocked = [e["name"] for e in events if e["kind"] == "tool_blocked"]
-    assert blocked == ["search_web", "fetch_url", "render_page"]
+    assert blocked == ["search_web", "fetch_url", "render_page"]                # refused BEFORE execution
     assert not [e for e in events if e["kind"] == "tool_call" and e["name"] in ("search_web", "fetch_url",
                                                                                 "render_page")]
     sweep_summary = result["document_sweep"]
-    assert sweep_summary["model_calls"] == 1 and sweep_summary["external_calls"] == 0
+    assert sweep_summary["model_calls"] == 2 and sweep_summary["external_calls"] == 0   # bounded: 2 at most
+    assert sweep_summary["follow_up_turn"]["tools"] == ["find_in_document"]
     assert sweep_summary["tool_calls_blocked"] == 3 and sweep_summary["evidence_promoted_from_candidates"] == 1
     assert "torque_nm" in sweep_summary["fields_resolved"]
     # the packet carries every applicable field together, compactly (no whole documents)
     packet = seen["packet"]
-    assert set(packet["requested_fields"]) == set(SMALL) and packet["turn_budget"] == 1
+    assert set(packet["requested_fields"]) == set(SMALL) and packet["turn_budget"] == 2
     assert len(json.dumps(packet, ensure_ascii=False)) < 40000 and "cached_documents" in packet
-    assert result["usage_document_sweep"]["model_calls"] == 1
+    assert result["usage_document_sweep"]["model_calls"] == 2
     m = compute_metrics(result)
-    assert m["document_sweep_model_calls"] == 1 and m["tool_calls_blocked"] == 3
+    assert m["document_sweep_model_calls"] == 2 and m["tool_calls_blocked"] == 3
     assert m["tool_calls"] == len([c for c in result["tool_calls"] if not c.get("blocked")])
 
 
-def test_sweep_records_a_fact_the_deterministic_harvest_missed(tmp_path, make_ctx):
+INTERIOR = "LYRIQ Luxury interior: cooling function built into both front seats (standard)."
+INTERIOR_URL = "https://www.cadillac.co.il/lyriq/interior"
+
+
+def tool_messages(messages):
+    return [m for m in messages if m.get("role") == "tool"]
+
+
+def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_path, make_ctx):
+    """Real conversational ordering: turn 1 does not know the value and inspects the cached document; only the
+    second turn, which sees the tool result in the conversation, can store the evidence."""
     ctx = make_ctx({})
-    text = "LYRIQ Luxury interior: cooling function built into both front seats (standard)."
-    doc = ctx.cache.put("fetch", "https://www.cadillac.co.il/lyriq/interior", text.encode(),
-                        {"doc_type": "text", "final_url": "https://www.cadillac.co.il/lyriq/interior"}, text)["document_id"]
+    doc = ctx.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
+                        INTERIOR)["document_id"]
+    seen = {}
 
     def sweep(packet, turn_no):
-        assert "ventilated_seats" in packet["fields_without_candidates"]          # the parser found nothing
+        messages = client.last_messages
+        if turn_no == 1:
+            seen["packet"] = packet
+            assert "ventilated_seats" in packet["fields_without_candidates"]   # the parser found nothing
+            assert not tool_messages(messages)                                  # nothing read yet: no answer known
+            return turn(_call("i1", "find_in_document", {"document_id": doc, "query": "cooling"}))
+        results = tool_messages(messages)
+        assert len(results) == 1 and results[0]["tool_call_id"] == "i1"
+        body, note = results[0]["content"].split("\n[operational note] ", 1)
+        assert note.startswith("Final document-sweep turn")
+        hits = json.loads(body)["hits"]
+        snippet = next(h["snippet"] for h in hits if "cooling function" in h["snippet"])
+        quote = snippet[snippet.index("cooling function"):snippet.index("seats") + len("seats")]
         return turn(_call("s1", "store_evidence", {"field": "ventilated_seats", "value": True, "document_id": doc,
-                                                   "quote": "cooling function built into both front seats",
-                                                   "market": "IL", "variant_match": "exact"}))
+                                                   "quote": quote, "market": "IL", "variant_match": "exact"}))
 
     client = PhaseGLM([read_docs([doc]), say({"summary": "primary", "fields": {}})], sweep=sweep)
-    result, events, _ = run(tmp_path, ctx, client, requested_fields=SMALL, field_recovery_max_attempts=0)
+    result, events, _ = run(tmp_path, ctx, client, requested_fields=SMALL, field_recovery_max_total_steps=4)
+    harvested = [e for e in events if e["kind"] == "candidates_harvested"]
+    assert harvested and "ventilated_seats" not in harvested[0]["fields"]
+    sweep_calls = [e for e in events if e.get("phase") == "document_sweep" and e["kind"] in ("tool_call",
+                                                                                              "model_response")]
+    assert [(e["kind"], e.get("name")) for e in sweep_calls] == [
+        ("model_response", None), ("tool_call", "find_in_document"),           # turn 1: inspect
+        ("model_response", None), ("tool_call", "store_evidence")]             # turn 2: store what it read
+    assert client.calls["document_sweep"] == 2 and result["document_sweep"]["model_calls"] == 2
+    assert [e["kind"] for e in events].count("document_sweep_follow_up") == 1
+    assert ctx.session.calls == [] and result["search_api_calls"] == 0          # no Search-Prime, no fetch
     missed = [e for e in events if e["kind"] == "candidate_missed_by_deterministic_harvest"]
     assert [(e["field"], e["document_id"]) for e in missed] == [("ventilated_seats", doc)]
-    assert result["document_sweep"]["deterministic_misses_found"] == 1 and result["search_api_calls"] == 0
-    assert result["candidate_summary"]["document_sweep_deterministic_misses_found"] == 1
+    started = next(e for e in events if e["kind"] == "document_sweep_started")
+    assert "ventilated_seats" in started["fields_to_review"]                    # missing before the sweep
+    assert "ventilated_seats" in result["document_sweep"]["fields_resolved"]
+    assert result["research_bundle"]["field_states"]["ventilated_seats"]["state"] == "ok"
+    rec = result["field_recovery"]
+    assert "ventilated_seats" not in rec["queue"]                               # never researched again
+    assert not [e for e in events if e["kind"] == "field_recovery_started" and e["field"] == "ventilated_seats"]
+
+
+def test_sweep_fast_path_promotes_a_candidate_in_one_turn(tmp_path, make_ctx):
+    ctx = make_ctx({})
+    ids = put_documents(ctx.cache)
+
+    def sweep(packet, turn_no):
+        assert turn_no == 1, "no pointless second sweep turn"
+        wheel = packet["deterministic_candidates"]["wheelbase_mm"][0]
+        return turn(_call("s", "store_evidence", {"field": "wheelbase_mm", "value": wheel["value"], "unit": "mm",
+                                                  "document_id": wheel["document_id"], "quote": wheel["quote"],
+                                                  "market": "IL", "variant_match": "exact"}),
+                    _call("r", "report_field_status", {"field": "local_trim_name", "status": "unresolved"}))
+
+    client = PhaseGLM([read_docs(ids[:1]), say({"summary": "primary", "fields": {}})], sweep=sweep)
+    result, events, _ = run(tmp_path, ctx, client, requested_fields=SMALL, field_recovery_max_attempts=0)
+    assert client.calls["document_sweep"] == 1 and result["document_sweep"]["follow_up_turn"] is None
+    assert "document_sweep_follow_up" not in [e["kind"] for e in events]
+    assert "wheelbase_mm" in result["document_sweep"]["fields_resolved"]
+
+
+def test_empty_inspections_and_a_one_turn_budget_never_buy_a_second_turn(tmp_path, make_ctx):
+    ctx = make_ctx({})
+    doc = ctx.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
+                        INTERIOR)["document_id"]
+
+    def zero_hits(packet, turn_no):
+        assert turn_no == 1
+        return turn(_call("i", "find_in_document", {"document_id": doc, "query": "panoramic roof"}),
+                    _call("j", "extract_tables", {"document_id": doc}),           # plain text: no tables
+                    _call("k", "find_in_document", {"document_id": "d_unknown", "query": "x"}))   # error
+
+    client = PhaseGLM([read_docs([doc]), say({"summary": "primary", "fields": {}})], sweep=zero_hits)
+    result, _, _ = run(tmp_path, ctx, client, requested_fields=SMALL, field_recovery_max_attempts=0)
+    assert client.calls["document_sweep"] == 1 and result["document_sweep"]["follow_up_turn"] is None
+
+    ctx2 = make_ctx({})
+    doc2 = ctx2.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
+                          INTERIOR)["document_id"]
+
+    def inspect(packet, turn_no):
+        assert turn_no == 1
+        return turn(_call("i", "find_in_document", {"document_id": doc2, "query": "cooling"}))
+
+    client2 = PhaseGLM([read_docs([doc2]), say({"summary": "primary", "fields": {}})], sweep=inspect)
+    result2, _, _ = run(tmp_path / "one", ctx2, client2, requested_fields=SMALL, field_recovery_max_attempts=0,
+                        document_sweep_max_turns=1)
+    assert client2.calls["document_sweep"] == 1                                  # DOCUMENT_SWEEP_MAX_TURNS=1
+
+
+def test_the_sweep_never_exceeds_two_turns(tmp_path, make_ctx):
+    ctx = make_ctx({})
+    doc = ctx.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
+                        INTERIOR)["document_id"]
+
+    def always_inspect(packet, turn_no):
+        assert turn_no <= 2
+        return turn(_call(f"i{turn_no}", "find_in_document", {"document_id": doc, "query": f"cooling {turn_no}"}))
+
+    client = PhaseGLM([read_docs([doc]), say({"summary": "primary", "fields": {}})], sweep=always_inspect)
+    result, _, _ = run(tmp_path, ctx, client, requested_fields=SMALL, field_recovery_max_attempts=0,
+                       document_sweep_max_turns=5)                                # clamped to the absolute max 2
+    assert client.calls["document_sweep"] == 2 and result["document_sweep"]["model_calls"] == 2
 
 
 def test_recovery_starts_only_after_the_sweep_and_harvest(tmp_path, make_ctx):

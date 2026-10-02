@@ -27,11 +27,29 @@ from .storage import trace
 DOCUMENT_SWEEP_TOOLS = ("find_in_document", "extract_tables", "extract_html", "get_structured_data",
                         "get_cached_document", "store_evidence", "report_field_status")
 EXTERNAL_TOOLS = trace.SEARCH_TOOLS + trace.FETCH_TOOLS
-MAX_SWEEP_TURNS = 2
+MAX_SWEEP_TURNS = 2        # absolute maximum; turn 2 only after a turn-1 cached-document inspection with content
+INSPECTION_TOOLS = ("find_in_document", "extract_tables", "extract_html", "get_structured_data",
+                    "get_cached_document")
 CANDIDATE_KEYS = ("value", "unit", "raw_value", "raw_unit", "document_id", "market_hint", "variant_hint",
                   "variant_hints", "year_hint", "year_hint_differs", "trim_mentioned", "official_domain",
                   "parser_confidence", "extraction_method", "position", "ambiguity", "availability",
                   "price_type_hint", "warranty_type", "converted_from", "range", "page", "occurrences")
+
+
+def inspection_has_content(name: str, result: dict | None) -> bool:
+    """Did a cached-document inspection return something the model still has to read?
+    Errors, zero hits, no tables, empty structured data or empty text do not justify a follow-up turn."""
+    if name not in INSPECTION_TOOLS or not isinstance(result, dict) or result.get("error"):
+        return False
+    if name == "find_in_document":
+        return bool(result.get("hit_count") or result.get("hits"))
+    if name == "extract_tables":
+        return bool(result.get("tables_total") or result.get("tables"))
+    if name == "get_structured_data":
+        return any((result.get("found") or {}).values()) or bool(result.get("data") or result.get("data_preview"))
+    if name == "get_cached_document" and not result.get("found", True):
+        return False
+    return bool((result.get("text") or "").strip())
 
 
 def sweep_tool_specs(all_specs: list[dict]) -> list[dict]:
@@ -76,6 +94,8 @@ def sweep_packet(*, payload: dict, specs: list[dict], evaluation: list[dict], ma
     packet: dict[str, Any] = {
         "vehicle_identity": vehicle_identity(payload, target_market),
         "turn_budget": max_turns,
+        "turn_rule": ("Promote valid candidates in turn 1 and finish. A second turn (if turn_budget allows) is given "
+                      "only when turn 1 inspected cached documents and got content back."),
         "requested_fields": {s["name"]: s.get("description") or s["name"] for s in applicable},
         "current_field_states": {s["name"]: states.get(s["name"]) for s in applicable},
         "fields_to_review": review,

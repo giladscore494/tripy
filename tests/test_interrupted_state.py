@@ -175,10 +175,12 @@ def test_completed_runs_and_level3_listing(tmp_path, make_ctx):
                           say({"summary": "done", "fields": {"torque_nm": {"value": 1066}}})])
     result = run_vehicle({"upstream_record_id": "85095"}, PAYLOAD, client=client, cache=ctx.cache,
                          run_log=RunLog(tmp_path / "runs", "b", "85095"),
-                         config=AgentConfig(field_recovery_enabled=False, requested_fields=["torque_nm", "gear_count"]),
+                         config=AgentConfig(field_recovery_enabled=False, requested_fields=["torque_nm", "gear_count"],
+                                            include_level3=True),     # Level 3 is opt-in; requested here
                          tool_config=ToolConfig(), session=ctx.session)
     assert result["status"] == "completed" and result["output"]["summary"] == "done"
     assert (result["partial"], result["interrupted"], result["interrupted_phase"]) == (False, False, None)
+    assert AgentConfig().include_level3 is False                               # off unless asked for
     bundle = result["research_bundle"]
     assert bundle["targets_without_stored_evidence"] == ["gear_count"] and bundle["unresolved_targets"] == ["gear_count"]
     assert "known_issues_reliability" in bundle["level3_topics_without_evidence"]

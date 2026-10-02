@@ -19,14 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import threading
-import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+from .atomic import atomic_write_bytes, atomic_write_text  # the one shared primitive (durable=False here)
 
 
 def _now() -> str:
@@ -39,21 +39,6 @@ def _digest(text: str) -> str:
 
 def document_id_for(kind: str, url: str) -> str:
     return "d_" + _digest(f"{kind}:{url}")[:16]
-
-
-def atomic_write_bytes(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
-
-
-def atomic_write_text(path: Path, text: str) -> None:
-    atomic_write_bytes(path, text.encode("utf-8"))
 
 
 class KeyedLocks:
