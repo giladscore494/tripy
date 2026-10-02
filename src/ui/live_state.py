@@ -70,6 +70,18 @@ def feed_line(kind: str, event: dict) -> str | None:
                 f"{event.get('max_attempts')} · reason {event.get('failure_reason')}")
     if kind == "field_recovery_finished":
         return f"   ↳ {event.get('field')} attempt {event.get('attempt')}: {event.get('state_before')} → {event.get('state_after')}"
+    if kind == "cluster_recovery_started":
+        return (f"🎯 cluster recovery · {event.get('cluster')} · attempt {event.get('attempt')}/"
+                f"{event.get('max_attempts')} · {event.get('mode')} · {len(event.get('fields') or [])} open field(s) · "
+                f"search budget {event.get('search_budget')}")
+    if kind == "cluster_turn_novelty":
+        return (f"   ↳ turn {event.get('turn')} novelty: {', '.join(event.get('novelty') or []) or 'none'}")
+    if kind == "cluster_recovery_no_novelty_stop":
+        return f"   ⏹ {event.get('cluster')} stopped: no novelty after turn {event.get('after_turn')}"
+    if kind == "cluster_recovery_budget_extended":
+        return f"   ➕ {event.get('cluster')}: turn {event.get('turn')} granted after real novelty"
+    if kind == "cluster_recovery_skipped":
+        return f"   ⏭ {event.get('cluster')} attempt skipped ({event.get('reason')})"
     if kind == "field_recovery_queue_resolved_indirectly":
         return (f"✅ {event.get('field')} resolved while recovering {event.get('resolved_during_field')}; "
                 "its own retry is skipped")
@@ -158,6 +170,9 @@ class VehicleLive:
         self.recovery_budget: int | None = None
         self.recovery_turns = 0
         self.recovery_attempts: dict[str, int] = {}
+        self.cluster: str | None = None            # clustered tail recovery: the cluster being recovered
+        self.cluster_fields: list[str] = []
+        self.cluster_mode: str | None = None
         self.resolved_indirectly: dict[str, str] = {}
         self.sweep_resolved: set[str] = set()
         self.sweep_info: dict = {}
@@ -239,7 +254,9 @@ class VehicleLive:
         self.reasoning_available = bool(isinstance(reasoning, str) and reasoning.strip())
         self.reasoning = reasoning if self.reasoning_available else None
         bits = [he.phase_label(e.get("phase"))]
-        if e.get("field"):
+        if e.get("cluster"):
+            bits.append(f"קבוצה: {he.cluster_label(e['cluster'])}")
+        elif e.get("field"):
             bits.append(field_display_name(e["field"], self._spec(e["field"])))
         if e.get("turn"):
             bits.append(f"תור {e['turn']}")
@@ -326,6 +343,16 @@ class VehicleLive:
         self.failure_reason = e.get("failure_reason")
         self.recovery_attempts[self.field] = self.recovery_attempts.get(self.field, 0) + 1
 
+    def _on_cluster_recovery_started(self, e: dict) -> None:
+        self.action = None
+        self.phase = "field_recovery"
+        self.field, self.failure_reason = None, None
+        self.cluster, self.cluster_fields = e.get("cluster"), list(e.get("fields") or [])
+        self.cluster_mode = e.get("mode")
+        self.attempt, self.max_attempts = e.get("attempt"), e.get("max_attempts")
+        for name in self.cluster_fields:
+            self.recovery_attempts[name] = self.recovery_attempts.get(name, 0) + 1
+
     def _on_field_recovery_queue_resolved_indirectly(self, e: dict) -> None:
         self.resolved_indirectly[e.get("field")] = e.get("resolved_during_field")
 
@@ -392,7 +419,8 @@ class VehicleLive:
         if state == "not_applicable":
             return he.RESOLUTION_ORIGIN_HE["not_applicable"]
         if state != "ok":
-            if name == self.field and self.op not in TERMINAL_OPS:
+            if (name == self.field or (self.cluster and self.phase == "field_recovery"
+                                       and name in self.cluster_fields)) and self.op not in TERMINAL_OPS:
                 return he.RESOLUTION_ORIGIN_HE["in_progress"]
             return he.RESOLUTION_ORIGIN_HE["needs_decision" if state == "conflicting" else "open"]
         if name in self.resolved_indirectly:
@@ -433,6 +461,12 @@ class VehicleLive:
     def why(self) -> str | None:
         if self.op in TERMINAL_OPS:
             return None
+        if self.phase == "field_recovery" and self.cluster and not self.field:
+            text = he.WHY_CLUSTER_HE.format(count=len(self.cluster_fields), cluster=he.cluster_label(self.cluster),
+                                            mode=he.CLUSTER_MODE_HE.get(self.cluster_mode or "", self.cluster_mode))
+            if self.attempt:
+                text += f" (ניסיון {self.attempt}" + (f" מתוך {self.max_attempts}" if self.max_attempts else "") + ")"
+            return text
         if self.phase == "field_recovery" and self.field:
             label = field_display_name(self.field, self._spec(self.field))
             template = he.WHY_BY_FAILURE_HE.get(self.failure_reason or "", he.WHY_BY_PHASE_HE["field_recovery"])

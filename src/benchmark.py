@@ -122,6 +122,12 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     admission = result.get("evidence_admission") or {}
     variant_matches = Counter(str(item.get("variant_match") or "not_recorded") for item in evidence)
     sanity = (result.get("consistency_checks") or {}).get("summary") or {}
+    # tail cost: the recovery stage's tokens + its billable searches (no finalizer), when pricing is known
+    tail_cost, _ = run_cost(usage_recovery, {}, int(recovery.get("tail_search_calls") or 0),
+                            pricing if pricing is not None else result.get("pricing"), None, 0)
+    tail_resolved = int(recovery.get("tail_fields_resolved") or 0)
+    tail_cost_usd = tail_cost["total_usd"] if usage_recovery.get("model_calls") or recovery.get("tail_search_calls") \
+        else (0.0 if recovery else None)
     return {
         "record_id": result.get("record_id"),
         "status": result.get("status"),
@@ -232,6 +238,26 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "recovery_resolution_per_turn": recovery.get("recovery_resolution_per_turn"),
         "fields_never_attempted_due_to_budget": len(recovery.get("fields_never_attempted_due_to_budget") or []),
         "tool_calls_blocked": sum(1 for call in result.get("tool_calls", []) if call.get("blocked")),
+        # tail recovery efficiency (legacy and cluster modes; observational, never accuracy)
+        "recovery_mode": recovery.get("mode"),
+        "tail_fields_at_start": recovery.get("tail_fields_at_start") or 0,
+        "tail_fields_resolved": tail_resolved,
+        "tail_fields_remaining": recovery.get("tail_fields_remaining") or 0,
+        "tail_model_calls": recovery.get("tail_model_calls") or 0,
+        "tail_search_calls": recovery.get("tail_search_calls") or 0,
+        "cluster_attempts": recovery.get("cluster_attempts") or 0,
+        "fields_resolved_by_cluster": sum(len(v) for v in (recovery.get("fields_resolved_by_cluster") or {}).values()),
+        "no_novelty_stops": recovery.get("no_novelty_stops") or 0,
+        "budget_extensions": recovery.get("budget_extensions") or 0,
+        "search_budget_refusals": recovery.get("search_budget_refusals") or 0,
+        "conflicts_normalized_without_search": recovery.get("conflicts_normalized_without_search") or 0,
+        "portable_facts_accepted": recovery.get("portable_facts_accepted") or 0,
+        "portable_facts_rejected": recovery.get("portable_facts_rejected") or 0,
+        "fields_resolved_per_tail_turn": recovery.get("fields_resolved_per_tail_turn"),
+        "fields_resolved_per_tail_search": recovery.get("fields_resolved_per_tail_search"),
+        "tail_cost_usd": tail_cost_usd,
+        "cost_per_tail_field_resolved": round(tail_cost_usd / tail_resolved, 6)
+        if tail_cost_usd is not None and tail_resolved else None,
         "finalizer_input_chars": finalization.get("finalizer_input_chars") or 0,
         "finalizer_prompt_tokens": usage_finalizer.get("prompt_tokens", 0),
         "finalizer_completion_tokens": usage_finalizer.get("completion_tokens", 0),
@@ -266,6 +292,10 @@ SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_item
             "field_recovery_early_resolutions", "field_recovery_turn_budget_skipped_by_early_resolution",
             "recovery_prior_excerpt_items", "recovery_prior_excerpt_chars", "recovery_attempts_with_prior_excerpts",
             "recovery_document_rereads_after_prior_excerpt",
+            "tail_fields_at_start", "tail_fields_resolved", "tail_fields_remaining", "tail_model_calls",
+            "tail_search_calls", "cluster_attempts", "fields_resolved_by_cluster", "no_novelty_stops",
+            "budget_extensions", "search_budget_refusals", "conflicts_normalized_without_search",
+            "portable_facts_accepted", "portable_facts_rejected",
             "duplicate_calls_suppressed", "duplicate_searches_suppressed", "duplicate_fetches_suppressed",
             "duplicate_inspections_suppressed", "recovery_operations_with_new_material",
             "recovery_operations_without_new_material", "evidence_with_market", "fields_israel_direct",

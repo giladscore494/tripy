@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from .candidate_harvest import OPERATIONS, normalize_term
+from .fields import with_dictionary
 from .typed_values import typed_value
 
 NORMALIZER_VERSION = "conflict-normalizer-v1"
@@ -116,6 +117,7 @@ def _partition_by(groups: list[list[dict]], key) -> bool:
 def classify_conflict(spec: dict, items: Iterable[dict], target_market: str | None = None) -> dict:
     """{class, normalized, detail, evidence_ids, version}: why these same-field values differ.
     `normalized` True means the values do not actually disagree (see the module docstring)."""
+    spec = with_dictionary(spec)
     items = [i for i in items if isinstance(i, dict)]
     ids = [str(i.get("evidence_id")) for i in items]
     out = {"version": NORMALIZER_VERSION, "evidence_ids": ids}

@@ -149,6 +149,18 @@ def schema_document(path: Path | str | None = None) -> dict:
     return doc
 
 
+def with_dictionary(spec: dict) -> dict:
+    """A (possibly public) field spec completed with its schema dictionary entry (units, conversions, value type):
+    run logs keep public specs, but unit-aware comparisons need the dictionary. The spec's own keys win."""
+    name = normalize_field_name(spec.get("name"))
+    if not name or any(k in spec for k in ("accepted_unit_variants", "expected_units", "conversion_rules")):
+        return spec
+    for item in schema_document().get("fields") or []:
+        if isinstance(item, dict) and normalize_field_name(item.get("name")) == name:
+            return {**item, **spec}
+    return spec
+
+
 def _default_document() -> dict:
     return schema_document(SCHEMA_PATH)
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from .conflict_normalizer import interval
 from .document_binding import LEVELS
+from .fields import with_dictionary
 from .source_authority import OFFICIAL_CLASSES
 
 PORTABILITY_VERSION = "portability-v1"
@@ -47,6 +48,7 @@ def _value_key(item: dict, spec: dict):
 def assess(spec: dict, evidence: list[dict], target_market: str, is_target) -> dict[str, dict]:
     """{evidence_id: {portable_to_target_market, portability_basis, portability_policy}} for every foreign-market
     item with a value. `is_target(market, target_market)` is the evaluator's own market test."""
+    spec = with_dictionary(spec)
     policy = policy_of(spec)
     with_value = [e for e in evidence if e.get("value") not in (None, "", [], {})]
     foreign = [e for e in with_value if str(e.get("market") or "").strip().lower() not in UNKNOWN_MARKETS
