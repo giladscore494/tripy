@@ -241,6 +241,8 @@ How to work:
 - Do not re-fetch a URL or repeat a search. Failed fetches (403 / 404 / 429) and repeated searches are not progress;
   research ends automatically when turns stop acquiring new usable documents.
 - A turn may end with an [operational note] listing the source categories still missing: prioritize them.
+- Prefer the listed official URLs (known pages from the official site's sitemap) and `links` from fetched pages over
+  URLs you construct yourself.
 - You have a small budget of turns.
 
 When the document set is good enough (or nothing more can be found), reply with ONLY this JSON object and no tool
@@ -563,8 +565,16 @@ class AgentConfig:
     # (src/final_assembly.py; a model may only narrate summary / research_trace); "llm" = the finalizer model writes
     # the output from the compact bundle (the previous behaviour).
     final_assembly: str = "deterministic"
-    # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
-    recovery_mode: str = "cluster"
+    # Tail recovery: "reacquire" (per recovery cluster: a short targeted acquisition episode, harvest, grounded
+    # candidates and adjudication; the recovery model never stores evidence), "cluster" (one tool-using attempt per
+    # recovery cluster, see src/tail_planner.py) or "legacy" (per field).
+    recovery_mode: str = "reacquire"
+    # SITE_MAP (contract acquisition and reacquire recovery): official domains' sitemaps -> ranked real URLs offered to
+    # the acquisition model (src/site_map.py); discovery metadata only
+    site_map: bool = True
+    # GROUNDED_CANDIDATES: one no-tool call per top document for open fields without an admissible candidate; the
+    # model points at a span, code cuts the quote and dry-runs admission; candidates only (src/grounded.py)
+    grounded_candidates: bool = True
     cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
     cluster_base_turns: int = 2               # turns every cluster attempt may use
     cluster_max_turns: int = 4                # ceiling (never above 4): extra turns only after real novelty
@@ -690,8 +700,12 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     card = _env_bool(env("ACQUISITION_DOCUMENT_CARD"))
     if card is not None:
         values["acquisition_document_card"] = card
-    if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
+    if (env("RECOVERY_MODE") or "").strip().lower() in RECOVERY_MODES:
         values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
+    for attr, name in (("site_map", "SITE_MAP"), ("grounded_candidates", "GROUNDED_CANDIDATES")):
+        flag = _env_bool(env(name))
+        if flag is not None:
+            values[attr] = flag
     if (env("FINAL_ASSEMBLY") or "").strip().lower() in FINAL_ASSEMBLY_MODES:
         values["final_assembly"] = env("FINAL_ASSEMBLY").strip().lower()
     from .phase_settings import parse_effort
@@ -717,6 +731,7 @@ def tool_config_from_env(env: Callable[[str], str | None] = os.environ.get, **ov
 
 
 FINAL_ASSEMBLY_MODES = ("deterministic", "llm")
+RECOVERY_MODES = ("reacquire", "cluster", "legacy")
 
 
 def request_extra(config: AgentConfig, settings: dict | None = None) -> dict:
@@ -2885,6 +2900,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   acquisition_mode=config.acquisition_mode, sweep_mode=config.sweep_mode,
                   final_assembly=config.final_assembly,
                   acquisition_document_card=config.acquisition_document_card, run_profile=config.run_profile,
+                  site_map=config.site_map, grounded_candidates=config.grounded_candidates,
                   research_prompt_hash=research_prompt_hash, env_overrides=env_overrides)
     try:
         memory = ResearchMemory.for_cache(cache) if config.research_memory_enabled else None
@@ -2907,6 +2923,18 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 "\n\nAlready supported by verified evidence reused from related variants (re-checked against this "
                 "exact variant; their evidence ids are in the store): " + ", ".join(fact_reuse["fields_ok"])
                 + ". Do not research these fields again.")
+
+    # Part D: real URLs of the official sites (contract acquisition only), before research turn 1. Bounded, never
+    # blocks the run: a failure logs site_map_failed and the task goes out without the section.
+    site_map_state: dict = {"site": None, "offered": []}
+    if contract and config.site_map:
+        from .site_map import acquisition_section, run_site_map
+
+        site_map_state = run_site_map(ctx, run_log, payload=payload, vehicle=vehicle_ctx,
+                                      target_market=config.target_market)
+        section = acquisition_section(site_map_state.get("offered") or [])
+        if section:
+            messages[1]["content"] += "\n\n" + section
 
     status: str | None = None
     stop_reason: str | None = None
@@ -2967,6 +2995,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "acquisition_document_card": config.acquisition_document_card,
             "run_profile": config.run_profile,
             "final_assembly": config.final_assembly,
+            "recovery_mode": config.recovery_mode,
+            "site_map": config.site_map,
+            "grounded_candidates": config.grounded_candidates,
             # where the output VALUES came from: code (deterministic assembly) or a model (finalizer / research reply)
             "output_source": None if output is None else ("code" if output_from_code else "model"),
             "research_prompt_hash": research_prompt_hash,
@@ -3129,6 +3160,15 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         primary_research = acq.summary(stop_reason=stop_reason, turns=steps_done,
                                        model_calls=caller.usage["research"]["model_calls"],
                                        research_s=research_seconds)
+        if contract and config.site_map:
+            from .site_map import usage as site_map_usage
+
+            try:      # D4: did research fetch the offered URLs, and did they become useful documents?
+                primary_research["site_map"] = site_map_usage(
+                    site_map_state.get("offered") or [], tools.tool_calls, cache=cache, adm=ctx.admission,
+                    target_market=config.target_market)
+            except Exception as exc:  # noqa: BLE001 - telemetry never costs the run
+                primary_research["site_map"] = {"error": _error_text(exc)}
         run_log.event("primary_research_summary", **primary_research)
 
         # ---------------- deterministic harvest + model document sweep ----------------

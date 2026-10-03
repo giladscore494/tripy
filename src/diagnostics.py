@@ -380,7 +380,21 @@ def acquisition_summary(events: list[dict], turns: list[dict]) -> dict:
                             and (e.get("phase") or "research") == "research"),
         "extension_exhausted": next((e for e in events if e.get("kind") == "primary_research_extension_exhausted"),
                                     None) is not None,
+        # importer site map (SITE_MAP, contract research): URLs offered, fetched by research, useful documents
+        **_site_map_usage(events, summary),
     }
+
+
+def _site_map_usage(events: list[dict], summary: dict) -> dict:
+    usage = summary.get("site_map") if isinstance(summary.get("site_map"), dict) else {}
+    event = next((e for e in events if e.get("kind") == "site_map" and e.get("stage", "acquisition") == "acquisition"),
+                 None)
+    if not usage and event is None:
+        return {"site_map_offered": None, "site_map_fetched": None, "site_map_useful": None}
+    return {"site_map_offered": usage.get("offered", len((event or {}).get("offered_urls") or [])),
+            "site_map_fetched": usage.get("fetched"), "site_map_useful": usage.get("useful"),
+            "site_map_url_count": (event or {}).get("url_count"),
+            "site_map_duration_ms": (event or {}).get("duration_ms")}
 
 
 def _min_base_reached(events: list[dict], turns: list[dict]) -> dict:
@@ -922,6 +936,8 @@ def vehicle_row(diag: dict) -> dict:
             "acq_tokens": (a.get("input_tokens") or 0) + (a.get("output_tokens") or 0)
             if a.get("input_tokens") is not None or a.get("output_tokens") is not None else None,
             "acq_extension_exhausted": a.get("extension_exhausted"),
+            "acq_site_map_offered": a.get("site_map_offered"), "acq_site_map_fetched": a.get("site_map_fetched"),
+            "acq_site_map_useful": a.get("site_map_useful"),
             "acq_done_deferred": a.get("done_deferred_count"),
             "parser_gap_rows": gaps.get("gaps_total"), "parser_gap_fields": gaps.get("fields_with_gaps"),
             "parser_gap_recovered_by_sweep": gaps.get("recovered_by_sweep"),
