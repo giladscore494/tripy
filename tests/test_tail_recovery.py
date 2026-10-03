@@ -517,7 +517,8 @@ def test_global_turn_cap_holds_across_clusters(tmp_path):
 def test_recovery_mode_from_env():
     from src.agent import agent_config_from_env
 
-    assert AgentConfig().recovery_mode == "cluster"
+    assert AgentConfig().recovery_mode == "reacquire"           # PR #31: targeted re-acquisition is the default
+    assert agent_config_from_env({"RECOVERY_MODE": "cluster"}.get).recovery_mode == "cluster"
     env = {"RECOVERY_MODE": "legacy", "CLUSTER_SEARCH_BUDGET": "2", "CLUSTER_MAX_TURNS": "3"}
     config = agent_config_from_env(env.get)
     assert (config.recovery_mode, config.cluster_search_budget, config.cluster_max_turns) == ("legacy", 2, 3)

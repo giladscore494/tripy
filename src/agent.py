@@ -58,7 +58,7 @@ import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .bundle import BUNDLE_VERSION, admission_summary, build_research_bundle
 from .consistency_checks import run_checks
@@ -425,12 +425,38 @@ Reply with ONLY one JSON object, no prose, in the shape the task asks for:
   snippet's text covering the statement of the value (its label and the value). Omit a field the snippets do not
   state; never guess."""
 
+GROUNDED_SYSTEM_PROMPT = """You are the grounded-candidate step of a vehicle research benchmark. The target is ONE exact
+vehicle variant (`vehicle_identity`) and the target market (`target_market`). You receive ONE document that research
+already downloaded, split into numbered text blocks, and a few requested fields with their definitions. Some of these
+fields may be stated in the document in prose or in a layout no parser reads.
+
+For every requested field the document states for this vehicle, point at the statement: the block id and the character
+offsets [start, end) inside that block's text covering the statement (its label or subject and the value), plus the
+value and its unit as written. Omit every field the document does not state. Never guess, never compute or convert a
+value, never combine statements from different blocks. You have no tools; you do not store anything. Your answer is
+only a pointer that code verifies against the document and a later step judges.
+
+Reply with ONLY one JSON object: {"items": [{"field": "<name>", "value": <value>, "unit": "<unit or null>",
+"block": "b12", "start": 41, "end": 96}]}"""
+
+REACQUIRE_SYSTEM_PROMPT = """You are a targeted RE-ACQUISITION step of a vehicle research benchmark for ONE exact vehicle
+variant. Earlier steps could not settle the fields of ONE recovery cluster listed below. Your only job is to obtain the
+document that states them: search and fetch. Code harvests every document you fetch and a later step judges the values;
+you do not extract, verify or store anything.
+
+Tools: search_web, search_official_domains, fetch_url, fetch_pdf, render_page, nothing else. Prefer the listed official
+URLs (from the official site's sitemap) and `links` of fetched pages over URLs you construct. Do not fetch a URL listed
+as already fetched and do not repeat a known unproductive route. The budget is small (a few turns, a few billable
+searches, a few fetches). When the right document is fetched, or nothing more can be found, reply with ONLY:
+{"done": true, "reason": "<short>"}"""
+
 REPAIR_PROMPT = ("Your last reply could not be parsed as JSON. Return the same content as ONE valid JSON object "
                  "and nothing else.")
 
 PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + ACQUISITION_SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT
                                  + FIELD_RECOVERY_SYSTEM_PROMPT + DOCUMENT_SWEEP_SYSTEM_PROMPT
                                  + CLUSTER_RECOVERY_SYSTEM_PROMPT + ADJUDICATION_SYSTEM_PROMPT
+                                 + GROUNDED_SYSTEM_PROMPT + REACQUIRE_SYSTEM_PROMPT
                                  + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
 
@@ -945,11 +971,13 @@ class ModelCaller:
 
     def __call__(self, messages: list[dict], *, phase: str, tools: list[dict] | None = None,
                  model: str | None = None, meta: dict | None = None, activity: dict | None = None,
-                 max_tokens: int | None = None) -> dict:
+                 max_tokens: int | None = None, settings_phase: str | None = None) -> dict:
         """`meta` adds explicit context to the logged model_response (e.g. the field and attempt of a
         field-recovery turn). It never changes `phase`, which usage accounting groups by. `activity`
         only labels this call's request-lifecycle events (e.g. the research turn); it is not logged
-        on the model_response."""
+        on the model_response. `settings_phase` takes the request settings (reasoning effort, timeouts,
+        attempts, model) of another phase while accounting stays with `phase` (e.g. a recovery re-acquisition
+        turn runs with the research settings and is booked as recovery)."""
         check_cancelled(self.cancel_event)
         meta = meta or {}
         self.run_context.clear()
@@ -958,12 +986,12 @@ class ModelCaller:
         # per-phase settings (src/phase_settings.py); unset keys inherit the global configuration
         from .phase_settings import for_phase
 
-        settings = for_phase(self.config, phase)
+        settings = for_phase(self.config, settings_phase or phase)
         extra = request_extra(self.config, settings)
         # Extra JSON must not override a call's explicit token cap or add tools to finalization.
         if max_tokens is not None and "max_tokens" in extra:
             extra["max_tokens"] = max_tokens
-        if trace.phase_group(phase) == "finalization":
+        if trace.phase_group(settings_phase or phase) == "finalization":
             extra.pop("tools", None)
             extra.pop("tool_choice", None)
         if settings["thinking_disabled_mapped"] and not self.thinking_mapped_logged:
@@ -2295,7 +2323,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                                       run_log=run_log, cache=cache, before=before, routed=routed, snippets=snippets,
                                       profiles=profiles, open_fields=open_fields, doc_metas=doc_metas, pre=pre,
                                       start_seq=start_seq, usage_before=usage_before,
-                                      unusable_candidates=unusable_candidates)
+                                      unusable_candidates=unusable_candidates, vehicle=vehicle)
 
     def build(fields: list[str], max_chars: int, chunk: dict | None = None) -> dict:
         return sweep_packet(payload=payload, specs=specs, evaluation=current, matrix=matrix, events=events,
@@ -2446,13 +2474,22 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                            config: AgentConfig, run_log: RunLog, cache, before: list[dict], routed: dict[str, list[dict]],
                            snippets: dict[str, list[dict]], profiles: dict[str, dict], open_fields: list[str],
                            doc_metas: list[dict], pre: dict, start_seq: int, usage_before: dict,
-                           unusable_candidates: int) -> dict:
+                           unusable_candidates: int, vehicle: dict | None = None, phase: str = "document_sweep",
+                           settings_phase: str | None = None, event_prefix: str = "document_sweep",
+                           stage: str = "sweep", exclude_keys: Iterable[str] = (),
+                           grounded_pool: list[str] | None = None) -> dict:
     """The Candidate Adjudication sweep (SWEEP_MODE=adjudication, src/adjudication.py). Code groups the open fields'
     usable candidates, dry-runs admission on each (nothing stored), classifies the fields U / A / M and sends small
     no-tool JSON packets per recovery cluster; accepted candidates and located statements become synthetic
     store_evidence calls through ToolSession.execute, so Evidence Admission stays the only gate. A packet that fails
     (GLMError, timeout, unparseable after one repair turn, or any local error) presents nothing and leaves its fields
-    open for recovery; the next packet still runs. Control-flow exceptions (cancellation) propagate."""
+    open for recovery; the next packet still runs. Control-flow exceptions (cancellation) propagate.
+
+    Grounded candidates (GROUNDED_CANDIDATES, src/grounded.py) run between the dry run and the classes, on the open
+    fields the dry run left WITHOUT an admissible candidate; their admissible candidates join those fields as class A.
+    The same runner serves re-acquisition recovery (stage "reacquire": phase / settings_phase / event_prefix select its
+    accounting and events, `exclude_keys` drops candidates already presented, `grounded_pool` restricts the grounded
+    documents to the episode's new documents)."""
     from .adjudication import (ADJUDICATION_VERSION, MECHANICAL_REASONS, SNIPPET_CHARS, DocumentReader, a_packet,
                                assign_ids, candidate_context, candidate_request, decision_flags, dry_run, field_class,
                                group_by_value, hint_keys, m_packet, packet_chars, plan_packets, u_packet)
@@ -2465,6 +2502,8 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
     market = config.target_market
     by_name = {s["name"]: s for s in specs}
     t_sweep = time.monotonic()
+    group = trace.phase_group(phase)
+    excluded = set(exclude_keys or ())
     reader = DocumentReader(cache)
     limits = {"u_items": config.adjudication_max_u_items, "a_fields": config.adjudication_max_a_fields,
               "a_candidates": config.adjudication_max_a_candidates, "m_fields": config.adjudication_max_m_fields,
@@ -2482,7 +2521,7 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
         adm = admission_context(session.ctx)
         documents = list(session.ctx.documents_opened)
         for name in open_fields:
-            for cand in group_by_value(routed.get(name) or []):
+            for cand in group_by_value([c for c in routed.get(name) or [] if candidate_key(c) not in excluded]):
                 dry["candidates_total"] += 1
                 decision = dry_run(adm, cache, candidate_request(name, cand), documents)
                 quote, widened = cand.get("quote"), False
@@ -2508,9 +2547,44 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                         dry["not_admissible_by_reason"][reason] = dry["not_admissible_by_reason"].get(reason, 0) + 1
                 not_admissible.append({"candidate_key": candidate_key(cand), "field": name,
                                        "document_id": cand.get("document_id"), "reasons": reasons})
+    except Exception as exc:  # noqa: BLE001 - never costs the run: every open field simply goes to recovery
+        run_log.event("adjudication_prepare_failed", error=_error_text(exc), stage=stage)
+        prepare_failed = True
+    else:
+        prepare_failed = False
+    # ---- grounded candidates for the open fields the dry run left with nothing admissible (Part E) ----
+    grounded: dict | None = None
+    grounded_fields: set[str] = set()
+    if not prepare_failed and config.grounded_candidates:
+        missing = [f for f in open_fields if not admissible.get(f) and by_name.get(f, {}).get("applicable", True)]
+        try:
+            docs = grounded_documents(adm=session.ctx.admission, cache=cache, events=trace_events(run_log),
+                                      doc_metas=doc_metas, fields=missing, specs=specs, vehicle=vehicle,
+                                      target_market=market, only=grounded_pool) if missing else []
+        except Exception as exc:  # noqa: BLE001
+            docs = []
+            run_log.event("grounded_candidates_failed", stage=stage, error=_error_text(exc))
+        if not missing or not docs:
+            run_log.event("grounded_candidates_skipped", stage=stage,
+                          reason="no_fields_without_admissible_candidate" if not missing else "no_documents",
+                          fields=missing)
+        else:
+            grounded = run_grounded_candidates(session=session, caller=caller, specs=specs, payload=payload,
+                                               config=config, run_log=run_log, cache=cache, fields=missing,
+                                               documents=docs, phase=phase, settings_phase=settings_phase,
+                                               stage=stage)
+            for name, items in grounded["admissible"].items():
+                if name in open_fields:
+                    admissible.setdefault(name, []).extend(items)
+                    grounded_fields.add(name)
+    try:
+        if prepare_failed:
+            raise RuntimeError("adjudication preparation failed")
         for name in open_fields:
-            cls = field_class(admissible.get(name) or [], routed.get(name) or [], bool(snippets.get(name)),
-                              hint_keys(by_name.get(name)))
+            # a field with a grounded candidate is always A: the model judges it a second time, in context
+            cls = "A" if name in grounded_fields else field_class(
+                admissible.get(name) or [], routed.get(name) or [], bool(snippets.get(name)),
+                hint_keys(by_name.get(name)))
             if cls:
                 classes[name] = cls
         sizes = {f: (len(snippets.get(f) or []) if c == "M" else len(admissible.get(f) or []))
@@ -2519,11 +2593,13 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                                clusters={f: cluster_of(by_name.get(f) or {"name": f}) for f in open_fields},
                                sizes=sizes, limits=limits)
     except Exception as exc:  # noqa: BLE001 - never costs the run: every open field simply goes to recovery
-        run_log.event("adjudication_prepare_failed", error=_error_text(exc))
+        if not prepare_failed:
+            run_log.event("adjudication_prepare_failed", error=_error_text(exc), stage=stage)
         packets = []
     if not_admissible:   # one event per run: recovery treats these keys like rejected ones (never fresh again)
         run_log.event("adjudication_not_admissible", rows=not_admissible, count=len(not_admissible))
-    run_log.event("adjudication_plan", version=ADJUDICATION_VERSION, fields=open_fields, classes=classes,
+    run_log.event("adjudication_plan", version=ADJUDICATION_VERSION, stage=stage, fields=open_fields, classes=classes,
+                  grounded_fields=sorted(grounded_fields),
                   not_sent=[f for f in open_fields if f not in classes], limits=limits, dry_run=dry,
                   packets=[{k: p[k] for k in ("class", "cluster", "fields", "items")} for p in packets])
 
@@ -2541,7 +2617,7 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
     for index, plan in enumerate(packets, start=1):
         cls = plan["class"]
         info = {"index": index, "of": len(packets), "class": cls, "clusters": [plan["cluster"]]}
-        usage_chunk = dict(caller.usage["document_sweep"])
+        usage_chunk = dict(caller.usage[group])
         t_chunk = time.monotonic()
         items: list[dict] = []
         offered: list[str] = []
@@ -2578,7 +2654,7 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
             packet = None
         if packet is not None:
             stats["packets"][cls] += 1
-            run_log.event("document_sweep_started", sweep_mode="adjudication", packet_class=cls,
+            run_log.event(f"{event_prefix}_started", sweep_mode="adjudication", packet_class=cls, stage=stage,
                           fields_to_review=plan["fields"], candidates_presented=len(items),
                           fields_without_candidates=plan["fields"] if cls == "M" else [],
                           documents=len(doc_metas), packet_chars=size, allowed_tools=[],
@@ -2594,15 +2670,16 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
             reply = None
             try:
                 meta = {"turn": 1, "chunk": index, "adjudication_class": cls}
-                message = caller(messages, phase="document_sweep", meta=meta, max_tokens=max_tokens[cls])
+                message = caller(messages, phase=phase, settings_phase=settings_phase, meta=meta,
+                                 max_tokens=max_tokens[cls])
                 chunk_calls += 1
                 reply, _ = parse_model_output(message.get("content"))
                 if not isinstance(reply, dict):
                     # technical repair only: ask once for valid JSON (same phase, same packet)
                     stats["repair_turns"] += 1
                     repair = messages + [_assistant_echo(message), {"role": "user", "content": REPAIR_PROMPT}]
-                    message = caller(repair, phase="document_sweep", meta={**meta, "turn": 2, "repair": True},
-                                     max_tokens=max_tokens[cls])
+                    message = caller(repair, phase=phase, settings_phase=settings_phase,
+                                     meta={**meta, "turn": 2, "repair": True}, max_tokens=max_tokens[cls])
                     chunk_calls += 1
                     reply, _ = parse_model_output(message.get("content"))
                     if not isinstance(reply, dict):
@@ -2618,11 +2695,12 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                 try:
                     record = _apply_adjudication(session=session, run_log=run_log, cache=cache, reader=reader,
                                                  cls=cls, plan=plan, items=items, ids=ids, reply=reply, info=info,
-                                                 offered=offered, stats=stats)
+                                                 offered=offered, stats=stats, phase=phase)
                     # A local failure while applying the packet must leave its candidates fresh for recovery.
                     # Announce them only after the entire packet was handled successfully.
                     if offered:
-                        run_log.event("candidates_presented", source="adjudication", chunk=info,
+                        run_log.event("candidates_presented", source="adjudication" if stage == "sweep" else stage,
+                                      chunk=info,
                                       presented_candidate_keys=offered)
                     presented += len(offered)
                     replies.append(reply)
@@ -2633,12 +2711,12 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
             chunk_errors.append(error)
             failed_fields.extend(f for f in plan["fields"] if f not in failed_fields)
             failed_offered.extend(offered)
-            run_log.event("document_sweep_failed", error=error, api_error=record.get("api_error"), chunk=info,
-                          sweep_mode="adjudication")
-            run_log.event("document_sweep_chunk_failed", **info, fields=plan["fields"], error=error,
+            run_log.event(f"{event_prefix}_failed", error=error, api_error=record.get("api_error"), chunk=info,
+                          sweep_mode="adjudication", stage=stage)
+            run_log.event(f"{event_prefix}_chunk_failed", **info, fields=plan["fields"], error=error,
                           timeout=bool(record.get("timeout")), attempts=record.get("attempts"),
                           note="packet failed; its fields stay open for recovery and the next packet still runs")
-        used = {k: caller.usage["document_sweep"][k] - usage_chunk.get(k, 0) for k in caller.usage["document_sweep"]}
+        used = {k: caller.usage[group][k] - usage_chunk.get(k, 0) for k in caller.usage[group]}
         chunk_log.append({**info, "fields": plan["fields"], "fields_count": len(plan["fields"]),
                           "candidates": len(items), "packet_chars": size, "model_calls": chunk_calls,
                           "latency_ms": int((time.monotonic() - t_chunk) * 1000),
@@ -2668,8 +2746,8 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
     summary["failed_chunk_candidates_kept_fresh"] = len({k for k in failed_offered if k not in seen})
     summary["follow_up_turn"] = None
     timeouts = sum(1 for e in events if e.get("kind") == "api_error" and (e.get("seq") or 0) > start_seq
-                   and e.get("phase") == "document_sweep" and e.get("timeout"))
-    used = {k: caller.usage["document_sweep"][k] - usage_before.get(k, 0) for k in caller.usage["document_sweep"]}
+                   and e.get("phase") == phase and e.get("timeout"))
+    used = {k: caller.usage[group][k] - usage_before.get(k, 0) for k in caller.usage[group]}
     sent = [c for c in chunk_log if c.get("model_calls")]
     summary.update(_sweep_telemetry(
         chunks=chunk_log, packet_chars=sum(c["packet_chars"] for c in sent),
@@ -2680,10 +2758,160 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                    adjudication={"version": ADJUDICATION_VERSION, "classes": classes,
                                  "class_counts": {c: sum(1 for v in classes.values() if v == c) for c in "UAM"},
                                  "fields_not_sent": [f for f in open_fields if f not in classes],
-                                 "dry_run": dry, **stats})
-    run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
-                  reply=summary["reply"])
+                                 "dry_run": dry, "grounded_fields": sorted(grounded_fields), **stats},
+                   grounded_candidates=(grounded or {}).get("summary"))
+    run_log.event(f"{event_prefix}_finished", **{k: v for k, v in summary.items() if k != "reply"},
+                  reply=summary["reply"], stage=stage)
     return summary
+
+
+def grounded_documents(*, adm, cache, events: list[dict], doc_metas: list[dict], fields: list[str], specs: list[dict],
+                       vehicle: dict | None, target_market: str, only: list[str] | None = None,
+                       limit: int = 3) -> list[dict]:
+    """E2 document selection: usable documents not bound to another variant, ranked by tail_planner.rank_documents
+    (source_yield_score) for the fields, keeping the top `limit` that are official or of the target market. `only`
+    restricts the pool (e.g. the documents a re-acquisition episode just fetched)."""
+    from .candidate_harvest import candidate_matrix
+    from .field_recovery import is_target_market
+    from .source_authority import OFFICIAL_CLASSES
+    from .tail_planner import document_profile_for, rank_documents, usable_candidate_matrix
+
+    metas = [m for m in doc_metas if only is None or str(m.get("document_id")) in set(map(str, only))]
+    matrix = usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
+    ranked = rank_documents(doc_metas=metas, matrix=matrix, fields=fields, events=events, adm=adm, cache=cache,
+                            target_market=target_market, limit=max(1, len(metas)))
+    out = []
+    for doc in ranked:
+        profile = document_profile_for(adm, cache, doc["document_id"])
+        if profile.get("variant_match") == "different":
+            continue
+        if profile.get("source_authority") in OFFICIAL_CLASSES or is_target_market(profile.get("market"),
+                                                                                    target_market):
+            out.append({**doc, "variant_match": profile.get("variant_match")})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
+                            config: AgentConfig, run_log: RunLog, cache, fields: list[str], documents: list[dict],
+                            phase: str = "document_sweep", settings_phase: str | None = None,
+                            stage: str = "sweep") -> dict:
+    """E3-E6: one no-tool call per selected document (max 3) for `fields` (max 15 per call); the model points at
+    statements, code cuts and verifies the quote and dry-runs admission. Returns {admissible: {field: [items]},
+    summary}; items are adjudication items (candidate, key, quote, flags) of class A. Nothing is stored. A failed call
+    (GLMError, timeout, unparseable after one repair, a local error) costs only its document."""
+    from . import grounded as G
+    from .adjudication import candidate_request, decision_flags, dry_run
+    from .candidate_harvest import dictionary_for, normalize_text
+    from .evidence_admission import quote_in_source
+    from .field_recovery import vehicle_identity
+    from .tail_planner import candidate_key
+    from .tools.evidence import admission_context
+    from .tools.extract import document_tables
+
+    t0 = time.monotonic()
+    by_name = {s["name"]: s for s in specs}
+    wanted = [f for f in fields if f in by_name][:G.MAX_FIELDS]
+    stats = {"stage": stage, "documents": len(documents[:G.MAX_DOCUMENTS]), "fields": wanted, "model_calls": 0,
+             "failed_documents": 0, "items": 0, "invalid": 0, "quote_not_in_document": 0, "admissible": 0,
+             "not_admissible": 0, "repair_turns": 0}
+    admissible: dict[str, list[dict]] = {}
+    usage_group = trace.phase_group(phase)
+    usage_before = dict(caller.usage[usage_group])
+    run_log.event("grounded_candidates_started", stage=stage, version=G.GROUNDED_VERSION, fields=wanted,
+                  documents=[d.get("document_id") for d in documents[:G.MAX_DOCUMENTS]])
+    try:
+        adm = admission_context(session.ctx)
+        alias = dictionary_for(specs).any_alias
+    except Exception as exc:  # noqa: BLE001
+        run_log.event("grounded_candidates_failed", stage=stage, error=_error_text(exc))
+        return {"admissible": {}, "summary": {**stats, "error": _error_text(exc)}}
+    identity = vehicle_identity(payload, config.target_market)
+    run_documents = list(session.ctx.documents_opened)
+    for doc in documents[:G.MAX_DOCUMENTS]:
+        doc_id = str(doc.get("document_id"))
+        error, reply, invalid, kept, rejected = None, None, [], [], []
+        try:
+            meta = cache.get(doc_id) or {}
+            is_html = meta.get("doc_type") == "html" or meta.get("kind") == "rendered"
+            html = cache.read_body(doc_id).decode("utf-8", errors="replace") if is_html else None
+            try:
+                tables = document_tables(cache, doc_id, meta, html)
+            except Exception:  # noqa: BLE001
+                tables = []
+            blocks = G.document_blocks(cache.read_text(doc_id), is_pdf=meta.get("doc_type") == "pdf", tables=tables,
+                                       alias_pattern=alias, normalize=normalize_text)
+            url = meta.get("final_url") or meta.get("url")
+            packet = G.grounded_packet(identity=identity, target_market=config.target_market,
+                                       specs=[by_name[f] for f in wanted], blocks=blocks,
+                                       source=re.sub(r"^https?://", "", str(url or ""))[:120] or None)
+            messages = [{"role": "system", "content": GROUNDED_SYSTEM_PROMPT},
+                        {"role": "user", "content": "Grounded candidate task (JSON):\n"
+                                                    + json.dumps(packet, ensure_ascii=False, default=str)}]
+            meta_tags = {"turn": 1, "grounded_document": doc_id, "stage": stage}
+            message = caller(messages, phase=phase, settings_phase=settings_phase, meta=meta_tags,
+                             max_tokens=G.MAX_TOKENS)
+            stats["model_calls"] += 1
+            reply, _ = parse_model_output(message.get("content"))
+            if not isinstance(reply, dict):
+                stats["repair_turns"] += 1
+                repair = messages + [_assistant_echo(message), {"role": "user", "content": REPAIR_PROMPT}]
+                message = caller(repair, phase=phase, settings_phase=settings_phase,
+                                 meta={**meta_tags, "turn": 2, "repair": True}, max_tokens=G.MAX_TOKENS)
+                stats["model_calls"] += 1
+                reply, _ = parse_model_output(message.get("content"))
+                if not isinstance(reply, dict):
+                    error = "unparseable_after_repair"
+            if error is None:
+                items, invalid = G.parse_reply(reply, {b["id"]: b for b in blocks}, wanted)
+                stats["items"] += len(items)
+                material = adm.material(cache, doc_id, None, run_documents)
+                for item in items:
+                    if material is None or not quote_in_source(material, item["quote"]):
+                        stats["quote_not_in_document"] += 1
+                        invalid.append({"problem": "quote_not_in_document", "field": item["field"],
+                                        "block": item["block"], "quote": item["quote"][:200]})
+                        continue
+                    cand = G.candidate(item, document_id=doc_id, source_url=url)
+                    decision = dry_run(adm, cache, candidate_request(item["field"], cand), run_documents)
+                    if decision.get("accepted"):
+                        kept.append(cand)
+                        admissible.setdefault(item["field"], []).append(
+                            {"field": item["field"], "candidate": cand, "key": candidate_key(cand),
+                             "quote": cand["quote"], "widened": False, "grounded": True,
+                             "flags": decision_flags(decision)})
+                    else:
+                        rejected.append({"candidate_key": candidate_key(cand), "field": item["field"],
+                                         "document_id": doc_id, "value": cand.get("value"), "quote": cand["quote"],
+                                         "reasons": list(decision.get("reasons") or [])})
+        except GLMError as exc:
+            error = _error_text(exc)
+        except Exception as exc:  # noqa: BLE001 - one document's problem never stops the others
+            error = _error_text(exc)
+        stats["invalid"] += len(invalid)
+        stats["admissible"] += len(kept)
+        stats["not_admissible"] += len(rejected)
+        if invalid:
+            run_log.event("grounded_candidates_invalid", stage=stage, document_id=doc_id, rows=invalid)
+        if rejected:
+            run_log.event("grounded_candidates_not_admissible", stage=stage, document_id=doc_id, rows=rejected,
+                          note="dropped: never stored, never presented")
+        if kept:   # harvest-equivalent: candidate_matrix / presented keys / diagnostics see them (never evidence)
+            run_log.event("candidates_harvested", document_id=doc_id, phase=phase, source=G.METHOD, stage=stage,
+                          url=(cache.get(doc_id) or {}).get("final_url") or (cache.get(doc_id) or {}).get("url"),
+                          cache_hit=False, candidate_count=len(kept), fields=sorted({c["field"] for c in kept}),
+                          candidates=kept)
+        if error is not None:
+            stats["failed_documents"] += 1
+            run_log.event("grounded_candidates_document_failed", stage=stage, document_id=doc_id, error=error,
+                          note="this document only; the others still run")
+    used = {k: caller.usage[usage_group][k] - usage_before.get(k, 0) for k in caller.usage[usage_group]}
+    stats.update(input_tokens=used.get("prompt_tokens", 0), output_tokens=used.get("completion_tokens", 0),
+                 latency_ms=int((time.monotonic() - t0) * 1000),
+                 fields_with_admissible=sorted(admissible))
+    run_log.event("grounded_candidates_finished", **stats)
+    return {"admissible": admissible, "summary": stats}
 
 
 def widen_quote_safe(reader, cand: dict) -> str | None:
@@ -2697,7 +2925,7 @@ def widen_quote_safe(reader, cand: dict) -> str | None:
 
 def _apply_adjudication(*, session: ToolSession, run_log: RunLog, cache, reader, cls: str, plan: dict,
                         items: list[dict], ids: dict, reply: dict, info: dict, offered: list[str],
-                        stats: dict) -> dict:
+                        stats: dict, phase: str = "document_sweep") -> dict:
     """B4 + B5 for one packet whose call returned a parsed reply: log the presented candidates, ignore (and log)
     invalid decisions, and turn accepted candidates / located statements into synthetic store_evidence calls that
     run through the normal tool path (admission decides; a rejection is only logged)."""
@@ -2736,7 +2964,7 @@ def _apply_adjudication(*, session: ToolSession, run_log: RunLog, cache, reader,
     admitted = rejected = 0
     if calls:
         stats["store_requests"] += len(calls)
-        session.execute(calls, [], phase="document_sweep", allowed=("store_evidence",))
+        session.execute(calls, [], phase=phase, allowed=("store_evidence",))
         for result in session.turn_results:
             outcome = result.get("result") if isinstance(result.get("result"), dict) else {}
             if outcome.get("stored"):

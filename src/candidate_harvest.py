@@ -1286,11 +1286,18 @@ def vehicle_hints(cand: dict, vehicle: dict | None) -> dict:
 
 
 def candidates_from_events(events: Iterable[dict]) -> list[dict]:
-    seen: set[str] = set()
+    """Every candidate of the run: the deterministic harvest's (one event per document) and, as separate
+    harvest-equivalent events of the same document, other candidate sources (`source`, e.g. grounded_llm; each
+    event carries only its own new candidates)."""
+    seen: set[tuple] = set()
     out: list[dict] = []
     for event in events:
-        if event.get("kind") == "candidates_harvested" and event.get("document_id") not in seen:
-            seen.add(event.get("document_id"))
+        if event.get("kind") != "candidates_harvested":
+            continue
+        source = event.get("source")
+        key = (event.get("document_id"), None) if not source else (event.get("document_id"), source, event.get("seq"))
+        if key not in seen:
+            seen.add(key)
             out += list(event.get("candidates") or [])
     return out
 
