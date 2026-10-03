@@ -82,9 +82,10 @@ st.session_state.setdefault("submit_nonce", uuid.uuid4().hex)
 # --- sidebar: history and advanced settings -------------------------------------------------------------
 
 records = manager.list_runs()
+active_records = manager.active_runs()  # execution-aware: ignores stale durable states with no live worker
 by_id = {r.run_id: r for r in records}
 requested_run = st.query_params.get("run")
-active_ids = [r.run_id for r in records if r.active]
+active_ids = [r.run_id for r in active_records]
 default_run = active_ids[0] if active_ids else (records[0].run_id if records else None)
 selected_id = requested_run if requested_run in by_id else default_run
 
@@ -165,7 +166,7 @@ with left:
         target_label = f"Benchmark v1 · {len(selection)} vehicles"
     if mode_label != "Benchmark A/B":
         target_ids = {v["upstream_record_id"] for v in selection}
-        busy = next((r for r in records if r.active and set(r.record_ids) & target_ids), None)
+        busy = next((r for r in active_records if set(r.record_ids) & target_ids), None)
         profile_col, button_col = st.columns([2, 3], vertical_alignment="bottom")
         run_profile = profile_col.selectbox("Run profile", PROFILES, format_func=PROFILE_LABELS.get, key="run_profile",
                                             index=PROFILES.index(PRODUCTION),
