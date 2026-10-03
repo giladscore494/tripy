@@ -327,7 +327,10 @@ def test_diagnostics_are_written_by_research_one_and_survive_reload(tmp_path, mo
     assert saved["acquisition"]["summary"]["stop_reason"] == "model_finished"
     assert saved["document_sweep"]["summary"]["skipped"] == "field_recovery_disabled"
     assert [r["type"] for r in stream] == ["acquisition_turn"] and stream[0]["record_id"] == "101122"
-    assert D.load_vehicle_diagnostics(run_dir) == saved                        # reload is lossless
+    loaded = D.load_vehicle_diagnostics(run_dir)
+    assert {k: loaded[k] for k in saved} == saved  # durable diagnostics remain lossless
+    assert loaded["binding_replay"]["fields_ok_now"] == 0
+    assert (run_dir / "binding_replay_summary.json").is_file()
     rebuilt = D.vehicle_diagnostics(read_events(run_dir / "events.jsonl"), run_id="b1", record_id="101122")
     assert rebuilt["acquisition"] == saved["acquisition"] and rebuilt["summary_text"] == saved["summary_text"]
     assert "SOURCE ACQUISITION" in saved["summary_text"] and "DOCUMENT SWEEP" in saved["summary_text"]

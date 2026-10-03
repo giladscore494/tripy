@@ -36,12 +36,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import urlparse
 
-from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
+from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, sanity_specs
 
 # v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
 # PDF tables without ruling lines (tools/extract), unit-anchored candidates
 # v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
-HARVESTER_VERSION = "harvest-v5"
+HARVESTER_VERSION = "harvest-v6"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -127,6 +127,7 @@ def _num_value(value: float) -> int | float:
 
 OPERATIONS: dict[str, Callable[[float], float]] = {
     "identity": lambda v: v,
+    "multiply_by_9_80665": lambda v: v * 9.80665,
     "divide_by_10": lambda v: v / 10,
     "multiply_by_10": lambda v: v * 10,
     "divide_by_1000": lambda v: v / 1000,
@@ -440,6 +441,106 @@ def _structured_roots(structured: dict | None) -> list:
     return roots
 
 
+_REJECTIONS: ContextVar[list | None] = ContextVar("candidate_rejections", default=None)
+
+
+@contextmanager
+def collect_candidate_rejections():
+    rows = []
+    token = _REJECTIONS.set(rows)
+    try:
+        yield rows
+    finally:
+        _REJECTIONS.reset(token)
+
+
+def reject_candidate(rule, text, value, method, reason, **extra):
+    sink = _REJECTIONS.get()
+    if sink is not None:
+        row = {"field": rule.name, "value": value, "quote": text[:QUOTE_CHARS],
+               "extraction_method": method, "rejection": reason, **extra}
+        if row not in sink:
+            sink.append(row)
+
+
+def semantic_reason(spec: dict, text: str, value: Any = None) -> str | None:
+    """One field's exclusions, attached to its own numeric statement, shared by all candidate origins and admission.
+
+    With several values on a line, an exclusion belongs to the nearest value. A following label before another
+    number names that other number; a qualifier after the last number still qualifies that last number.
+    """
+    text = normalize_text(text)
+    nums = list(NUMBER.finditer(text))
+    wanted = parse_number(str(value)) if isinstance(value, (int, float, str)) else None
+    own = [n for n in nums if wanted is not None and parse_number(n.group()) == wanted]
+    for exclusion in spec.get("semantic_exclusions") or []:
+        applies = exclusion.get("applies_to")
+        if applies and spec.get("_sanity_propulsion") not in applies:
+            continue
+        pattern = compile_terms(exclusion.get("terms") or [])
+        for hit in pattern.finditer(text) if pattern else []:
+            if own and len(nums) > 1 and not re.search(r"\d", hit.group()):
+                nearest = min(nums, key=lambda n: max(0, hit.start()-n.end(), n.start()-hit.end()))
+                if nearest not in own:
+                    continue
+            return exclusion.get("reason") or "semantic exclusion"
+    for exclusion in spec.get("value_exclusion_patterns") or []:
+        if re.search(exclusion["regex"], normalize_text(str(value if value is not None else text))):
+            return exclusion.get("reason") or "invalid text value"
+    return None
+
+
+def dimension_assignment(rule: FieldRule, d: Dictionary, text: str) -> dict | None:
+    """Ordered composite label/value triples, driven by sibling_group and axis_token. Each number has one owner."""
+    group = rule.spec.get("sibling_group")
+    axes = [r for r in d.rules if group and r.spec.get("sibling_group") == group and r.spec.get("axis_token")]
+    if len(axes) < 3:
+        return None
+    labels = []
+    for r in axes:
+        terms = [pat.pattern for _, pat, _ in r.aliases] + [_term_regex(r.spec["axis_token"])]
+        for hit in re.finditer("|".join(f"(?:{t})" for t in terms), text):
+            labels.append((hit.start(), hit.end(), r.name))
+    labels.sort(key=lambda h: (h[0], -(h[1]-h[0])))
+    kept = []
+    for label in labels:
+        if not kept or label[0] >= kept[-1][1]:
+            kept.append(label)
+    for i in range(len(kept)-2):
+        triple = kept[i:i+3]
+        if len({x[2] for x in triple}) != 3:
+            continue
+        if not all(re.fullmatch(r"\s*(?:x|/)\s*", text[a[1]:b[0]]) for a,b in zip(triple,triple[1:])):
+            continue
+        tail = text[triple[-1][1]:]
+        m = re.match(r"\s*(?:\([^)]{1,12}\))?\s*[:=]?\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)", tail)
+        if m:
+            return {name: (parse_number(m.group(j+1)), (triple[-1][1]+m.start(j+1), triple[-1][1]+m.end(j+1)))
+                    for j,(_,_,name) in enumerate(triple)}
+    return None
+
+
+def owns_dimension_number(rule: FieldRule, d: Dictionary, text: str, start: int, end: int) -> bool:
+    group = rule.spec.get("sibling_group")
+    if not group:
+        return True
+    composite = dimension_assignment(rule, d, text)
+    if composite:
+        return rule.name in composite and composite[rule.name][1] == (start, end)
+    labels = [(r.name, a,b) for r in d.rules if r.spec.get("sibling_group") == group
+              for a,b,_,_ in _alias_hits(r,text)]
+    labels = [h for h in labels if not any(o != h and o[1] <= h[1] and h[2] <= o[2]
+                                           and o[2]-o[1] > h[2]-h[1] for o in labels)]
+    if not labels:
+        return True
+    prior = [h for h in labels if h[2] <= start]
+    # A closer following label supports value-before-label prose. Ties prefer preceding labels.
+    best = min(labels, key=lambda h: (max(0,start-h[2],h[1]-end), h[1] >= end))
+    if prior and not re.search(r"\d", text[max(prior,key=lambda h:h[2])[2]:start]):
+        best = max(prior,key=lambda h:h[2])
+    return best[0] == rule.name
+
+
 # --- matching helpers ----------------------------------------------------------------------------------
 
 @dataclass
@@ -467,12 +568,17 @@ def _window(text: str, a: int, b: int, pad: int, bounds: tuple[int, int]) -> str
     return text[max(bounds[0], a - pad):min(bounds[1], b + pad)]
 
 
-def _context_ok(rule: FieldRule, near: str, wide: str) -> tuple[bool, float, dict]:
+def _context_ok(rule: FieldRule, near: str, wide: str, *, full_text: str | None = None, value: Any = None) -> tuple[bool, float, dict]:
     """Exclusion / negative / positive / ambiguity rules. Returns (keep, confidence delta, hints)."""
     hints: dict = {}
     delta = 0.0
     for pattern, unless, reason in rule.exclusions:
         if pattern.search(near) and not (unless and unless.search(wide)):
+            if full_text is not None:
+                scoped = {"semantic_exclusions": [{"terms": r.get("terms") or [], "reason": r.get("reason")}
+                                                  for r in rule.spec.get("exclusion_rules") or []]}
+                if semantic_reason(scoped, full_text, value) is None:
+                    continue
             return False, 0.0, {"rejected": reason}
     positive = _contains(rule.positive, wide)
     if rule.require_context and not positive:
@@ -495,7 +601,9 @@ def _context_ok(rule: FieldRule, near: str, wide: str) -> tuple[bool, float, dic
 
 def _plausible(rule: FieldRule, value: float) -> bool:
     low, high = rule.plausible
-    return (low is None or value >= float(low)) and (high is None or value <= float(high))
+    step = rule.spec.get("allowed_step")
+    return ((low is None or value >= float(low)) and (high is None or value <= float(high))
+            and (not step or abs(value/step-round(value/step)) < 1e-7))
 
 
 def _unit_at(d: Dictionary, text: str, end: int) -> tuple[str | None, int]:
@@ -550,6 +658,8 @@ def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int],
         s, e = m.span()
         if s < b and e > a:
             continue  # part of the alias itself (e.g. "0-100")
+        if not owns_dimension_number(rule, d, text, s, e):
+            continue
         number = parse_number(m.group(1))
         if number is None:
             continue
@@ -571,6 +681,7 @@ def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int],
     _, m, number, unit, norm_unit, operation, kind, unit_end = best
     value = OPERATIONS[operation](number) if operation else number
     if not _plausible(rule, value):
+        reject_candidate(rule, text, _num_value(value), "table" if structured else "line", "implausible_value")
         return None
     raw = m.group(1)
     hints: dict = {}
@@ -872,7 +983,10 @@ def _price(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], s
 
 def _candidate(rule: FieldRule, seg: Segment, hit: Hit, method: str, alias: str | None, wide: str) -> dict:
     quote = seg.quote if len(seg.quote) <= QUOTE_CHARS else _cut_quote(seg, hit.span)
-    out = {"field": rule.name, "value": hit.value, "raw_value": hit.raw_value, "unit": hit.unit,
+    block = f"table:{seg.table_index}:row:{seg.row_index}" if seg.table_index is not None else seg.quote
+    origin = "dom_pair" if method == "dom_pair" else "unit_anchor" if method == "unit_anchor" else (
+        "column_identity" if seg.column_identity else "table" if seg.kind == "row" else "line")
+    out = {"origin": origin, "block": block, "field": rule.name, "value": hit.value, "raw_value": hit.raw_value, "unit": hit.unit,
            "raw_unit": hit.raw_unit, "quote": quote, "matched_alias": alias, "extraction_method": method,
            "parser_confidence": round(max(0.0, min(1.0, hit.confidence)), 2)}
     if seg.table_index is not None:
@@ -927,7 +1041,12 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
         if hit is None:
             return
         near, wide = context(hit.span)
-        keep, delta, hints = _context_ok(rule, near, wide)
+        own_text = text[hit.span[0]:hit.span[1]] if rule.matcher == "warranty" else text
+        reason = semantic_reason(rule.spec, own_text, hit.value)
+        if reason:
+            reject_candidate(rule, seg.quote, hit.value, method, reason)
+            return
+        keep, delta, hints = _context_ok(rule, near, wide, full_text=text, value=hit.value)
         if not keep:
             return
         hit.confidence += delta - (0.1 if abbr else 0)
@@ -937,6 +1056,14 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
 
     m = rule.matcher
     if m == "numeric":
+        composite = dimension_assignment(rule, d, text)
+        if composite:
+            item = composite.get(rule.name)
+            if item and item[0] is not None and _plausible(rule, item[0]):
+                value, span = item
+                accept(Hit(_num_value(value), text[span[0]:span[1]], rule.normalized_unit,
+                           confidence=0.95, span=span), base, rule.spec.get("axis_token"))
+            return out
         for s, e, alias, abbr in anchors:
             if structured:
                 label_unit = _label_unit(rule, seg.label)
@@ -1006,8 +1133,8 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
                 pass
             elif position == "alternative" and rule.component == "alternative":
                 pass
-            elif position is None and rule.component in ("front", "rear") and has_tire_word:
-                confidence, hints = 0.45, {"ambiguity": "axle_not_stated"}
+            elif position is None and rule.component in ("front", "rear") and has_tire_word and len(_tires(d, source)) == 1:
+                confidence, hints = 0.6, {"ambiguity": "single_size_all_wheels"}
             else:
                 continue
             hints["position"] = position or "unspecified"
@@ -1050,7 +1177,7 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
             if hit is None:
                 continue
             near, wide = (text, text) if structured else context(hit.span)
-            keep, delta, hints = _context_ok(rule, near, wide)
+            keep, delta, hints = _context_ok(rule, near, wide, full_text=text, value=hit.value)
             if keep:
                 hit.confidence += delta
                 hit.hints.update(hints)
@@ -1080,6 +1207,11 @@ def harvest_segments(segments: list[Segment], d: Dictionary) -> list[dict]:
     for seg in segments:
         for rule in d.rules:
             for hit, method, alias, wide in _rule_hits(rule, d, seg):
+                own_text = seg.text[hit.span[0]:hit.span[1]] if rule.matcher == "warranty" else seg.text
+                reason = semantic_reason(rule.spec, own_text, hit.value)
+                if reason:
+                    reject_candidate(rule, seg.quote, hit.value, method, reason)
+                    continue
                 cand = _candidate(rule, seg, hit, method, alias, wide)
                 key = (rule.name, json.dumps(cand["value"], ensure_ascii=False, sort_keys=True, default=str).lower(),
                        cand.get("unit"), cand.get("position"), cand.get("warranty_type"))
@@ -1192,7 +1324,11 @@ def unit_anchor_candidates(segments: list[Segment], d: Dictionary) -> list[dict]
             if number is None:
                 continue
             value = OPERATIONS[operation](number) if operation else number
-            if not _plausible(rule, value):
+            if not owns_dimension_number(rule, d, joined, ns, m.end()+offset):
+                continue
+            reason = semantic_reason(rule.spec, joined, value)
+            if reason or not _plausible(rule, value):
+                reject_candidate(rule, joined_quote, _num_value(value), "unit_anchor", reason or "implausible_value")
                 continue
             hit_alias = min(near, key=lambda h: min(abs(h[1] - ne), abs(ns - h[2])))
             _, s, e, alias, abbr = hit_alias
@@ -1257,7 +1393,13 @@ def harvest_text(text: str, specs: Iterable[dict], *, tables: list[dict] | None 
     the line / table / structured segments (merge_additions)."""
     from .structure_harvest import html_pairs
 
+    from .structure_harvest import clean_soup
+    specs = list(specs)
+    specs = sanity_specs(specs)
     d = dictionary or Dictionary(specs)
+    if html:
+        from .tools.extract import _clean_lines
+        text = _clean_lines(clean_soup(html).get_text("\n"))
     segments = document_segments(text, tables, structured, is_pdf=is_pdf, dictionary=d)
     if html:
         # (html_pairs never raises) structural pairs join the same per-value dedupe AFTER every other segment: an identical value keeps its
@@ -1285,6 +1427,7 @@ _DICTIONARIES: dict[str, Dictionary] = {}
 
 
 def dictionary_for(specs: list[dict]) -> Dictionary:
+    specs = sanity_specs(specs)
     key = schema_hash(specs)
     d = _DICTIONARIES.get(key)
     if d is None:
@@ -1292,7 +1435,7 @@ def dictionary_for(specs: list[dict]) -> Dictionary:
     return d
 
 
-def harvest_document(cache, document_id: str, specs: list[dict]) -> tuple[list[dict], bool]:
+def harvest_document(cache, document_id: str, specs: list[dict], *, rejections: list | None = None) -> tuple[list[dict], bool]:
     """(candidates, cache_hit) for one cached document. Parsed once per document and dictionary: the
     result is stored as derived_field_candidates_<schema_hash>.json and reused by every vehicle; two
     workers asking at once compute it once (single flight)."""
@@ -1310,13 +1453,22 @@ def harvest_document(cache, document_id: str, specs: list[dict]) -> tuple[list[d
         except Exception:  # a broken table extraction never prevents the text harvest
             tables = []
         structured = document_structured(cache, document_id, html) if html is not None else None
-        cands = harvest_text(cache.read_text(document_id), specs, tables=tables, structured=structured,
-                             is_pdf=meta.get("doc_type") == "pdf", url=url, document_id=document_id, dictionary=d,
-                             html=html)
-        return {"harvester_version": HARVESTER_VERSION, "schema_hash": d.hash, "document_id": document_id,
+        with collect_candidate_rejections() as rejected:
+            cands = harvest_text(cache.read_text(document_id), specs, tables=tables, structured=structured,
+                                 is_pdf=meta.get("doc_type") == "pdf", url=url, document_id=document_id, dictionary=d,
+                                 html=html)
+        if meta.get("doc_type") == "pdf":
+            for cand in cands:
+                if cand.get("origin") == "table":
+                    cand["origin"] = "pdf_table_text"
+        return {"rejections": rejected,"harvester_version": HARVESTER_VERSION, "schema_hash": d.hash, "document_id": document_id,
                 "candidates": cands}
 
     record, hit = cache.derived(document_id, f"field_candidates_{d.hash}", compute)
+    if rejections is not None:
+        rejections.extend({**r, "document_id": document_id, "source_url": url,
+                           "origin": r.get("origin") or r.get("extraction_method") or "line",
+                           "block": r.get("block") or r.get("quote")} for r in record.get("rejections") or [])
     return list(record.get("candidates") or []), hit
 
 
@@ -1326,6 +1478,27 @@ def _official_domains(vehicle: dict | None) -> list[str]:
     from .tools.search import default_domains
 
     return default_domains(vehicle or {})
+
+
+def catalog_trim_hints(cand: dict, payload: dict | None, spec: dict) -> dict:
+    if not spec.get("catalog_trim_hint"):
+        return cand
+    from .document_binding import target_identity, trim_index, normalize_catalog_trim
+    ident = target_identity(payload or {})
+    tokens = set()
+    for key, entry in (trim_index().get("entries") or {}).items():
+        parts = key.split("|")
+        if len(parts) > 1 and parts[0] == ident.manufacturer and parts[1] == ident.family:
+            tokens.update(normalize_catalog_trim(t) for t in entry.get("trims") or [] if t)
+    value = normalize_catalog_trim(cand.get("value"))
+    out = dict(cand)
+    if tokens and value in tokens:
+        out["trim_in_catalog"] = True
+        out["parser_confidence"] = max(out.get("parser_confidence", 0), 0.8)
+    else:
+        out["trim_not_in_catalog"] = True
+        out["parser_confidence"] = min(out.get("parser_confidence", 0.5), 0.35)
+    return out
 
 
 def vehicle_hints(cand: dict, vehicle: dict | None) -> dict:
@@ -1431,6 +1604,12 @@ class RunHarvester:
     events.jsonl. A harvesting problem is logged and never interrupts research."""
 
     def __init__(self, cache, specs: list[dict], run_log, enabled: bool = True):
+        try:
+            payload = json.loads((run_log.dir / "input.json").read_text("utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        specs = sanity_specs(specs, payload=payload)
+        self.payload = payload
         self.cache, self.specs, self.run_log, self.enabled = cache, specs, run_log, enabled
         self.schema_hash = schema_hash(specs)
         self.done: set[str] = set()
@@ -1446,7 +1625,12 @@ class RunHarvester:
             self.done.add(document_id)
             try:
                 with collect_harvest_caps() as caps:
-                    cands, hit = harvest_document(self.cache, document_id, self.specs)
+                    rejected = []
+                    cands, hit = harvest_document(self.cache, document_id, self.specs, rejections=rejected)
+                by_name = {s["name"]: s for s in self.specs}
+                cands = [catalog_trim_hints(c, self.payload, by_name.get(c.get("field"), {})) for c in cands]
+                for row in rejected:
+                    self.run_log.event("candidate_rejected", phase=phase, **row)
                 for cap in caps:
                     self.run_log.event("harvest_capped", document_id=document_id, phase=phase, **cap)
             except Exception as exc:  # never break research because of the parser

@@ -31,7 +31,10 @@ DICTIONARY_KEYS = ("matcher", "component", "warranty_kind", "aliases_he", "alias
                    "positive_context_terms_he", "positive_context_terms_en", "negative_context_terms_he",
                    "negative_context_terms_en", "expected_units", "accepted_unit_variants", "normalized_unit",
                    "value_type", "patterns", "plausible_min", "plausible_max", "enum_values", "conversion_rules",
-                   "ambiguity_rules", "exclusion_rules", "require_context")
+                   "ambiguity_rules", "exclusion_rules", "require_context", "semantic_exclusions",
+                   "plausible_by_propulsion", "plausible_by_segment", "allowed_step", "step_by_segment",
+                   "sibling_group", "axis_token", "value_exclusion_patterns", "catalog_trim_hint",
+                   "_sanity_propulsion", "_sanity_segment")
 # Evidence-admission policy keys (src/evidence_admission.py, src/document_binding.py). Not harvester metadata (not
 # part of the harvest schema hash) and not sent to a model either. `semantic_definition`, `time_sensitive` and
 # `not_applicable_when` stay public: they tell the model what the field means.
@@ -96,13 +99,49 @@ def resolve_requested_fields(requested: Iterable[Any] | None = None, schema: lis
         spec.setdefault("group", DEFAULT_GROUP)
         applies = spec.get("applies_to")
         spec["applicable"] = not applies or not propulsion or propulsion in applies
+        spec["_sanity_propulsion"] = propulsion
         out.append(spec)
-    return out
+    return sanity_specs(out, propulsion=propulsion)
 
 
 def propulsion_of(payload: dict | None, vehicle_meta: dict | None = None) -> str | None:
     engine = (payload or {}).get("engine_drivetrain") or {}
     return engine.get("propulsion_normalized") or (vehicle_meta or {}).get("propulsion") or None
+
+
+def sanity_specs(specs: Iterable[dict], *, payload: dict | None = None, vehicle: dict | None = None,
+                 propulsion: str | None = None) -> list[dict]:
+    """Resolve parser/admission sanity from actual Level 1.5 metadata; never infer regulatory M/N categories.
+
+    Cache keys include the effective ranges/step and semantic propulsion. Unknown segment uses global rules.
+    Only commercial + recorded gross weight > the dictionary threshold enables a heavy-commercial step.
+    """
+    payload, vehicle = payload or {}, vehicle or {}
+    identity, structure = payload.get("identity") or {}, payload.get("structure") or {}
+    raw = payload.get("raw_row") or {}
+    segment = identity.get("segment") or raw.get("vehicle_segment") or vehicle.get("segment")
+    propulsion = propulsion or propulsion_of(payload, vehicle)
+    gross = structure.get("gross_weight_kg", raw.get("mishkal_kolel"))
+    out = []
+    for original in specs:
+        spec = dict(original)
+        prop = propulsion or spec.get("_sanity_propulsion")
+        seg = segment or spec.get("_sanity_segment")
+        spec["_sanity_propulsion"], spec["_sanity_segment"] = prop, seg
+        for key, context in (("plausible_by_propulsion", prop), ("plausible_by_segment", seg)):
+            scoped = (spec.get(key) or {}).get(context) or {}
+            for bound in ("min", "max"):
+                if scoped.get(bound) is not None:
+                    spec[f"plausible_{bound}"] = scoped[bound]
+        for rule in spec.get("step_by_segment") or []:
+            if seg != rule.get("segment"):
+                continue
+            threshold = rule.get("gross_weight_min_exclusive")
+            if threshold is not None and (not isinstance(gross, (int, float)) or gross <= threshold):
+                continue
+            spec["allowed_step"] = rule["step"]
+        out.append(spec)
+    return out
 
 
 def applicable_names(specs: Iterable[dict]) -> list[str]:

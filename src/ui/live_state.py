@@ -20,7 +20,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..field_recovery import current_evaluation
-from ..fields import field_display_name, group_display_name
+from ..candidate_harvest import normalize_term
+from ..fields import field_display_name, group_display_name, normalize_field_name
 from ..pricing import compute_cost
 from . import labels_he as he
 
@@ -640,6 +641,25 @@ def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | 
 
     applicable = [s for s in specs if s.get("applicable", True)]
     matrix = candidate_matrix(events, applicable, vehicle)
+    rejected_by_field: dict[str, list[dict]] = {}
+    for event in events:
+        rows = []
+        if event.get("kind") == "candidate_rejected":
+            rows = [event]
+        elif event.get("kind") == "grounded_candidates_not_admissible":
+            rows = [{**row, "origin": "grounded", "document_id": event.get("document_id")}
+                    for row in event.get("rows") or []]
+        elif event.get("kind") == "evidence_rejected":
+            # Model proposals from sweep/recovery still pass through the one admission gate.  Older traces do not
+            # always carry an explicit origin, so derive only the pipeline phase recorded on the event.
+            phase = event.get("phase") or event.get("stage") or "model_proposal"
+            rows = [{**event, **(event.get("request") or {}),
+                     "origin": "sweep" if phase == "document_sweep" else
+                     "recovery" if "recovery" in str(phase) else phase}]
+        for row in rows:
+            name = normalize_field_name(row.get("field"))
+            if name:
+                rejected_by_field.setdefault(name, []).append(row)
     evaluation = {e["field"]: e for e in current_evaluation(events, applicable)} if applicable else {}
     rows = []
     for spec in applicable:
@@ -647,7 +667,7 @@ def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | 
         cands = matrix["fields"].get(name) or []
         values: list[str] = []
         for cand in cands:
-            text = f"{cand.get('value')}" + (f" {cand['unit']}" if cand.get("unit") and not isinstance(cand.get("value"), bool) else "")
+            text = format_value_unit(cand.get("value"), cand.get("unit"))
             if isinstance(cand.get("value"), bool):
                 text = "כן" if cand["value"] else "לא"
             if text not in values:
@@ -655,11 +675,30 @@ def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | 
         entry = evaluation.get(name) or {}
         state = entry.get("state")
         sources = {c.get("document_id") or c.get("source_url") for c in cands}
+        origins = [f"{c.get('origin') or c.get('extraction_method') or 'unknown'} · "
+                   f"{c.get('document_id') or c.get('source_url') or 'unknown'} · {c.get('block') or c.get('quote') or '—'}"
+                   for c in cands]
+        rejected = rejected_by_field.get(name) or []
+        rejection_text = [f"{r.get('value', '—')}: {r.get('rejection') or ', '.join(r.get('reasons') or []) or r.get('reason') or 'rejected'}"
+                          for r in rejected]
         rows.append({
             "שדה": field_display_name(name, spec),
             "מועמדים שנמצאו": ", ".join(values[:5]) if values else "—",
             "מקורות": len(sources),
+            "origin": " | ".join(dict.fromkeys(origins)) or "—",
+            "rejection": " | ".join(dict.fromkeys(rejection_text)) or "—",
             "ראיה מאומתת": "כן" if entry.get("evidence_ids") else "לא",
             "מצב": "דורש חיפוש" if not cands and state not in DONE_STATES else he.state_label(state),
         })
     return rows
+
+
+def format_value_unit(value, unit: str | None) -> str:
+    """Display a value and unit exactly once (model text sometimes already contains the normalized unit)."""
+    if isinstance(value, bool):
+        return "כן" if value else "לא"
+    text = str(value)
+    unit = str(unit or "").strip()
+    if not unit or normalize_term(text).endswith(normalize_term(unit)):
+        return text
+    return f"{text} {unit}"

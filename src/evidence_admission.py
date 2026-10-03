@@ -43,10 +43,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
+from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 normalize_text, parse_number, reverse_hebrew_line)
 from .document_binding import TargetIdentity, about_target, bind, document_profile, target_identity
+from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
 from .structure_harvest import page_text
@@ -273,9 +275,15 @@ class AdmissionContext:
     def for_run(cls, payload: dict | None, vehicle: dict | None, specs: list[dict],
                 target_market: str = "IL") -> "AdmissionContext":
         identity = target_identity(payload, vehicle, normalize_market(target_market) or "IL")
-        return cls(identity=identity, specs=specs, target_market=target_market,
+        specs = sanity_specs(specs, payload=payload, vehicle=vehicle)
+        ctx = cls(identity=identity, specs=specs, target_market=target_market,
                    manufacturer=((payload or {}).get("identity") or {}).get("manufacturer")
                    or (vehicle or {}).get("manufacturer"))
+        ctx.fallback = {s["name"]: s for s in sanity_specs(ctx.fallback.values(), payload=payload, vehicle=vehicle)}
+        merged = {**ctx.fallback, **ctx.specs}
+        ctx.parse_specs = list(merged.values())
+        ctx.dictionary = dictionary_for(ctx.parse_specs)
+        return ctx
 
     @classmethod
     def default(cls, vehicle: dict | None) -> "AdmissionContext":
@@ -576,7 +584,10 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
                 # "length x width x height 4650 x 1790 x 1460 mm": the nearest label before a value names its field
                 start, _ = clause_span(parse_text, hit)
                 nearest = _nearest_label(adm, parse_text[start:hit])
-                if nearest is not None and nearest != spec["name"]:
+                if rule and rule.spec.get("sibling_group"):
+                    if not owns_dimension_number(rule, d, parse_text, hit, hit+len(raw)):
+                        continue
+                elif nearest is not None and nearest != spec["name"]:
                     continue
             return Entailment(True, f"deterministic_parse:{cand.get('extraction_method')}",
                               position=hit if hit >= 0 else None, fragment=parse_text,
@@ -584,8 +595,12 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
     if matcher == "tire_size":
         sizes = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(text)}
         claimed = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(normalize_text(str(value)))}
-        if claimed and claimed <= sizes:
-            m = TIRE.search(text)
+        component = spec.get("component")
+        parsed_sizes = _tires(d, text)
+        owned = {size for size, _, _, position in parsed_sizes
+                 if position in (component, "both") or (position is None and len(set(sizes)) == 1)}
+        if claimed and claimed <= sizes and claimed <= owned:
+            m = next((m for m in TIRE.finditer(text) if f"{m.group(1)}/{m.group(2)} R{m.group(4)}" in claimed), None)
             return Entailment(True, "tire_size_literal", position=m.start() if m else None, fragment=text)
         return Entailment(False, reason="value_not_in_quote" if sizes else "unsupported_inference")
     if matcher == "enum" and rule is not None:
@@ -639,7 +654,12 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
     # components of one compound statement share their label ("אחריות" heads years, km and the warranty text);
     # the kind / AC-DC checks below decide between them
     sibling = nearest is not None and matcher in COMPOUND_MATCHERS and adm.matcher_of.get(nearest) == matcher
-    if nearest is not None and nearest != spec["name"] and not sibling:
+    dimensional = bool(rule and rule.spec.get("sibling_group"))
+    if dimensional and first_position is not None:
+        match = NUMBER.match(text, first_position)
+        if match and not owns_dimension_number(rule, d, text, match.start(), match.end()):
+            return Entailment(False, reason="value_belongs_to_other_field")
+    if nearest is not None and nearest != spec["name"] and not sibling and not dimensional:
         return Entailment(False, reason="value_belongs_to_other_field")
     # compound matchers anchor on their shared vocabulary ("אחריות: שלוש שנים", "AC charging 11 kW"), and must
     # still be THIS component: the warranty kind (vehicle vs battery) and the charging side (AC vs DC)
@@ -710,19 +730,16 @@ def _plausible(spec: dict, value: Any) -> bool:
         return True
     if spec.get("matcher") == "warranty" and spec.get("component") not in ("years", "km"):
         return True
-    return all((low is None or n >= float(low)) and (high is None or n <= float(high)) for n in numbers)
+    step = spec.get("allowed_step")
+    return all((low is None or n >= float(low)) and (high is None or n <= float(high))
+               and (not step or abs(n/step-round(n/step)) < 1e-7) for n in numbers)
 
 
-def semantic_violation(adm: AdmissionContext, spec: dict, clauses: list[str]) -> str | None:
-    """The field's semantic exclusions (for this propulsion) found in the value's own clause(s)."""
-    for rule in spec.get("semantic_exclusions") or []:
-        applies = rule.get("applies_to")
-        if applies and adm.identity.propulsion not in applies:
-            continue
-        pattern = compile_terms(rule.get("terms") or [])
-        if pattern and any(pattern.search(normalize_text(c)) for c in clauses if c):
-            return rule.get("reason") or "semantic exclusion"
-    return None
+def semantic_violation(adm: AdmissionContext, spec: dict, clauses: list[str], value: Any = None) -> str | None:
+    """The same semantic sanity rules used at parser origins, in the proposed value's own statement."""
+    scoped = {**spec, "_sanity_propulsion": adm.identity.propulsion}
+    return next((reason for clause in clauses if clause
+                 for reason in [semantic_reason(scoped, clause, value)] if reason), None)
 
 
 # --- dates ---------------------------------------------------------------------------------------------
@@ -961,6 +978,13 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if not quote_in_source(material, quote):
         return reject(["quote_not_in_source"])
     checks.setdefault("quote", "verbatim_in_source")
+    # Semantic exclusions outrank a missing label in a deliberately short model quote.  Inspect the source line
+    # containing that quote as well: e.g. a model quoting only "185 Nm" must not hide that the source calls it
+    # "system torque".  This is the same admission gate and dictionary rule used below, not a downstream filter.
+    quote_lines = [line for line in material.text.splitlines() if squash(quote) in squash(line)]
+    early_violation = semantic_violation(adm, spec, [quote, *quote_lines], value)
+    if early_violation:
+        return reject(["semantic_mismatch"], semantic_note=early_violation)
     entailment = entail(adm, spec, value, quote, material)
     if not entailment.ok:
         return reject([entailment.reason or "value_not_in_quote"])
@@ -976,8 +1000,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     ctx = fact_context(adm, material, quote, entailment)
     fragment, clause, source_lines, headings = ctx.fragment, ctx.clause, ctx.source_lines, ctx.headings
     line_clauses = [_clause_in_line(line, value) for line in source_lines]
-    violation = semantic_violation(adm, spec, [clause, *line_clauses,
-                                               *[h for h in headings if not re.search(r"\d", h)]])
+    violation = semantic_violation(adm, spec, [quote, *source_lines,
+                                               *[h for h in headings if not re.search(r"\d", h)]], value)
     if violation:
         return reject(["semantic_mismatch"], semantic_note=violation)
     checks["semantics"] = "ok"

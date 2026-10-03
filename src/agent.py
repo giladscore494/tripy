@@ -1268,6 +1268,7 @@ class ToolSession:
         Any other call is answered with an error WITHOUT being executed: no HTTP request, no search."""
         self.step += 1
         step = self.step
+        self.ctx.phase = phase
         self.tracker.begin_turn(step)
         self.turn_results = []             # (name, result) of every call answered this turn, replayed or executed
         for call in calls:
@@ -3740,6 +3741,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     eff_config = effective_config(client, config, tool_config)
     eff_config["glm"] = glm_config
     specs = resolve_requested_fields(config.requested_fields or None, propulsion=propulsion_of(payload, vehicle_meta))
+    from .fields import sanity_specs
+    specs = sanity_specs(specs, payload=payload, vehicle=vehicle_meta)
     requested_fields = {s["name"]: s.get("description") for s in specs if s.get("applicable", True)}
     notes_for_variant = variant_notes(record_id_of(payload) or record_id)
     api_errors: list[dict] = []
@@ -4243,6 +4246,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     # Persist first, then announce: a UI stop raised by the run_finished callback cannot lose the result.
     try:
         persist(result)
+        from .binding_replay import replay_after_result
+        replay_after_result(run_log, ctx.cache.root)
     except Exception as exc:  # disk problems must not hide the in-memory result from the caller
         run_log.event("result_write_failed", error=_error_text(exc))
     run_log.event("run_finished", status=status, stop_reason=stop_reason, duration_s=duration,

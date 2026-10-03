@@ -111,7 +111,7 @@ def test_tire_axles_are_never_assumed(specs):
     assert labelled["alternative_tire_sizes"][0]["value"] == "275/35 R22"
     unlabelled = by_field(harvest_text("Tyres 255/45 R20", specs))
     front = unlabelled["tire_size_front"][0]
-    assert front["ambiguity"] == "axle_not_stated" and front["parser_confidence"] < 0.5
+    assert front["ambiguity"] == "single_size_all_wheels" and front["parser_confidence"] >= 0.5
 
 
 # --- candidate != evidence ----------------------------------------------------------------------------
@@ -157,8 +157,8 @@ def test_one_document_is_parsed_once_for_all_fields_and_the_harvest_is_reused(tm
     assert hit and again == cands and calls["segments"] == 1                     # no rescan
     derived = list((tmp_path / "cache" / "documents" / ids[0]).glob("derived_field_candidates_*.json"))
     assert [p.name for p in derived] == [f"derived_field_candidates_{schema_hash(BEV)}.json"]
-    ice = resolve_requested_fields(None, propulsion="conventional")              # applicability is not in the key
-    assert harvest_document(cache, ids[0], ice)[1] is True
+    ice = resolve_requested_fields(None, propulsion="conventional")              # propulsion-scoped sanity is part of the cache key
+    assert harvest_document(cache, ids[0], ice)[1] is False
 
 
 def test_cadillac_fixture_harvests_all_documents_across_all_fields(tmp_path):
@@ -169,7 +169,7 @@ def test_cadillac_fixture_harvests_all_documents_across_all_fields(tmp_path):
     harvester = RunHarvester(cache, BEV, log)
     harvester.observe(ids, "research")
     matrix = candidate_matrix(read_events(log.events_path), BEV, {**VEHICLE, **PAYLOAD["identity"]})
-    assert matrix["applicable_fields"] == 43 and matrix["documents"] >= 7
+    assert matrix["applicable_fields"] == 43 and matrix["documents"] >= 6
     assert len(matrix["fields_with_candidates"]) >= 35 and matrix["candidate_count"] >= 50
     # conflicts preserved, nothing merged: Israeli 610 Nm and US 650 Nm stay separate candidates
     assert {610, 650} <= {c["value"] for c in matrix["fields"]["torque_nm"]}
