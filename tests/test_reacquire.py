@@ -151,6 +151,65 @@ def test_a_conflicting_field_asks_for_the_deciding_source():
     assert packet["conflicting_fields"] == ["list_price"] and "DECIDING source" in packet["conflict_instruction"]
 
 
+def test_search_then_fetch_can_complete_the_episode(tmp_path):
+    def episodes(packet, turn_no):
+        if turn_no == 1:
+            return turn(_call("search", "search_web", {"query": "Toyota Corolla Touring Sports 2024 length"}))
+        return fetch("source", tail.CARTUBE)
+
+    client = ReacquireClient([fetch("a", EU), say({"done": True})], episodes, search_url=tail.CARTUBE)
+    result, events = run(tmp_path, client, acquisition_mode="contract",
+                         requested_fields=["fuel_tank_l", "length_mm"], **GATE_OFF)
+    episode = result["field_recovery"]["attempts"][0]
+    assert episode["turns"] == 2 and episode["fetches"] == 1
+    assert episode["fields_resolved"] == ["length_mm"]
+
+
+@pytest.mark.parametrize("cap", [1, 2, 3])
+@pytest.mark.parametrize("field", ["length_mm", "warranty_years"])
+def test_recovery_call_cap_includes_grounding_adjudication_and_repairs(tmp_path, cap, field):
+    def episodes(packet, turn_no):
+        return fetch("source", tail.CARTUBE) if turn_no == 1 else say({"done": True})
+
+    # Invalid adjudication replies require a repair; that repair must share the same hard cap.
+    client = ReacquireClient([fetch("a", EU), say({"done": True})], episodes,
+                             respond=lambda packet, n: "invalid JSON")
+    result, events = run(tmp_path, client, acquisition_mode="contract",
+                         requested_fields=["fuel_tank_l", field],
+                         field_recovery_max_total_steps=cap, **GATE_OFF)
+    rec = result["field_recovery"]
+    calls = [e for e in events if e["kind"] == "model_response" and e.get("phase") == "field_recovery"]
+    assert len(calls) <= cap
+    assert rec["field_recovery_turns_used"] <= cap
+    assert rec["stopped"] == "max_total_steps"
+
+
+def test_failed_model_calls_consume_the_recovery_cap(tmp_path):
+    def episodes(packet, turn_no):
+        return GLMError("HTTP 503", status=503)
+
+    client = ReacquireClient([fetch("a", tail.FORUM), say({"done": True})], episodes)
+    result, events = run(tmp_path, client, acquisition_mode="contract",
+                         requested_fields=["length_mm", "list_price"],
+                         field_recovery_max_total_steps=1, **GATE_OFF)
+    rec = result["field_recovery"]
+    assert len(client.reacquire_requests) == 1 and rec["field_recovery_turns_used"] == 1
+    assert rec["stopped"] == "max_total_steps"
+
+
+@pytest.mark.parametrize("search_url", [None, EU])
+def test_empty_search_or_an_already_fetched_url_does_not_extend_the_episode(tmp_path, search_url):
+    client = ReacquireClient([fetch("a", EU), say({"done": True})],
+                             lambda packet, n: turn(_call("search", "search_web", {"query": "Corolla length"})),
+                             search_url=search_url)
+    if search_url is None:
+        client.web_search = lambda *args, **kwargs: []
+    result, events = run(tmp_path, client, acquisition_mode="contract",
+                         requested_fields=["fuel_tank_l", "length_mm"], **GATE_OFF)
+    episode = result["field_recovery"]["attempts"][0]
+    assert episode["turns"] == 1 and episode["stop"] == "no_new_usable_document"
+
+
 def test_live_pipeline_labels_the_recovery_stage_re_acquisition(tmp_path):
     from src.runstate.pipeline import pipeline_from_events
 

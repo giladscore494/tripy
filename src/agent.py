@@ -2238,6 +2238,34 @@ REACQUIRE_TURNS = 2           # turns of one targeted acquisition episode
 REACQUIRE_FETCHES = 3         # executed fetches of one episode
 
 
+class RecoveryCallBudgetExceeded(Exception):
+    """A recovery episode has exhausted its shared model-call budget."""
+
+
+class RecoveryModelCaller:
+    """One budget for acquisition, grounding, adjudication and JSON repairs, including failed calls.
+
+    Reserve a logical call before dispatch, rather than inferring cost from successful responses afterward.
+    Provider transport retries remain governed by ModelCaller and the phase settings.
+    """
+
+    def __init__(self, caller: ModelCaller, limit: int):
+        self.caller, self.limit, self.used = caller, limit, 0
+
+    @property
+    def exhausted(self) -> bool:
+        return bool(self.limit and self.used >= self.limit)
+
+    def __getattr__(self, name):
+        return getattr(self.caller, name)
+
+    def __call__(self, *args, **kwargs):
+        if self.exhausted:
+            raise RecoveryCallBudgetExceeded("max_total_steps")
+        self.used += 1
+        return self.caller(*args, **kwargs)
+
+
 def _usable_new(cache, adm, documents: list[str]) -> list[str]:
     """Documents that are usable material (2xx with content) and not server-side bound to another variant."""
     from .tail_planner import document_profile_for, usable_document
@@ -2339,6 +2367,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     current = {e["field"]: e for e in primary}
     state = {"total_steps": 0, "stopped": None, "searches": 0, "search_refusals": 0, "fetch_refusals": 0,
              "negative_route_blocks": 0, "failed_attempts": 0, "consecutive_api_failures": 0}
+    caller = RecoveryModelCaller(caller, config.field_recovery_max_total_steps)
     provider = search_provider(session.ctx)
     target = getattr(adm, "identity", None)
     route_keys = {f: k for f in queued if not by_name[f].get("time_sensitive")
@@ -2421,9 +2450,10 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         turns, error, stop, reply_text = 0, None, None, None
         dead_routes: list[dict] = []
         new_useful: list[str] = []
+        discovered_urls: set[str] = set(fetched_urls)
         try:
             for turn_index in range(1, REACQUIRE_TURNS + 1):
-                if cap and state["total_steps"] >= cap:
+                if caller.exhausted:
                     stop = "max_total_steps"
                     state["stopped"] = "max_total_steps"
                     break
@@ -2432,7 +2462,6 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                 message = caller(outgoing_messages(messages, config), phase="field_recovery", settings_phase="research",
                                  tools=model_tools, meta=meta)
                 turns += 1
-                state["total_steps"] += 1
                 messages.append(_assistant_echo(message))
                 calls = message.get("tool_calls") or []
                 if not calls:
@@ -2446,10 +2475,20 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                 fresh = _usable_new(cache, adm, [d for d in session.ctx.documents_opened if d not in opened_before
                                                  and d not in docs_before])
                 new_useful += [d for d in fresh if d not in new_useful]
+                # Searching and fetching normally take separate model turns. A successful search with a new
+                # URL earns the remaining fetch turn; empty, failed and repeated searches still stop promptly.
+                new_routes = {str(row.get("url")) for result in session.turn_results
+                              if result.get("name") in trace.SEARCH_TOOLS and not result.get("reused")
+                              and not (result.get("result") or {}).get("error")
+                              for row in (result.get("result") or {}).get("results") or []
+                              if isinstance(row, dict) and str(row.get("url") or "").startswith(("https://", "http://"))}
+                search_progress = bool(new_routes - discovered_urls) and fetch_budget.remaining > 0
+                discovered_urls.update(new_routes)
                 if not fresh:
-                    dead_routes.extend(_routes_of(session.tool_calls[turn_start:]))
-                    stop = "no_new_usable_document"
-                    break
+                    if not search_progress:
+                        dead_routes.extend(_routes_of(session.tool_calls[turn_start:]))
+                        stop = "no_new_usable_document"
+                        break
                 if budget.remaining <= 0 and fetch_budget.remaining <= 0:
                     stop = "budget"
                     break
@@ -2524,9 +2563,10 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         searched = session.ctx.counters["search_cache_misses"] - searches_before
         state["searches"] += searched
         used = {k: caller.usage["field_recovery"][k] - usage_before.get(k, 0) for k in caller.usage["field_recovery"]}
-        # the per-vehicle recovery cap (FIELD_RECOVERY_MAX_TOTAL_STEPS) counts EVERY recovery model call: the
-        # acquisition turns were counted as they ran, the grounded and adjudication calls are added here
-        state["total_steps"] += max(0, used.get("model_calls", 0) - turns)
+        state["total_steps"] = caller.used
+        if caller.exhausted:
+            state["stopped"] = "max_total_steps"
+            stop = "max_total_steps"
         adj = adjudication.get("adjudication") or {}
         grounded = adjudication.get("grounded_candidates") or {}
         resolved = [f for f in open_fields if not current[f]["retry_eligible"]]
@@ -3026,6 +3066,8 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
              "admitted": 0, "duplicates": 0, "rejected_by_admission": 0, "quote_not_in_document": 0,
              "repair_turns": 0}
     for index, plan in enumerate(packets, start=1):
+        if isinstance(caller, RecoveryModelCaller) and caller.exhausted:
+            break
         cls = plan["class"]
         info = {"index": index, "of": len(packets), "class": cls, "clusters": [plan["cluster"]]}
         usage_chunk = dict(caller.usage[group])
@@ -3095,6 +3137,8 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                     reply, _ = parse_model_output(message.get("content"))
                     if not isinstance(reply, dict):
                         error = "unparseable_after_repair"
+            except RecoveryCallBudgetExceeded:
+                error = "max_total_steps"
             except GLMError as exc:
                 error = _error_text(exc)
                 record = {"timeout": bool(getattr(exc, "timeout", False)), "attempts": getattr(exc, "attempts", None),
@@ -3241,6 +3285,8 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
     identity = vehicle_identity(payload, config.target_market)
     run_documents = list(session.ctx.documents_opened)
     for doc in documents[:G.MAX_DOCUMENTS]:
+        if isinstance(caller, RecoveryModelCaller) and caller.exhausted:
+            break
         doc_id = str(doc.get("document_id"))
         error, reply, invalid, kept, rejected = None, None, [], [], []
         try:
@@ -3296,6 +3342,8 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
                         rejected.append({"candidate_key": candidate_key(cand), "field": item["field"],
                                          "document_id": doc_id, "value": cand.get("value"), "quote": cand["quote"],
                                          "reasons": list(decision.get("reasons") or [])})
+        except RecoveryCallBudgetExceeded:
+            error = "max_total_steps"
         except GLMError as exc:
             error = _error_text(exc)
         except Exception as exc:  # noqa: BLE001 - one document's problem never stops the others
