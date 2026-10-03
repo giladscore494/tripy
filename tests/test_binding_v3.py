@@ -368,6 +368,17 @@ def test_binding_replay_cli_and_diagnostics(tmp_path, capsys):
     assert row["replay_fields_ok_now"] == 1 and row["replay_fields_ok_recorded"] == 0
     assert json.loads(row["replay_gap_counts"]) == diag["binding_replay"]["gap_counts"]
 
+    # A replay is a cache of today's binding, not historical truth. After a binding-code change diagnostics must not
+    # silently surface old replay numbers as current benchmark results.
+    summary_path = run_dir / R.SUMMARY_FILE
+    stale = json.loads(summary_path.read_text("utf-8"))
+    stale["code_version"] = "binding-v3:stale"
+    summary_path.write_text(json.dumps(stale), "utf-8")
+    stale_diag = D.load_vehicle_diagnostics(run_dir)
+    assert "binding_replay" not in stale_diag
+    stale_row = D.vehicle_row(stale_diag)
+    assert stale_row["replay_fields_ok_now"] is None and stale_row["replay_gap_counts"] is None
+
 
 # --- 7: recovery spend while binding is the blocker -------------------------------------------------------------------
 
