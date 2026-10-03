@@ -380,6 +380,21 @@ def test_binding_replay_cli_and_diagnostics(tmp_path, capsys):
     assert stale_row["replay_fields_ok_now"] is None and stale_row["replay_gap_counts"] is None
 
 
+
+def test_ui_diagnostics_cache_invalidates_when_binding_replay_is_created(tmp_path):
+    from src import binding_replay as R
+    from src.ui import diagnostics_view as V
+
+    run_dir, cache_dir, _ = replay_fixture(tmp_path)
+    V._CACHE.clear()
+    before = V.diagnostics_for(run_dir)
+    assert before is not None and "binding_replay" not in before
+    R.replay_run(run_dir, cache_dir)
+    after = V.diagnostics_for(run_dir)
+    assert after is not None and after["binding_replay"]["fields_ok_now"] == 1
+
+
+
 # --- 7: recovery spend while binding is the blocker -------------------------------------------------------------------
 
 from src.tail_planner import binding_budget, field_binding_gaps  # noqa: E402
