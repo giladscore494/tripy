@@ -1,0 +1,1094 @@
+{
+ "[\"A\", \"html:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"נפח תא מטען | 581 ליטר (2.0 Hybrid 196)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"נפח תא מטען | 596 ליטר (1.8 Hybrid 140)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה | 1,460 מ\\\"מ (1.8 Hybrid 140)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:1.8hybrid140\", null, \"גרסה | 1.8 Hybrid 140\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:2.0hybrid196\", null, \"גרסה | 2.0 Hybrid 196\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h | 9.2 s\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.76\", \"kWh\", \"Battery capacity | 0.76 kWh\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity | 596 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight | 1,410 kg\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"acceleration_0_100_s\", \"num:8.1\", \"s\", \"0-100 km/h | 8.1 s\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.91\", \"kWh\", \"Battery capacity | 0.91 kWh\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Luggage capacity | 581 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"curb_weight_kg\", \"num:1455.0\", \"kg\", \"Kerb weight | 1,455 kg\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length | 4,650 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h (s) | 9.2\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) | 1410-1415\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_consumption_combined_l_100km\", \"num:4.4\", \"l/100km\", \"Combined fuel consumption (l/100km) | 4.4-4.5\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity (l) | 43\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"Transmission | e-CVT\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"height_mm\", \"num:1460.0\", \"mm\", \"Height (mm) | 1460\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length (mm) | 4650\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Maximum speed (km/h) | 180\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque (Nm) | 142\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase (mm) | 2700\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"width_mm\", \"num:1790.0\", \"mm\", \"Width (mm) | 1790\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"climate_zones\", \"num:2.0\", \"zones\", \"בקרת אקלים: מפוצלת דו-אזורית\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"heated_seats\", \"txt:false\", null, \"חימום מושבים | אין\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"power_seats\", \"txt:false\", null, \"מושבים חשמליים | אין\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"חישוקים | 16 אינץ'\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"מסך מולטימדיה 10.5 אינץ'\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"cargo_volume_l\", \"num:471.0\", \"l\", \"נפח תא מטען (ליטר) | 471\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"curb_weight_kg\", \"num:1385.0\", \"kg\", \"משקל עצמי (ק\\\"ג) | 1,385\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"נפח מיכל דלק (ליטר) | 43\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"תיבת הילוכים | e-CVT\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה | 1,435\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"length_mm\", \"num:4630.0\", \"mm\", \"אורך | 4,630\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים (מ\\\"מ) | 2,700\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"width_mm\", \"num:1780.0\", \"mm\", \"רוחב | 1,780\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance | 135 mm (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Business\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Premium\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque | 142 Nm (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"registration_licence_fee\", \"num:1316.0\", \"ILS\", \"אגרת רישוי שנתית: 1,316 ש\\\"ח\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity 43 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"height_mm\", \"num:1435.0\", \"mm\", \"Unladen height 1,435 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity (l) 596\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) 1410\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance (mm) 135\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"Toyota Corolla Touring Sports 2024 1.8 Hybrid review. The 1.8 Hybrid does 0-100 km/h in 9.2 s and tops out at 180 km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscre…\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"…km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscreen supports wireless Apple CarPlay on higher grades.\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"text:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה 143.5 ס\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"length_mm\", \"num:4650.0\", \"mm\", \"אורך: 4,650 מ\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"list_price\", \"num:183990.0\", \"ILS\", \"מחיר: 179,990-183,990 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"torque_nm\", \"num:142.0\", \"Nm\", \"מומנט מנוע בנזין: 142 ניוטון-מטר\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים: 2,700 מ\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"list_price\", \"num:189990.0\", \"ILS\", \"מחיר: 189,990 ש\\\"ח\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"list_price\", \"num:199990.0\", \"ILS\", \"מחיר: 199,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"text:https://www.example.com/reviews/corolla-touring-sports-2-0-hybrid-2024\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Toyota Corolla Touring Sports 2.0 Hybrid 2024 review. The larger hybrid battery costs boot space: Boot space: 581 litres.\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A\", \"text:https://www.example.org/family-cars-boot-space\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Family estates compared. Boot space: 596 litres on the best of them.\"]": {
+  "binding_level": "unknown",
+  "variant_match": "unbound"
+ },
+ "[\"A2\", \"html:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"נפח תא מטען | 581 ליטר (2.0 Hybrid 196)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"נפח תא מטען | 596 ליטר (1.8 Hybrid 140)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה | 1,460 מ\\\"מ (1.8 Hybrid 140)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:1.8hybrid140\", null, \"גרסה | 1.8 Hybrid 140\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:2.0hybrid196\", null, \"גרסה | 2.0 Hybrid 196\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h | 9.2 s\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.76\", \"kWh\", \"Battery capacity | 0.76 kWh\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity | 596 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight | 1,410 kg\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"acceleration_0_100_s\", \"num:8.1\", \"s\", \"0-100 km/h | 8.1 s\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.91\", \"kWh\", \"Battery capacity | 0.91 kWh\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Luggage capacity | 581 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"curb_weight_kg\", \"num:1455.0\", \"kg\", \"Kerb weight | 1,455 kg\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length | 4,650 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h (s) | 9.2\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) | 1410-1415\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_consumption_combined_l_100km\", \"num:4.4\", \"l/100km\", \"Combined fuel consumption (l/100km) | 4.4-4.5\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity (l) | 43\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"Transmission | e-CVT\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"height_mm\", \"num:1460.0\", \"mm\", \"Height (mm) | 1460\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length (mm) | 4650\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Maximum speed (km/h) | 180\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque (Nm) | 142\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase (mm) | 2700\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"width_mm\", \"num:1790.0\", \"mm\", \"Width (mm) | 1790\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"climate_zones\", \"num:2.0\", \"zones\", \"בקרת אקלים: מפוצלת דו-אזורית\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"heated_seats\", \"txt:false\", null, \"חימום מושבים | אין\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"power_seats\", \"txt:false\", null, \"מושבים חשמליים | אין\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"חישוקים | 16 אינץ'\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"מסך מולטימדיה 10.5 אינץ'\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"cargo_volume_l\", \"num:471.0\", \"l\", \"נפח תא מטען (ליטר) | 471\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"curb_weight_kg\", \"num:1385.0\", \"kg\", \"משקל עצמי (ק\\\"ג) | 1,385\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"נפח מיכל דלק (ליטר) | 43\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"תיבת הילוכים | e-CVT\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה | 1,435\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"length_mm\", \"num:4630.0\", \"mm\", \"אורך | 4,630\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים (מ\\\"מ) | 2,700\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"width_mm\", \"num:1780.0\", \"mm\", \"רוחב | 1,780\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance | 135 mm (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Business\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Premium\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque | 142 Nm (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"registration_licence_fee\", \"num:1316.0\", \"ILS\", \"אגרת רישוי שנתית: 1,316 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity 43 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"height_mm\", \"num:1435.0\", \"mm\", \"Unladen height 1,435 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity (l) 596\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) 1410\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance (mm) 135\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"Toyota Corolla Touring Sports 2024 1.8 Hybrid review. The 1.8 Hybrid does 0-100 km/h in 9.2 s and tops out at 180 km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscre…\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"…km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscreen supports wireless Apple CarPlay on higher grades.\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"text:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה 143.5 ס\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"length_mm\", \"num:4650.0\", \"mm\", \"אורך: 4,650 מ\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"list_price\", \"num:183990.0\", \"ILS\", \"מחיר: 179,990-183,990 ש\\\"ח\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"torque_nm\", \"num:142.0\", \"Nm\", \"מומנט מנוע בנזין: 142 ניוטון-מטר\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים: 2,700 מ\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"list_price\", \"num:189990.0\", \"ILS\", \"מחיר: 189,990 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"list_price\", \"num:199990.0\", \"ILS\", \"מחיר: 199,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"text:https://www.example.com/reviews/corolla-touring-sports-2-0-hybrid-2024\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Toyota Corolla Touring Sports 2.0 Hybrid 2024 review. The larger hybrid battery costs boot space: Boot space: 581 litres.\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"A2\", \"text:https://www.example.org/family-cars-boot-space\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Family estates compared. Boot space: 596 litres on the best of them.\"]": {
+  "binding_level": "unknown",
+  "variant_match": "unbound"
+ },
+ "[\"B\", \"html:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"נפח תא מטען | 581 ליטר (2.0 Hybrid 196)\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"נפח תא מטען | 596 ליטר (1.8 Hybrid 140)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה | 1,460 מ\\\"מ (1.8 Hybrid 140)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:1.8hybrid140\", null, \"גרסה | 1.8 Hybrid 140\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-compare\", \"local_trim_name\", \"txt:2.0hybrid196\", null, \"גרסה | 2.0 Hybrid 196\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h | 9.2 s\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.76\", \"kWh\", \"Battery capacity | 0.76 kWh\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity | 596 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight | 1,410 kg\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"acceleration_0_100_s\", \"num:8.1\", \"s\", \"0-100 km/h | 8.1 s\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"battery_gross_kwh\", \"num:0.91\", \"kWh\", \"Battery capacity | 0.91 kWh\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Luggage capacity | 581 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"curb_weight_kg\", \"num:1455.0\", \"kg\", \"Kerb weight | 1,455 kg\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity | 43 l\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length | 4,650 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2-0-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase | 2,700 mm\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"0-100 km/h (s) | 9.2\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) | 1410-1415\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_consumption_combined_l_100km\", \"num:4.4\", \"l/100km\", \"Combined fuel consumption (l/100km) | 4.4-4.5\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity (l) | 43\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"Transmission | e-CVT\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"height_mm\", \"num:1460.0\", \"mm\", \"Height (mm) | 1460\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"length_mm\", \"num:4650.0\", \"mm\", \"Length (mm) | 4650\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"205/55 R16\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Maximum speed (km/h) | 180\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque (Nm) | 142\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"Wheelbase (mm) | 2700\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota-europe.com/new-cars/corolla-touring-sports/2024/1-8-hybrid-specifications\", \"width_mm\", \"num:1790.0\", \"mm\", \"Width (mm) | 1790\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"climate_zones\", \"num:2.0\", \"zones\", \"בקרת אקלים: מפוצלת דו-אזורית\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"heated_seats\", \"txt:false\", null, \"חימום מושבים | אין\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"power_seats\", \"txt:false\", null, \"מושבים חשמליים | אין\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"rim_diameter_in\", \"num:16.0\", \"in\", \"חישוקים | 16 אינץ'\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/models/corolla-touring-sports-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"מסך מולטימדיה 10.5 אינץ'\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"cargo_volume_l\", \"num:471.0\", \"l\", \"נפח תא מטען (ליטר) | 471\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"curb_weight_kg\", \"num:1385.0\", \"kg\", \"משקל עצמי (ק\\\"ג) | 1,385\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"נפח מיכל דלק (ליטר) | 43\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"gearbox_type\", \"txt:e-cvt\", null, \"תיבת הילוכים | e-CVT\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה | 1,435\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"length_mm\", \"num:4630.0\", \"mm\", \"אורך | 4,630\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר | 179,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"local_trim_name\", \"txt:businessedi\", null, \"רמת גימור | BUSINESS EDI\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות | 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים (מ\\\"מ) | 2,700\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"html:https://www.toyota.co.il/new-cars/corolla/specifications\", \"width_mm\", \"num:1780.0\", \"mm\", \"רוחב | 1,780\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance | 135 mm (1.8 Hybrid Business)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Business\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"local_trim_name\", \"num:1.8\", null, \"Version | 1.8 Hybrid Premium\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "unclear"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"torque_nm\", \"num:142.0\", \"Nm\", \"Maximum torque | 142 Nm (1.8 Hybrid Business)\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"registration_licence_fee\", \"num:1316.0\", \"ILS\", \"אגרת רישוי שנתית: 1,316 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"vehicle_warranty\", \"txt:3years/100000km\", null, \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_km\", \"num:100000.0\", \"km\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/pricelist-2024-01.pdf\", \"warranty_years\", \"num:3.0\", \"years\", \"אחריות: 3 שנים או 100,000 ק\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"fuel_tank_l\", \"num:43.0\", \"l\", \"Fuel tank capacity 43 l\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.uk/corolla-touring-sports-specs.pdf\", \"height_mm\", \"num:1435.0\", \"mm\", \"Unladen height 1,435 mm\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Luggage capacity (l) 596\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"curb_weight_kg\", \"num:1410.0\", \"kg\", \"Kerb weight (kg) 1410\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"pdf:https://www.toyota.co.uk/download/corolla-touring-sports-2024-spec.pdf\", \"ground_clearance_mm\", \"num:135.0\", \"mm\", \"Ground clearance (mm) 135\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"acceleration_0_100_s\", \"num:9.2\", \"s\", \"Toyota Corolla Touring Sports 2024 1.8 Hybrid review. The 1.8 Hybrid does 0-100 km/h in 9.2 s and tops out at 180 km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscre…\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.autoexpress.example/reviews/toyota-corolla-touring-sports-2024-1-8-hybrid\", \"screen_size_in\", \"num:10.5\", \"in\", \"…km/h. We averaged 4.9 l/100km on a mixed route. Ground clearance is modest; the 10.5-inch touchscreen supports wireless Apple CarPlay on higher grades.\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.carnews.co.il/toyota-corolla-touring-sports-2024-launch\", \"list_price\", \"num:179990.0\", \"ILS\", \"מחיר: 179,990 ש\\\"ח (מחירון ינואר 2024).\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1435.0\", \"mm\", \"גובה 143.5 ס\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"length_mm\", \"num:4650.0\", \"mm\", \"אורך: 4,650 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"list_price\", \"num:183990.0\", \"ILS\", \"מחיר: 179,990-183,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"torque_nm\", \"num:142.0\", \"Nm\", \"מומנט מנוע בנזין: 142 ניוטון-מטר\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"wheelbase_mm\", \"num:2700.0\", \"mm\", \"בסיס גלגלים: 2,700 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"list_price\", \"num:189990.0\", \"ILS\", \"מחיר: 189,990 ש\\\"ח\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "body_powertrain",
+  "variant_match": "different"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"height_mm\", \"num:1460.0\", \"mm\", \"גובה 146.0 ס\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"list_price\", \"num:199990.0\", \"ILS\", \"מחיר: 199,990 ש\\\"ח\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"text:https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business\", \"width_mm\", \"num:1790.0\", \"mm\", \"רוחב: 1,790 מ\\\"מ\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"text:https://www.example.com/reviews/corolla-touring-sports-2-0-hybrid-2024\", \"cargo_volume_l\", \"num:581.0\", \"l\", \"Toyota Corolla Touring Sports 2.0 Hybrid 2024 review. The larger hybrid battery costs boot space: Boot space: 581 litres.\"]": {
+  "binding_level": "exact_technical_variant",
+  "variant_match": "exact"
+ },
+ "[\"B\", \"text:https://www.example.org/family-cars-boot-space\", \"cargo_volume_l\", \"num:596.0\", \"l\", \"Family estates compared. Boot space: 596 litres on the best of them.\"]": {
+  "binding_level": "unknown",
+  "variant_match": "unbound"
+ }
+}

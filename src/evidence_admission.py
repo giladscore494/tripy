@@ -897,8 +897,15 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     checks["semantics"] = "ok"
 
     # identity: server-side binding (the model's variant text can only veto)
-    hints = [h for c in _matching_candidates(material, name, value, spec)
-             for h in [c.get("variant_hint")] + list(c.get("variant_hints") or []) if h]
+    matching = _matching_candidates(material, name, value, spec)
+    hints = [h for c in matching for h in [c.get("variant_hint")] + list(c.get("variant_hints") or []) if h]
+    # the value's table column identity (header + that column's power / drivetrain / ... cells); a value found in two
+    # or more columns (or in a column that cannot be identified) names no single column, so the layer is left out
+    # (fail-closed: the document decides)
+    columns = list(dict.fromkeys(i for c in matching
+                                 for i in [c.get("column_identity")] + list(c.get("column_identities") or []) if i))
+    if any(c.get("column_identity_unknown") for c in matching):
+        columns = []
     claim = str(args.get("variant_match") or "").strip().lower() or None
     model_market = args.get("market")
     market, market_basis = material.market, material.market_basis
@@ -912,14 +919,18 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     # numbers' bracket groups removed), the section heading above; the quote's OTHER fragments can only veto
     other_fragments = [f for f in quote_fragments(quote) if normalize_text(f) != fragment]
     layers = [("value_clause", clause if clause != fragment else ""),
-              ("column_header", " | ".join(dict.fromkeys(hints))), ("quote", _line_context(fragment, value)),
+              ("column_header", " | ".join(dict.fromkeys(hints))),
+              ("column_identity", columns[0] if len(columns) == 1 else ""), ("quote", _line_context(fragment, value)),
               ("source_line", " ".join(_line_context(line, value) for line in source_lines)),
               ("section_heading", " ".join(headings))]
     binding = bind(adm.identity, material.profile["statuses"], layers,
                    [("model_variant", _text_arg(args.get("variant"))),
                     *[("other_quote_fragment", f) for f in other_fragments]], market=market, requirement=requirement,
                    model_declared_different=claim == "different",
-                   trim_named_in_document=material.profile.get("trim_named_in_document", False))
+                   trim_named_in_document=material.profile.get("trim_named_in_document", False),
+                   source_authority=material.authority.get("source_authority"),
+                   document_names_family=material.profile.get("zone_statuses", {}).get("model") == "match",
+                   other_trims_named=material.profile.get("other_trims_named"))
 
     # the unit: the model's, else what the source wrote (a USD price stays USD), else the field's unit
     record_unit = unit or stated_unit or spec.get("normalized_unit")
@@ -960,6 +971,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "entailment": entailment.method,
         "binding_level": binding["binding_level"], "binding_requirement": binding["binding_requirement"],
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
+        "binding_basis": binding.get("binding_basis"),
         "model_variant_claim": claim,
         "market_basis": market_basis,
         "model_market_claim": model_market if model_market and normalize_market(model_market) != market else None,

@@ -41,7 +41,7 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
 # v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
 # PDF tables without ruling lines (tools/extract), unit-anchored candidates
 # v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
-HARVESTER_VERSION = "harvest-v4"
+HARVESTER_VERSION = "harvest-v5"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -285,6 +285,8 @@ class Dictionary:
         self.hour_units = [normalize_term(u) for u in v.get("time_hour_units") or []]
         self.charging = compile_terms(v.get("charging_terms") or [])
         self.trim_header = compile_terms(v.get("trim_header_terms") or [])
+        # identity rows of a multi-variant table (power, drivetrain, battery, ...): their cells name a column's variant
+        self.column_identity_rows = compile_terms(v.get("column_identity_row_terms") or [])
         # any field's alias (an isolated structural pair needs one in its label: src/structure_harvest.py)
         self.any_alias = compile_terms(a for r in self.rules for a, _, _ in r.aliases)
         self.currencies = {normalize_term(var): code for code, variants in (v.get("currencies") or {}).items()
@@ -322,6 +324,8 @@ class Segment:
     row_index: int | None = None
     page: int | None = None
     header: str | None = None
+    column_identity: str | None = None   # rows / pairs: the header + identity cells of the value's own column
+    multi_column: bool = False           # rows: one of several value cells of a multi-variant table row
     reversed: bool = False
     next_text: str = ""       # lines: the following line (label-on-one-line documents)
     next_quote: str = ""
@@ -348,6 +352,41 @@ def _label(key: str) -> str:
     return normalize_term(re.sub(r"([a-z])([A-Z])", r"\1 \2", key).replace("_", " "))
 
 
+COLUMN_IDENTITY_CHARS = 300
+
+
+def table_header(rows: list[list], trim_header) -> list | None:
+    """A table's header row: at most one numeric cell, or a first cell that names the column dimension (version /
+    trim), so variant columns such as "1.8 Hybrid 140 | 2.0 Hybrid 196" keep their names as variant hints."""
+    return rows[0] if rows and len(rows[0]) > 2 and (
+        sum(1 for c in rows[0] if NUMBER.search(str(c))) <= 1
+        or _contains(trim_header, normalize_text(str(rows[0][0] or "")))) else None
+
+
+def column_identities(rows: list[list], row_terms, *, header: bool) -> list[str | None]:
+    """Per column of a multi-variant table (>= 2 value columns), the text that says WHICH variant the column is: its
+    header cell plus its cells in identity rows (power, drivetrain, battery, motor, body, model year, trim), e.g.
+    "MAX | הספק 486 כ"ס | הנעה כפולה". Only full-width rows count (a short row's cells may sit in other columns).
+    Index 0 (the label column) and columns with nothing to say are None."""
+    width = max((len(r) for r in rows), default=0)
+    if width < 3 or row_terms is None:
+        return []
+    texts: list[list[str]] = [[] for _ in range(width)]
+    if header and rows and len(rows[0]) == width:
+        for j in range(1, width):
+            if str(rows[0][j] or "").strip():
+                texts[j].append(str(rows[0][j]).strip())
+    for row in rows[1 if header else 0:]:
+        label = str(row[0] or "").strip() if row else ""
+        if len(row) != width or not label or len(label) > 60 or not row_terms.search(normalize_text(label)):
+            continue
+        for j in range(1, width):
+            cell = str(row[j] or "").strip()
+            if cell:
+                texts[j].append(f"{label} {cell}")
+    return [None] + [" | ".join(t)[:COLUMN_IDENTITY_CHARS] or None for t in texts[1:]]
+
+
 def document_segments(text: str, tables: list[dict] | None, structured: dict | None, *, is_pdf: bool,
                       dictionary: Dictionary) -> list[Segment]:
     """Every searchable unit of one document, built ONCE and then read by all field matchers."""
@@ -364,11 +403,11 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
         segments.append(Segment("line", norm, quote, reversed=reversed_, next_text=nxt[0], next_quote=nxt[1]))
     for t_index, table in enumerate(tables or []):
         rows = table.get("rows") or []
-        # a header row: at most one numeric cell, or a first cell that names the column dimension (version / trim),
-        # so variant columns such as "1.8 Hybrid 140 | 2.0 Hybrid 196" keep their names as variant hints
-        header = rows[0] if rows and len(rows[0]) > 2 and (
-            sum(1 for c in rows[0] if NUMBER.search(str(c))) <= 1
-            or _contains(dictionary.trim_header, normalize_text(str(rows[0][0] or "")))) else None
+        header = table_header(rows, dictionary.trim_header)
+        # computed once per table (src/tools/extract stores it with newly extracted tables)
+        idents = table.get("column_identity") or column_identities(rows, dictionary.column_identity_rows,
+                                                                   header=header is not None)
+        width = max((len(r) for r in rows), default=0)
         for r_index, row in enumerate(rows):
             cells = [str(c or "").strip() for c in row]
             if len(cells) < 2 or not cells[0]:
@@ -376,11 +415,14 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
             values = [(j, c) for j, c in enumerate(cells[1:], start=1) if c]
             for j, cell in values:
                 head = header[j] if header and j < len(header) and header is not row else None
+                ident = idents[j] if idents and len(values) > 1 and len(cells) == width and j < len(idents) \
+                    and header is not row else None
                 segments.append(Segment("row", normalize_text(f"{cells[0]} : {cell}"),
                                         f"{cells[0]} | {cell}" + (f" ({head})" if head and len(values) > 1 else ""),
                                         label=normalize_text(cells[0]), value=normalize_text(cell), raw_value=cell,
                                         table_index=t_index, row_index=r_index, page=table.get("page"),
-                                        header=head if head and len(values) > 1 else None))
+                                        header=head if head and len(values) > 1 else None, column_identity=ident,
+                                        multi_column=bool(idents) and len(values) > 1))
     for key, value in _leaves(_structured_roots(structured)):
         label = _label(key)
         segments.append(Segment("leaf", normalize_text(f"{label} : {value}"), f"{key}: {value}", label=label,
@@ -839,6 +881,10 @@ def _candidate(rule: FieldRule, seg: Segment, hit: Hit, method: str, alias: str 
         out["page"] = seg.page
     if seg.header:
         out["variant_hint"] = seg.header
+    if seg.column_identity:
+        out["column_identity"] = seg.column_identity
+    elif seg.multi_column:
+        out["column_identity_unknown"] = True     # a column cell whose column cannot be identified (a short row)
     if seg.reversed:
         out["reversed_hebrew_normalized"] = True
     years = sorted(set(re.findall(r"(?<!\d)(20[1-3]\d)(?!\d)", wide)))
@@ -1045,11 +1091,19 @@ def harvest_segments(segments: list[Segment], d: Dictionary) -> list[dict]:
                     prior["occurrences"] += 1
                     hints = [h for h in (prior.get("variant_hints") or [prior.get("variant_hint")]) +
                              [cand.get("variant_hint")] if h]
+                    # a value in two columns names no single column (admission then leaves the column layer out)
+                    idents = [i for i in (prior.get("column_identities") or [prior.get("column_identity")]) +
+                              [cand.get("column_identity")] if i]
+                    unknown_column = bool(prior.get("column_identity_unknown") or cand.get("column_identity_unknown"))
                     if cand["parser_confidence"] > prior["parser_confidence"]:
                         cand["occurrences"] = prior["occurrences"]
                         best[key] = prior = cand
                     if len(set(hints)) > 1:
                         prior["variant_hints"] = list(dict.fromkeys(hints))
+                    if len(set(idents)) > 1:
+                        prior["column_identities"] = list(dict.fromkeys(idents))
+                    if unknown_column:
+                        prior["column_identity_unknown"] = True
     by_field: dict[str, list[dict]] = {}
     for cand in best.values():
         by_field.setdefault(cand["field"], []).append(cand)
@@ -1072,7 +1126,8 @@ def pair_segments(pairs: list[dict]) -> list[Segment]:
     for p in pairs:
         label, value = str(p.get("label") or ""), str(p.get("value") or "")
         out.append(Segment("pair", normalize_text(f"{label} : {value}"), str(p["quote"]), label=normalize_text(label),
-                           value=normalize_text(value), raw_value=value, header=p.get("header") or None))
+                           value=normalize_text(value), raw_value=value, header=p.get("header") or None,
+                           column_identity=p.get("column_identity") or None))
     return out
 
 
@@ -1208,7 +1263,8 @@ def harvest_text(text: str, specs: Iterable[dict], *, tables: list[dict] | None 
         # (html_pairs never raises) structural pairs join the same per-value dedupe AFTER every other segment: an identical value keeps its
         # earlier candidate unless the pair reads it with a higher parser confidence (a "label | value" quote instead
         # of a label-only line); a value only a pair reads is new
-        segments += pair_segments(html_pairs(html, text, alias_pattern=d.any_alias, trim_header=d.trim_header))
+        segments += pair_segments(html_pairs(html, text, alias_pattern=d.any_alias, trim_header=d.trim_header,
+                                             identity_rows=d.column_identity_rows))
     cands = harvest_segments(segments, d)
     try:      # an addition never costs the document's other candidates
         cands = merge_additions(cands, unit_anchor_candidates(segments, d))

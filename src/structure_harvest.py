@@ -224,10 +224,13 @@ def admissible_quote(haystack: str, label: str, value: str) -> str | None:
 
 
 def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, limit: int = MAX_PAIRS,
-               max_html_bytes: int = MAX_HTML_BYTES, time_budget_s: float = TIME_BUDGET_S) -> list[dict]:
+               max_html_bytes: int = MAX_HTML_BYTES, time_budget_s: float = TIME_BUDGET_S,
+               identity_rows=None) -> list[dict]:
     """Admissible structural pairs of one HTML page: [{label, value, quote, header, kind}], deduplicated by
     (label, value), at most `limit`. `alias_pattern` (any field's dictionary alias) admits an isolated pair;
-    `trim_header` (the dictionary's trim header matcher) decides which headings are kept as a group's header.
+    `trim_header` (the dictionary's trim header matcher) decides which headings are kept as a group's header;
+    `identity_rows` (the dictionary's column identity row terms) adds to a group WITH a header its `column_identity`:
+    the header plus the group's identity pairs (power, drivetrain, battery, ...), at most 300 chars.
     A page over `max_html_bytes` yields no pairs; the search stops after `time_budget_s` keeping the pairs found so
     far (both noted as harvest caps). Never raises (an unparsable page yields no pairs)."""
     size = len((html or "").encode("utf-8", errors="ignore"))
@@ -251,6 +254,11 @@ def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, li
         key = (p["parent"], p["signature"])
         groups[key] = groups.get(key, 0) + 1
     haystack = admission_haystack(html, text)
+    identities: dict[int, list[str]] = {}
+    for p in pairs if identity_rows is not None else []:
+        repeated = p["kind"] == "definition_list" or groups[(p["parent"], p["signature"])] >= REPEAT_MIN
+        if repeated and len(p["label"]) <= 60 and identity_rows.search(normalize_text(p["label"])):
+            identities.setdefault(p["parent"], []).append(f"{p['label']} {p['value']}")
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     headers: dict[int, str | None] = {}
@@ -278,8 +286,11 @@ def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, li
                 headers[p["parent"]] = heading if heading and trim_header is not None \
                     and trim_header.search(normalize_text(heading)) else None
             header = headers[p["parent"]]
-        out.append({"label": label, "value": value, "quote": quote, "header": header, "kind": p["kind"],
-                    "repeated": repeated})
+        item = {"label": label, "value": value, "quote": quote, "header": header, "kind": p["kind"],
+                "repeated": repeated}
+        if header and identity_rows is not None:
+            item["column_identity"] = " | ".join([header, *dict.fromkeys(identities.get(p["parent"]) or [])])[:300]
+        out.append(item)
     if capped:
         note_harvest_cap(stage="structure_harvest", reason="time_budget", time_budget_s=time_budget_s,
                          pairs_kept=len(out))

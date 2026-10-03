@@ -27,7 +27,7 @@ import json
 import re
 from typing import Any, Iterable
 
-from .document_binding import DEFAULT_REQUIREMENT, LEVELS, level_index
+from .document_binding import DEFAULT_REQUIREMENT, LEVELS, binding_gaps, level_index
 from .excerpts import select_prior_excerpts
 from .fields import normalize_field_name, public_spec
 from .schemas import iter_fields, parse_model_output
@@ -358,6 +358,10 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
             info.append(f"declaration_outside_server_scope:{declared_status}")
     else:
         state = "ok"                                  # in-scope evidence (a found / backed resolution changes nothing)
+    if state == "variant_not_exact":
+        # observational: the binding dimensions that stopped the target-market items (else all items)
+        scoped = [e for e in with_value if market_in_scope(e, target_market)] or with_value
+        info += [f"binding_gap:{g}" for g in sorted({g for e in scoped for g in binding_gaps(e, requirement)})]
     return {
         "field": name,
         "state": state,

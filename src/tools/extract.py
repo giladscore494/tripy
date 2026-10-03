@@ -149,8 +149,9 @@ class TableVocabulary:
     """What the second PDF table pass recognizes: any field alias (first-column labels) and the trim header terms,
     from the full field dictionary (vehicle-independent, so the derived table cache stays shared)."""
 
-    def __init__(self, alias=None, trim_header=None, hebrew_aliases=()):
+    def __init__(self, alias=None, trim_header=None, hebrew_aliases=(), identity_rows=None):
         self.alias, self.trim_header, self.hebrew_aliases = alias, trim_header, tuple(hebrew_aliases)
+        self.identity_rows = identity_rows
 
     @classmethod
     def default(cls) -> "TableVocabulary":
@@ -158,7 +159,7 @@ class TableVocabulary:
         from ..fields import load_schema
 
         d = dictionary_for(load_schema())
-        return cls(d.any_alias, d.trim_header, d.hebrew_aliases)
+        return cls(d.any_alias, d.trim_header, d.hebrew_aliases, d.column_identity_rows)
 
     def alias_hits(self, text: str) -> int:
         from ..candidate_harvest import normalize_text
@@ -294,16 +295,35 @@ def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary |
     return tables + extra
 
 
+def with_column_identities(tables: list[dict], vocabulary: "TableVocabulary | None" = None) -> list[dict]:
+    """Each multi-variant table gets its per-column identity text (candidate_harvest.column_identities), computed once
+    and stored with the table. Tables cached before it existed get it computed by the harvest instead."""
+    from ..candidate_harvest import column_identities, table_header
+
+    try:
+        vocabulary = vocabulary or TableVocabulary.default()
+    except Exception:  # noqa: BLE001 - identity text is an aid; the tables stand without it
+        return tables
+    for table in tables:
+        rows = table.get("rows") or []
+        idents = column_identities(rows, vocabulary.identity_rows,
+                                   header=table_header(rows, vocabulary.trim_header) is not None)
+        if any(idents):
+            table["column_identity"] = idents
+    return tables
+
+
 def document_tables(cache, document_id: str, meta: dict, html: str | None) -> list[dict]:
     """All tables of a cached document, extracted once (derived cache, single flight). PDF tables are cached as
     "tables_v2" (default + text-strategy pass), so documents cached before the second pass get it too."""
     def compute() -> list[dict]:
         if html is not None:
-            return _html_tables(html)
+            return with_column_identities(_html_tables(html))
         if meta.get("doc_type") == "pdf":
             body = cache.read_body(document_id)
             try:
-                return _pdf_tables(body, vocabulary=TableVocabulary.default())
+                vocabulary = TableVocabulary.default()
+                return with_column_identities(_pdf_tables(body, vocabulary=vocabulary), vocabulary)
             except Exception:  # noqa: BLE001 - the second pass never costs the default tables
                 return _pdf_tables(body)
         return []
@@ -326,6 +346,7 @@ def extract_tables(ctx, document_id: str, max_tables: int | None = None, max_row
     out = []
     for index, table in enumerate(tables[start_table : start_table + max_tables], start=start_table):
         rows = table["rows"]
+        table = {k: v for k, v in table.items() if k != "column_identity"}     # harvest-only (binding) material
         out.append({**table, "index": index, "n_rows": len(rows),
                     "n_cols": max((len(r) for r in rows), default=0),
                     "rows": rows[:max_rows], "rows_truncated": len(rows) > max_rows})

@@ -156,7 +156,43 @@ def triage(evaluation: list[dict], specs: list[dict], matrix: dict, events: list
         out[name] = {"triage": category, "state": entry["state"], "cluster": cluster_of(spec),
                      "candidates": len(cands) - grounded, "grounded_candidates": grounded,
                      "fresh_candidates": len(fresh.get(name) or []), "max_attempts": attempts}
+        if entry["state"] == "variant_not_exact":
+            # logged with the retry queue: the binding dimensions that keep the field open (field_recovery info)
+            out[name]["binding_gap"] = [str(i).split(":", 1)[1] for i in info if str(i).startswith("binding_gap:")]
     return out
+
+
+OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
+
+
+def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: dict[str, list[dict]],
+                     target_market: str, trim_named_by_official: bool) -> dict:
+    """Which of a cluster's open fields a web episode can still help (RECOVERY_MODE=reacquire).
+
+    A field that is `variant_not_exact` although it already has ADMITTED evidence from an official target-market
+    source failed only on binding (its `binding_gap:*` info): a new search cannot fix that, so it is dropped
+    (`skipped`). Exception, once per cluster: when every such field's gap is the trim and no official target-market
+    document of the run names the trim, the fields stay for ONE episode of at most one billable search
+    (`trim_exception`) asking for a page that names the trim. `trim_fields`: the kept variant_not_exact fields whose
+    gap is the trim (the episode's trim-specific instruction). Scheduling only: never a field state."""
+    market = str(target_market or "").upper()
+    gaps: dict[str, list[str]] = {}
+    for name in fields:
+        entry = evaluation.get(name) or {}
+        if entry.get("state") != "variant_not_exact":
+            continue
+        field_gaps = [str(i).split(":", 1)[1] for i in entry.get("info") or [] if str(i).startswith("binding_gap:")]
+        official = [e for e in evidence.get(name) or [] if e.get("source_authority") in OFFICIAL_AUTHORITIES
+                    and str(e.get("market") or "").upper() == market]
+        if field_gaps and official:
+            gaps[name] = field_gaps
+    exception = bool(gaps) and not trim_named_by_official \
+        and all(g.startswith("trim_") for items in gaps.values() for g in items)
+    kept = list(fields) if exception else [f for f in fields if f not in gaps]
+    trim_fields = [f for f in kept if (evaluation.get(f) or {}).get("state") == "variant_not_exact"
+                   and any(str(i).startswith("binding_gap:trim_") for i in (evaluation.get(f) or {}).get("info") or [])]
+    return {"fields": kept, "skipped": [] if exception else list(gaps), "gaps": gaps, "trim_exception": exception,
+            "search_cap": 1 if exception and set(kept) <= set(gaps) else None, "trim_fields": trim_fields}
 
 
 def plan_clusters(triaged: dict[str, dict], specs: list[dict]) -> list[dict]:

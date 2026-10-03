@@ -56,6 +56,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -2393,10 +2394,11 @@ def _usable_new(cache, adm, documents: list[str]) -> list[str]:
 def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], evaluation: dict[str, dict],
                      identity: dict, target_market: str, source_type: str, site_urls: list[dict],
                      fetched_urls: list[str], negative: dict[str, list[str]], search_budget: int,
-                     fetch_budget: int, turns: int) -> dict:
+                     fetch_budget: int, turns: int, trim_fields: list[str] | None = None) -> dict:
     """The small task of ONE targeted acquisition episode (F1.1): identity, the cluster's missing fields with
     one-line definitions, the source type, site-map URLs ranked for the cluster, URLs already fetched, negative
-    routes. A conflicting field asks for the DECIDING source (F3)."""
+    routes. A conflicting field asks for the DECIDING source (F3); a variant_not_exact field whose binding gap is the
+    trim asks for a target-market official page that names the trim."""
     by_name = {s["name"]: s for s in specs}
 
     def line(name: str) -> str:
@@ -2419,6 +2421,12 @@ def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], eval
         packet["conflict_instruction"] = ("Sources disagree on these fields. Fetch the DECIDING source for the exact "
                                           "trim: the official importer's model page, its price list, or the "
                                           "specification PDF of this exact trim.")
+    if trim_fields:
+        packet["trim_binding_fields"] = list(trim_fields)
+        packet["trim_binding_instruction"] = (
+            "Existing sources already state these values, but they do not tie them to this exact trim. Fetch an "
+            "official target-market page that names the trim together with its price / equipment: the importer's "
+            "price list or its trim comparison page.")
     if negative:
         packet["known_unproductive_routes"] = negative
     return packet
@@ -2452,12 +2460,26 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     from .field_recovery import vehicle_identity
     from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
     from .site_map import run_site_map
-    from .tail_planner import (candidate_key, document_profile_for, plan_clusters, presented_keys, rejected_keys,
-                               stored_keys, triage, usable_candidate_matrix)
+    from .tail_planner import (OFFICIAL_AUTHORITIES, binding_gap_gate, candidate_key, document_profile_for,
+                               plan_clusters, presented_keys, rejected_keys, stored_keys, triage,
+                               usable_candidate_matrix)
     from .tools.search import default_domains, search_provider
 
     def usable_matrix(events: list[dict]) -> dict:
         return usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
+
+    def trim_named_by_official(doc_metas: list[dict]) -> bool:
+        """Does an official target-market document of this run name the target trim?"""
+        for m in doc_metas:
+            try:
+                material = adm.material(cache, str(m.get("document_id")), None)
+            except Exception:  # noqa: BLE001 - an unreadable document names nothing
+                material = None
+            if material is not None and material.authority.get("source_authority") in OFFICIAL_AUTHORITIES \
+                    and str(material.market or "").upper() == str(market).upper() \
+                    and (material.profile.get("mentions") or {}).get("trim") == "match":
+                return True
+        return False
 
     market = config.target_market
     adm = session.ctx.admission
@@ -2495,6 +2517,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     site_map_state = dict(site_map_state or {})
     built_site = site_map_state.get("site")
     site_tried = False          # a site map that could not be built is tried once per recovery, not per cluster
+    skipped_binding_gap: list[str] = []
 
     def reevaluate(cluster: str, fields: list[str]) -> None:
         for entry in current_evaluation(trace_events(run_log), specs, market):
@@ -2511,6 +2534,27 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
             break
         name = plan["cluster"]
         open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
+        if not open_fields:
+            continue
+        # a field open only on binding (admitted official target-market evidence) is not a search problem
+        events = trace_events(run_log)
+        evidence_by_field: dict[str, list[dict]] = {}
+        for e in events:
+            if e.get("kind") == "evidence" and isinstance(e.get("evidence"), dict):
+                evidence_by_field.setdefault(normalize_field_name(e["evidence"].get("field")), []).append(e["evidence"])
+        binding_open = any(current[f]["state"] == "variant_not_exact" for f in open_fields)
+        gate = binding_gap_gate(open_fields, current, evidence_by_field, market,
+                                trim_named_by_official(_doc_metas(events, cache, documents_dir)) if binding_open
+                                else True)
+        if gate["skipped"]:
+            skipped_binding_gap += [f for f in gate["skipped"] if f not in skipped_binding_gap]
+            run_log.event("reacquire_skipped_binding_gap", cluster=name, fields=gate["skipped"], gaps=gate["gaps"],
+                          note="variant_not_exact with admitted official target-market evidence: a new search "
+                               "cannot fix the binding")
+        if gate["trim_exception"]:
+            run_log.event("reacquire_trim_exception", cluster=name, fields=sorted(gate["gaps"]), gaps=gate["gaps"],
+                          search_cap=gate["search_cap"])
+        open_fields = gate["fields"]
         if not open_fields:
             continue
         cap = config.field_recovery_max_total_steps
@@ -2538,13 +2582,15 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
             site_urls = result.get("offered") or []
         known_dead = {f: labels for f in open_fields if f in negative
                       and (labels := [route_label(r) for r in negative[f]["routes"] if route_applies(r, provider)][:8])}
-        budget = SearchBudget(max(0, int(config.cluster_search_budget)))
+        limit = max(0, int(config.cluster_search_budget))
+        budget = SearchBudget(min(limit, gate["search_cap"]) if gate["search_cap"] is not None else limit)
         fetch_budget = SearchBudget(REACQUIRE_FETCHES)
         packet = reacquire_packet(cluster=name, fields=open_fields, specs=specs, evaluation=current,
                                   identity=identity, target_market=market,
                                   source_type=cluster_source_type([by_name[f] for f in open_fields], market),
                                   site_urls=site_urls, fetched_urls=fetched_urls, negative=known_dead,
-                                  search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS)
+                                  search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS,
+                                  trim_fields=gate["trim_fields"])
         states_before = {f: current[f]["state"] for f in open_fields}
         run_log.event("reacquire_started", cluster=name, fields=open_fields, mode="reacquire",
                       triage={f: (triaged.get(f) or {}).get("triage") for f in open_fields},
@@ -2760,6 +2806,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         "search_budget_refusals": state["search_refusals"],
         "fetch_budget_refusals": state["fetch_refusals"],
         "negative_route_cache_hits": state["negative_route_blocks"],
+        "reacquire_skipped_fields": skipped_binding_gap,
         "reacquire": {"episodes": len(attempts_log),
                       "new_useful_documents": sum(a["new_useful_documents"] for a in attempts_log),
                       "new_candidates": sum(a["new_candidates"] for a in attempts_log),
@@ -3375,6 +3422,11 @@ def grounded_documents(*, adm, cache, events: list[dict], doc_metas: list[dict],
     return out
 
 
+# grounded pointer problems (src/grounded.parse_reply / the quote check) as not-admissible reasons
+GROUNDED_PROBLEM_REASON = {"span_out_of_range": "offset_invalid", "unknown_block": "offset_invalid",
+                           "field_not_requested": "unknown_field", "quote_not_in_document": "quote_not_in_document"}
+
+
 def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
                             config: AgentConfig, run_log: RunLog, cache, fields: list[str], documents: list[dict],
                             phase: str = "document_sweep", settings_phase: str | None = None,
@@ -3398,6 +3450,8 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
     stats = {"stage": stage, "documents": len(documents[:G.MAX_DOCUMENTS]), "fields": wanted, "model_calls": 0,
              "failed_documents": 0, "items": 0, "invalid": 0, "quote_not_in_document": 0, "admissible": 0,
              "not_admissible": 0, "repair_turns": 0}
+    # why items did not become admissible: the admission reasons, plus the pointer problems before admission
+    not_admissible_by_reason: Counter = Counter()
     admissible: dict[str, list[dict]] = {}
     usage_group = trace.phase_group(phase)
     usage_before = dict(caller.usage[usage_group])
@@ -3486,6 +3540,9 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
         except Exception as exc:  # noqa: BLE001 - one document's problem never stops the others
             error = _error_text(exc)
         stats["invalid"] += len(invalid)
+        not_admissible_by_reason.update(GROUNDED_PROBLEM_REASON.get(str(row.get("problem")), str(row.get("problem")))
+                                        for row in invalid)
+        not_admissible_by_reason.update(reason for row in rejected for reason in row["reasons"] or ["unspecified"])
         stats["admissible"] += len(kept)
         stats["not_admissible"] += len(rejected)
         if invalid:
@@ -3505,7 +3562,8 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
     used = {k: caller.usage[usage_group][k] - usage_before.get(k, 0) for k in caller.usage[usage_group]}
     stats.update(input_tokens=used.get("prompt_tokens", 0), output_tokens=used.get("completion_tokens", 0),
                  latency_ms=int((time.monotonic() - t0) * 1000),
-                 fields_with_admissible=sorted(admissible), **truncation_counts(caller, usage_group, truncation_before))
+                 fields_with_admissible=sorted(admissible), not_admissible_by_reason=dict(not_admissible_by_reason),
+                 **truncation_counts(caller, usage_group, truncation_before))
     run_log.event("grounded_candidates_finished", **stats)
     return {"admissible": admissible, "summary": stats}
 

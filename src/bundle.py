@@ -95,7 +95,7 @@ def _is_electrified(payload: dict) -> bool:
 
 # Never sent to the finalizer: model commentary and verbose debug detail of an evidence item.
 EVIDENCE_PRIVATE_KEYS = ("note", "supplementary", "binding_dimensions", "admission_checks", "binding_version",
-                         "admission_version")
+                         "admission_version", "binding_basis")
 FACT_KEYS = ("value", "unit", "market", "variant", "variant_match", "binding_level", "source_authority", "condition",
              "valid_as_of", "evidence_id", "source_url", "document_id")
 
