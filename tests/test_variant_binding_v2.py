@@ -480,6 +480,16 @@ def test_the_builder_keys_rows_like_the_runtime_and_marks_unnormalized_siblings_
                                                                  complete=False)["entries"].values())
 
 
+def test_generic_trims_have_distinct_exact_market_scope_keys():
+    max_identity = xpeng(identity={"trim": "MAX"})
+    pro_identity = xpeng(identity={"trim": "PRO"})
+    assert max_identity.trim_tokens == pro_identity.trim_tokens == []
+    assert max_identity.scope_key("exact_technical_variant") == pro_identity.scope_key("exact_technical_variant")
+    assert max_identity.scope_key("exact_market_trim") != pro_identity.scope_key("exact_market_trim")
+    assert '"max"' in max_identity.scope_key("exact_market_trim")
+    assert '"pro"' in pro_identity.scope_key("exact_market_trim")
+
+
 def test_bare_multi_word_phrases_only_for_all_generic_trims():
     assert "pro max" in xpeng(identity={"trim": "PRO MAX"}).qualified_trim_phrases
     assert mentions("the PRO MAX comes with", xpeng(identity={"trim": "PRO MAX"}))["trim"] == "match"
