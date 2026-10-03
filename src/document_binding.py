@@ -52,7 +52,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v2"
+BINDING_VERSION = "binding-v3"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -85,6 +85,102 @@ NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout
                           r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
 YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
                   r"l\b|ליטר|kw|hp|כ\"ס|ש\"ח|₪|€|\$|lb|wh))")
+
+# A calendar year is not a model year unless its local context says so. The document profile and fact layers share
+# this classifier, so publication/copyright dates can never lower binding while an explicit other model year still can.
+EN_MONTH_NAMES = ("january", "february", "march", "april", "may", "june", "july", "august", "september",
+                  "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep",
+                  "sept", "oct", "nov", "dec")
+HE_MONTH_NAMES = ("ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר",
+                  "אוקטובר", "נובמבר", "דצמבר")
+YEAR_LABEL = re.compile(r"(?:model\s*year|שנת\s*דגם|שנתון)\s*[:\-]?\s*$")
+MY_LABEL = re.compile(r"(?<![a-z0-9])my\s*[-:]?\s*(20\d{2}|\d{2})(?!\d)")
+PUBLICATION_WORDS = re.compile(r"(?:פורסם|עודכן|תאריך|published|updated|posted)")
+COPYRIGHT_WORDS = re.compile(r"(?:©|\(c\)|copyright|כל\s+הזכויות|all\s+rights\s+reserved)")
+VALIDITY_WORDS = re.compile(r"(?:מחירון.{0,30}בתוקף|valid\s+from|החל\s+מ-?)")
+URL_OR_EMAIL = re.compile(r"(?:https?://|www\.)\S+|\b\S+@\S+\b")
+DAY_MONTH_DATE = re.compile(r"(?<!\d)(?:0?[1-9]|[12]\d|3[01])[./-](?:0?[1-9]|1[0-2])[./-](?:20)?\d{2}(?!\d)")
+
+
+def _line_span(text: str, pos: int) -> tuple[int, int]:
+    start = text.rfind("\n", 0, pos) + 1
+    end = text.find("\n", pos)
+    return start, len(text) if end < 0 else end
+
+
+def _near_identity(line: str, year_start: int, year_end: int, identity: "TargetIdentity", vocab: dict) -> bool:
+    aliases = list((vocab.get("model_families") or {}).get(identity.family or "") or [identity.family or ""])
+    aliases += list((vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), []))
+    for alias in aliases:
+        alias = normalize_text(alias)
+        if not alias:
+            continue
+        for match in re.finditer(r"(?<![\wא-ת])" + r"[\s\-]*".join(re.escape(p) for p in alias.split())
+                                 + r"(?![\wא-ת])", line):
+            gap = max(0, max(match.start(), year_start) - min(match.end(), year_end))
+            if gap <= 16:
+                return True
+    return False
+
+
+def _noise_year_kind(line: str, pos: int, year: int) -> str | None:
+    """Why a calendar year on this line is not a model-year statement."""
+    if COPYRIGHT_WORDS.search(line):
+        return "copyright"
+    lo, hi = max(0, pos - 30), min(len(line), pos + 34)
+    around = line[lo:hi]
+    if PUBLICATION_WORDS.search(around):
+        return "publication"
+    month_lo, month_hi = max(0, pos - 15), min(len(line), pos + 19)
+    months = "|".join(map(re.escape, (*EN_MONTH_NAMES, *HE_MONTH_NAMES)))
+    if re.search(rf"(?:{months})", line[month_lo:month_hi]):
+        return "publication_month"
+    if any(m.start() <= pos <= m.end() for m in DAY_MONTH_DATE.finditer(line)):
+        return "calendar_date"
+    if VALIDITY_WORDS.search(around):
+        return "price_validity"
+    for match in URL_OR_EMAIL.finditer(line):
+        if match.start() <= pos < match.end():
+            return "url_or_email"
+    return None
+
+
+def _year_mentions(text: str, identity: "TargetIdentity", vocab: dict) -> dict[str, Any]:
+    """Model-year statements and ignored calendar years, with a deterministic reason for each occurrence."""
+    norm = normalize_text(text or "")
+    years: set[int] = set()
+    contexts: list[dict] = []
+    ignored: list[dict] = []
+    seen: set[tuple] = set()
+    for match in YEAR.finditer(norm):
+        year = int(match.group(1))
+        lo, hi = _line_span(norm, match.start())
+        line = norm[lo:hi]
+        rel_start, rel_end = match.start() - lo, match.end() - lo
+        noise = _noise_year_kind(line, rel_start, year)
+        before = line[max(0, rel_start - 32):rel_start]
+        explicit = bool(YEAR_LABEL.search(before))
+        adjacent = _near_identity(line, rel_start, rel_end, identity, vocab)
+        key = (year, lo + rel_start)
+        if noise and not explicit and not adjacent:
+            ignored.append({"year": year, "kind": noise, "context": line.strip()[:180]})
+        elif explicit or adjacent:
+            years.add(year)
+            contexts.append({"year": year, "kind": "model_year_label" if explicit else "identity_adjacent",
+                             "context": line.strip()[:180]})
+        else:
+            ignored.append({"year": year, "kind": "free_standing", "context": line.strip()[:180]})
+        seen.add(key)
+    # MY2026 / MY26 is an explicit model-year label even when the four-digit YEAR regex did not see it.
+    for match in MY_LABEL.finditer(norm):
+        raw = int(match.group(1))
+        year = raw if raw >= 2000 else 2000 + raw
+        key = (year, match.start(1))
+        if key not in seen:
+            years.add(year)
+            contexts.append({"year": year, "kind": "model_year_label", "context": match.group(0)[:180]})
+    return {"years": years, "contexts": contexts, "ignored": ignored}
+
 
 
 def vocabulary(path: Path | str | None = None) -> dict:
@@ -412,7 +508,9 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     return {
         "manufacturer": bool(man and man.search(norm)),
         "model": _family_status(norm, identity, vocab),
-        "year": {int(y) for y in YEAR.findall(norm)},
+        "year": (year_info := _year_mentions(norm, identity, vocab))["years"],
+        "year_context": year_info["contexts"],
+        "year_ignored": year_info["ignored"],
         "body": _keys_found(norm, "body_terms", vocab),
         "propulsion": _keys_found(norm, "propulsion_terms", vocab,
                                   ["plug_in", "battery_electric", "hybrid", "conventional"])
@@ -447,7 +545,14 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
         target = identity.year
         if target is None:
             return "absent"
-        return ("match" if found == {target} else "mixed") if target in found else "mismatch"
+        if target in found:
+            return "match" if found == {target} else "mixed"
+        distances = {abs(int(y) - target) for y in found}
+        if distances and distances <= {1}:
+            return "adjacent"
+        if distances and min(distances) >= 2:
+            return "mismatch"
+        return "mixed"
     if dim == "displacement":
         # marketed litres vs exact cc: 1950 cc is a "2.0", 1798 cc a "1.8"
         target = identity.displacement_cc / 1000 if identity.displacement_cc else identity.displacement_l
@@ -490,9 +595,12 @@ DIMENSIONS = ("model", "year", "body", "propulsion", "displacement", "power", "d
               "manufacturer")
 
 
-def statuses(text: str, identity: TargetIdentity) -> dict[str, str]:
+def statuses(text: str, identity: TargetIdentity) -> dict[str, Any]:
     found = mentions(text, identity)
-    return {dim: dimension_status(dim, found[dim], identity) for dim in DIMENSIONS}
+    out: dict[str, Any] = {dim: dimension_status(dim, found[dim], identity) for dim in DIMENSIONS}
+    out["_year_context"] = list(found.get("year_context") or [])
+    out["_year_ignored"] = list(found.get("year_ignored") or [])
+    return out
 
 
 # How a dimension the identity zone does not name is read from the rest of the document. Full text includes
@@ -554,7 +662,7 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
     named = zone_names_target(zone, identity)
     zone_found = mentions(zone, identity)
     full_found = mentions(f"{zone}\n{about_target(text or '', identity)}", identity)
-    combined: dict[str, str] = {}
+    combined: dict[str, Any] = {}
     zone_statuses = {dim: dimension_status(dim, zone_found[dim], identity) for dim in DIMENSIONS}
     full_statuses = {dim: dimension_status(dim, full_found[dim], identity) for dim in DIMENSIONS}
     for dim in DIMENSIONS:
@@ -567,7 +675,11 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
             combined[dim] = FULL_TEXT_MISMATCH.get(dim, "absent")
         else:
             combined[dim] = full_statuses[dim]
+    year_source = zone_found if zone_statuses["year"] != "absent" else full_found
+    combined["_year_context"] = list(year_source.get("year_context") or [])
+    combined["_year_ignored"] = list(full_found.get("year_ignored") or [])
     return {"statuses": combined, "zone_statuses": zone_statuses, "full_statuses": full_statuses,
+            "year_context": combined["_year_context"], "year_ignored": combined["_year_ignored"],
             "trim_named_in_document": bool(full_found["trim"]),
             # another named trim anywhere in the document (single_trim_catalog never applies to such a document)
             "other_trims_named": other_trims_named(f"{zone}\n{about_target(text or '', identity)}", identity),
@@ -663,7 +775,8 @@ def _veto_dims(identity: TargetIdentity) -> tuple[str, ...]:
 
 def _layer_statuses(name: str, text: str, identity: TargetIdentity, trim_named_in_document: bool) -> dict[str, str]:
     st = statuses(text, identity)
-    st["year"] = "absent"        # a year inside a fact (a price-list date, "since 2019") is not a model year
+    # Free-standing years in a fact are already ignored by _year_mentions; an explicit model-year label or a year
+    # next to the target family is allowed to bind the fact.
     if name == "column_header":
         found = mentions(text, identity)
         technical = found["displacement"] or found["power"] or found["propulsion"]
@@ -718,8 +831,19 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         for name, st in layer_statuses:
             if st[dim] != "absent":
                 chosen = {"status": st[dim], "basis": name}
+                if dim == "year" and st.get("_year_context"):
+                    chosen["context"] = list(st["_year_context"])
                 break
         effective[dim] = chosen or {"status": doc_statuses.get(dim, "absent"), "basis": "document"}
+        if dim == "year":
+            if effective[dim]["basis"] == "document" and doc_statuses.get("_year_context"):
+                effective[dim]["context"] = list(doc_statuses["_year_context"])
+            ignored = []
+            for _, st in layer_statuses:
+                ignored += list(st.get("_year_ignored") or [])
+            ignored += list(doc_statuses.get("_year_ignored") or [])
+            if ignored:
+                effective[dim]["ignored"] = ignored
     vetoes: list[str] = []
     veto_dims = _veto_dims(identity)
     required = requirement if requirement in LEVELS else DEFAULT_REQUIREMENT
@@ -779,6 +903,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     if model_declared_different and "model_declared_different" not in vetoes:
         vetoes.append("model_declared_different")
     dimensions = {d: effective[d] for d in DIMENSIONS if effective[d]["status"] != "absent"}
+    if effective["year"].get("ignored"):
+        dimensions["year_ignored"] = list(effective["year"]["ignored"])
     if basis == "qualified_trim_phrase" and "trim" in dimensions:
         dimensions["trim"] = {**dimensions["trim"], "rule": "qualified_trim_phrase"}
     if catalog is not None:
@@ -828,6 +954,14 @@ def binding_gaps(item: dict, requirement: str | None = None) -> list[str]:
     elif level == "exact_technical_variant":
         gaps.append("trim_absent" if dims["trim"] == "absent" else "market" if dims["trim"] == "match"
                     else f"trim_{dims['trim']}")
+    year = (item.get("binding_dimensions") or {}).get("year") or {}
+    ignored = (item.get("binding_dimensions") or {}).get("year_ignored") or []
+    if year.get("status") == "adjacent":
+        gaps.append("year_adjacent")
+    elif year.get("status") == "mismatch":
+        gaps.append("year_mismatch")
+    elif ignored and not year:
+        gaps.append("year_ignored_only")
     return sorted(set(gaps)) or ["unresolved"]
 
 
