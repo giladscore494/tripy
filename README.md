@@ -741,6 +741,23 @@ Hebrew text), the evidence market is `unknown`, whichever market the model named
 `model_market_claim`. Vocabulary (model families with Hebrew names, body / propulsion / drivetrain terms) lives in
 `data/identity_vocabulary.json`.
 
+`binding-v2` makes `exact_market_trim` reachable when the government trim does not identify itself in prose, with two
+deterministic, fail-closed rules, each recorded as `binding_basis` on the evidence item: **`qualified_trim_phrase`**:
+a trim made only of generic words (`MAX`, `PRO`, `BASE EDITION`) matches only as the family followed by its words
+(`g6 max`, `g6-max`, `xpeng g6 max`, `G6 בגרסת MAX`), never the word alone ("max power"); **`single_trim_catalog`**:
+a fact already bound at `exact_technical_variant` (no veto, no mixed dimension) from a target-market official source
+(or a target-market document whose identity zone names the family) that names no other trim binds at
+`exact_market_trim` only when `data/catalog_trim_index.json` lists exactly ONE government trim for the target's
+technical variant in its model year (also none in a neighbouring power bucket within the 3 % tolerance; a missing
+key or an entry marked `"complete": false` never applies). The index is built by `scripts/build_trim_index.py`
+(`DATABASE_URL`, else the data.gov.il catalog; workflow `build-trim-index`). A multi-variant table's value also gets a
+`column_identity` layer (the column header plus that column's power / drivetrain / battery / ... cells), so the
+column's own power decides instead of the document's mixed status; a value in two columns gets none. A
+`variant_not_exact` field reports what stopped it as `binding_gap:*` info (diagnostics `binding_gap_counts`,
+`binding_gap_trim`, `binding_gap_technical`), and re-acquisition skips a field that is open only on binding although
+it has admitted official target-market evidence (`reacquire_skipped_binding_gap`; one search at most when the gap is
+the trim and no official target-market document names it).
+
 **Source authority** is `government | official_manufacturer | official_importer | official_media | aggregator |
 marketplace | publisher | unknown`, from `data/source_rules.json` (government suffixes, per-brand slugs and press
 domains, aggregator / marketplace / publisher lists). Official is relative to the target brand. Authority is not
@@ -857,7 +874,7 @@ CANDIDATES or routing hints only, and only `admit()` turns anything into evidenc
   per page (`harvest_capped`). **Borderless PDF tables**: a pdfplumber text-strategy pass
   (`source: pdf_table_text`) on pages without ruled tables or with >= 3 aliases (first 60 pages, 5 s per document). **Unit anchors** (`unit_anchor`):
   number + unit with exactly one field's alias within the clause / 60 chars (existing candidates always win).
-  `HARVESTER_VERSION` is `harvest-v4`, so older cached candidates are recomputed with these exclusions and limits.
+  `HARVESTER_VERSION` is `harvest-v5` (candidates of multi-variant tables carry `column_identity`), so older cached candidates are recomputed.
 - **Importer site map** (`SITE_MAP`, `src/site_map.py`): robots.txt / sitemap indexes / `.xml.gz` with the standard
   library (depth 3, 50 files, 20,000 URLs per domain, 7-day per-domain cache, robots `Disallow` respected); the top 15
   ranked URLs go into the first contract-acquisition message (20 s bound; a failure logs `site_map_failed`). The bound

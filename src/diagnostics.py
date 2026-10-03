@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+from .document_binding import is_trim_gap
+
 SCHEMA = "tripy-diagnostics/1"
 DIAGNOSTICS_FILE = "diagnostics.json"
 DIAGNOSTICS_STREAM = "diagnostics.jsonl"
@@ -577,6 +579,10 @@ def _grounded_summary(events: list[dict]) -> dict:
             "grounded_items": sum(int(e.get("items") or 0) for e in done),
             "grounded_admissible": sum(int(e.get("admissible") or 0) for e in done),
             "grounded_not_admissible": sum(int(e.get("not_admissible") or 0) for e in done),
+            # why grounded items did not become admissible: admission reasons + offset_invalid / quote_not_in_document /
+            # unknown_field (grounded-v1 events before this count carried no reasons)
+            "grounded_not_admissible_by_reason": dict(sum((Counter(e.get("not_admissible_by_reason") or {})
+                                                           for e in done), Counter())),
             "grounded_fields_with_admissible": sorted({f for e in done for f in e.get("fields_with_admissible") or []})}
 
 
@@ -662,6 +668,9 @@ def recovery_summary(events: list[dict]) -> dict:
                                                                 "reacquire_started")),
         # RECOVERY_MODE=reacquire: per-cluster episodes (targeted acquire -> harvest -> grounded -> adjudicate)
         **_reacquire_summary(window),
+        # fields no web episode was scheduled for: variant_not_exact with admitted official target-market evidence
+        "reacquire_skipped_fields": sorted({f for e in window if e.get("kind") == "reacquire_skipped_binding_gap"
+                                            for f in e.get("fields") or []}),
         "model_calls": len(calls),
         "input_tokens": sum((e.get("usage") or {}).get("prompt_tokens") or 0 for e in calls) or None,
         "output_tokens": sum((e.get("usage") or {}).get("completion_tokens") or 0 for e in calls) or None,
@@ -688,15 +697,19 @@ def final_field_states(events: list[dict]) -> dict:
     started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
     specs = list(started.get("requested_field_specs") or [])
     if not specs:
-        return {"counts": None, "ok_fields": None, "fields": 0}
+        return {"counts": None, "ok_fields": None, "fields": 0, "binding_gaps": {}, "binding_gap_counts": {}}
     evaluation = current_evaluation(events, specs, started.get("target_market"))
     counts = {k: 0 for k in FINAL_STATE_KEYS}
     for e in evaluation:
         state = e["state"]
         key = "unresolved_or_missing" if state in ("unresolved", "missing") else state if state in counts else "other"
         counts[key] += 1
+    # variant_not_exact fields: the binding dimensions that stopped them (field_recovery info `binding_gap:*`)
+    gaps = {e["field"]: [str(i).split(":", 1)[1] for i in e.get("info") or [] if str(i).startswith("binding_gap:")]
+            for e in evaluation if e["state"] == "variant_not_exact"}
     return {"counts": counts, "ok_fields": sorted(e["field"] for e in evaluation if e["state"] == "ok"),
-            "fields": len(evaluation)}
+            "fields": len(evaluation), "binding_gaps": gaps,
+            "binding_gap_counts": dict(Counter(g for items in gaps.values() for g in items))}
 
 
 def run_totals(events: list[dict], result: dict | None = None) -> dict:
@@ -988,6 +1001,9 @@ def vehicle_row(diag: dict) -> dict:
             "sweep_timeouts": s.get("timeouts"), "sweep_resolved_per_model_call": s.get("resolved_per_model_call"),
             "sweep_failed_chunk_candidates_kept_fresh": s.get("failed_chunk_candidates_kept_fresh"),
             "sweep_grounded_calls": s.get("grounded_calls"), "sweep_grounded_admissible": s.get("grounded_admissible"),
+            "sweep_grounded_not_admissible_by_reason": json.dumps(s["grounded_not_admissible_by_reason"],
+                                                                  sort_keys=True, ensure_ascii=False)
+            if s.get("grounded_not_admissible_by_reason") is not None else None,
             "acq_official_urls_discovered": a.get("official_urls_discovered"),
             "acq_tool_blocked": a.get("tool_blocked"), "acq_turn_reached_min_base": a.get("turn_reached_min_base"),
             "acq_tokens_until_min_base": a.get("tokens_until_min_base"),
@@ -1006,6 +1022,14 @@ def vehicle_row(diag: dict) -> dict:
             "rec_fields_resolved": rec.get("fields_resolved"),
             **{f"final_{k}": counts.get(k) for k in FINAL_STATE_KEYS},
             "final_ok_fields": ",".join(final.get("ok_fields") or []) if final.get("ok_fields") is not None else None,
+            # variant_not_exact fields stopped by the trim / by a technical dimension (a field may count in both)
+            "binding_gap_trim": sum(1 for g in (final.get("binding_gaps") or {}).values() if any(map(is_trim_gap, g)))
+            if final.get("binding_gaps") is not None else None,
+            "binding_gap_technical": sum(1 for g in (final.get("binding_gaps") or {}).values()
+                                         if any(not is_trim_gap(x) and x != "market" for x in g))
+            if final.get("binding_gaps") is not None else None,
+            "rec_reacquire_skipped_fields": len(rec["reacquire_skipped_fields"])
+            if rec.get("reacquire_skipped_fields") is not None else None,
             "total_model_calls": totals.get("model_calls"), "total_input_tokens": totals.get("input_tokens"),
             "total_output_tokens": totals.get("output_tokens"),
             "total_reasoning_tokens": totals.get("reasoning_tokens"),

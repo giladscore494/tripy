@@ -24,6 +24,17 @@ computed here, deterministically, from what the text itself names:
     variant_match   different (veto) | unbound (not even the model family) | exact (level >= the field's
                     binding_requirement) | unclear
 
+Two rules make `exact_market_trim` reachable when the government trim does not identify itself in prose
+(binding-v2), both deterministic and fail-closed, each recorded as `binding_basis`:
+
+    qualified_trim_phrase   a government trim made only of generic words (MAX, PRO, BASE EDITION) matches only as
+                            the family followed by those words ("g6 max", "g6-max", "xpeng g6 max"), never alone
+                            ("max power" is not the MAX trim)
+    single_trim_catalog     a fact already bound at exact_technical_variant (no veto, no mixed dimension) from a
+                            target-market official source (or a target-market document whose identity zone names the
+                            family) that names no other trim, when the government catalog index
+                            (data/catalog_trim_index.json) lists exactly ONE trim for that technical variant
+
 A multi-variant document (1.8 AND 2.0 Hybrid) is never exact by itself: the fact context must name the
 target's technical variant. A powertrain mismatch vetoes exact binding even when manufacturer, model,
 body and year all match. DocumentBinding is not Evidence and never a truth score: it only says which
@@ -41,8 +52,10 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v1"
+BINDING_VERSION = "binding-v2"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
+TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
+OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
 LEVELS = ("unknown", "model_family", "generation", "body_powertrain", "exact_technical_variant", "exact_market_trim")
 DEFAULT_REQUIREMENT = "exact_technical_variant"
 # Level a veto on this dimension caps the binding at.
@@ -50,12 +63,24 @@ VETO_CAP = {"model": "unknown", "body": "generation", "propulsion": "generation"
             "drivetrain": "body_powertrain", "power": "body_powertrain", "trim": "exact_technical_variant"}
 NON_TARGET_MATCHES = ("different", "unbound")
 _VOCAB: dict[str, tuple[float, dict]] = {}
+_TRIM_INDEX: dict[str, tuple[float, dict]] = {}
 _COMPILED: dict[tuple, Any] = {}
 # "<X> version / trim", "version / trim / גרסת / רמת גימור <X>": the text names a trim
 NAMED_TRIM = re.compile(r"(?:\b(?:version|trim)\s*:?\s*|(?:גרסת|גרסה|רמת גימור)\s*:?\s*(?:ה-?)?)([a-zא-ת][\w-]{2,})"
                         r"|\b([a-z][\w-]{2,})\s+(?:version|trim)\b")
 GENERIC_NAMED = {"the", "this", "that", "each", "every", "all", "base", "entry", "top", "new", "old", "other", "same",
                  "hybrid", "היברידית", "היברידי", "חשמלית", "הבסיס", "הבסיסית", "העליונה", "החדשה", "level", "line"}
+# These words are harmless descriptors for legacy trim matching, but for a generic-only target (MAX/PRO/BASE) an
+# explicit "Base version" / "Top version" is a real competing tier and must not inherit the target trim from the page.
+GENERIC_TIER_WORDS = {"base", "entry", "top", "הבסיס", "הבסיסית", "העליונה"}
+# between the model family and a generic trim word: nothing, a space / hyphen, or a Hebrew "version" connector
+TRIM_CONNECTOR = r"(?:\s*(?:בגרסת|גרסת|ברמת גימור|רמת גימור|ב-|ה-)\s*|[\s\-]*)"
+# a generic trim word's written forms ("business edi" is the catalog's "business edition")
+TRIM_WORD_FORMS = {"edi": ("edi", "edition"), "edition": ("edition", "edi")}
+# A generic MAX immediately modifying a metric label is not a trim, even when the model family precedes it:
+# "G6 MAX power 486 hp" means maximum power. Fail closed rather than promote the fact to exact_market_trim.
+MAX_METRIC_FOLLOWERS = ("power", "output", "speed", "range", "torque", "charge", "charging", "current", "voltage",
+                        "capacity", "הספק", "מהירות", "טווח", "מומנט", "טעינה", "זרם", "מתח", "קיבולת")
 NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout\b|(?<![א-ת])לא(?![א-ת])|ללא|למעט|"
                           r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
 YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
@@ -107,6 +132,8 @@ class TargetIdentity:
     model_code_tokens: list[str] = field(default_factory=list)
     trim_tokens: list[str] = field(default_factory=list)
     trim_words: list[str] = field(default_factory=list)      # every word of the government trim (generic ones too)
+    # a trim made only of generic words matches only qualified by the family ("g6 max"); see _qualified_phrases
+    qualified_trim_phrases: list[str] = field(default_factory=list)
     target_market: str = "IL"
     # identity-only parts (never used for document binding): the FULL normalized government model code, whose letter
     # suffixes separate variants the engine figures cannot, and the transmission (Level 1.5 `automatic` flag)
@@ -126,6 +153,11 @@ class TargetIdentity:
                  "exact_market_trim": ("manufacturer", "family", "year", "body", "propulsion", "displacement_l",
                                        "power_hp", "drivetrain", "trim_tokens", "target_market")}[level]
         data = self.as_dict()
+        # Generic-only trims (MAX / PRO / BASE ...) intentionally have no trim_tokens. Once binding-v2 can reach
+        # exact_market_trim for them, an empty trim component would make different trims share the same fact-cache /
+        # research-memory scope. Preserve the old key for normal trims, but fall back to the full trim words here.
+        if level == "exact_market_trim" and not data.get("trim_tokens"):
+            data["trim_tokens"] = data.get("trim_words")
         return level + ":" + json.dumps([data.get(k) for k in parts], ensure_ascii=False, sort_keys=True)
 
 
@@ -162,6 +194,52 @@ def _trim_tokens(trim: str | None, vocab: dict) -> list[str]:
             if len(t) >= 3 and not t.isdigit() and t not in generic and t not in propulsion]
 
 
+def _trim_words(trim: str | None) -> list[str]:
+    return [t for t in re.split(r"[^\wא-ת]+", str(trim or "").lower()) if t]
+
+
+def _qualified_phrases(family: str | None, trim_words: list[str], trim_tokens: list[str], vocab: dict) -> list[str]:
+    """A government trim no word of which identifies it (every word generic: MAX, PRO, BASE EDITION) is matched only
+    as the family followed by its words ("g6 max"; the manufacturer may precede it). A multi-word trim of generic
+    words only also as its whole phrase with its written forms ("pro max", "base edition"). Never one word alone."""
+    if trim_tokens or not trim_words or not family:
+        return []
+    aliases = (vocab.get("model_families") or {}).get(family) or [family]
+    phrases = [f"{normalize_text(alias)} {' '.join(trim_words)}" for alias in aliases]
+    if _bare_phrase_ok(trim_words, vocab):
+        phrases.append(" ".join(trim_words))
+    return list(dict.fromkeys(phrases))
+
+
+def _bare_phrase_ok(trim_words: list[str], vocab: dict) -> bool:
+    generic = {w.lower() for w in vocab.get("generic_trim_words") or []}
+    return len(trim_words) > 1 and all(w in generic for w in trim_words)
+
+
+def _qualified_pattern(identity: "TargetIdentity", vocab: dict):
+    """The regex of the target's qualified trim phrases (family aliases + connector + trim words), or None."""
+    if not identity.qualified_trim_phrases:
+        return None
+    key = ("qualified_trim", identity.family, tuple(identity.trim_words))
+    compiled = _COMPILED.get(key)
+    if compiled is None:
+        def word(w: str) -> str:
+            return "(?:" + "|".join(re.escape(f) for f in TRIM_WORD_FORMS.get(w, (w,))) + ")"
+        words = r"[\s\-]+".join(word(w) for w in identity.trim_words)
+        aliases = (vocab.get("model_families") or {}).get(identity.family or "") or [identity.family or ""]
+        family = "|".join(r"[\s\-]*".join(re.escape(part) for part in normalize_text(a).split())
+                          for a in sorted(aliases, key=len, reverse=True) if a)
+        metric_guard = ""
+        if identity.trim_words == ["max"]:
+            followers = "|".join(re.escape(w) for w in MAX_METRIC_FOLLOWERS)
+            metric_guard = rf"(?![\s:;,.\-–—]*(?:{followers})\b)"
+        options = [rf"(?:{family}){TRIM_CONNECTOR}{words}{metric_guard}"]
+        if _bare_phrase_ok(identity.trim_words, vocab):
+            options.append(words)
+        compiled = _COMPILED[key] = re.compile(r"(?<![\wא-ת])(?:" + "|".join(options) + r")(?![\wא-ת])")
+    return compiled
+
+
 def _drivetrain(value: Any) -> str | None:
     text = str(value or "").lower()
     if text in ("awd", "4x4", "four_wheel_drive", "4wd"):
@@ -192,9 +270,12 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         year = int(year) if year else None
     except (TypeError, ValueError):
         year = None
+    family = _family_of(ident.get("commercial_name") or vehicle.get("model"), vocab)
+    trim = ident.get("trim") or vehicle.get("trim")
+    trim_tokens, trim_words = _trim_tokens(trim, vocab), _trim_words(trim)
     return TargetIdentity(
         manufacturer=ident.get("manufacturer") or vehicle.get("manufacturer"),
-        family=_family_of(ident.get("commercial_name") or vehicle.get("model"), vocab),
+        family=family,
         year=year,
         body=structure.get("body_normalized") or vehicle.get("body"),
         propulsion=engine.get("propulsion_normalized") or vehicle.get("propulsion"),
@@ -203,8 +284,9 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         power_hp=power,
         drivetrain=_drivetrain(engine.get("drivetrain_normalized") or vehicle.get("drivetrain")),
         model_code_tokens=_code_tokens(ident.get("model_code") or vehicle.get("model_code")),
-        trim_tokens=_trim_tokens(ident.get("trim") or vehicle.get("trim"), vocab),
-        trim_words=[t for t in re.split(r"[^\wא-ת]+", str(ident.get("trim") or vehicle.get("trim") or "").lower()) if t],
+        trim_tokens=trim_tokens,
+        trim_words=trim_words,
+        qualified_trim_phrases=_qualified_phrases(family, trim_words, trim_tokens, vocab),
         target_market=target_market or "IL",
         model_code=" ".join(t for t in re.split(r"[^0-9a-z]+", str(ident.get("model_code") or vehicle.get("model_code")
                                                                  or "").lower()) if t) or None,
@@ -295,6 +377,18 @@ def _family_status(text: str, identity: TargetIdentity, vocab: dict) -> set[str]
     return found
 
 
+def _named_trim_noise(identity: TargetIdentity) -> set[str]:
+    """Words that do not identify a competing trim. Generic tier labels become meaningful for generic-only targets."""
+    return GENERIC_NAMED - GENERIC_TIER_WORDS if identity.qualified_trim_phrases else GENERIC_NAMED
+
+
+def other_trims_named(text: str, identity: TargetIdentity) -> list[str]:
+    """Trim names the text gives ("the Premium version", "Base version", "גרסת Business") that are not the target."""
+    named = [w for groups in NAMED_TRIM.findall(normalize_text(text or "")) for w in groups if w]
+    noise = _named_trim_noise(identity)
+    return sorted({w for w in named if w not in identity.trim_words and w not in noise})
+
+
 def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     """Every identity value a text names (normalized, case-insensitive)."""
     vocab = vocabulary()
@@ -303,10 +397,12 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     man = _terms(("manufacturer", identity.manufacturer), manufacturer_terms) if manufacturer_terms else None
     codes = [c for c in identity.model_code_tokens if re.search(rf"(?<![a-z0-9]){re.escape(c)}(?![a-z0-9])", norm)]
     phrase = " ".join(identity.trim_tokens)
-    trims = _terms(("trim", phrase), [phrase]) if phrase else None
+    # a generic government trim (MAX) only as a qualified phrase ("g6 max"), never the word alone ("max power")
+    trims = _terms(("trim", phrase), [phrase]) if phrase else _qualified_pattern(identity, vocab)
     trim = ""
     named = [w for w in NAMED_TRIM.findall(norm) for w in w if w]
-    if identity.trim_words and any(w not in identity.trim_words and w not in GENERIC_NAMED for w in named):
+    named_noise = _named_trim_noise(identity)
+    if identity.trim_words and any(w not in identity.trim_words and w not in named_noise for w in named):
         trim = "negated"        # "the Premium version", "גרסת ה-Premium": a fact about ANOTHER named trim
     for m in trims.finditer(norm) if trims else ():
         # "not available on Business", "לא בגרסת Business": the trim is named to EXCLUDE it
@@ -473,7 +569,86 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
             combined[dim] = full_statuses[dim]
     return {"statuses": combined, "zone_statuses": zone_statuses, "full_statuses": full_statuses,
             "trim_named_in_document": bool(full_found["trim"]),
+            # another named trim anywhere in the document (single_trim_catalog never applies to such a document)
+            "other_trims_named": other_trims_named(f"{zone}\n{about_target(text or '', identity)}", identity),
             "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in full_found.items()}}
+
+
+# --- government catalog trim index (single_trim_catalog) -------------------------------------------------
+
+def power_bucket(power_hp: float | None) -> int | None:
+    """Power rounded to the nearest 5 hp (the catalog index key part)."""
+    return None if power_hp is None else int(float(power_hp) / 5 + 0.5) * 5
+
+
+def catalog_key(*, manufacturer: Any, family: Any, year: Any, body: Any, propulsion: Any, drivetrain: Any,
+                power: int | None, displacement_l: float | None) -> str:
+    """The catalog index key of a technical variant (scripts/build_trim_index.py builds keys with this function)."""
+    parts = [manufacturer, family, year, body, propulsion, drivetrain, power,
+             None if displacement_l is None else f"{float(displacement_l):.1f}"]
+    return "|".join("" if v is None else str(v) for v in parts)
+
+
+def normalize_catalog_trim(trim: Any) -> str:
+    return " ".join(str(trim or "").upper().split())
+
+
+def trim_index(path: Path | str | None = None) -> dict:
+    """data/catalog_trim_index.json (CATALOG_TRIM_INDEX_PATH overrides), loaded once per file version."""
+    path = Path(path or os.environ.get("CATALOG_TRIM_INDEX_PATH") or TRIM_INDEX_PATH)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached = _TRIM_INDEX.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    _TRIM_INDEX[str(path)] = (mtime, data)
+    return data
+
+
+def single_catalog_trim(identity: TargetIdentity, index: dict | None = None) -> dict | None:
+    """{key, trim, records} when the government catalog lists exactly ONE trim -- the target's own -- for the target's
+    technical variant in its model year; None otherwise (fail-closed: an unknown identity part, a key missing from the
+    index, an entry marked incomplete, more than one trim, or another trim in a neighbouring power bucket the binding
+    cannot tell apart (within the 3 % power tolerance))."""
+    index = trim_index() if index is None else index
+    entries = index.get("entries") or {}
+    needed = (identity.manufacturer, identity.family, identity.year, identity.body, identity.propulsion,
+              identity.drivetrain, identity.power_hp)
+    if not entries or any(v in (None, "") for v in needed) or not identity.trim_words:
+        return None
+    if identity.displacement_l is None and identity.propulsion != "battery_electric":
+        return None
+    default_complete = index.get("complete", False) is True
+    parts = dict(manufacturer=identity.manufacturer, family=identity.family, year=identity.year, body=identity.body,
+                 propulsion=identity.propulsion, drivetrain=identity.drivetrain,
+                 displacement_l=identity.displacement_l)
+    own = power_bucket(identity.power_hp)
+    key = catalog_key(**parts, power=own)
+    if key not in entries:
+        return None
+    low, high = power_bucket(identity.power_hp * 0.97), power_bucket(identity.power_hp * 1.03)
+    trims: set[str] = set()
+    records: list[str] = []
+    for bucket in range(low, high + 5, 5):
+        entry = entries.get(catalog_key(**parts, power=bucket))
+        if entry is None:
+            continue
+        if entry.get("complete", default_complete) is not True:
+            return None
+        trims |= {normalize_catalog_trim(t) for t in entry.get("trims") or [""]}
+        records += [str(r) for r in entry.get("records") or []]
+    if len(trims) != 1:
+        return None
+    (trim,) = trims
+    if _trim_words(trim) != identity.trim_words:
+        return None
+    return {"key": key, "trim": trim, "records": records[:20]}
 
 
 # --- binding --------------------------------------------------------------------------------------------
@@ -496,9 +671,19 @@ def _layer_statuses(name: str, text: str, identity: TargetIdentity, trim_named_i
         # ("Premium", "1.8 Hybrid Premium", "Business Plus"); a technical header (1.8 Hybrid 140) names none
         if _header_extra_words(text, identity):
             st["trim"] = "mismatch"
-        elif st["trim"] == "absent" and trim_named_in_document and not technical:
+        elif st["trim"] == "absent" and trim_named_in_document and not technical \
+                and not _header_names_own_trim(text, identity):
             st["trim"] = "mismatch"
     return st
+
+
+def _header_names_own_trim(header: str, identity: TargetIdentity) -> bool:
+    """A header made of the target's own generic trim words ("MAX" for the G6 MAX): not another trim (and, alone,
+    not a trim match either: a generic word is never the trim by itself)."""
+    if not identity.qualified_trim_phrases:
+        return False
+    words = [w for w in re.split(r"[^\wא-ת]+", normalize_text(header)) if w and not re.search(r"\d", w)]
+    return bool(words) and set(identity.trim_words) <= set(words)
 
 
 def _header_extra_words(header: str, identity: TargetIdentity) -> list[str]:
@@ -520,8 +705,11 @@ def _header_extra_words(header: str, identity: TargetIdentity) -> list[str]:
 def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tuple[str, str]] | None = None,
          veto_layers: list[tuple[str, str]] | None = None, *, market: str | None = None,
          requirement: str | None = None, model_declared_different: bool = False,
-         trim_named_in_document: bool = False) -> dict:
-    """The effective binding of a fact (or, with no layers, of the whole document)."""
+         trim_named_in_document: bool = False, source_authority: str | None = None,
+         document_names_family: bool = False, other_trims_named: list[str] | None = None) -> dict:
+    """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
+    `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
+    `other_trims_named=None` (unknown) never lets it apply."""
     effective: dict[str, dict] = {}
     layer_statuses = [(name, _layer_statuses(name, text, identity, trim_named_in_document))
                       for name, text in layers or [] if text]
@@ -548,7 +736,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             if st[dim] == "mismatch" and f"{dim}_mismatch@{name}" not in vetoes:
                 vetoes.append(f"{dim}_mismatch@{name}")
     s = {dim: effective[dim]["status"] for dim in DIMENSIONS}
-    level = "unknown"
+    level, basis = "unknown", None
     if s["model"] in ("match", "mixed"):
         level = "model_family"
         if s["year"] != "mismatch":
@@ -565,6 +753,17 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
                     level = "exact_technical_variant"
                     if s["trim"] == "match" and market and market == identity.target_market:
                         level = "exact_market_trim"
+                        # a generic government trim (MAX) can only match as its qualified phrase ("g6 max")
+                        basis = "qualified_trim_phrase" if identity.qualified_trim_phrases else None
+    catalog = None
+    if (required == "exact_market_trim" and level == "exact_technical_variant" and not vetoes
+            and not model_declared_different and "mixed" not in s.values() and s["trim"] == "absent"
+            and market and market == identity.target_market
+            and (source_authority in OFFICIAL_AUTHORITIES or document_names_family)
+            and other_trims_named is not None and not other_trims_named):
+        catalog = single_catalog_trim(identity)
+        if catalog is not None:
+            level, basis = "exact_market_trim", "single_trim_catalog"
     for veto in vetoes:
         cap = VETO_CAP[veto.split("_mismatch")[0]]
         if level_index(level) > level_index(cap):
@@ -579,7 +778,58 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         variant_match = "unclear"
     if model_declared_different and "model_declared_different" not in vetoes:
         vetoes.append("model_declared_different")
-    return {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
-            "binding_veto": vetoes, "binding_dimensions": {d: effective[d] for d in DIMENSIONS
-                                                            if effective[d]["status"] != "absent"},
-            "binding_version": BINDING_VERSION}
+    dimensions = {d: effective[d] for d in DIMENSIONS if effective[d]["status"] != "absent"}
+    if basis == "qualified_trim_phrase" and "trim" in dimensions:
+        dimensions["trim"] = {**dimensions["trim"], "rule": "qualified_trim_phrase"}
+    if catalog is not None:
+        dimensions["trim"] = {"status": "match", "basis": "single_trim_catalog", "catalog_key": catalog["key"],
+                              "catalog_trim": catalog["trim"], "catalog_records": catalog["records"]}
+    out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
+           "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
+    if basis and level == "exact_market_trim":
+        out["binding_basis"] = basis
+    return out
+
+
+# --- binding gap diagnosis (observational) ----------------------------------------------------------------
+
+def binding_gaps(item: dict, requirement: str | None = None) -> list[str]:
+    """Why an evidence item's binding stopped below its requirement, from its own binding_veto / binding_dimensions:
+    `veto:<dim>`, or the dimension(s) that kept it from the next level (`trim_absent`, `power_absent`, `power_mixed`,
+    `model_mixed`, ...), or `market` (bound at the trim but outside the target market). Never changes anything."""
+    vetoes = item.get("binding_veto") or []
+    if vetoes:
+        return sorted({"veto:" + str(v).split("_mismatch")[0].split("@")[0].replace("model_declared_different",
+                                                                                    "model_declared")
+                       for v in vetoes})
+    level = item.get("binding_level")
+    required = requirement if requirement in LEVELS else item.get("binding_requirement") or DEFAULT_REQUIREMENT
+    if level not in LEVELS:
+        return []
+    dims = {d: str((item.get("binding_dimensions") or {}).get(d, {}).get("status") or "absent") for d in DIMENSIONS}
+    if level_index(level) >= level_index(required):
+        return [] if str(item.get("variant_match") or "") == "exact" else ["market"]
+    gaps: list[str] = []
+    if level == "unknown":
+        gaps.append(f"model_{dims['model']}")
+    elif level == "model_family":
+        gaps.append(f"year_{dims['year']}")
+    elif level == "generation":
+        gaps += [f"{d}_{dims[d]}" for d, ok in (("model", ("match",)), ("body", ("match", "absent")),
+                                                ("propulsion", ("match",))) if dims[d] not in ok]
+    elif level == "body_powertrain":
+        mixed = [f"{d}_mixed" for d in ("displacement", "drivetrain", "power") if dims[d] == "mixed"]
+        if mixed:
+            gaps += mixed
+        elif dims["power"] == "match":
+            gaps.append(f"displacement_{dims['displacement']}")
+        else:
+            gaps += [f"{d}_{dims[d]}" for d in ("displacement", "power") if dims[d] != "match"]
+    elif level == "exact_technical_variant":
+        gaps.append("trim_absent" if dims["trim"] == "absent" else "market" if dims["trim"] == "match"
+                    else f"trim_{dims['trim']}")
+    return sorted(set(gaps)) or ["unresolved"]
+
+
+def is_trim_gap(gap: str) -> bool:
+    return gap.startswith("trim_") or gap == "veto:trim"
