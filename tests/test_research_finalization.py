@@ -457,6 +457,12 @@ def test_results_distinguish_missing_final_json_from_missing_research(baseline):
 
 @pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 def test_finalize_existing_run_makes_one_call_and_no_research(baseline, monkeypatch):
+    from src import binding_replay
+    replayed = []
+    real_replay_after_result = binding_replay.replay_after_result
+    monkeypatch.setattr(binding_replay, "replay_after_result",
+                        lambda log, root: (replayed.append((log.dir, Path(root))),
+                                           real_replay_after_result(log, root))[1])
     def no_network(*args, **kwargs):
         raise AssertionError("recovery must not search or fetch")
 
@@ -485,6 +491,7 @@ def test_finalize_existing_run_makes_one_call_and_no_research(baseline, monkeypa
     assert result["usage_research"]["model_calls"] == 30 and result["usage_finalizer"]["model_calls"] == 1
     assert result["api_stats"]["timeout_count"] == 3 and result["cost_note"] == UNKNOWN_USAGE_NOTE
     assert result["metrics"]["fields_with_value"] == 1
+    assert replayed == [(run_dir, cache.root)]
 
     # History preserved: original events are an unchanged prefix, input untouched, recovery events appended.
     events_now = (run_dir / "events.jsonl").read_bytes()

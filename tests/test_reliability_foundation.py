@@ -146,6 +146,29 @@ def test_semantic_definition_keeps_hybrid_torque_to_the_engine(corolla):
     assert "semantic_exclusions" not in public_spec(spec)                            # policy is not model input
 
 
+def test_curb_weight_conflict_ignores_rejected_braked_towing_end_to_end(corolla):
+    """Two admitted curb weights remain a real conflict; a third document's towing value never participates."""
+    from conftest import cache_source
+
+    docs = [cache_source(corolla.cache, f"https://www.cartube.co.il/corolla-weight-{i}", text)
+            for i, text in enumerate((
+                "Toyota Corolla Touring Sports 2024 1.8 Hybrid. Curb weight: 2100 kg",
+                "Toyota Corolla Touring Sports 2024 1.8 Hybrid. Curb weight: 2190 kg",
+                "Toyota Corolla Touring Sports 2024 1.8 Hybrid. Braked towing: 750 kg",
+            ))]
+    first = store(corolla, field="curb_weight_kg", value=2100, unit="kg", document_id=docs[0],
+                  quote="Curb weight: 2100 kg")
+    second = store(corolla, field="curb_weight_kg", value=2190, unit="kg", document_id=docs[1],
+                   quote="Curb weight: 2190 kg")
+    towing = store(corolla, field="curb_weight_kg", value=750, unit="kg", document_id=docs[2],
+                   quote="Braked towing: 750 kg")
+    assert first["stored"] and second["stored"]
+    assert towing["stored"] is False and towing["reasons"] == ["semantic_mismatch"]
+    evaluation = state(corolla, "curb_weight_kg")
+    assert evaluation["state"] == "conflicting"
+    assert set(evaluation["values"]) == {2100, 2190}
+
+
 def test_climate_zones_need_an_explicit_schema_mapping(corolla):
     doc = corolla.docs[CARTUBE]
     mapped = store(corolla, field="climate_zones", value=2, document_id=doc, quote="בקרת אקלים: מפוצלת")

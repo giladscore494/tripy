@@ -178,5 +178,5 @@ def parse_reply(reply: Any, blocks: dict[str, dict], fields: Iterable[str]) -> t
 def candidate(item: dict, *, document_id: str, source_url: str | None) -> dict:
     out = {"field": item["field"], "value": item["value"], "unit": item.get("unit"), "document_id": document_id,
            "quote": item["quote"], "extraction_method": METHOD, "parser_confidence": PARSER_CONFIDENCE,
-           "source_url": source_url, "block": item.get("block"), "page": item.get("page")}
+           "source_url": source_url, "origin": "grounded", "block": item.get("block"), "page": item.get("page")}
     return {k: v for k, v in out.items() if v not in (None, "")}
