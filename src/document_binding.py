@@ -77,7 +77,7 @@ TRIM_WORD_FORMS = {"edi": ("edi", "edition"), "edition": ("edition", "edi")}
 # A generic MAX immediately modifying a metric label is not a trim, even when the model family precedes it:
 # "G6 MAX power 486 hp" means maximum power. Fail closed rather than promote the fact to exact_market_trim.
 MAX_METRIC_FOLLOWERS = ("power", "output", "speed", "range", "torque", "charge", "charging", "current", "voltage",
-                        "capacity")
+                        "capacity", "הספק", "מהירות", "טווח", "מומנט", "טעינה", "זרם", "מתח", "קיבולת")
 NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout\b|(?<![א-ת])לא(?![א-ת])|ללא|למעט|"
                           r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
 YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
