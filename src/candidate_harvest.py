@@ -1202,12 +1202,15 @@ def harvest_text(text: str, specs: Iterable[dict], *, tables: list[dict] | None 
     d = dictionary or Dictionary(specs)
     segments = document_segments(text, tables, structured, is_pdf=is_pdf, dictionary=d)
     if html:
-        # structural pairs join the same per-value dedupe AFTER every other segment: an identical value keeps its
+        # (html_pairs never raises) structural pairs join the same per-value dedupe AFTER every other segment: an identical value keeps its
         # earlier candidate unless the pair reads it with a higher parser confidence (a "label | value" quote instead
         # of a label-only line); a value only a pair reads is new
         segments += pair_segments(html_pairs(html, text, alias_pattern=d.any_alias, trim_header=d.trim_header))
     cands = harvest_segments(segments, d)
-    cands = merge_additions(cands, unit_anchor_candidates(segments, d))
+    try:      # an addition never costs the document's other candidates
+        cands = merge_additions(cands, unit_anchor_candidates(segments, d))
+    except Exception:  # noqa: BLE001
+        pass
     hint = market_hint(url)
     for cand in cands:
         if document_id:

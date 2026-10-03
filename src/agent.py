@@ -2470,6 +2470,11 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                 state["stopped"] = "api_failure"
                 run_log.event("field_recovery_api_failure_stop", cluster=name, attempt=1, mode="reacquire",
                               consecutive_api_failures=state["consecutive_api_failures"])
+        except Exception as exc:  # noqa: BLE001 - a local failure costs this cluster only (not an API failure)
+            error = _error_text(exc)
+            state["failed_attempts"] += 1
+            run_log.event("field_recovery_failed", field=label, cluster=name, attempt=1, error=error, mode="reacquire",
+                          consecutive_api_failures=state["consecutive_api_failures"])
         else:
             state["consecutive_api_failures"] = 0
         finally:
