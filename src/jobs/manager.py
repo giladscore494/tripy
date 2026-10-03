@@ -525,6 +525,11 @@ class RunManager:
             self.repository.update(run_id, mutate)
         except Exception:  # noqa: BLE001
             log.error("run %s: could not write the final run state", run_id, exc_info=True)
+        try:      # benchmark aggregate of this run's vehicles (observational diagnostics; src/diagnostics.py)
+            from ..diagnostics import write_benchmark
+            write_benchmark(self.runs_dir, [run_id], self.runs_dir / run_id / "diagnostics")
+        except Exception:  # noqa: BLE001
+            log.warning("run %s: could not write the diagnostics aggregate", run_id, exc_info=True)
         with self._lock:
             self._cancel.pop(run_id, None)
 

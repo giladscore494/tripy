@@ -154,7 +154,9 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
                 str(c.get("document_id")) in (good if str((sensitivity or {}).get(name) or "high") == "low"
                                               else set(target_docs))
                 for c in matrix["fields"].get(name) or [])},
-            "fields_with_candidates": len(covered)}
+            "fields_with_candidates": len(covered),
+            # telemetry only (never read by artifacts() / minimum_base() / sufficient()): every harvested candidate
+            "candidate_count_total": matrix.get("candidate_count", 0)}
 
 
 def artifacts(before: dict, after: dict) -> list[str]:
@@ -180,6 +182,18 @@ def artifacts(before: dict, after: dict) -> list[str]:
     if better:
         reasons.append(f"binding_improvement:{len(better)}")
     return reasons
+
+
+def state_counts(snap: dict) -> dict:
+    """Observational counts of one acquisition snapshot (diagnostic telemetry; decides nothing)."""
+    return {"useful_documents": len(snap.get("useful_documents") or ()),
+            "official_documents": len(snap.get("official_sources") or ()),
+            "target_market_documents": len(snap.get("target_market_documents") or ()),
+            "candidates": snap.get("candidate_count_total"),
+            "open_field_candidates": len(snap.get("candidates") or ()),
+            "candidate_fields": snap.get("fields_with_candidates", 0),
+            "scoped_coverage_pct": scoped_coverage_pct(snap),
+            "admitted_evidence": len(snap.get("evidence") or ())}
 
 
 def scoped_coverage_pct(snap: dict) -> float:
@@ -271,6 +285,7 @@ class AcquisitionTracker:
             self.streak = 0
             return ["unmeasured"]
         found = artifacts(self.last, now)
+        before = self.last
         self.last = now
         self.streak = 0 if found else self.streak + 1
         self.max_streak = max(self.max_streak, self.streak)
@@ -280,6 +295,10 @@ class AcquisitionTracker:
                "fields_with_candidates": now["fields_with_candidates"],
                "candidate_field_coverage_pct": coverage_pct(now),
                "scoped_coverage_pct": base["scoped_coverage_pct"], "minimum_acquisition_met": met}
+        try:     # diagnostic telemetry only: the state before and after this turn
+            row["state_before"], row["state_after"] = state_counts(before), state_counts(now)
+        except Exception as exc:  # noqa: BLE001 - telemetry must never cost the run
+            row["state_error"] = f"{type(exc).__name__}: {exc}"[:200]
         self.turns.append(row)
         self.run_log.event("primary_research_turn", **row)
         return found

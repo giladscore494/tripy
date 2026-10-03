@@ -34,7 +34,7 @@ from src.runstate.pipeline import PipelineCache
 from src.runstate.report import vehicle_report
 from src.storage.paths import resolve_paths
 from src.storage.run_loader import load_runs
-from src.ui import benchmark_view, run_view
+from src.ui import benchmark_view, diagnostics_view, run_view
 from src.ui import dashboard as ui
 from src.ui.settings_panel import render_settings
 
@@ -100,6 +100,8 @@ def history_panel() -> None:
 with st.sidebar:
     access_control.render_logout(secret)
     st.fragment(run_every=5 if active_ids else None)(history_panel)()
+    diagnostics_view.render_benchmark_export(paths.runs_dir, [r.run_id for r in records],
+                                             {r.run_id: ui.history_label(r) for r in records})
     st.divider()
     settings = render_settings(secret, manager.controller, allow_ui_key=allow_ui_api_key(secret))
 
@@ -284,6 +286,12 @@ def _render_report(record, views: list[dict], results_by_id: dict[str, dict]) ->
 def _render_technical(record, views: list[dict], results: list[dict]) -> None:
     with st.expander("Technical details"):
         st.caption(f"Run {record.run_id} · data in {paths.runs_dir / record.run_id}")
+        for view in views:      # acquisition / document-sweep diagnostics (src/diagnostics.py; observational)
+            if len(views) > 1:
+                st.markdown(f"**{ui.esc(view['title'])}**")
+            diag = diagnostics_view.diagnostics_for(paths.runs_dir / record.run_id / view["record_id"])
+            diagnostics_view.render_brief(view, diag)
+            diagnostics_view.render_detailed(diag)
         if record.active:
             for view in views:
                 live = view["_pipeline"].live

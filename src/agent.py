@@ -1979,7 +1979,11 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                       candidates_presented=shown, fields_without_candidates=packet["fields_without_candidates"],
                       documents=len(doc_metas), packet_chars=size["chars"], allowed_tools=list(DOCUMENT_SWEEP_TOOLS),
                       presented_candidate_keys=presented_keys, chunk=info,
-                      local_snippet_fields=sorted(packet.get("local_snippets") or {}))
+                      local_snippet_fields=sorted(packet.get("local_snippets") or {}),
+                      # diagnostic telemetry (observational; the packet sent is unchanged)
+                      packet_document_ids=[d.get("document_id") for d in packet.get("cached_documents") or []],
+                      candidates_per_field={n: len(v) for n, v in packet["deterministic_candidates"].items()},
+                      estimated_input_tokens=(len(DOCUMENT_SWEEP_SYSTEM_PROMPT) + size["chars"]) // 4)
         usage_chunk = dict(caller.usage["document_sweep"])
         t_chunk = time.monotonic()
         messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
