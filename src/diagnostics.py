@@ -634,6 +634,14 @@ def _evaluation_event(events: list[dict], stage: str) -> dict | None:
     return next((e for e in reversed(events) if e.get("kind") == "field_evaluation" and e.get("stage") == stage), None)
 
 
+def _searches_by_reason(episodes: list[dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for e in episodes:
+        reason = str(e.get("budget_reason") or "other")
+        out[reason] = out.get(reason, 0) + int(e.get("billable_searches", e.get("searches")) or 0)
+    return out
+
+
 def _reacquire_summary(window: list[dict]) -> dict:
     episodes = [e for e in window if e.get("kind") == "field_recovery_finished" and e.get("mode") == "reacquire"]
     if not episodes:
@@ -645,6 +653,8 @@ def _reacquire_summary(window: list[dict]) -> dict:
             "reacquire_adjudication_accepted": total("adjudication_accepted"), "reacquire_admitted": total("admitted"),
             "reacquire_fields_resolved": sum(len(e.get("fields_resolved") or []) for e in episodes),
             "reacquire_site_map_urls": total("site_map_urls"),
+            # billable searches per budget reason (technical_gap / trim_gap / other; PR #35 recovery spend caps)
+            "reacquire_searches_by_reason": _searches_by_reason(episodes),
             "reacquire_clusters": [{k: e.get(k) for k in ("cluster", "searches", "fetches", "new_useful_documents",
                                                           "new_candidates", "grounded_items", "adjudication_accepted",
                                                           "admitted", "fields_resolved", "model_calls", "tokens",
@@ -710,6 +720,26 @@ def final_field_states(events: list[dict]) -> dict:
     return {"counts": counts, "ok_fields": sorted(e["field"] for e in evaluation if e["state"] == "ok"),
             "fields": len(evaluation), "binding_gaps": gaps,
             "binding_gap_counts": dict(Counter(g for items in gaps.values() for g in items))}
+
+
+YEAR_STATUSES = ("match", "adjacent", "mixed", "mismatch", "absent")
+
+
+def binding_year_summary(events: list[dict]) -> dict:
+    """Year-dimension telemetry over the run's admitted evidence (binding-v3): how many items' effective year status
+    was match / adjacent / mixed / mismatch / absent (binding_dimensions.year; absent when not recorded), and how many
+    years the model-year rules ignored, by kind (year_context.ignored: copyright, publication_date, date, url, prose,
+    ...). Observational: `adjacent` and ignored years never feed binding_gap."""
+    from .storage import trace
+
+    status = {k: 0 for k in YEAR_STATUSES}
+    ignored: Counter = Counter()
+    items = [e for e in trace.evidence_items(events) if e.get("admission_status", "accepted") == "accepted"]
+    for item in items:
+        value = str(((item.get("binding_dimensions") or {}).get("year") or {}).get("status") or "absent")
+        status[value if value in status else "absent"] += 1
+        ignored.update(str(r.get("kind")) for r in (item.get("year_context") or {}).get("ignored") or [])
+    return {"evidence": len(items), "binding_year_status_counts": status, "ignored_year_contexts": dict(ignored)}
 
 
 def run_totals(events: list[dict], result: dict | None = None) -> dict:
@@ -905,6 +935,7 @@ def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record
         "document_sweep": {"summary": sweep, "calls": calls},
         "recovery": recovery_summary(events),
         "final_fields": final_field_states(events),
+        "binding_year": binding_year_summary(events),
         "parser_gaps": parser_gap_summary(events),
         "totals": run_totals(events, result),
         "summary_text": summary_text(acq, sweep),
@@ -947,12 +978,32 @@ def write_vehicle_diagnostics(run_dir: Path | str, *, run_id: str | None = None)
 
 def load_vehicle_diagnostics(run_dir: Path | str, *, rebuild_if_missing: bool = True) -> dict | None:
     path = Path(run_dir) / DIAGNOSTICS_FILE
+    diag = None
     if path.is_file():
         try:
-            return json.loads(path.read_text("utf-8"))
+            diag = json.loads(path.read_text("utf-8"))
         except ValueError:
-            pass
-    return write_vehicle_diagnostics(run_dir) if rebuild_if_missing else None
+            diag = None
+    if diag is None and rebuild_if_missing:
+        diag = write_vehicle_diagnostics(run_dir)
+    return with_binding_replay(diag, run_dir)
+
+
+def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
+    """The diagnostics with the run's Binding Replay summary (src/binding_replay.py) when one was written next to it:
+    {fields_ok_recorded, fields_ok_now, gap_counts, code_version}. Read fresh each time (a replay is written after
+    the run); a missing or unreadable summary leaves the diagnostics as they are."""
+    if diag is None:
+        return None
+    path = Path(run_dir) / "binding_replay_summary.json"
+    try:
+        summary = json.loads(path.read_text("utf-8")) if path.is_file() else None
+    except (OSError, ValueError):
+        summary = None
+    vehicle = (summary or {}).get("vehicle") if isinstance(summary, dict) else None
+    if not isinstance(vehicle, dict):
+        return diag
+    return {**diag, "binding_replay": {"code_version": summary.get("code_version"), **vehicle}}
 
 
 # --- benchmark aggregation -----------------------------------------------------------------------------------------------
@@ -967,6 +1018,7 @@ def vehicle_row(diag: dict) -> dict:
     gaps = diag.get("parser_gaps") or {}
     gaps = gaps if gaps.get("recorded") else {}
     counts = final.get("counts") or {}
+    year, replay = diag.get("binding_year") or {}, diag.get("binding_replay") or {}
     phases = totals.get("by_phase") or {}
     research = phases.get("research") or {}
     return {"run_id": diag.get("run_id"), "record_id": diag.get("record_id"),
@@ -1030,6 +1082,19 @@ def vehicle_row(diag: dict) -> dict:
             if final.get("binding_gaps") is not None else None,
             "rec_reacquire_skipped_fields": len(rec["reacquire_skipped_fields"])
             if rec.get("reacquire_skipped_fields") is not None else None,
+            # re-acquisition billable searches by budget reason (technical_gap / trim_gap / other)
+            "rec_reacquire_searches_by_reason": json.dumps(rec["reacquire_searches_by_reason"], sort_keys=True)
+            if rec.get("reacquire_searches_by_reason") is not None else None,
+            # binding-v3 year telemetry over admitted evidence
+            "binding_year_status_counts": json.dumps(year["binding_year_status_counts"], sort_keys=True)
+            if year.get("binding_year_status_counts") is not None else None,
+            "ignored_year_contexts": json.dumps(year["ignored_year_contexts"], sort_keys=True, ensure_ascii=False)
+            if year.get("ignored_year_contexts") is not None else None,
+            # Binding Replay (when a binding_replay_summary.json exists for the run): fields ok with today's binding
+            "replay_fields_ok_now": replay.get("fields_ok_now"),
+            "replay_fields_ok_recorded": replay.get("fields_ok_recorded"),
+            "replay_gap_counts": json.dumps(replay["gap_counts"], sort_keys=True, ensure_ascii=False)
+            if replay.get("gap_counts") is not None else None,
             "total_model_calls": totals.get("model_calls"), "total_input_tokens": totals.get("input_tokens"),
             "total_output_tokens": totals.get("output_tokens"),
             "total_reasoning_tokens": totals.get("reasoning_tokens"),
@@ -1200,7 +1265,8 @@ def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, 
 
     diags = []
     for run_dir in vehicle_dirs(runs_dir, run_ids):
-        diag = write_vehicle_diagnostics(run_dir) if rebuild else load_vehicle_diagnostics(run_dir)
+        diag = with_binding_replay(write_vehicle_diagnostics(run_dir), run_dir) if rebuild \
+            else load_vehicle_diagnostics(run_dir)
         if diag:
             diags.append(diag)
     result = redact_obj(aggregate(diags))

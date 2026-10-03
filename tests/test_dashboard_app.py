@@ -203,3 +203,33 @@ def test_technical_details_show_acquisition_and_sweep_diagnostics(data_env, monk
     assert "Fields entering" in body and "18.4 s" in body
     assert any(e.label == "Detailed diagnostics" for e in app.expander)
     assert any("SOURCE ACQUISITION" in str(c.value) for c in app.code)          # the compact run summary
+
+
+def test_technical_details_binding_tab_runs_the_replay_on_demand(data_env, monkeypatch):
+    monkeypatch.setenv("GLM_API_KEY", "k")
+    monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")
+    specs = [{"name": "curb_weight_kg", "applicable": True}]
+    evidence = {"evidence_id": "e1", "field": "curb_weight_kg", "value": 2180, "document_id": "0" * 24,
+                "source_url": "https://www.xpeng.co.il/g6", "quote": 'משקל עצמי: 2,180 ק"ג', "market": "IL",
+                "admission_status": "accepted", "binding_level": "model_family", "variant_match": "unclear",
+                "binding_requirement": "exact_technical_variant"}
+    events = [("run_started", {"agent_config": {}, "requested_field_specs": specs, "target_market": "IL"}),
+              ("evidence", {"evidence": evidence}), ("run_finished", {"status": "completed"})]
+    done = {"record_id": "101122", "status": "completed", "output": {"summary": "ok", "fields": {}}, "documents": []}
+    run_id = "20261003T175133Z-replay"
+    make_run(data_env, run_id, status=M.COMPLETED, engine_status="completed", events=events, result=done)
+    app = app_test()
+    app.query_params["run"] = run_id
+    app.run()
+    assert not app.exception, app.exception
+    assert any(t.label == "Binding" for t in app.tabs)
+    run_dir = data_env / run_id / "101122"
+    assert not (run_dir / "binding_replay_summary.json").exists()          # on demand only
+    app.button(key=f"binding_replay_{run_id}_101122").click().run()
+    assert not app.exception, app.exception
+    assert any(m.label == "Fields ok (recorded → now)" for m in app.metric)
+    assert any(m.label == "Missing documents" and str(m.value) == "1" for m in app.metric)
+    summary = json.loads((run_dir / "binding_replay_summary.json").read_text("utf-8"))
+    assert summary["missing_documents"] and summary["vehicle"]["fields_ok_now"] == 0
+    app.run()                                                              # cached until the code version changes
+    assert not app.exception and any(m.label == "Rose by the year rules" for m in app.metric)

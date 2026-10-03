@@ -383,8 +383,8 @@ def _render_technical(record, views: list[dict], results: list[dict]) -> None:
                                  width="stretch")
                 st.code("\n".join(list(live.lines)[-60:]) or "—", language=None, wrap_lines=True)
             return
-        tab_run, tab_docs, tab_results, tab_bench, tab_state = st.tabs(
-            ["Diagnostics", "Documents", "Results", "Benchmark", "Run state"])
+        tab_run, tab_docs, tab_results, tab_bench, tab_binding, tab_state = st.tabs(
+            ["Diagnostics", "Documents", "Results", "Benchmark", "Binding", "Run state"])
         with tab_run:
             if not results:
                 st.caption("No vehicle run folder has input.json, events.jsonl or result.json yet.")
@@ -401,6 +401,12 @@ def _render_technical(record, views: list[dict], results: list[dict]) -> None:
             run_view.render_results_tab(results, labels, paths.runs_dir, manager.cache)
         with tab_bench:
             benchmark_view.render_benchmark(results, vehicles_by_id, labels, manager.cache, paths.runs_dir)
+        with tab_binding:      # Binding Replay (src/binding_replay.py): read-only, on demand
+            for view in views:
+                if len(views) > 1:
+                    st.markdown(f"**{ui.esc(view['title'])}**")
+                diagnostics_view.render_binding_replay(paths.runs_dir / record.run_id / view["record_id"],
+                                                       manager.cache.root, key=f"{record.run_id}_{view['record_id']}")
         with tab_state:
             st.json({k: v for k, v in record.to_dict().items() if k != "report"}, expanded=False)
 
