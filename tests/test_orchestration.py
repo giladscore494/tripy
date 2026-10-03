@@ -100,7 +100,7 @@ def test_a_new_document_resets_the_no_artifact_counter(tmp_path):
               turn(_call("c", "fetch_url", {"url": tail.CARTUBE})),                       # new document: reset
               turn(_call("d", "find_in_document", {"document_id": EU_DOC, "query": "Top speed"})),
               say({"summary": "done", "fields": {}})]
-    result, _, _, _ = research_run(tmp_path, script, routes, max_steps=6)
+    result, _, _, _ = research_run(tmp_path, script, routes, max_steps=6, **GATE_OFF)
     assert result["stop_reason"] == "model_finished"
     streaks = [t["artifacts"] != [] for t in result["primary_research"]["turn_artifacts"]]
     assert streaks == [True, False, True, False]
@@ -157,7 +157,8 @@ def test_no_artifact_stop_is_configurable_and_zero_disables_it(tmp_path):
     script = [turn(_call("a", "fetch_url", {"url": EU}))] + [
         turn(_call(f"f{i}", "find_in_document", {"document_id": EU_DOC, "query": q}))
         for i, q in enumerate(["Fuel tank", "Kerb weight", "Top speed"])] + [say({"summary": "s", "fields": {}})]
-    result, _, _, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6, primary_research_no_artifact_stop=0)
+    result, _, _, _ = research_run(tmp_path, script, EU_ROUTE, max_steps=6, primary_research_no_artifact_stop=0,
+                                   **GATE_OFF)
     assert result["stop_reason"] == "model_finished" and result["research_steps"] == 5
 
 
@@ -440,7 +441,7 @@ def test_chunked_sweep_reevaluates_between_chunks_and_a_reply_is_never_a_state(t
         return say({"reviewed": [{"field": "wheelbase_mm", "decision": "promoted"}]})
 
     client = SweepGLM(PRIMARY_FETCH + [say({"summary": "p", "fields": {}})], sweep=sweep)
-    result, events = sweep_run(tmp_path, client, document_sweep_max_fields=4)
+    result, events = sweep_run(tmp_path, client, document_sweep_max_fields=4, **GATE_OFF)
     sweep_summary = result["document_sweep"]
     chunks = [c for c in sweep_summary["document_sweep_chunk_details"] if c.get("model_calls")]
     assert len(chunks) >= 2 and all(c["fields_count"] <= 4 for c in chunks)
@@ -460,7 +461,7 @@ def test_recovery_still_runs_breadth_first_and_harvests_new_documents_for_all_op
 
     client = SweepGLM([turn(_call("b", "fetch_url", {"url": tail.CARTUBE})), say({"summary": "p", "fields": {}})],
                       cluster=cluster)
-    result, events = sweep_run(tmp_path, client)
+    result, events = sweep_run(tmp_path, client, **GATE_OFF)
     rec = result["field_recovery"]
     assert rec["queue"] and rec["attempt_count"] > 0 and rec["order"] == "breadth_first_clusters"
     first = [a for a in rec["attempts"] if a["attempt"] == 1]
@@ -583,7 +584,7 @@ def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
 def test_fields_without_a_dictionary_entry_are_never_reported_as_not_found_locally(tmp_path):
     custom = {"name": "engine_oil_capacity_l", "description": "engine oil capacity", "group": "technical"}
     client = SweepGLM(PRIMARY_FETCH + [say({"summary": "p", "fields": {}})])
-    sweep_run(tmp_path, client, requested_fields=["ground_clearance_mm", custom])
+    sweep_run(tmp_path, client, requested_fields=["ground_clearance_mm", custom], **GATE_OFF)
     packet = client.sweep_packets[0]
     assert "engine_oil_capacity_l" in packet["fields_without_candidates"]
     assert packet.get("fields_not_found_locally") == ["ground_clearance_mm"]
@@ -722,13 +723,15 @@ def test_failures_rereads_and_replays_are_still_no_progress_while_under_acquired
                    _call("e", "search_web", {"query": "corolla 429 specifications"})),
               turn(_call("f", "get_cached_document", {"key": EU_DOC}),
                    _call("g", "search_web", {"query": "corolla touring sports specifications"})),
-              say({"summary": "final", "fields": {}})]
-    result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6)
+              say({"summary": "final", "fields": {}}), say({"summary": "final", "fields": {}})]
+    result, events, _, _ = research_run(tmp_path, script, routes, max_steps=6, acquisition_mode="contract")
     turns = [e for e in events if e["kind"] == "primary_research_turn"]
     assert [bool(t["artifacts"]) for t in turns] == [True, False, False]
     assert [t["no_artifact_streak"] for t in turns] == [0, 1, 2]
-    assert [e["wanted_stop"] for e in events if e["kind"] == "primary_research_stop_deferred"] == ["no_new_artifact"]
-    assert result["stop_reason"] == "model_finished" and result["research_steps"] == 4
+    # under-acquired: the first "done" is deferred once (contract), the second consecutive one ends research
+    assert [e["wanted_stop"] for e in events if e["kind"] == "primary_research_stop_deferred"] == [
+        "no_new_artifact", "model_finished"]
+    assert result["stop_reason"] == "model_finished" and result["research_steps"] == 5
 
 
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract

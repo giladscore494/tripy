@@ -36,6 +36,8 @@ ROUTES = {EU: (tail.EU_SPEC_HTML, "text/html; charset=utf-8"), tail.FORUM: (tail
           tail.LAUNCH: (tail.LAUNCH_TEXT, "text/plain")}
 UK_OFFICIAL = "https://www.toyota.co.uk/new-cars/corolla-touring-sports"
 SPECS = resolve_requested_fields(tail.FIELDS, propulsion="hybrid")
+# tests about later stages script an early {"done": true}: the minimum acquisition base (which would defer it) is off
+GATE_OFF = {"primary_research_min_base_documents": 0, "primary_research_min_base_scoped_coverage": 0}
 
 
 def say(obj):
@@ -316,7 +318,7 @@ def test_contract_artifacts_ignore_evidence_binding_and_search_only_official_sou
 
 def test_a_finished_contract_research_always_reaches_the_finalizer(tmp_path):
     client = PhaseClient([fetch("a", EU), say({"done": True, "reason": "official spec page fetched"})])
-    result, events = run(tmp_path, client, acquisition_mode="contract", field_recovery_enabled=False)
+    result, events = run(tmp_path, client, acquisition_mode="contract", field_recovery_enabled=False, **GATE_OFF)
     assert result["stop_reason"] == "model_finished" and result["status"] == "completed"
     assert client.kinds[-1] == "final" and any(e["kind"] == "finalization_started" for e in events)
     assert result["output"]["summary"] == "final" and result["parse_note"].startswith("finalizer:")
@@ -445,7 +447,7 @@ def test_a_failed_sweep_chunk_never_ends_the_sweep(tmp_path):
         return say({"reviewed": []})
 
     client = PhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})], sweep=sweep)
-    result, events = run(tmp_path, client, acquisition_mode="contract", document_sweep_max_fields=4)
+    result, events = run(tmp_path, client, acquisition_mode="contract", document_sweep_max_fields=4, **GATE_OFF)
     sweep_summary = result["document_sweep"]
     chunks = sweep_summary["document_sweep_chunk_details"]
     assert len(chunks) >= 2 and chunks[0]["failed"] and chunks[0]["error"].startswith("GLMError")

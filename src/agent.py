@@ -72,10 +72,11 @@ from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_tools
 from .tools.evidence import EvidenceStore
-from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, DISCOVERY_TOOLS, AcquisitionTracker,
-                          acquisition_tool_specs, annotate_search_result, cluster_source_type, missing_categories_note,
-                          model_tokens, navigation_links, recovery_clusters)
+from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, CARD_TOOLS, DISCOVERY_TOOLS, AcquisitionTracker,
+                          acquisition_tool_specs, annotate_search_result, cluster_source_type, document_card,
+                          missing_categories_note, model_tokens, navigation_links, recovery_clusters)
 from .candidate_harvest import RunHarvester
+from .parser_gaps import log_parser_gaps
 from .evidence_admission import AdmissionContext
 from .research_memory import ResearchMemory
 from .variant_notes import record_id_of, variant_notes
@@ -238,6 +239,13 @@ When the document set is good enough (or nothing more can be found), reply with 
 call:
 {"done": true, "reason": "<short>"}"""
 
+# ACQUISITION_DOCUMENT_CARD=on only (inserted after the `links` sentence of ACQUISITION_SYSTEM_PROMPT); not part of
+# PROMPT_VERSION, so runs without the card keep their prompt version; run_started records the sent prompt's hash.
+DOCUMENT_CARD_PARAGRAPH = """fetch_url / fetch_pdf results may also carry a server-computed `document_card`: the document's
+variant match, market, source authority, whether it is usable, and how many requested fields per source category it
+already supplies in scope. Use it to judge whether a document is the right variant / market and which source
+categories it covered, instead of fetching it again. It is not evidence."""
+
 FINALIZER_SYSTEM_PROMPT = """You are the finalization step of a vehicle research benchmark.
 
 A research agent with web tools has already researched ONE specific vehicle variant. You receive a
@@ -390,10 +398,13 @@ PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + ACQUISITION_SYSTEM_PROMPT + FIN
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
 
 
-def research_system_prompt(mode: str = "legacy") -> str:
+def research_system_prompt(mode: str = "legacy", document_card: bool = False) -> str:
     """The research system prompt of an acquisition mode (contract: ACQUISITION_SYSTEM_PROMPT; legacy: SYSTEM_PROMPT)
-    without tools this host cannot run (e.g. render_page without Playwright)."""
+    without tools this host cannot run (e.g. render_page without Playwright). `document_card` (contract only) adds
+    the one DOCUMENT_CARD_PARAGRAPH (ACQUISITION_DOCUMENT_CARD=on); off, the prompt is exactly the previous one."""
     prompt = ACQUISITION_SYSTEM_PROMPT if mode == "contract" else SYSTEM_PROMPT
+    if mode == "contract" and document_card:
+        prompt = prompt.replace("\n\nVariant identity:", "\n" + DOCUMENT_CARD_PARAGRAPH + "\n\nVariant identity:", 1)
     for name in unavailable_tools():
         prompt = prompt.replace(f" {name},", "").replace(f" / {name}", "")
     return prompt
@@ -444,6 +455,13 @@ class AgentConfig:
     # prompt, progress = new documents and candidates, extension futility, always finalized from the bundle);
     # "legacy" = the previous behaviour exactly.
     acquisition_mode: str = "contract"
+    # ACQUISITION_DOCUMENT_CARD (contract research only; default off): successful fetch_url / fetch_pdf results carry a
+    # server-computed `document_card` (variant match, market, authority, usability, in-scope candidate fields per
+    # recovery cluster); scheduling metadata, never evidence. The research prompt then gets one paragraph about it.
+    acquisition_document_card: bool = False
+    # The run profile chosen for the run (src/run_profiles.py; "" = none, e.g. the CLI). Recorded, never read by the
+    # engine: a profile only sets other fields of this config.
+    run_profile: str = ""
     # Primary research is source acquisition (src/acquisition.py). It stops after N consecutive turns that acquired
     # nothing (no new usable document, official source, candidate for an open field, admitted evidence or better
     # binding; re-reads, repeated searches and failed fetches are no progress). 0 = off.
@@ -604,6 +622,9 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
         values["phase_settings"] = phases
     if (env("ACQUISITION_MODE") or "").strip().lower() in ACQUISITION_MODES:
         values["acquisition_mode"] = env("ACQUISITION_MODE").strip().lower()
+    card = _env_bool(env("ACQUISITION_DOCUMENT_CARD"))
+    if card is not None:
+        values["acquisition_document_card"] = card
     if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
         values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
     return AgentConfig(**{**values, **overrides})
@@ -909,8 +930,9 @@ class ToolSession:
     """
 
     def __init__(self, ctx: ToolContext, run_log: RunLog, config: AgentConfig, cancel_event=None,
-                 on_documents: Callable[[list[str], str], None] | None = None):
+                 on_documents: Callable[[list[str], str], None] | None = None, specs: list[dict] | None = None):
         self.ctx, self.run_log, self.config = ctx, run_log, config
+        self.specs = specs                 # the run's requested field specs (the document card's clusters)
         self.tracker = ResearchTracker()
         self.tool_calls: list[dict] = []
         self.step = 0                      # global tool-turn counter across phases
@@ -955,6 +977,8 @@ class ToolSession:
                 result = replay_result(prior)
                 if name == "fetch_url" and phase != "research":   # navigation links: research fetches only
                     result.pop("links", None)
+                if name in FETCH_TOOLS and phase != "research":     # the document card: research fetches only
+                    result.pop("document_card", None)
                 self.turn_results.append({"name": name, "result": result, "reused": True})
                 self.tracker.note_reused(name)
                 self.run_log.event("tool_reused", step=step, phase=phase, call_id=call.get("id"), name=name,
@@ -1033,6 +1057,9 @@ class ToolSession:
             self.turn_results.append({"name": name, "result": result, "reused": False})
             if self.on_documents is not None:
                 self.on_documents(self.ctx.documents_opened, phase)
+            if (phase == "research" and name in CARD_TOOLS and self.config.acquisition_mode == "contract"
+                    and self.config.acquisition_document_card):
+                self._attach_document_card(result)   # after the harvest hook, before the tool message
             self.tool_calls.append({
                 "step": step, "phase": phase, **tags, "name": name, "arguments": raw_args, "duration_ms": elapsed,
                 "cache_hit": result.get("cache_hit") if isinstance(result, dict) else None,
@@ -1062,6 +1089,31 @@ class ToolSession:
             return
         if links is not None:
             result["links"] = links
+
+    def _attach_document_card(self, result: Any) -> None:
+        """Contract-mode research with ACQUISITION_DOCUMENT_CARD: a fetched document carries its server-computed
+        document card (src/acquisition.py document_card): identity / scope metadata, never evidence. Never raises."""
+        try:
+            adm = self.ctx.admission
+            card = document_card(adm=adm, cache=self.ctx.cache, specs=self.specs or [], result=result,
+                                 target_market=getattr(adm, "target_market", None) or self.config.target_market)
+        except Exception as exc:  # noqa: BLE001 - scheduling metadata must never cost the run
+            self.run_log.event("document_card_failed", error=_error_text(exc),
+                               document_id=result.get("document_id") if isinstance(result, dict) else None)
+            return
+        if card is not None:
+            result["document_card"] = card
+            self.run_log.event("document_card", document_id=result.get("document_id"), card=card)
+
+
+def early_done_note(base: dict, missing: str = "") -> str:
+    """The operational note after a deferred contract-mode "done" (the minimum acquisition base is unmet)."""
+    return ("[operational note] Research cannot end yet: the acquired source set is still thin "
+            f"({base.get('useful_documents')} useful document(s), minimum {base.get('min_documents')}; "
+            f"{base.get('scoped_coverage_pct')}% of the requested fields have a candidate from a source in their market "
+            f"scope, minimum {base.get('min_scoped_coverage_pct')}%). " + (f"{missing} " if missing else "")
+            + "Acquire NEW sources now (official importer / manufacturer specification pages or PDFs, target-market "
+              'price lists or brochures). Reply {"done": true, ...} again only if nothing more can be found.')
 
 
 def _doc_metas(events: list[dict], cache, documents_dir: Path) -> list[dict]:
@@ -2263,7 +2315,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                              config.target_market)
     harvester = RunHarvester(cache, specs, run_log, enabled=config.layered_harvest_enabled)
     tools = ToolSession(ctx, run_log, config, cancel_event=cancel_event,
-                        on_documents=harvester.observe if config.layered_harvest_enabled else None)
+                        on_documents=harvester.observe if config.layered_harvest_enabled else None, specs=specs)
     tracker = tools.tracker
     run_context: dict = {}
     caller = ModelCaller(client, run_log, config, run_context=run_context, cancel_event=cancel_event)
@@ -2299,9 +2351,16 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         task = build_user_message(payload, config.include_level3, config.max_steps, notes_for_variant, specs,
                                   config.primary_research_no_artifact_stop)
     messages: list[dict] = [
-        {"role": "system", "content": research_system_prompt(config.acquisition_mode)},
+        {"role": "system", "content": research_system_prompt(config.acquisition_mode,
+                                                             config.acquisition_document_card)},
         {"role": "user", "content": task},
     ]
+    research_prompt_hash = hashlib.sha256(messages[0]["content"].encode("utf-8")).hexdigest()[:12]
+    from .run_profiles import env_overrides as list_env_overrides
+    try:       # informational: env values that differ from the code defaults (a named profile ignores them)
+        env_overrides = list_env_overrides()
+    except Exception:  # noqa: BLE001
+        env_overrides = []
     run_log.write_input(payload)
     run_log.event("run_started", model=research_model, research_model=research_model,
                   finalizer_model=finalizer_model, record_id=record_id, prompt_version=PROMPT_VERSION,
@@ -2312,7 +2371,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
                   target_market=config.target_market, vehicle_label=vehicle_ctx,
                   tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode,
-                  acquisition_mode=config.acquisition_mode)
+                  acquisition_mode=config.acquisition_mode,
+                  acquisition_document_card=config.acquisition_document_card, run_profile=config.run_profile,
+                  research_prompt_hash=research_prompt_hash, env_overrides=env_overrides)
     try:
         memory = ResearchMemory.for_cache(cache) if config.research_memory_enabled else None
     except Exception as exc:  # memory problems never cost the run
@@ -2389,6 +2450,10 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "requested_fields": requested_fields,
             "target_market": config.target_market,
             "acquisition_mode": config.acquisition_mode,
+            "acquisition_document_card": config.acquisition_document_card,
+            "run_profile": config.run_profile,
+            "research_prompt_hash": research_prompt_hash,
+            "env_overrides": env_overrides,
             "status": final_status,
             "stop_reason": stop_reason,
             "research_steps": steps_done,
@@ -2454,6 +2519,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         # an under-acquired extension beyond the normal ceiling ends once it stops acquiring (extension futility).
         research_tools = acquisition_tool_specs(tool_specs()) if contract else tool_specs()
         research_allowed = ACQUISITION_TOOLS if contract else None
+        done_deferred_last = False            # contract: the previous research turn was a deferred "done"
         try:
             for step in range(1, hard_ceiling + 1):
                 message = caller(outgoing_messages(messages, config), phase="research", tools=research_tools,
@@ -2462,8 +2528,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 calls = message.get("tool_calls") or []
                 if not calls:
                     final_text = message.get("content") or ""
-                    stop_reason, steps_done = "model_finished", step
+                    steps_done = step
+                    # contract: an early "done" cannot bypass the MINIMUM ACQUISITION BASE. Before or at the normal
+                    # ceiling with the base unmet, the first "done" is deferred once; a second consecutive one, an
+                    # extension turn's "done" (the futility rule's signal) or the hard ceiling stop as before.
+                    if (contract and step < hard_ceiling and step <= config.max_steps and not done_deferred_last
+                            and not acq.base()[0]):
+                        acq.defer("model_finished", step)
+                        done_deferred_last = True
+                        messages.append({"role": "user", "content": early_done_note(
+                            acq.base()[1], missing_categories_note(acq.missing_categories()))})
+                        continue
+                    stop_reason = "model_finished"
                     break
+                done_deferred_last = False
                 calls_before = len(tools.tool_calls)
                 tools.execute(calls, messages, phase="research", allowed=research_allowed)
                 steps_done = step
@@ -2542,6 +2620,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             harvester.observe(ctx.documents_opened, "deterministic_harvest")
             harvest_summary = harvest_report(trace_events(run_log), specs, vehicle_ctx, harvester, config)
             run_log.event("deterministic_harvest_summary", **harvest_summary)
+            # parser-gap telemetry (src/parser_gaps.py): labels with no harvested value; observational, never raises
+            log_parser_gaps(run_log, cache=cache, adm=ctx.admission, documents=ctx.documents_opened, specs=specs)
             try:
                 sweep = run_document_sweep(session=tools, caller=caller, specs=specs, payload=payload, config=config,
                                            run_log=run_log, cache=cache, documents_dir=documents_dir,

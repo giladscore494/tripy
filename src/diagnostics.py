@@ -57,6 +57,7 @@ from urllib.parse import urlparse
 SCHEMA = "tripy-diagnostics/1"
 DIAGNOSTICS_FILE = "diagnostics.json"
 DIAGNOSTICS_STREAM = "diagnostics.jsonl"
+PARSER_GAPS_FILE = "parser_gaps.jsonl"
 
 DETERMINISTIC_HARVEST_MISS = "DETERMINISTIC_HARVEST_MISS"
 DETERMINISTIC_VALUE_MISMATCH = "DETERMINISTIC_VALUE_MISMATCH"
@@ -364,6 +365,7 @@ def acquisition_summary(events: list[dict], turns: list[dict]) -> dict:
                                          sum(1 for t in turns if t.get("qualifying_artifact") is False)),
         "extended_turns": summary.get("extended_turns", sum(1 for t in turns if t["extended_beyond_normal_budget"])),
         "stop_deferred_count": summary.get("stop_deferred_count"),
+        "done_deferred_count": summary.get("done_deferred_count"),
         "minimum_base_met": summary.get("minimum_acquisition_met"),
         "stop_reason": summary.get("stop_reason") or stopped.get("reason"),
         "run_stop_reason": stopped.get("reason"),
@@ -662,6 +664,33 @@ def run_totals(events: list[dict], result: dict | None = None) -> dict:
             else None, "wall_time_s": wall}
 
 
+def parser_gap_summary(events: list[dict]) -> dict:
+    """The run's parser gaps (src/parser_gaps.py: a field label in a document, no harvested value) joined with what the
+    document sweep found: per field {label_hits_no_value, recovered_by_sweep}, where recovered_by_sweep counts
+    `candidate_missed_by_deterministic_harvest` events for that field on one of that field's gap documents."""
+    event = next((e for e in reversed(events) if e.get("kind") == "parser_gaps"), None)
+    if event is None:
+        return {"recorded": False, "failed": any(e.get("kind") == "parser_gaps_failed" for e in events)}
+    rows = [r for r in event.get("rows") or [] if isinstance(r, dict)]
+    fields: dict[str, dict] = {}
+    gap_docs: dict[str, set] = {}
+    for row in rows:
+        name = _norm_field(row.get("field"))
+        fields.setdefault(name, {"label_hits_no_value": 0, "recovered_by_sweep": 0})["label_hits_no_value"] += 1
+        gap_docs.setdefault(name, set()).add(str(row.get("document_id")))
+    for missed in events:
+        if missed.get("kind") != "candidate_missed_by_deterministic_harvest":
+            continue
+        name = _norm_field(missed.get("field"))
+        if str(missed.get("document_id")) in gap_docs.get(name, ()):
+            fields[name]["recovered_by_sweep"] += 1
+    return {"recorded": True, "gaps_total": event.get("gaps_total", len(rows)), "truncated": event.get("truncated", 0),
+            "fields_with_gaps": event.get("fields_with_gaps", len(fields)),
+            "documents_scanned": event.get("documents_scanned"), "duration_ms": event.get("duration_ms"),
+            "recovered_by_sweep": sum(f["recovered_by_sweep"] for f in fields.values()),
+            "fields": fields, "rows": rows}
+
+
 def run_configuration(events: list[dict]) -> dict:
     """The configuration a run used, as recorded at run start (runs before ACQUISITION_MODE are legacy)."""
     started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
@@ -676,12 +705,19 @@ def run_configuration(events: list[dict]) -> dict:
             "sweep_max_attempts": sweep.get("max_attempts") or glm.get("chat_max_attempts"),
             "sweep_max_fields": agent.get("document_sweep_max_fields"),
             "sweep_max_candidates": agent.get("document_sweep_max_candidates"),
-            "sweep_max_packet_chars": agent.get("document_sweep_packet_max_chars")}
+            "sweep_max_packet_chars": agent.get("document_sweep_packet_max_chars"),
+            # runs before the document card / run profiles had neither: card off, no profile
+            "document_card": bool(started.get("acquisition_document_card", agent.get("acquisition_document_card"))),
+            "run_profile": started.get("run_profile") or agent.get("run_profile") or None,
+            # informational (env values differing from the code defaults; a named profile ignores them): not part of
+            # config_key, whose other entries already hold the effective values
+            "env_overrides": [o.get("text") for o in started.get("env_overrides") or [] if isinstance(o, dict)]}
 
 
 def config_key(config: dict) -> str:
-    return " | ".join(f"{k}={config.get(k)}" for k in ("acquisition_mode", "research_model", "sweep_model",
-                                                         "sweep_thinking", "sweep_max_attempts", "sweep_max_fields",
+    return " | ".join(f"{k}={config.get(k)}" for k in ("run_profile", "acquisition_mode", "document_card",
+                                                         "research_model", "sweep_model", "sweep_thinking",
+                                                         "sweep_max_attempts", "sweep_max_fields",
                                                          "sweep_max_candidates"))
 
 
@@ -749,6 +785,7 @@ def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record
         "document_sweep": {"summary": sweep, "calls": calls},
         "recovery": recovery_summary(events),
         "final_fields": final_field_states(events),
+        "parser_gaps": parser_gap_summary(events),
         "totals": run_totals(events, result),
         "summary_text": summary_text(acq, sweep),
         "note": "observational telemetry; nothing here changes research behaviour",
@@ -807,6 +844,8 @@ def vehicle_row(diag: dict) -> dict:
     # end-to-end sections are absent from diagnostics.json files written before they existed
     rec, final, totals = diag.get("recovery") or {}, diag.get("final_fields") or {}, diag.get("totals") or {}
     config = diag.get("configuration") or {}
+    gaps = diag.get("parser_gaps") or {}
+    gaps = gaps if gaps.get("recorded") else {}
     counts = final.get("counts") or {}
     phases = totals.get("by_phase") or {}
     research = phases.get("research") or {}
@@ -846,6 +885,9 @@ def vehicle_row(diag: dict) -> dict:
             "acq_tokens": (a.get("input_tokens") or 0) + (a.get("output_tokens") or 0)
             if a.get("input_tokens") is not None or a.get("output_tokens") is not None else None,
             "acq_extension_exhausted": a.get("extension_exhausted"),
+            "acq_done_deferred": a.get("done_deferred_count"),
+            "parser_gap_rows": gaps.get("gaps_total"), "parser_gap_fields": gaps.get("fields_with_gaps"),
+            "parser_gap_recovered_by_sweep": gaps.get("recovered_by_sweep"),
             "rec_attempts": rec.get("attempts"), "rec_model_calls": rec.get("model_calls"),
             "rec_billable_searches": rec.get("billable_searches"), "rec_fetches": rec.get("fetches"),
             "rec_fields_open_before": rec.get("fields_open_before"),
@@ -886,7 +928,35 @@ def aggregate(diagnostics: list[dict]) -> dict:
                                  if k not in ("schema", "generated_at")}}
                         for key, items in sorted(groups.items())}
     out["per_vehicle"] = [vehicle_row(d) for d in diagnostics]
+    out["parser_gaps_by_field"] = parser_gaps_by_field(diagnostics)
     return out
+
+
+def parser_gap_rows(diagnostics: list[dict]) -> list[dict]:
+    """Every parser-gap row of the given vehicle runs, with its run_id / record_id (parser_gaps.jsonl)."""
+    return [{"run_id": d.get("run_id"), "record_id": d.get("record_id"), **row}
+            for d in diagnostics for row in ((d.get("parser_gaps") or {}).get("rows") or [])]
+
+
+def parser_gaps_by_field(diagnostics: list[dict]) -> list[dict]:
+    """The catalog-wide parser backlog: per field, across runs, the gap rows, the runs with a gap, the rows the sweep
+    recovered and the top-3 matched aliases; most widespread first (runs with a gap, then rows)."""
+    out: dict[str, dict] = {}
+    aliases: dict[str, Counter] = {}
+    for d in diagnostics:
+        gaps = d.get("parser_gaps") or {}
+        if not gaps.get("recorded"):
+            continue
+        for name, item in (gaps.get("fields") or {}).items():
+            entry = out.setdefault(name, {"field": name, "gap_rows": 0, "runs_with_gap": 0, "recovered_by_sweep": 0})
+            entry["gap_rows"] += item.get("label_hits_no_value", 0)
+            entry["runs_with_gap"] += 1
+            entry["recovered_by_sweep"] += item.get("recovered_by_sweep", 0)
+        for row in gaps.get("rows") or []:
+            aliases.setdefault(_norm_field(row.get("field")), Counter())[str(row.get("matched_alias"))] += 1
+    for name, entry in out.items():
+        entry["top_matched_aliases"] = [{"alias": a, "rows": n} for a, n in aliases.get(name, Counter()).most_common(3)]
+    return sorted(out.values(), key=lambda e: (-e["runs_with_gap"], -e["gap_rows"], e["field"]))
 
 
 def _aggregate_stats(diagnostics: list[dict]) -> dict:
@@ -971,7 +1041,8 @@ def vehicle_dirs(runs_dir: Path | str, run_ids: Iterable[str] | None = None) -> 
 
 def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, out_dir: Path | str | None = None,
                     *, rebuild: bool = False) -> dict:
-    """Aggregate every vehicle of the given runs (default: all) into benchmark.json + per_vehicle.csv / .jsonl."""
+    """Aggregate every vehicle of the given runs (default: all) into benchmark.json + per_vehicle.csv / .jsonl and
+    parser_gaps.jsonl (one parser-gap row per line, with run_id / record_id)."""
     from .app_config import redact_obj
     from .storage.atomic import atomic_write_json, atomic_write_text
 
@@ -984,6 +1055,8 @@ def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, 
     if out_dir is not None:
         out = Path(out_dir)
         atomic_write_json(out / "benchmark.json", result, durable=True)
+        atomic_write_text(out / PARSER_GAPS_FILE, "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
+                                                         for r in redact_obj(parser_gap_rows(diags))), durable=True)
         atomic_write_text(out / "per_vehicle.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
                                                              for r in result["per_vehicle"]), durable=True)
         if result["per_vehicle"]:

@@ -191,7 +191,7 @@ def test_dashboard_never_calls_the_api(tmp_path, make_ctx, monkeypatch):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
     client = PhaseGLM([read_docs(ids[:3]), say({"summary": "primary", "fields": {}})])
-    result, events, _ = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"],
+    result, events, _ = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"], primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0,
                             field_recovery_max_attempts=1)
     calls_before = dict(client.calls)
 
