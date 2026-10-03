@@ -32,6 +32,7 @@ import copy
 import hashlib
 import json
 import sys
+import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -48,12 +49,13 @@ from .storage.run_log import read_events
 
 REPLAY_FILE = "binding_replay.jsonl"
 SUMMARY_FILE = "binding_replay_summary.json"
-REPLAY_VERSION = "binding-replay-v1"
+REPLAY_VERSION = "binding-replay-v2"
 ROOT = Path(__file__).resolve().parent
 # the code and data binding depends on: a change to any of them invalidates a cached replay
 VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", ROOT / "structure_harvest.py",
                  ROOT / "candidate_harvest.py", ROOT / "binding_replay.py", ROOT / "source_authority.py",
-                 ROOT.parent / "data" / "identity_vocabulary.json", ROOT.parent / "data" / "catalog_trim_index.json")
+                 ROOT.parent / "data" / "identity_vocabulary.json", ROOT.parent / "data" / "catalog_trim_index.json",
+                 ROOT.parent / "data" / "enrichment_fields.json", ROOT / "fields.py")
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
                 "binding_requirement", "binding_version", "year_context")
@@ -361,7 +363,13 @@ def _summary(run_dir: Path, items: list[dict], recorded: list[dict], after: dict
                         "best_variant_match_recorded": _best(r.get("variant_match_recorded") for r in admitted),
                         "best_variant_match_now": _best(r.get("variant_match_now") for r in rows),
                         "evidence": len(admitted), "candidates": len(rows) - len(admitted),
-                        "blocking_dimensions": dict(blocking)}
+                        "blocking_dimensions": dict(blocking),
+                        "best_binding_level_now": max((r["binding_level_now"] for r in rows
+                                                       if r.get("binding_level_now") in LEVELS),
+                                                      key=level_index, default=None),
+                        "binding_level_histogram": dict(Counter(r["binding_level_now"] for r in admitted
+                                                                if r.get("binding_level_now") in LEVELS)),
+                        "most_common_blocking_dimension": blocking.most_common(1)[0][0] if blocking else None}
     gaps = Counter(g for r in evidence if r.get("variant_match_now") not in ("exact", None)
                    for g in r.get("binding_gap_now") or [])
     year_now = Counter(str((r.get("binding_dimensions_now") or {}).get("year", {}).get("status") or "absent")
@@ -400,13 +408,55 @@ def load_replay(run_dir: Path | str) -> dict | None:
     summary = _read_json(run_dir / SUMMARY_FILE)
     if not summary or summary.get("code_version") != code_version():
         return None
-    items = read_events(run_dir / REPLAY_FILE) if (run_dir / REPLAY_FILE).is_file() else []
+    if not (run_dir / REPLAY_FILE).is_file():
+        return None
+    items = read_events(run_dir / REPLAY_FILE)
     return {"summary": summary, "items": items}
 
 
-def load_or_replay(run_dir: Path | str, cache_dir: Path | str | None = None) -> dict:
-    """The cached replay while the code version is unchanged, else a fresh one (written next to the run)."""
-    return load_replay(run_dir) or replay_run(run_dir, cache_dir)
+def load_or_replay(run_dir: Path | str, cache_dir: Path | str | None = None, *, timeout_s: float = 30) -> dict:
+    """Reuse a current replay; compute old runs in a killable process with a hard per-run deadline.
+
+    The child never writes. Only a complete response is persisted, so a timeout cannot publish a partial replay
+    or leave a background task writing after diagnostics returned.
+    """
+    cached = load_replay(run_dir)
+    if cached is not None:
+        return cached
+    code = ("import json,sys; from src.binding_replay import replay_run; "
+            "print(json.dumps(replay_run(sys.argv[1], sys.argv[2] or None, write=False), ensure_ascii=False))")
+    try:
+        proc = subprocess.run([sys.executable, "-c", code, str(run_dir), str(cache_dir or "")],
+                              cwd=ROOT.parent, capture_output=True, text=True, timeout=timeout_s, check=True)
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"Binding replay exceeded {timeout_s:g} s") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(exc.stderr.strip()[-2000:] or str(exc)) from exc
+    replay = json.loads(proc.stdout)
+    atomic_write_text(Path(run_dir) / REPLAY_FILE, "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                                                          for r in replay["items"]))
+    atomic_write_json(Path(run_dir) / SUMMARY_FILE, replay["summary"])
+    return replay
+
+
+def replay_after_result(run_log, cache_root) -> None:
+    """Observational run-end hook. A replay failure cannot alter the result or status."""
+    try:
+        replay = replay_run(run_log.dir, cache_root, write=True)
+        v = replay["summary"]["vehicle"]
+        run_log.event("binding_replay_written", fields_ok_recorded=v["fields_ok_recorded"],
+                      fields_ok_now=v["fields_ok_now"], evidence_exact_recorded=v["evidence_exact_recorded"],
+                      evidence_exact_now=v["evidence_exact_now"], gap_counts=v["gap_counts"])
+    except Exception as exc:
+        # The listener may itself fail; diagnostics must never cost a run.
+        from .server_logging import get_logger
+        error = f"{type(exc).__name__}: {exc}"
+        get_logger("binding_replay").warning("replay for %s failed: %s", run_log.dir, error)
+        try:
+            run_log.event("binding_replay_failed", error=error)
+        except Exception:
+            pass
+
 
 
 def run_dirs(runs_dir: Path | str) -> list[Path]:

@@ -272,6 +272,8 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     if metrics_fn is not None:
         result["metrics"] = metrics_fn(result)
     log.write_result(result)
+    from .binding_replay import replay_after_result
+    replay_after_result(log, cache.root)
     log.event("recovery_finished", status=status, finalizer_model=finalizer_model, parse_note=result["parse_note"],
               usage=caller.usage["finalization"], cost=cost)
     return result

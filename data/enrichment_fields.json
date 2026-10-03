@@ -1,5 +1,5 @@
 {
- "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in. Recovery / market keys: recovery_cluster (technical_spec | performance | charging_ev | equipment | multimedia | tires_wheels | commercial | warranty: fields one kind of source usually answers together; the tail recovery unit), market_sensitivity (high | medium | low: how much the value can differ between markets for the same technical variant), portability_scope (none | exact_technical_variant: the binding level at which an official foreign-market fact may count for the target market when no target-market source contradicts it; the source market is never rewritten), unknown_market_policy (not_target | portable; default not_target: an item whose market the source does not establish is never target-market evidence by itself; portable lets it count for the target market only through the same deterministic portability verdict as an official foreign fact, and only on a field whose portability_scope is not none and market_sensitivity is not high; its market stays unknown). Reuse key: reuse_scope (none | exact_market_trim | exact_technical_variant | body_powertrain): the identity scope within which an admitted, exactly bound fact may be reused for another variant (src/research_memory.py); a reused fact is re-admitted against the new target and must bind exactly again, so a source naming another powertrain never crosses (body_powertrain is supported for fields whose own binding requirement is body_powertrain). Commercial, warranty, equipment, multimedia and tyre fields are never reused; time-sensitive fields never are.",
+ "_about": "Enrichment fields requested from the model AND the field dictionary of the deterministic candidate harvester. The research prompt, field-state evaluation, targeted field recovery, the finalizer bundle, coverage metrics, Hebrew UI labels and deterministic candidate extraction are all driven by this file: add a field here (or pass ENRICHMENT_FIELDS / ENRICHMENT_SCHEMA_PATH) and it gets the same treatment with no code change. Keys: name (required), description, group, unit, applies_to (Level 1.5 propulsion_normalized values; omitted = all vehicles), recovery_attempts (overrides FIELD_RECOVERY_MAX_ATTEMPTS; 0 = never retried), display_name_he (Hebrew label for the UI). Dictionary keys (all optional; a field without aliases is simply not harvested): matcher (numeric | boolean | enum | gearbox | tire_size | charging_time | charging_window | warranty | price | text), component (part of a compound matcher this field takes), aliases_he / aliases_en / abbreviations (labels that identify the field), positive_context_terms_he/_en (raise parser confidence; with require_context at least one must be near the value), negative_context_terms_he/_en (reject a match unless positive context is also present), expected_units / accepted_unit_variants / normalized_unit, value_type, patterns (regex -> value for fixed textual forms), plausible_min / plausible_max (parser sanity range only, never truth), enum_values, conversion_rules (exact unit arithmetic only), ambiguity_rules (attach a hint and lower parser confidence), exclusion_rules (reject when a term is present unless an `unless` term is too), warranty_kind. A harvested candidate is NEVER evidence: it only lists values the code located for the model to review. Semantic / admission keys: semantic_definition (what the field means, shown to models), binding_requirement (exact_technical_variant | exact_market_trim | body_powertrain: the server-side document binding a value needs to count as variant_match=exact), time_sensitive (the value is valid as of a date), semantic_exclusions ([{terms, applies_to?, reason}]: evidence whose value clause uses these terms states a different quantity and is rejected by the admission gate), not_applicable_when ([{field, values}]: the field is not applicable when admitted target evidence of another field has one of these values). applies_to for charging / range fields is plug_in + battery_electric: a regular hybrid does not plug in. Recovery / market keys: recovery_cluster (technical_spec | performance | charging_ev | equipment | multimedia | tires_wheels | commercial | warranty: fields one kind of source usually answers together; the tail recovery unit), market_sensitivity (high | medium | low: how much the value can differ between markets for the same technical variant), portability_scope (none | exact_technical_variant: the binding level at which an official foreign-market fact may count for the target market when no target-market source contradicts it; the source market is never rewritten), unknown_market_policy (not_target | portable; default not_target: an item whose market the source does not establish is never target-market evidence by itself; portable lets it count for the target market only through the same deterministic portability verdict as an official foreign fact, and only on a field whose portability_scope is not none and market_sensitivity is not high; its market stays unknown). Reuse key: reuse_scope (none | exact_market_trim | exact_technical_variant | body_powertrain): the identity scope within which an admitted, exactly bound fact may be reused for another variant (src/research_memory.py); a reused fact is re-admitted against the new target and must bind exactly again, so a source naming another powertrain never crosses (body_powertrain is supported for fields whose own binding requirement is body_powertrain). Commercial, warranty, equipment, multimedia and tyre fields are never reused; time-sensitive fields never are. PR36: semantic_exclusions also apply at candidate origins; propulsion-scoped rules require known propulsion. plausible_by_propulsion / plausible_by_segment: context-> {min,max} overrides global sanity bounds, never truth. Level 1.5 identity.segment (raw_row.vehicle_segment fallback) supplies private/commercial, NOT M1/N1. Unknown segment retains global price bounds and conservative whole-inch wheel steps. allowed_step: normalized numeric granularity; step_by_segment: [{segment,gross_weight_min_exclusive?,step}]. Commercial wheels allow half inches only when recorded gross_weight_kg is >3500; no classification is invented. sibling_group: numeric fields competing for the same labelled span; axis_token: one-letter axis in ordered composite dimensions. value_exclusion_patterns: [{regex,reason}] for malformed text values. catalog_trim_hint: reject metric text/multiple model tokens, prefer target-model catalog trim tokens; nonmatching names stay with trim_not_in_catalog and reduced parser confidence.",
  "version": "enrichment-v2",
  "dictionary_version": "field-dictionary-v1",
  "groups": {
@@ -509,6 +509,24 @@
       "מערכת ההנעה ההיברידית"
      ],
      "reason": "for hybrids torque_nm is the combustion engine's torque; motor / system torque is a different quantity"
+    }
+   ],
+   "plausible_by_propulsion": {
+    "battery_electric": {
+     "min": 100
+    }
+   },
+   "conversion_rules": [
+    {
+     "from_unit": "kgf·m",
+     "from_unit_variants": [
+      "kgfm",
+      "kgf.m",
+      "kgf m",
+      "kgf-m"
+     ],
+     "to_unit": "Nm",
+     "operation": "multiply_by_9_80665"
     }
    ]
   },
@@ -1551,7 +1569,21 @@
    "recovery_cluster": "charging_ev",
    "market_sensitivity": "medium",
    "portability_scope": "none",
-   "reuse_scope": "exact_technical_variant"
+   "reuse_scope": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "V2L",
+      "V2H",
+      "vehicle-to-load",
+      "vehicle-to-home",
+      "discharge",
+      "פריקה",
+      "הזנה חיצונית"
+     ],
+     "reason": "discharge / external supply, not charging power"
+    }
+   ]
   },
   {
    "name": "dc_max_charging_power_kw",
@@ -1664,14 +1696,28 @@
     "kilowatt",
     "kilowatts"
    ],
-   "plausible_min": 3,
+   "plausible_min": 20,
    "plausible_max": 1000,
    "semantic_definition": "Maximum DC charging power in kW of a plug-in vehicle.",
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "charging_ev",
    "market_sensitivity": "medium",
    "portability_scope": "none",
-   "reuse_scope": "exact_technical_variant"
+   "reuse_scope": "exact_technical_variant",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "V2L",
+      "V2H",
+      "vehicle-to-load",
+      "vehicle-to-home",
+      "discharge",
+      "פריקה",
+      "הזנה חיצונית"
+     ],
+     "reason": "discharge / external supply, not charging power"
+    }
+   ]
   },
   {
    "name": "length_mm",
@@ -1757,7 +1803,9 @@
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
    "unknown_market_policy": "portable",
-   "reuse_scope": "exact_technical_variant"
+   "reuse_scope": "exact_technical_variant",
+   "sibling_group": "body_dimensions",
+   "axis_token": "l"
   },
   {
    "name": "width_mm",
@@ -1877,7 +1925,9 @@
      ],
      "reason": "width with mirrors"
     }
-   ]
+   ],
+   "sibling_group": "body_dimensions",
+   "axis_token": "w"
   },
   {
    "name": "height_mm",
@@ -1979,7 +2029,9 @@
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "medium",
    "portability_scope": "none",
-   "reuse_scope": "exact_market_trim"
+   "reuse_scope": "exact_market_trim",
+   "sibling_group": "body_dimensions",
+   "axis_token": "h"
   },
   {
    "name": "wheelbase_mm",
@@ -2044,7 +2096,8 @@
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
    "unknown_market_policy": "portable",
-   "reuse_scope": "exact_technical_variant"
+   "reuse_scope": "exact_technical_variant",
+   "sibling_group": "body_dimensions"
   },
   {
    "name": "curb_weight_kg",
@@ -2126,7 +2179,25 @@
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "medium",
    "portability_scope": "none",
-   "reuse_scope": "exact_market_trim"
+   "reuse_scope": "exact_market_trim",
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "towing",
+      "braked",
+      "unbraked",
+      "payload",
+      "load capacity",
+      "גרירה",
+      "עם בלמים",
+      "מטען",
+      "כושר העמסה",
+      "gross",
+      "משקל כולל"
+     ],
+     "reason": "gross / towing / payload weight, not curb weight"
+    }
+   ]
   },
   {
    "name": "ground_clearance_mm",
@@ -2612,7 +2683,10 @@
       "driver display",
       "לוח מחוונים",
       "head-up",
-      "תצוגה עילית"
+      "תצוגה עילית",
+      "HUD",
+      "תצוגת נהג",
+      "צג נהג"
      ],
      "reason": "a different screen"
     }
@@ -3148,7 +3222,15 @@
    "recovery_cluster": "tires_wheels",
    "market_sensitivity": "high",
    "portability_scope": "none",
-   "reuse_scope": "none"
+   "reuse_scope": "none",
+   "allowed_step": 1,
+   "step_by_segment": [
+    {
+     "segment": "commercial",
+     "gross_weight_min_exclusive": 3500,
+     "step": 0.5
+    }
+   ]
   },
   {
    "name": "tire_size_front",
@@ -3272,7 +3354,31 @@
    "recovery_cluster": "commercial",
    "market_sensitivity": "high",
    "portability_scope": "none",
-   "reuse_scope": "none"
+   "reuse_scope": "none",
+   "catalog_trim_hint": true,
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "צריכת",
+      "טווח",
+      "מחיר",
+      "מע\"מ",
+      "kWh",
+      "km"
+     ],
+     "reason": "metric / price text, not a trim name"
+    }
+   ],
+   "value_exclusion_patterns": [
+    {
+     "regex": "\\d+(?:[.,]\\d+)?\\s*(?:kw(?:h)?|km|mm|kg|nm|hp|ps|l/100|כ\"ס|ק\"מ|מ\"מ|ק\"ג)(?!\\w)",
+     "reason": "number with a unit, not a trim name"
+    },
+    {
+     "regex": "(?:\\b[a-z]{1,3}\\d{1,2}\\+?\\b[\\s,;/|]+){2,}[a-z]{1,3}\\d{1,2}\\+?\\b",
+     "reason": "multiple model names, not a trim name"
+    }
+   ]
   },
   {
    "name": "list_price",
@@ -3369,7 +3475,27 @@
    "market_sensitivity": "high",
    "portability_scope": "none",
    "reuse_scope": "none",
-   "time_sensitive": true
+   "time_sensitive": true,
+   "plausible_by_segment": {
+    "private": {
+     "min": 20000
+    }
+   },
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "fee",
+      "deposit",
+      "discount",
+      "הנחה",
+      "מקדמה",
+      "אגרה",
+      "תוספת",
+      "אביזר"
+     ],
+     "reason": "fee / deposit / discount / accessory, not list price"
+    }
+   ]
   },
   {
    "name": "registration_licence_fee",
@@ -3462,7 +3588,20 @@
    "market_sensitivity": "high",
    "portability_scope": "none",
    "reuse_scope": "none",
-   "time_sensitive": true
+   "time_sensitive": true,
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "battery",
+      "high-voltage",
+      "hybrid system",
+      "סוללה",
+      "מערכת היברידית",
+      "מתח גבוה"
+     ],
+     "reason": "battery / hybrid-system warranty, not vehicle warranty"
+    }
+   ]
   },
   {
    "name": "battery_hybrid_warranty",
@@ -3540,7 +3679,20 @@
    "market_sensitivity": "high",
    "portability_scope": "none",
    "reuse_scope": "none",
-   "time_sensitive": true
+   "time_sensitive": true,
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "battery",
+      "high-voltage",
+      "hybrid system",
+      "סוללה",
+      "מערכת היברידית",
+      "מתח גבוה"
+     ],
+     "reason": "battery / hybrid-system warranty, not vehicle warranty"
+    }
+   ]
   },
   {
    "name": "warranty_years",
@@ -3583,7 +3735,20 @@
    "market_sensitivity": "high",
    "portability_scope": "none",
    "reuse_scope": "none",
-   "time_sensitive": true
+   "time_sensitive": true,
+   "semantic_exclusions": [
+    {
+     "terms": [
+      "battery",
+      "high-voltage",
+      "hybrid system",
+      "סוללה",
+      "מערכת היברידית",
+      "מתח גבוה"
+     ],
+     "reason": "battery / hybrid-system warranty, not vehicle warranty"
+    }
+   ]
   }
  ]
 }

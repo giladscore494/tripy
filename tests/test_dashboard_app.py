@@ -205,7 +205,7 @@ def test_technical_details_show_acquisition_and_sweep_diagnostics(data_env, monk
     assert any("SOURCE ACQUISITION" in str(c.value) for c in app.code)          # the compact run summary
 
 
-def test_technical_details_binding_tab_runs_the_replay_on_demand(data_env, monkeypatch):
+def test_technical_details_binding_tab_runs_the_replay_automatically(data_env, monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "k")
     monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")
     specs = [{"name": "curb_weight_kg", "applicable": True}]
@@ -224,8 +224,9 @@ def test_technical_details_binding_tab_runs_the_replay_on_demand(data_env, monke
     assert not app.exception, app.exception
     assert any(t.label == "Binding" for t in app.tabs)
     run_dir = data_env / run_id / "101122"
-    assert not (run_dir / "binding_replay_summary.json").exists()          # on demand only
-    app.button(key=f"binding_replay_{run_id}_101122").click().run()
+    assert (run_dir / "binding_replay_summary.json").exists()
+    assert any(h.value == "Binding replay" for h in app.subheader)
+    assert not any(b.label == "Run binding replay" for b in app.button)
     assert not app.exception, app.exception
     assert any(m.label == "Fields ok (recorded → now)" for m in app.metric)
     assert any(m.label == "Missing documents" and str(m.value) == "1" for m in app.metric)

@@ -997,15 +997,28 @@ def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
     if diag is None:
         return None
     try:
-        from .binding_replay import load_replay
+        from .binding_replay import load_replay, load_or_replay
         replay = load_replay(run_dir)
-    except Exception:  # noqa: BLE001 - replay metadata must never break diagnostics
-        replay = None
-    summary = (replay or {}).get("summary")
-    vehicle = (summary or {}).get("vehicle") if isinstance(summary, dict) else None
+        if replay is None and diag.get("complete"):
+            replay = load_or_replay(run_dir)
+    except Exception as exc:
+        return {**diag, "binding_replay": {"replay_error": f"{type(exc).__name__}: {exc}"}}
+    summary = (replay or {}).get("summary") or {}
+    vehicle = summary.get("vehicle")
     if not isinstance(vehicle, dict):
         return diag
-    return {**diag, "binding_replay": {"code_version": summary.get("code_version"), **vehicle}}
+    fields = [{"field": name, "state_recorded": f.get("state_recorded"), "state_now": f.get("would_be_state"),
+               "best_variant_match_now": f.get("best_variant_match_now"),
+               "best_binding_level_now": f.get("best_binding_level_now"),
+               "blocking_dims": f.get("blocking_dimensions") or {},
+               "binding_level_histogram": f.get("binding_level_histogram") or {},
+               "most_common_blocking_dimension": f.get("most_common_blocking_dimension")}
+              for name, f in (summary.get("fields") or {}).items()]
+    errors = list(dict.fromkeys(r["replay_error"] for r in replay["items"] if r.get("replay_error")))
+    return {**diag, "binding_replay": {"code_version": summary.get("code_version"), **vehicle,
+                                     "fields": fields, "replay_error": "; ".join(errors) or None},
+            "binding_replay_items": replay["items"]}
+
 
 
 # --- benchmark aggregation -----------------------------------------------------------------------------------------------
@@ -1095,6 +1108,12 @@ def vehicle_row(diag: dict) -> dict:
             # Binding Replay (when a binding_replay_summary.json exists for the run): fields ok with today's binding
             "replay_fields_ok_now": replay.get("fields_ok_now"),
             "replay_fields_ok_recorded": replay.get("fields_ok_recorded"),
+            "replay_evidence_exact_recorded": replay.get("evidence_exact_recorded"),
+            "replay_evidence_exact_now": replay.get("evidence_exact_now"),
+            "replay_rose_by_year_rules": replay.get("evidence_rose_by_year_rules"),
+            "replay_missing_documents": replay.get("missing_documents"),
+            "replay_error": replay.get("replay_error"),
+            "replay_fields": replay.get("fields") or [],
             "replay_gap_counts": json.dumps(replay["gap_counts"], sort_keys=True, ensure_ascii=False)
             if replay.get("gap_counts") is not None else None,
             "total_model_calls": totals.get("model_calls"), "total_input_tokens": totals.get("input_tokens"),
@@ -1258,6 +1277,11 @@ def per_vehicle_csv(rows: list[dict]) -> str:
     return buf.getvalue()
 
 
+def binding_replay_rows(diags: Iterable[dict]) -> list[dict]:
+    return [{"run_id": d.get("run_id"), "record_id": d.get("record_id"), **row}
+            for d in diags for row in d.get("binding_replay_items") or []]
+
+
 def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, out_dir: Path | str | None = None,
                     *, rebuild: bool = False) -> dict:
     """Aggregate every vehicle of the given runs (default: all) into benchmark.json + per_vehicle.csv / .jsonl and
@@ -1277,6 +1301,9 @@ def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, 
         atomic_write_json(out / "benchmark.json", result, durable=True)
         atomic_write_text(out / PARSER_GAPS_FILE, "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
                                                          for r in redact_obj(parser_gap_rows(diags))), durable=True)
+        atomic_write_text(out / "binding_replay_items.jsonl",
+                          "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
+                                  for r in redact_obj(binding_replay_rows(diags))), durable=True)
         atomic_write_text(out / "per_vehicle.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
                                                              for r in result["per_vehicle"]), durable=True)
         if result["per_vehicle"]:

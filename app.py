@@ -385,7 +385,7 @@ def _render_technical(record, views: list[dict], results: list[dict]) -> None:
             return
         tab_run, tab_docs, tab_results, tab_bench, tab_binding, tab_state = st.tabs(
             ["Diagnostics", "Documents", "Results", "Benchmark", "Binding", "Run state"])
-        with tab_run:
+        with tab_run, diagnostics_view.error_boundary("run"):
             if not results:
                 st.caption("No vehicle run folder has input.json, events.jsonl or result.json yet.")
             incomplete = [r for r in results if r.get("synthesized")]
@@ -395,19 +395,19 @@ def _render_technical(record, views: list[dict], results: list[dict]) -> None:
             for result in results:
                 run_view.render_vehicle(result, labels.get(result["record_id"], result["record_id"]), paths.runs_dir,
                                         manager.cache)
-        with tab_docs:
+        with tab_docs, diagnostics_view.error_boundary("docs"):
             run_view.render_documents_tab(manager.cache, results, paths.runs_dir)
-        with tab_results:
+        with tab_results, diagnostics_view.error_boundary("results"):
             run_view.render_results_tab(results, labels, paths.runs_dir, manager.cache)
-        with tab_bench:
+        with tab_bench, diagnostics_view.error_boundary("bench"):
             benchmark_view.render_benchmark(results, vehicles_by_id, labels, manager.cache, paths.runs_dir)
-        with tab_binding:      # Binding Replay (src/binding_replay.py): read-only, on demand
+        with tab_binding, diagnostics_view.error_boundary("binding"):      # Binding Replay (src/binding_replay.py): read-only, on demand
             for view in views:
                 if len(views) > 1:
                     st.markdown(f"**{ui.esc(view['title'])}**")
                 diagnostics_view.render_binding_replay(paths.runs_dir / record.run_id / view["record_id"],
                                                        manager.cache.root, key=f"{record.run_id}_{view['record_id']}")
-        with tab_state:
+        with tab_state, diagnostics_view.error_boundary("state"):
             st.json({k: v for k, v in record.to_dict().items() if k != "report"}, expanded=False)
 
 
@@ -453,6 +453,9 @@ def run_panel(run_id: str | None) -> None:
                 _render_vehicle_live(view)
                 if not record.active:
                     _render_vehicle_result(view, result, failed=failure is not None)
+                    st.subheader("Binding replay")
+                    diagnostics_view.render_binding_replay(paths.runs_dir / record.run_id / rid,
+                                                           manager.cache.root, key=f"main_{record.run_id}_{rid}")
         if not record.active and record.status != COMPLETED and record.error and not views:
             st.error(f"**{record.error.get('message')}**")
     with side:

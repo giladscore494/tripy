@@ -8,17 +8,28 @@ written into a run folder from here).
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from .. import diagnostics as diag_mod
+from ..binding_replay import code_version
 from ..storage.run_log import read_events
 from . import dashboard as ui
 
 _CACHE: dict[str, tuple[tuple, dict]] = {}
 _LOCK = threading.Lock()
+
+
+@contextmanager
+def error_boundary(label: str):
+    """Isolate sibling views: an error in an earlier tab must not leave later tabs empty."""
+    try:
+        yield
+    except Exception as exc:
+        st.error(f"{label} failed: {type(exc).__name__}: {exc}")
 
 
 def diagnostics_for(run_dir: Path) -> dict | None:
@@ -28,7 +39,8 @@ def diagnostics_for(run_dir: Path) -> dict | None:
         replay_path = run_dir / "binding_replay_summary.json"
         stamp = (events_path.stat().st_size, (run_dir / diag_mod.DIAGNOSTICS_FILE).stat().st_mtime_ns
                  if (run_dir / diag_mod.DIAGNOSTICS_FILE).exists() else 0,
-                 replay_path.stat().st_mtime_ns if replay_path.exists() else 0)
+                 replay_path.stat().st_mtime_ns if replay_path.exists() else 0,
+                 code_version())
     except OSError:
         return None
     key = str(run_dir)
@@ -211,7 +223,7 @@ def binding_rows(items: list[dict]) -> list[dict]:
     return rows
 
 
-def render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -> None:
+def _render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -> None:
     """Technical details · Binding: Binding Replay of one finished vehicle run (src/binding_replay.py), on demand and
     cached next to the run until the binding code changes. Read-only: the run's events and evidence never change."""
     from .. import binding_replay as replay_mod
@@ -221,13 +233,7 @@ def render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -
     if not (run_dir / "events.jsonl").is_file():
         st.caption("This vehicle run has no events.jsonl yet.")
         return
-    replay = replay_mod.load_replay(run_dir)
-    if replay is None and st.button("Run binding replay", key=f"binding_replay_{key}"):
-        with st.spinner("Replaying binding…"):
-            replay = replay_mod.replay_run(run_dir, cache_root)
-    if replay is None:
-        st.caption(f"No replay for the current binding code ({replay_mod.code_version()}) yet.")
-        return
+    replay = replay_mod.load_or_replay(run_dir, cache_root)
     summary, vehicle = replay["summary"], replay["summary"]["vehicle"]
     cols = st.columns(4)
     cols[0].metric("Fields ok (recorded → now)", f"{vehicle['fields_ok_recorded']} → {vehicle['fields_ok_now']}")
@@ -238,11 +244,20 @@ def render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -
     if vehicle.get("gap_counts"):
         st.caption("Blocking dimensions now: " + ", ".join(f"{k} {v}" for k, v in
                                                           sorted(vehicle["gap_counts"].items(), key=lambda kv: -kv[1])))
+    st.dataframe(pd.DataFrame([{"field": n, **f} for n, f in summary["fields"].items()]),
+                 hide_index=True, width="stretch")
     rows = binding_rows(replay["items"])
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     with st.expander("Replay JSON"):
         st.json({"summary": summary, "items": replay["items"]}, expanded=False)
+
+
+def render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -> None:
+    try:
+        _render_binding_replay(run_dir, cache_root, key=key)
+    except Exception as exc:
+        st.error(f"Binding replay failed: {type(exc).__name__}: {exc}")
 
 
 def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str, str],
@@ -275,6 +290,11 @@ def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str
                            file_name="tripy_parser_gaps.jsonl", mime="application/x-ndjson", width="stretch",
                            disabled=not gaps)
 
+        items = diag_mod.binding_replay_rows(diags)
+        st.download_button("Download binding_replay_items.jsonl",
+                           "".join(_json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in items),
+                           file_name="binding_replay_items.jsonl", mime="application/x-ndjson", width="stretch")
+
 
 def _render_series_benchmarks(series: list[dict]) -> None:
     """The benchmark.json / parser_gaps.jsonl each finished A/B series wrote (runs/_series/<id>/)."""
@@ -288,7 +308,8 @@ def _render_series_benchmarks(series: list[dict]) -> None:
                    + ("" if bench.get("complete") else " · partial"))
         folder = Path(bench["dir"])
         for name, mime in (("benchmark.json", "application/json"),
-                           (diag_mod.PARSER_GAPS_FILE, "application/x-ndjson")):
+                           (diag_mod.PARSER_GAPS_FILE, "application/x-ndjson"),
+                           ("binding_replay_items.jsonl", "application/x-ndjson")):
             path = folder / name
             if path.is_file():
                 st.download_button(f"Download {name}", path.read_bytes(), file_name=f"{item['series_id']}_{name}",
