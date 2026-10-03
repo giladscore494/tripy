@@ -141,7 +141,7 @@ def _listener(kind: str, event: dict) -> None:
         brief = {k: v for k, v in event.items()
                  if k not in ("ts", "seq", "result", "body", "glm_config", "headers", "tracking", "queue",
                               "reply_text", "candidates", "fields_with_candidates", "fields_without_candidates",
-                              "presented_candidate_keys", "triage", "clusters", "novelty", "states_before",
+                              "presented_candidate_keys", "offered_candidate_keys", "triage", "clusters", "novelty", "states_before",
                               "states_after")}
         if kind == "api_error":
             brief = {"request": brief.get("request_kind"), "attempt": f"{brief.get('attempt')}/{brief.get('max_attempts')}",

@@ -1664,7 +1664,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         run_log.event("cluster_recovery_started", cluster=name, attempt=attempt, round=round_no, mode=mode,
                       fields=open_fields, triage={f: (tri.get(f) or {}).get("triage") for f in open_fields},
                       max_attempts=max_attempts, turn_budget=base, turn_ceiling=ceiling,
-                      search_budget=budget.limit if budget else 0, presented_candidate_keys=presented,
+                      search_budget=budget.limit if budget else 0, offered_candidate_keys=presented,
                       ranked_documents=[{k: d.get(k) for k in ("document_id", "source_yield_score")} for d in ranked],
                       search_hints=len(hints), conflicts=sorted(conflicts), packet_chars=packet_chars)
         phase_ref["name"] = "field_recovery"
@@ -1679,6 +1679,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         extensions = 0
         searches_before = session.ctx.counters["search_cache_misses"]
         label = f"cluster:{name}"
+        announced_keys: list[str] = []     # candidates added to the NEXT request: presented once that call returns
         try:
             for turn_index in range(1, ceiling + 1):
                 if cap_reached():
@@ -1699,6 +1700,14 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                         "turn_ceiling": ceiling, "mode": mode}
                 message = caller(outgoing_messages(messages, config), phase="field_recovery", tools=model_tools,
                                  meta=meta)
+                # the call returned: the candidates it carried were really put in front of the model
+                if turn_index == 1 and presented:
+                    run_log.event("candidates_presented", source="cluster_recovery", cluster=name, attempt=attempt,
+                                  presented_candidate_keys=presented)
+                if announced_keys:
+                    run_log.event("cluster_candidates_announced", cluster=name, attempt=attempt, turn=turn_index - 1,
+                                  presented_candidate_keys=announced_keys)
+                    announced_keys = []
                 turns += 1
                 state["total_steps"] += 1
                 messages.append(_assistant_echo(message))
@@ -1755,9 +1764,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                     note.append("This turn produced novelty, so one more turn is allowed; reply with the JSON when "
                                 "done.")
                 messages[-1]["content"] += "\n[operational note] " + " ".join(note)
-                if announced:     # shown to the model now: never again a reason for a local-only pass
-                    run_log.event("cluster_candidates_announced", cluster=name, attempt=attempt, turn=turn_index,
-                                  presented_candidate_keys=[candidate_key(c) for v in announced.values() for c in v])
+                # shown to the model with the next request: logged (never again a reason for a local-only pass) only
+                # once that call returns
+                announced_keys = [candidate_key(c) for v in announced.values() for c in v]
         except GLMError as exc:  # stop spending on recovery; finalize with what we have
             error = _error_text(exc)
             state["stopped"] = "api_failure"
@@ -1968,6 +1977,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                                  inspection_has_content, packet_size, plan_chunks, promoted_or_missed, route_candidates,
                                  sweep_packet, sweep_summary, sweep_tool_specs)
     from .tail_planner import candidate_key, document_profile_for, usable_document
+    from .tail_planner import presented_keys as shown_keys
 
     market = config.target_market
     events = trace_events(run_log)
@@ -2056,6 +2066,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     turns, presented = 0, 0
     chunk_errors: list[str] = []
     failed_chunk_fields: list[str] = []
+    failed_chunk_offered: list[str] = []      # candidate keys offered in chunks that failed
     replies, follow_ups, chunk_log = [], [], []
     t_sweep = time.monotonic()
     for index, plan in enumerate(chunks, start=1):
@@ -2080,7 +2091,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
         run_log.event("document_sweep_started", turn_budget=max_turns, fields_to_review=packet["fields_to_review"],
                       candidates_presented=shown, fields_without_candidates=packet["fields_without_candidates"],
                       documents=len(doc_metas), packet_chars=size["chars"], allowed_tools=list(DOCUMENT_SWEEP_TOOLS),
-                      presented_candidate_keys=presented_keys, chunk=info,
+                      offered_candidate_keys=presented_keys, chunk=info,
                       local_snippet_fields=sorted(packet.get("local_snippets") or {}),
                       # diagnostic telemetry (observational; the packet sent is unchanged)
                       packet_document_ids=[d.get("document_id") for d in packet.get("cached_documents") or []],
@@ -2096,6 +2107,9 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
             for turn_index in range(1, max_turns + 1):
                 message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
                                  meta={"turn": turn_index, "turn_budget": max_turns, "chunk": index})
+                if turn_index == 1 and presented_keys:   # the call returned: the chunk's candidates were seen
+                    run_log.event("candidates_presented", source="document_sweep", chunk=info,
+                                  presented_candidate_keys=presented_keys)
                 turns += 1
                 chunk_turns += 1
                 messages.append(_assistant_echo(message))
@@ -2124,6 +2138,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
             error = _error_text(exc)
             chunk_errors.append(error)
             failed_chunk_fields.extend(f for f in fields if f not in failed_chunk_fields)
+            failed_chunk_offered.extend(presented_keys)
             run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict(), chunk=info)
             run_log.event("document_sweep_chunk_failed", **info, fields=fields, error=error,
                           timeout=bool(getattr(exc, "timeout", False)), attempts=getattr(exc, "attempts", None),
@@ -2158,6 +2173,9 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     summary["error"] = (chunk_errors[0] if len(chunk_errors) == 1 else chunk_errors) if chunk_errors else None
     summary["chunk_errors"] = chunk_errors
     summary["failed_chunk_fields"] = failed_chunk_fields
+    # candidates offered only in failed chunks: never seen by a model, so they stay fresh for recovery's local pass
+    seen = shown_keys(events)
+    summary["failed_chunk_candidates_kept_fresh"] = len({k for k in failed_chunk_offered if k not in seen})
     summary["follow_up_turn"] = follow_ups[0] if len(follow_ups) == 1 else (follow_ups or None)
     timeouts = sum(1 for e in events if e.get("kind") == "api_error" and (e.get("seq") or 0) > start_seq
                    and e.get("phase") == "document_sweep" and e.get("timeout"))

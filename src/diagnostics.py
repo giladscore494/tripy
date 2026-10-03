@@ -582,6 +582,8 @@ def sweep_summary(events: list[dict], calls: list[dict]) -> dict:
         "stage_latency_ms": finished.get("document_sweep_latency_ms"),
         "timeouts": sum(c["timeouts"] for c in calls),
         "failed_calls": sum(1 for c in calls if not c["call_success"]),
+        # candidates offered only in failed chunks (never seen by a model; still fresh for recovery's local pass)
+        "failed_chunk_candidates_kept_fresh": finished.get("failed_chunk_candidates_kept_fresh"),
     }
 
 
@@ -840,6 +842,7 @@ def vehicle_row(diag: dict) -> dict:
             "sweep_rejection_rate": s.get("evidence_rejection_rate"), "sweep_input_tokens": s.get("input_tokens"),
             "sweep_output_tokens": s.get("output_tokens"), "sweep_latency_ms": s.get("latency_ms"),
             "sweep_timeouts": s.get("timeouts"), "sweep_resolved_per_model_call": s.get("resolved_per_model_call"),
+            "sweep_failed_chunk_candidates_kept_fresh": s.get("failed_chunk_candidates_kept_fresh"),
             "acq_official_urls_discovered": a.get("official_urls_discovered"),
             "acq_tool_blocked": a.get("tool_blocked"), "acq_turn_reached_min_base": a.get("turn_reached_min_base"),
             "acq_tokens_until_min_base": a.get("tokens_until_min_base"),
