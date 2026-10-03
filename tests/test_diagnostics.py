@@ -1,6 +1,8 @@
 """Acquisition / document-sweep diagnostics: real engine runs (scripted GLM) plus targeted event fixtures."""
 
 import json
+import csv
+import io
 
 import pytest
 
@@ -12,6 +14,47 @@ from test_tools_smoke import _call
 from src import diagnostics as D
 from src.acquisition import artifacts
 from src.storage.run_log import RunLog, read_events
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_per_vehicle_csv_preserves_columns_from_all_rows(reverse):
+    rows = [{"record_id": "old", "cfg_model": "model,old", "cfg_retired": "legacy"},
+            {"record_id": "new", "cfg_model": "model\nnew", "cfg_recovery_mode": "reacquire",
+             "cfg_research_memory": False, "cfg_future_setting": "חדש"}]
+    if reverse:
+        rows.reverse()
+    exported = list(csv.DictReader(io.StringIO(D.per_vehicle_csv(rows))))
+    assert [r["record_id"] for r in exported] == [r["record_id"] for r in rows]
+    for source, output in zip(rows, exported):
+        assert output == {key: str(source[key]) if key in source else ""
+                          for key in {key for row in rows for key in row}}
+
+
+def test_per_vehicle_csv_without_rows():
+    assert D.per_vehicle_csv([]) == ""
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_write_benchmark_accepts_old_and_new_cached_configurations(tmp_path, reverse):
+    run_ids = ["old", "new"]
+    for run_id in run_ids:
+        log = RunLog(tmp_path / "runs", run_id, "101122")
+        log.event("run_started")
+        log.event("run_finished", status="completed")
+        diag = D.write_vehicle_diagnostics(log.dir)
+        if run_id == "old":
+            diag["configuration"] = {"acquisition_mode": "legacy"}
+        (log.dir / D.DIAGNOSTICS_FILE).write_text(json.dumps(diag))
+    if reverse:
+        run_ids.reverse()
+    out = tmp_path / "benchmark"
+    result = D.write_benchmark(tmp_path / "runs", run_ids, out)
+    exported = list(csv.DictReader(io.StringIO((out / "per_vehicle.csv").read_text())))
+    assert result["vehicles"] == len(exported) == 2
+    assert [r["run_id"] for r in exported] == run_ids
+    by_run = {r["run_id"]: r for r in exported}
+    assert by_run["old"]["cfg_recovery_mode"] == ""
+    assert by_run["new"]["cfg_recovery_mode"] == "cluster"
 
 
 def ev(seq, kind, **data):
