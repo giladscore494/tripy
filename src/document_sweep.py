@@ -84,7 +84,7 @@ def compact_evidence(item: dict) -> dict:
 
 ROUTING_AUTHORITY = {"official_importer": 3.0, "official_manufacturer": 3.0, "government": 2.5, "official_media": 2.0,
                      "publisher": 0.5, "aggregator": 0.5, "marketplace": 0.0, "unknown": 0.0}
-TABLE_METHODS = ("table_row", "structured_data")
+TABLE_METHODS = ("table_row", "structured_data", "dom_pair")    # dom_pair: a structural DOM label/value pair
 
 
 def routing_score(cand: dict, profile: dict | None, target_market: str, market_sensitive: bool = False) -> float:

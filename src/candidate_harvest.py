@@ -3,7 +3,10 @@
     document in DocumentCache
             ↓
     segments (parsed ONCE per document): text lines (reversed-Hebrew PDF lines repaired),
-    table rows (HTML tables, <dl>, PDF tables) and structured-data leaves (JSON-LD, page state)
+    table rows (HTML tables, <dl>, PDF tables incl. borderless ones) and structured-data leaves (JSON-LD, page state)
+    and structural DOM pairs of HTML pages (src/structure_harvest.py, kind "pair", method dom_pair)
+    + ADDITION: unit-anchored values (number + unit with exactly one field's alias nearby, method unit_anchor); an
+      addition never replaces or displaces a candidate of the segments above
             ↓
     generic matchers configured by the field dictionary (data/enrichment_fields.json):
     numeric · boolean · enum · gearbox · tire_size · charging_time · charging_window · warranty ·
@@ -33,7 +36,9 @@ from urllib.parse import urlparse
 
 from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
 
-HARVESTER_VERSION = "harvest-v2"   # v2: booleans need a stated value (label-only is never true)
+# v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
+# PDF tables without ruling lines (tools/extract), unit-anchored candidates
+HARVESTER_VERSION = "harvest-v3"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -277,6 +282,8 @@ class Dictionary:
         self.hour_units = [normalize_term(u) for u in v.get("time_hour_units") or []]
         self.charging = compile_terms(v.get("charging_terms") or [])
         self.trim_header = compile_terms(v.get("trim_header_terms") or [])
+        # any field's alias (an isolated structural pair needs one in its label: src/structure_harvest.py)
+        self.any_alias = compile_terms(a for r in self.rules for a, _, _ in r.aliases)
         self.currencies = {normalize_term(var): code for code, variants in (v.get("currencies") or {}).items()
                            for var in variants}
         self.hebrew_aliases = sorted({normalize_term(a) for r in self.rules for a, _, _ in r.aliases
@@ -302,7 +309,7 @@ class Dictionary:
 
 @dataclass
 class Segment:
-    kind: str                 # line | row | leaf
+    kind: str                 # line | row | leaf | pair (a structural DOM label/value pair)
     text: str                 # text matched (normalized)
     quote: str                # original text for the quote
     label: str = ""           # rows/leaves: normalized label
@@ -847,8 +854,8 @@ def _cut_quote(seg: Segment, span: tuple[int, int]) -> str:
 def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, str, str | None, str]]:
     """(hit, method, alias, wide context) for one rule over one segment."""
     out: list[tuple[Hit, str, str | None, str]] = []
-    structured = seg.kind in ("row", "leaf")
-    base = "table_row" if seg.kind == "row" else ("structured_data" if seg.kind == "leaf" else "alias_proximity")
+    structured = seg.kind in ("row", "leaf", "pair")
+    base = {"row": "table_row", "leaf": "structured_data", "pair": "dom_pair"}.get(seg.kind, "alias_proximity")
     text = seg.text
 
     if structured:
@@ -1050,6 +1057,134 @@ def harvest_segments(segments: list[Segment], d: Dictionary) -> list[dict]:
     return out[:MAX_CANDIDATES_PER_DOC]
 
 
+# --- structural pair segments, and the unit-anchor addition (never replaces a candidate of the segments) ----------
+
+UNIT_ANCHOR_WINDOW = 60          # chars between an alias and a number + unit (same line or the previous line)
+UNIT_ANCHOR_CONFIDENCE = 0.6     # below every label-first match with a unit (0.85)
+
+
+def pair_segments(pairs: list[dict]) -> list[Segment]:
+    """Segments of kind "pair" from src/structure_harvest.html_pairs (the quote already passed admission's check)."""
+    out = []
+    for p in pairs:
+        label, value = str(p.get("label") or ""), str(p.get("value") or "")
+        out.append(Segment("pair", normalize_text(f"{label} : {value}"), str(p["quote"]), label=normalize_text(label),
+                           value=normalize_text(value), raw_value=value, header=p.get("header") or None))
+    return out
+
+
+def _word_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return start, end
+
+
+def unit_anchor_candidates(segments: list[Segment], d: Dictionary) -> list[dict]:
+    """Unit-first extraction for numeric fields with expected units: every number + unit occurrence on a text line
+    whose range (the same clause, or UNIT_ANCHOR_WINDOW chars before / after, on the same line or the previous line)
+    holds the alias of EXACTLY ONE numeric field, and that field accepts the unit. Ambiguous -> nothing. Lower
+    parser_confidence than label-first matches; the quote holds the alias and the number + unit."""
+    numeric = [r for r in d.rules if r.matcher == "numeric"]
+    accepting = [r for r in numeric if r.spec.get("expected_units")]
+    if not accepting:
+        return []
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    previous: Segment | None = None
+    for seg in segments:
+        if seg.kind != "line":
+            previous = None
+            continue
+        prev_text, prev_quote = (previous.text, previous.quote) if previous is not None else ("", "")
+        previous = seg
+        offset = len(prev_text) + 1 if prev_text else 0
+        joined = f"{prev_text}\n{seg.text}" if prev_text else seg.text
+        joined_quote = f"{prev_quote}\n{seg.quote}" if prev_text else seg.quote
+        if len(joined_quote) != len(joined):
+            continue
+        hits_cache: list[tuple[FieldRule, int, int, str, bool]] | None = None
+        for m in NUMBER.finditer(seg.text):
+            unit, unit_end = _unit_at(d, seg.text, m.end())
+            if unit is None:
+                continue
+            if RANGE_BEFORE.search(seg.text[max(0, m.start() - 12):m.start()]):
+                continue                                   # a range: label-first matching handles those
+            ns, ne = m.start() + offset, unit_end + offset
+            if hits_cache is None:
+                hits_cache = [(r, s, e, alias, abbr) for r in numeric for s, e, alias, abbr in _alias_hits(r, joined)]
+            cs, ce = _clause_bounds(seg.text, m.start())
+            cs, ce = cs + offset, ce + offset
+            near = [h for h in hits_cache if not (h[1] < ne and h[2] > ns) and (
+                (h[2] <= ns and ns - h[2] <= UNIT_ANCHOR_WINDOW) or (h[1] >= ne and h[1] - ne <= UNIT_ANCHOR_WINDOW)
+                or (h[1] >= cs and h[2] <= ce))]
+            # a shorter alias inside a longer alias of another field is that longer field's word ("גובה" in "גובה גחון")
+            near = [h for h in near if not any(o is not h and o[0].name != h[0].name and o[1] <= h[1] and h[2] <= o[2]
+                                               and o[2] - o[1] > h[2] - h[1] for o in near)]
+            if len({h[0].name for h in near}) != 1:
+                continue
+            rule = near[0][0]
+            if rule not in accepting:
+                continue
+            kind, norm_unit, operation = _classify_unit(rule, unit)
+            if kind not in ("ok", "convert"):
+                continue
+            number = parse_number(m.group(1))
+            if number is None:
+                continue
+            value = OPERATIONS[operation](number) if operation else number
+            if not _plausible(rule, value):
+                continue
+            hit_alias = min(near, key=lambda h: min(abs(h[1] - ne), abs(ns - h[2])))
+            _, s, e, alias, abbr = hit_alias
+            lo, hi = min(s, ns), max(e, ne)
+            bounds = (0, len(joined))
+            near_text = joined[max(0, lo - EXCLUSION_PAD):hi + EXCLUSION_PAD]
+            keep, delta, hints = _context_ok(rule, near_text, _window(joined, lo, hi, POSITIVE_PAD, bounds))
+            if not keep:
+                continue
+            key = (rule.name, json.dumps(_num_value(value)))
+            if key in seen:
+                continue
+            seen.add(key)
+            qs, qe = _word_bounds(joined_quote, lo, hi)
+            quote = re.sub(r"\s+", " ", joined_quote[qs:qe]).strip()
+            if not quote or len(quote) > QUOTE_CHARS:
+                continue
+            confidence = UNIT_ANCHOR_CONFIDENCE + min(0.0, delta) - (0.05 if operation else 0) - (0.1 if abbr else 0)
+            if operation:
+                hints["converted_from"] = {"value": m.group(1), "unit": unit, "operation": operation}
+            hit = Hit(_num_value(value), m.group(1), norm_unit or rule.normalized_unit, unit, confidence, (lo, hi),
+                      hints=hints)
+            wide = _window(joined, lo, hi, POSITIVE_PAD, bounds)
+            out.append(_candidate(rule, Segment("line", joined, quote, reversed=seg.reversed), hit, "unit_anchor",
+                                  alias, wide))
+    return out
+
+
+def merge_additions(existing: list[dict], additions: list[dict]) -> list[dict]:
+    """`existing` unchanged and in order, plus every addition whose (field, material value) no existing candidate
+    has, within the per-field and per-document caps (existing candidates win every tie and use the room first)."""
+    from .field_recovery import material_key
+
+    keys = {(c.get("field"), material_key(c.get("value"))) for c in existing}
+    per_field: dict[str, int] = {}
+    for c in existing:
+        per_field[c.get("field")] = per_field.get(c.get("field"), 0) + 1
+    out = list(existing)
+    for cand in additions:
+        key = (cand.get("field"), material_key(cand.get("value")))
+        if key in keys or per_field.get(cand.get("field"), 0) >= MAX_CANDIDATES_PER_FIELD_PER_DOC \
+                or len(out) >= MAX_CANDIDATES_PER_DOC:
+            continue
+        keys.add(key)
+        per_field[cand.get("field")] = per_field.get(cand.get("field"), 0) + 1
+        cand.setdefault("occurrences", 1)
+        out.append(cand)
+    return out
+
+
 def market_hint(url: str | None) -> str | None:
     host = urlparse(url or "").netloc.lower()
     return "IL" if host.endswith(".il") else None
@@ -1057,11 +1192,22 @@ def market_hint(url: str | None) -> str | None:
 
 def harvest_text(text: str, specs: Iterable[dict], *, tables: list[dict] | None = None,
                  structured: dict | None = None, is_pdf: bool = False, url: str | None = None,
-                 document_id: str | None = None, dictionary: Dictionary | None = None) -> list[dict]:
-    """Candidates from raw material (used by tests and by harvest_document)."""
+                 document_id: str | None = None, dictionary: Dictionary | None = None,
+                 html: str | None = None) -> list[dict]:
+    """Candidates from raw material (used by tests and by harvest_document). `html` (an HTML document's source) adds
+    its structural DOM pairs; unit anchors are read from the text lines. Additions never displace a candidate of
+    the line / table / structured segments (merge_additions)."""
+    from .structure_harvest import html_pairs
+
     d = dictionary or Dictionary(specs)
     segments = document_segments(text, tables, structured, is_pdf=is_pdf, dictionary=d)
+    if html:
+        # structural pairs join the same per-value dedupe AFTER every other segment: an identical value keeps its
+        # earlier candidate unless the pair reads it with a higher parser confidence (a "label | value" quote instead
+        # of a label-only line); a value only a pair reads is new
+        segments += pair_segments(html_pairs(html, text, alias_pattern=d.any_alias, trim_header=d.trim_header))
     cands = harvest_segments(segments, d)
+    cands = merge_additions(cands, unit_anchor_candidates(segments, d))
     hint = market_hint(url)
     for cand in cands:
         if document_id:
@@ -1103,7 +1249,8 @@ def harvest_document(cache, document_id: str, specs: list[dict]) -> tuple[list[d
             tables = []
         structured = document_structured(cache, document_id, html) if html is not None else None
         cands = harvest_text(cache.read_text(document_id), specs, tables=tables, structured=structured,
-                             is_pdf=meta.get("doc_type") == "pdf", url=url, document_id=document_id, dictionary=d)
+                             is_pdf=meta.get("doc_type") == "pdf", url=url, document_id=document_id, dictionary=d,
+                             html=html)
         return {"harvester_version": HARVESTER_VERSION, "schema_hash": d.hash, "document_id": document_id,
                 "candidates": cands}
 

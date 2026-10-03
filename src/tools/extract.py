@@ -134,29 +134,164 @@ def _html_tables(html: str) -> list[dict]:
     return tables
 
 
-def _pdf_tables(body: bytes, max_pages: int = 200) -> list[dict]:
+# Second pass for spec matrices WITHOUT ruling lines (brochures): pdfplumber's text strategies. Bounded and optional:
+# a failure falls back to the default (ruling-line) tables.
+TEXT_TABLE_SETTINGS = {"vertical_strategy": "text", "horizontal_strategy": "text", "snap_tolerance": 3,
+                       "join_tolerance": 3, "intersection_tolerance": 5, "text_x_tolerance": 2, "text_y_tolerance": 2,
+                       "min_words_vertical": 2, "min_words_horizontal": 1}
+MAX_TEXT_TABLES = 30
+MIN_TEXT_TABLE_ROWS, MIN_TEXT_TABLE_COLS, MIN_TEXT_TABLE_LABELS = 3, 2, 2
+
+
+class TableVocabulary:
+    """What the second PDF table pass recognizes: any field alias (first-column labels) and the trim header terms,
+    from the full field dictionary (vehicle-independent, so the derived table cache stays shared)."""
+
+    def __init__(self, alias=None, trim_header=None, hebrew_aliases=()):
+        self.alias, self.trim_header, self.hebrew_aliases = alias, trim_header, tuple(hebrew_aliases)
+
+    @classmethod
+    def default(cls) -> "TableVocabulary":
+        from ..candidate_harvest import dictionary_for
+        from ..fields import load_schema
+
+        d = dictionary_for(load_schema())
+        return cls(d.any_alias, d.trim_header, d.hebrew_aliases)
+
+    def alias_hits(self, text: str) -> int:
+        from ..candidate_harvest import normalize_text
+
+        return len(self.alias.findall(normalize_text(text or ""))) if self.alias is not None else 0
+
+    def is_label(self, cell: str) -> bool:
+        from ..candidate_harvest import normalize_text
+
+        return bool(self.alias is not None and cell and self.alias.search(normalize_text(cell)))
+
+    def is_trim_header(self, cell: str) -> bool:
+        from ..candidate_harvest import normalize_text
+
+        return bool(self.trim_header is not None and cell and self.trim_header.search(normalize_text(cell)))
+
+
+def _logical_cell(cell: str, vocabulary: TableVocabulary) -> str:
+    """A cell in logical order: visually ordered (reversed) Hebrew is repaired as document_segments repairs lines."""
+    from ..candidate_harvest import HEBREW, looks_reversed, reverse_hebrew_line
+
+    if cell and HEBREW.search(cell) and looks_reversed(cell, vocabulary.hebrew_aliases):
+        return reverse_hebrew_line(cell)
+    return cell
+
+
+def text_table_ok(rows: list[list[str]], vocabulary: TableVocabulary) -> bool:
+    """A second-pass table is kept only when it looks like a spec matrix: >= 3 rows, >= 2 columns, and >= 2
+    first-column cells naming a dictionary field (or a trim header present)."""
+    rows = [r for r in rows if any(c for c in r)]
+    if len(rows) < MIN_TEXT_TABLE_ROWS or max((len(r) for r in rows), default=0) < MIN_TEXT_TABLE_COLS:
+        return False
+    labels = sum(1 for r in rows if r and vocabulary.is_label(r[0]))
+    header = any(vocabulary.is_trim_header(c) for r in rows[:2] for c in r)
+    return labels >= MIN_TEXT_TABLE_LABELS or header
+
+
+def wants_text_pass(default_tables_on_page: int, page_text: str, vocabulary: TableVocabulary) -> bool:
+    """Run the text-strategy pass on a page where the default pass found no table, or whose text names >= 3
+    dictionary aliases (a spec page may hold a ruled table AND a borderless matrix). A page that names no field
+    alias and no trim header cannot yield a kept table (text_table_ok), so it is never parsed a second time."""
+    hits = vocabulary.alias_hits(page_text)
+    if hits >= 3:
+        return True
+    return default_tables_on_page == 0 and (hits > 0 or vocabulary.is_trim_header(page_text))
+
+
+CELL_GAP = 9.0          # points between two words of the same row that start a new cell
+
+
+def _text_strategy_tables(page, vocabulary: TableVocabulary) -> list[list[list[str]]]:
+    """Borderless tables of one page: the table areas and row bands come from pdfplumber's text strategies; the cells
+    of each row are rebuilt from WHOLE words split at wide gaps (the strategy's own column edges cut words such as
+    "Hybrid" or separate "4,650" from "mm"). Right-to-left rows (the label in the last cell) are put label first, and
+    reversed Hebrew cells are repaired."""
+    out = []
+    for table in page.find_tables(TEXT_TABLE_SETTINGS) or []:
+        # the strategy's bbox ends at its last column edge and would cut the last column's words: keep the table's
+        # row band across the page width
+        x0, top, x1, bottom = table.bbox
+        band = (0, max(0, top - 2), page.width, min(page.height, bottom + 2))
+        words = page.crop(band).extract_words(x_tolerance=2, y_tolerance=2, keep_blank_chars=False)
+        lines: list[list[dict]] = []
+        for word in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
+            if lines and abs(lines[-1][0]["top"] - word["top"]) <= 3:
+                lines[-1].append(word)
+            else:
+                lines.append([word])
+        rows = []
+        for line in lines:
+            cells: list[list[str]] = []
+            last = None
+            for word in sorted(line, key=lambda w: w["x0"]):
+                if last is None or word["x0"] - last["x1"] > CELL_GAP:
+                    cells.append([])
+                cells[-1].append(word["text"])
+                last = word
+            rows.append([_logical_cell(" ".join(c), vocabulary) for c in cells])
+        rtl = sum(1 for r in rows if len(r) > 1 and vocabulary.is_label(r[-1]) and not vocabulary.is_label(r[0]))
+        ltr = sum(1 for r in rows if len(r) > 1 and vocabulary.is_label(r[0]))
+        if rtl > ltr:
+            rows = [list(reversed(r)) for r in rows]
+        out.append(rows)
+    return out
+
+
+def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary | None = None) -> list[dict]:
     import pdfplumber
 
-    tables = []
+    tables, extra = [], []
     with pdfplumber.open(io.BytesIO(body)) as pdf:
         for page_no, page in enumerate(pdf.pages[:max_pages], start=1):
+            found = 0
+            seen_first: set[str] = set()
             for raw in page.extract_tables() or []:
                 rows = [[(cell or "").strip() for cell in row] for row in raw if row and any(row)]
                 if rows:
+                    found += 1
+                    seen_first |= {r[0] for r in rows if r and r[0]}
                     tables.append({"source": "pdf_table", "page": page_no, "caption": "", "rows": rows})
-    return tables
+            if vocabulary is None or len(extra) >= MAX_TEXT_TABLES:
+                continue
+            try:      # never raises: the default tables stand
+                if not wants_text_pass(found, page.extract_text() or "", vocabulary):
+                    continue
+                for rows in _text_strategy_tables(page, vocabulary):
+                    if not text_table_ok(rows, vocabulary):
+                        continue
+                    if {r[0] for r in rows if r and r[0]} <= seen_first:
+                        continue              # the default pass already read these rows
+                    extra.append({"source": "pdf_table_text", "page": page_no, "caption": "", "rows": rows})
+                    if len(extra) >= MAX_TEXT_TABLES:
+                        break
+            except Exception:  # noqa: BLE001
+                continue
+    # appended after the default tables, so every default table keeps its index (candidates cite table_index)
+    return tables + extra
 
 
 def document_tables(cache, document_id: str, meta: dict, html: str | None) -> list[dict]:
-    """All tables of a cached document, extracted once (derived cache, single flight)."""
+    """All tables of a cached document, extracted once (derived cache, single flight). PDF tables are cached as
+    "tables_v2" (default + text-strategy pass), so documents cached before the second pass get it too."""
     def compute() -> list[dict]:
         if html is not None:
             return _html_tables(html)
         if meta.get("doc_type") == "pdf":
-            return _pdf_tables(cache.read_body(document_id))
+            body = cache.read_body(document_id)
+            try:
+                return _pdf_tables(body, vocabulary=TableVocabulary.default())
+            except Exception:  # noqa: BLE001 - the second pass never costs the default tables
+                return _pdf_tables(body)
         return []
 
-    return cache.derived(document_id, "tables", compute)[0]
+    name = "tables_v2" if html is None and meta.get("doc_type") == "pdf" else "tables"
+    return cache.derived(document_id, name, compute)[0]
 
 
 def document_structured(cache, document_id: str, html: str) -> dict:
