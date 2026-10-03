@@ -1155,6 +1155,18 @@ def vehicle_dirs(runs_dir: Path | str, run_ids: Iterable[str] | None = None) -> 
             if child.is_dir() and (child / "events.jsonl").is_file()]
 
 
+def per_vehicle_csv(rows: list[dict]) -> str:
+    """Export every column across mixed diagnostic versions; absent values stay blank."""
+    if not rows:
+        return ""
+    columns = list(dict.fromkeys(key for row in rows for key in row))
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns)
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
 def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, out_dir: Path | str | None = None,
                     *, rebuild: bool = False) -> dict:
     """Aggregate every vehicle of the given runs (default: all) into benchmark.json + per_vehicle.csv / .jsonl and
@@ -1176,11 +1188,7 @@ def write_benchmark(runs_dir: Path | str, run_ids: Iterable[str] | None = None, 
         atomic_write_text(out / "per_vehicle.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
                                                              for r in result["per_vehicle"]), durable=True)
         if result["per_vehicle"]:
-            buf = io.StringIO()
-            writer = csv.DictWriter(buf, fieldnames=list(result["per_vehicle"][0]))
-            writer.writeheader()
-            writer.writerows(result["per_vehicle"])
-            atomic_write_text(out / "per_vehicle.csv", buf.getvalue(), durable=True)
+            atomic_write_text(out / "per_vehicle.csv", per_vehicle_csv(result["per_vehicle"]), durable=True)
     return result
 
 

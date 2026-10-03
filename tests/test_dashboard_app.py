@@ -86,6 +86,29 @@ def test_development_allows_a_session_api_key(data_env):
     assert any("API key (development only)" in t.label for t in app.text_input)
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_app_loads_with_mixed_cached_benchmark_versions(data_env, reverse):
+    from src import diagnostics as D
+
+    run_ids = ["20261001T100000Z-old-schema", "20261001T090000Z-new-schema"]
+    for index, run_id in enumerate(run_ids):
+        make_run(data_env, run_id, status=M.COMPLETED, engine_status="completed",
+                 events=[("run_started", {}), ("run_finished", {"status": "completed"})],
+                 result={"status": "completed", "output": {"summary": "Done", "fields": {}}})
+        folder = data_env / run_id / "101122"
+        diag = D.write_vehicle_diagnostics(folder)
+        if index == 0:
+            diag["configuration"] = {"acquisition_mode": "legacy"}
+        (folder / D.DIAGNOSTICS_FILE).write_text(json.dumps(diag))
+    app = app_test()
+    app.session_state["bench_runs"] = run_ids[::-1] if reverse else run_ids
+    app.run()
+    assert not app.exception, app.exception
+    assert "2 vehicle run(s)" in texts(app)
+    downloads = app.get("download_button")
+    assert any(button.label == "Download per_vehicle.csv" and not button.disabled for button in downloads)
+
+
 def test_a_failed_run_is_restored_cleanly_from_disk(data_env, monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "sk-should-not-show")
     monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")

@@ -198,17 +198,11 @@ def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str
         a, s = result["acquisition"], result["document_sweep"]
         st.caption(f"{result['vehicles']} vehicle run(s) · mean turns {a['turns']['mean']} · mean searches "
                    f"{a['searches_per_vehicle']['mean']} · sweep resolution rate {s['resolution_rate']}")
-        import csv as _csv
-        import io as _io
         import json as _json
-        buf = _io.StringIO()
-        if result["per_vehicle"]:
-            writer = _csv.DictWriter(buf, fieldnames=list(result["per_vehicle"][0]))
-            writer.writeheader()
-            writer.writerows(result["per_vehicle"])
+        csv_data = diag_mod.per_vehicle_csv(result["per_vehicle"])
         st.download_button("Download benchmark.json", _json.dumps(result, ensure_ascii=False, indent=1, default=str),
                            file_name="tripy_benchmark.json", mime="application/json", width="stretch")
-        st.download_button("Download per_vehicle.csv", buf.getvalue(), file_name="tripy_per_vehicle.csv",
+        st.download_button("Download per_vehicle.csv", csv_data, file_name="tripy_per_vehicle.csv",
                            mime="text/csv", width="stretch", disabled=not result["per_vehicle"])
         gaps = diag_mod.parser_gap_rows(diags)
         st.download_button("Download parser_gaps.jsonl", "".join(_json.dumps(r, ensure_ascii=False, default=str) + "\n"
