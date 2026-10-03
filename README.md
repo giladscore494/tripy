@@ -857,7 +857,7 @@ CANDIDATES or routing hints only, and only `admit()` turns anything into evidenc
   per page (`harvest_capped`). **Borderless PDF tables**: a pdfplumber text-strategy pass
   (`source: pdf_table_text`) on pages without ruled tables or with >= 3 aliases (first 60 pages, 5 s per document). **Unit anchors** (`unit_anchor`):
   number + unit with exactly one field's alias within the clause / 60 chars (existing candidates always win).
-  `HARVESTER_VERSION` is `harvest-v3`.
+  `HARVESTER_VERSION` is `harvest-v4`, so older cached candidates are recomputed with these exclusions and limits.
 - **Importer site map** (`SITE_MAP`, `src/site_map.py`): robots.txt / sitemap indexes / `.xml.gz` with the standard
   library (depth 3, 50 files, 20,000 URLs per domain, 7-day per-domain cache, robots `Disallow` respected); the top 15
   ranked URLs go into the first contract-acquisition message (20 s bound; a failure logs `site_map_failed`). The bound

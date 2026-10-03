@@ -40,7 +40,8 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
 
 # v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
 # PDF tables without ruling lines (tools/extract), unit-anchored candidates
-HARVESTER_VERSION = "harvest-v3"
+# v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
+HARVESTER_VERSION = "harvest-v4"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000

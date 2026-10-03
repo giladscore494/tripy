@@ -691,3 +691,45 @@ def test_truncation_counts_reach_run_totals_and_the_vehicle_row():
                          "totals": totals})
     assert (row["sweep_truncated_calls"], row["sweep_truncation_retries"], row["finalizer_truncated_calls"]) == \
         (1, 1, 1)
+
+
+def test_pre_hardening_harvest_cache_is_recomputed(tmp_path, monkeypatch):
+    from src import candidate_harvest as C
+
+    cache = DocumentCache(tmp_path / "cache")
+    doc = cache_source(cache, tail.CARTUBE, tail.CARTUBE_TEXT)
+    specs = resolve_requested_fields(["length_mm"], propulsion="hybrid")
+    with monkeypatch.context() as old:
+        old.setattr(C, "HARVESTER_VERSION", "harvest-v3")
+        legacy_hash = C.dictionary_for(specs).hash
+    cache.derived(doc, f"field_candidates_{legacy_hash}",
+                  lambda: {"harvester_version": "harvest-v3", "candidates": []})
+    candidates, hit = C.harvest_document(cache, doc, specs)
+    assert not hit and any(c["field"] == "length_mm" for c in candidates)
+    assert C.harvest_document(cache, doc, specs)[1] is True
+
+
+def test_pre_hardening_site_map_cache_is_recrawled(tmp_path):
+    cache = DocumentCache(tmp_path / "cache")
+    path = S._cache_path(cache, DOMAIN)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": "site-map-v1", "stored_at": 0,
+                                "urls": ["old"], "sitemaps": ["map"], "truncated": True}))
+    record, hit = S.cached_domain(cache, DOMAIN, lambda: {"urls": ["fresh"], "partial": False}, now=lambda: 10)
+    assert not hit and record["urls"] == ["fresh"]
+
+
+def test_no_truncation_retry_is_reported_when_recovery_budget_is_exhausted(tmp_path):
+    from src.agent import RecoveryCallBudgetExceeded, RecoveryModelCaller, call_with_truncation_retry
+
+    client = TruncatingClient({"adjudicate_unambiguous": 1})
+    log = RunLog(tmp_path, "b", "1")
+    caller = ModelCaller(client, log, AgentConfig())
+    budgeted = RecoveryModelCaller(caller, 1)
+    messages = [{"role": "system", "content": "adjudication"},
+                {"role": "user", "content": 'Task:\n{"task": "adjudicate_unambiguous"}'}]
+    with pytest.raises(RecoveryCallBudgetExceeded):
+        call_with_truncation_retry(budgeted, messages, phase="field_recovery", max_tokens=4000)
+    assert len(client.requests) == 1 and budgeted.used == 1
+    assert caller.truncation["field_recovery"] == {"truncated_calls": 1, "truncation_retries": 0}
+    assert not any(e["kind"] == "truncation_retry" for e in read_events(log.events_path))

@@ -28,7 +28,7 @@ from urllib.parse import unquote, urlparse
 from urllib.robotparser import RobotFileParser
 from xml.etree import ElementTree
 
-SITE_MAP_VERSION = "site-map-v1"
+SITE_MAP_VERSION = "site-map-v2"  # old cache entries cannot distinguish deadline-partial from complete crawls
 MAX_DEPTH = 3
 MAX_SITEMAPS = 50
 MAX_URLS = 20000

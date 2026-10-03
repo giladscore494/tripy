@@ -1139,6 +1139,9 @@ def call_with_truncation_retry(caller, messages: list[dict], *, max_tokens: int,
         retry_tokens = min(TRUNCATION_RETRY_MAX_TOKENS, int(max_tokens) * 2)
         if retry_tokens <= int(max_tokens):
             raise
+        # The shared recovery cap also covers truncation retries. Do not claim a retry that the cap prevents.
+        if isinstance(caller, RecoveryModelCaller) and caller.exhausted:
+            raise RecoveryCallBudgetExceeded("max_total_steps")
         phase = kwargs.get("phase")
         counts = getattr(caller, "truncation", None)
         if isinstance(counts, dict):
