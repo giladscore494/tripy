@@ -76,8 +76,11 @@ def test_xpeng_g6_max_binds_the_market_trim_through_the_qualified_phrase():
     assert bind(ident, st, requirement="exact_market_trim", market="DE")["variant_match"] == "unclear"
 
 
-@pytest.mark.parametrize("text", ["max power 486 hp", "Max. speed 200 km/h, MAX range", "g6 maximum comfort"])
-def test_the_generic_word_alone_is_never_the_trim(text):
+@pytest.mark.parametrize("text", [
+    "max power 486 hp", "Max. speed 200 km/h, MAX range", "g6 maximum comfort",
+    "XPeng G6 MAX power 486 hp", "XPeng G6 - MAX power 486 hp", "G6\nMAX power 486 hp",
+])
+def test_generic_max_metric_wording_is_never_the_trim(text):
     assert mentions(text, xpeng())["trim"] != "match"
 
 
@@ -405,15 +408,19 @@ def test_binding_gap_gate_rules():
                   "d": {"state": "variant_not_exact", "info": ["binding_gap:trim_absent"]}}
     evidence = {"a": [official], "b": [official], "d": [{**official, "source_authority": "publisher"}]}
     gate = binding_gap_gate(["a", "b", "c", "d"], evaluation, evidence, "IL", trim_named_by_official=False)
-    # b's gap is technical: no exception; a and b are dropped, c (missing) and d (no official evidence) stay
-    assert gate["skipped"] == ["a", "b"] and gate["fields"] == ["c", "d"] and not gate["trim_exception"]
-    assert gate["trim_fields"] == ["d"]
+    # b's gap is technical, so normal reacquisition must keep it; only trim-only a participates in the gate.
+    # Because another field remains in the cluster, the trim exception keeps a too and does not cap the shared search.
+    assert gate["skipped"] == [] and gate["fields"] == ["a", "b", "c", "d"] and gate["trim_exception"]
+    assert gate["search_cap"] is None and gate["trim_fields"] == ["a", "d"]
     only_trim = binding_gap_gate(["a"], evaluation, evidence, "IL", trim_named_by_official=False)
     assert only_trim["trim_exception"] and only_trim["fields"] == ["a"] and only_trim["search_cap"] == 1
     named = binding_gap_gate(["a"], evaluation, evidence, "IL", trim_named_by_official=True)
     assert named["fields"] == [] and named["skipped"] == ["a"]
     foreign = binding_gap_gate(["a"], evaluation, {"a": [{**official, "market": "DE"}]}, "IL", False)
     assert foreign["fields"] == ["a"] and not foreign["skipped"] and foreign["search_cap"] is None
+
+    technical = binding_gap_gate(["b"], evaluation, evidence, "IL", trim_named_by_official=True)
+    assert technical["fields"] == ["b"] and technical["skipped"] == [] and not technical["trim_exception"]
 
 
 # --- versions ---------------------------------------------------------------------------------------------------------------
