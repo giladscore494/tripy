@@ -3,14 +3,21 @@
 Environment variables stay the source of DEFAULTS (agent_config_from_env). A run profile or a UI choice wins over env
 for that run:
 
-    Production (default)        contract, card off, site map on, grounded candidates on,  recovery reacquire
-    Benchmark: Baseline         legacy,   card off, site map on, grounded candidates off, recovery cluster
-    Benchmark: Treatment        contract, card off, site map on, grounded candidates on,  recovery reacquire
-    Benchmark: Treatment + card contract, card on,  site map on, grounded candidates on,  recovery reacquire
+    Production (default)        contract, card off, site map on,  grounded candidates on,  recovery reacquire
+    Benchmark: Baseline         legacy,   card off, site map off, grounded candidates off, recovery cluster
+    Benchmark: Treatment        contract, card off, site map on,  grounded candidates on,  recovery reacquire
+    Benchmark: Treatment + card contract, card on,  site map on,  grounded candidates on,  recovery reacquire
     Custom                      the Advanced settings as edited (their defaults come from env)
 
-Baseline is the pre-redesign engine (no grounded candidates, the cluster recovery agent) on the same discovery: the
-site map stays on so the arms stay comparable (it only acts in contract acquisition and reacquire recovery).
+Baseline is the pre-redesign engine (no grounded candidates, the cluster recovery agent). The importer SITE MAP IS PART
+OF THE TREATMENT: it only acts in contract acquisition and reacquire recovery, neither of which Baseline runs, so
+Baseline has it off and diagnostics.run_configuration() records `site_map_used` (the switch AND a stage that uses it).
+
+Single runs of the A/B arms (Baseline, Treatment, Treatment + card) started OUTSIDE a series run with cross-run
+research memory and negative-route blocking OFF (isolate_single_run), so an arm never inherits verified facts or
+"unproductive route" verdicts of earlier runs. A run of an A/B series is unchanged: it already gets a private cache and
+research memory per planned run (src/jobs/manager.py). Production keeps memory on. run_configuration() records both
+flags.
 
 Every named profile also runs: sweep mode adjudication, sweep 12 fields / 16 candidates, deterministic final assembly,
 reasoning effort research high / document sweep low / recovery low / finalizer low, no thinking object, one HTTP
@@ -18,10 +25,11 @@ attempt for sweep and recovery requests (PHASE_DEFAULTS in src/phase_settings.py
 
 A NAMED profile also pins every experiment-relevant setting listed in ENV_OVERRIDE_VARS to its code default, so a
 stale env value (e.g. DOCUMENT_SWEEP_MAX_FIELDS=30 or SWEEP_MODE=legacy left on a deployment) cannot leak into a
-profiled run, and drops a `thinking` object from extra_body (GLM_EXTRA_BODY). Everything else (models, timeouts,
-recovery budgets, other phases' thinking / max_tokens ...) comes from the Advanced settings / env as before. The
-research model stays outside profiles. UI phase settings are MERGED per phase and per key over the env phase settings,
-never replacing them.
+profiled run: among them the cluster recovery budgets (CLUSTER_*), the recovery turn cap
+(FIELD_RECOVERY_MAX_TOTAL_STEPS) and the research / recovery HTTP attempts. A named profile ignores extra_body
+(GLM_EXTRA_BODY) entirely. Everything else (models, timeouts, other phases' thinking / max_tokens ...) comes from the
+Advanced settings / env as before. The research model stays outside profiles. UI phase settings are MERGED per phase
+and per key over the env phase settings, never replacing them.
 """
 
 from __future__ import annotations
@@ -45,13 +53,15 @@ _SWEEP = {"document_sweep_max_fields": 12, "document_sweep_max_candidates": 16}
 # is pinned to "inherit" (removed): the global thinking is pinned to "" (provider default, no thinking object)
 _PINNED_PHASE_KEYS = (("research", "reasoning_effort"), ("document_sweep", "reasoning_effort"),
                       ("document_sweep", "max_attempts"), ("document_sweep", "thinking"),
+                      ("research", "max_attempts"),
                       ("recovery", "reasoning_effort"), ("recovery", "max_attempts"),
                       ("finalizer", "reasoning_effort"))
 _YIELD = {"site_map": True, "grounded_candidates": True, "recovery_mode": "reacquire"}       # PR #31
 NAMED_PROFILES: dict[str, dict] = {
     PRODUCTION: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP, **_YIELD},
+    # the site map is part of the Treatment (Baseline's legacy acquisition and cluster recovery never use it)
     BASELINE: {"acquisition_mode": "legacy", "acquisition_document_card": False, **_SWEEP,
-               "site_map": True, "grounded_candidates": False, "recovery_mode": "cluster"},
+               "site_map": False, "grounded_candidates": False, "recovery_mode": "cluster"},
     TREATMENT: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP, **_YIELD},
     TREATMENT_CARD: {"acquisition_mode": "contract", "acquisition_document_card": True, **_SWEEP, **_YIELD},
 }
@@ -75,9 +85,10 @@ ENV_OVERRIDE_VARS: tuple[tuple[str, Any, str], ...] = (
     ("GLM_FINALIZER_REASONING_EFFORT", ("phase", "finalizer", "reasoning_effort"), "str"),
     ("GLM_THINKING", "thinking", "str"),
     ("GLM_DOCUMENT_SWEEP_THINKING", ("phase", "document_sweep", "thinking"), "str"),
-    # shown only when it carries a `thinking` object (a named profile drops that object; other keys stay)
+    # shown whenever it is a non-empty object (a named profile ignores extra_body entirely)
     ("GLM_EXTRA_BODY", "extra_body", "extra_body"),
     ("GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS", ("phase", "document_sweep", "max_attempts"), "int"),
+    ("GLM_RESEARCH_MAX_ATTEMPTS", ("phase", "research", "max_attempts"), "int"),
     ("GLM_RECOVERY_MAX_ATTEMPTS", ("phase", "recovery", "max_attempts"), "int"),
     ("ADJUDICATION_MAX_U_ITEMS", "adjudication_max_u_items", "int"),
     ("ADJUDICATION_MAX_A_FIELDS", "adjudication_max_a_fields", "int"),
@@ -94,6 +105,11 @@ ENV_OVERRIDE_VARS: tuple[tuple[str, Any, str], ...] = (
     ("SITE_MAP", "site_map", "bool"),
     ("GROUNDED_CANDIDATES", "grounded_candidates", "bool"),
     ("RECOVERY_MODE", "recovery_mode", "str"),
+    ("CLUSTER_MAX_ATTEMPTS", "cluster_max_attempts", "int"),
+    ("CLUSTER_BASE_TURNS", "cluster_base_turns", "int"),
+    ("CLUSTER_MAX_TURNS", "cluster_max_turns", "int"),
+    ("CLUSTER_SEARCH_BUDGET", "cluster_search_budget", "int"),
+    ("FIELD_RECOVERY_MAX_TOTAL_STEPS", "field_recovery_max_total_steps", "int"),
 )
 
 
@@ -118,14 +134,14 @@ def _parse(raw: str, kind: str) -> Any:
     from .agent import _env_bool
 
     raw = raw.strip()
-    if kind == "extra_body":     # only its thinking object is experiment-relevant
+    if kind == "extra_body":     # any key of it may change model calls
         import json
 
         try:
             parsed = json.loads(raw)
         except ValueError:
             return raw
-        return {"thinking": parsed["thinking"]} if isinstance(parsed, dict) and "thinking" in parsed else {}
+        return parsed if isinstance(parsed, dict) else raw
     try:
         if kind == "int":
             return int(raw)
@@ -140,7 +156,7 @@ def _parse(raw: str, kind: str) -> Any:
 
 
 def _same(value: Any, default: Any) -> bool:
-    if isinstance(default, dict):        # GLM_EXTRA_BODY: differs only when it carries a thinking object
+    if isinstance(default, dict):        # GLM_EXTRA_BODY: differs whenever it is a non-empty object
         return value == {} or value == default
     if isinstance(value, (int, float)) and not isinstance(value, bool) and isinstance(default, (int, float)):
         return float(value) == float(default)
@@ -151,7 +167,7 @@ def _shown(value: Any) -> str:
     if isinstance(value, bool):
         return "on" if value else "off"
     if isinstance(value, dict):
-        return "no thinking object"
+        return "no extra request fields"
     return "provider default" if value == "" else str(value)
 
 
@@ -187,7 +203,7 @@ def merge_phase_settings(base: dict | None, overlay: dict | None) -> dict[str, d
 
 def pinned_values(profile: str) -> tuple[dict, dict]:
     """(AgentConfig values, phase settings) a NAMED profile imposes: the code default of every ENV_OVERRIDE_VARS
-    AgentConfig setting (extra_body is handled by build_agent_config: only its thinking object is dropped), then the
+    AgentConfig setting (extra_body is handled by build_agent_config: it is dropped entirely), then the
     profile's own values; the phase settings of _PINNED_PHASE_KEYS at their code default (PHASE_DEFAULTS; None =
     removed, i.e. inherit the pinned global). They cover every phase variable of ENV_OVERRIDE_VARS. ({}, {}) for
     Custom / unknown."""
@@ -217,9 +233,19 @@ def build_agent_config(env: Callable[[str], str | None] = os.environ.get, overri
     values.update(pinned)
     phases = merge_phase_settings(phases, pinned_phases)
     config = agent_config_from_env(env, **values, phase_settings=phases, run_profile=profile or "")
-    if pinned and "thinking" in (config.extra_body or {}):      # a named profile sends no thinking object at all
-        config.extra_body = {k: v for k, v in config.extra_body.items() if k != "thinking"}
+    if pinned:        # a named profile ignores extra_body (GLM_EXTRA_BODY / the UI's extra JSON) entirely
+        config.extra_body = {}
     return config
+
+
+def isolate_single_run(config, in_series: bool):
+    """The AgentConfig a run actually uses: an A/B arm (Baseline, Treatment, Treatment + card) started OUTSIDE a
+    series runs with research memory and negative-route blocking off (no fact reuse, no route verdicts of earlier
+    runs); a series run (its own private cache and memory per planned run), Production, Custom and the CLI are
+    unchanged."""
+    if in_series or getattr(config, "run_profile", "") not in ARMS:
+        return config
+    return dataclasses.replace(config, research_memory_enabled=False, negative_route_blocking=False)
 
 
 def profile_label(profile: str | None) -> str:

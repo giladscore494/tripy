@@ -19,6 +19,13 @@ document text, so a pair is emitted only when that quote occurs in the document 
 (evidence_admission: squashed visible text + tag-stripped source); else only when label and value each occur and the
 "…"-joined quote "label … value" passes the fragment rule; else never.
 
+Page chrome is skipped: script-like and nav / footer / header tags, elements with role navigation / menu / banner /
+contentinfo, and elements whose class or id names a nav, menu, breadcrumb, footer, header, cookie or consent block
+(CHROME_WORDS; matched per class / id word, so "unavailable" is not "nav"), plus hidden elements.
+
+Bounded per document: a page over MAX_HTML_BYTES is skipped and the pair search stops after TIME_BUDGET_S (both noted
+as `harvest_capped`, see candidate_harvest.note_harvest_cap).
+
 Pure functions only: no cache, no network, no field names. A pair is a CANDIDATE source (via the existing matchers in
 src/candidate_harvest.py), never evidence.
 """
@@ -26,19 +33,26 @@ src/candidate_harvest.py), never evidence.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from .candidate_harvest import normalize_text
+from .candidate_harvest import normalize_text, note_harvest_cap
 
 MAX_PAIRS = 400
+MAX_HTML_BYTES = 3 * 1024 * 1024       # a larger page gets no structural pairs (the line harvest still reads it)
+TIME_BUDGET_S = 2.0                    # per document
 LABEL_MAX, VALUE_MAX = 80, 120
 REPEAT_MIN = 3
 NOISE_TAGS = ("script", "style", "noscript", "template", "svg", "iframe", "object", "canvas")
 SKIP_TAGS = ("nav", "footer", "header")
 CONSENT = re.compile(r"cookie|consent|gdpr|onetrust|cookiebot", re.I)
 HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
+CHROME_ROLES = ("navigation", "menu", "menubar", "banner", "contentinfo")
+CHROME_WORDS = ("nav", "menu", "breadcrumb", "footer", "header", "cookie", "consent")
+# never removed for a class / id word: the document itself and table structure (a "table-header" row is content)
+CHROME_EXEMPT = ("html", "body", "main", "table", "thead", "tbody", "tfoot", "tr", "th", "td")
 BLOCK_TAGS = {"div", "p", "li", "ul", "ol", "table", "section", "article", "dl", "dt", "dd", "tr", "tbody", "thead",
               "h1", "h2", "h3", "h4", "h5", "h6", "form", "aside", "main", "figure", "header", "footer", "nav"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
@@ -63,13 +77,38 @@ def _hidden(tag: Tag) -> bool:
     return bool(CONSENT.search(marker))
 
 
+def _words(marker: str) -> list[str]:
+    """The words of a class / id value: split at non-alphanumerics and camelCase ("mainNav" -> main, nav)."""
+    marker = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", marker)
+    return [w for w in re.split(r"[^A-Za-z0-9]+", marker.lower()) if w]
+
+
+def _chrome(tag: Tag) -> bool:
+    """Navigation / menu / banner / footer / breadcrumb / cookie chrome by ARIA role or by a class / id word: a word
+    that starts or ends with "nav" (navbar, subnav; not "unavailable"), or contains one of the other CHROME_WORDS."""
+    attrs = tag.attrs or {}
+    roles = str(attrs.get("role") or "").lower().split()
+    if any(r in CHROME_ROLES for r in roles):
+        return True
+    if tag.name in CHROME_EXEMPT:
+        return False
+    marker = " ".join([str(attrs.get("id") or "")] + [str(c) for c in attrs.get("class") or []])
+    for word in _words(marker):
+        if word.startswith("nav") or word.endswith("nav"):
+            return True
+        if any(w in word for w in CHROME_WORDS if w != "nav"):
+            return True
+    return False
+
+
 def clean_soup(html: str) -> BeautifulSoup:
-    """The page without scripts, navigation, footer, header, cookie / consent blocks and hidden elements."""
+    """The page without scripts, navigation, footer, header, menu / breadcrumb / cookie / consent blocks (tags, ARIA
+    roles, class / id words) and hidden elements."""
     soup = BeautifulSoup(html or "", "html.parser")
     for tag in soup(NOISE_TAGS + SKIP_TAGS):
         tag.decompose()
     for tag in list(soup.find_all(True)):
-        if not getattr(tag, "decomposed", False) and tag.attrs is not None and _hidden(tag):
+        if not getattr(tag, "decomposed", False) and tag.attrs is not None and (_hidden(tag) or _chrome(tag)):
             tag.decompose()
     return soup
 
@@ -129,10 +168,13 @@ def _heading_before(tag: Tag) -> str | None:
     return _text(heading)[:120] if heading is not None else None
 
 
-def raw_pairs(soup: BeautifulSoup) -> list[dict]:
-    """Every structural pair candidate in page order: {label, value, signature, parent, node, kind}."""
+def raw_pairs(soup: BeautifulSoup, deadline: float | None = None) -> list[dict]:
+    """Every structural pair candidate in page order: {label, value, signature, parent, node, kind}; the search stops
+    (keeping what it has) once `deadline` (time.monotonic()) has passed."""
     out: list[dict] = []
     for dl in soup.find_all("dl"):
+        if deadline is not None and time.monotonic() > deadline:
+            return out
         term = None
         for child in _element_children(dl):
             if child.name == "dt":
@@ -143,6 +185,8 @@ def raw_pairs(soup: BeautifulSoup) -> list[dict]:
                     out.append({"label": term, "value": value, "signature": ("dl",), "parent": id(dl), "node": dl,
                                 "kind": "definition_list"})
     for tag in soup.find_all(True):
+        if deadline is not None and time.monotonic() > deadline:
+            break
         if tag.name in ("dl", "dt", "dd"):
             continue
         pair = _two_column(tag)
@@ -179,16 +223,29 @@ def admissible_quote(haystack: str, label: str, value: str) -> str | None:
     return None
 
 
-def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, limit: int = MAX_PAIRS) -> list[dict]:
+def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, limit: int = MAX_PAIRS,
+               max_html_bytes: int = MAX_HTML_BYTES, time_budget_s: float = TIME_BUDGET_S) -> list[dict]:
     """Admissible structural pairs of one HTML page: [{label, value, quote, header, kind}], deduplicated by
     (label, value), at most `limit`. `alias_pattern` (any field's dictionary alias) admits an isolated pair;
     `trim_header` (the dictionary's trim header matcher) decides which headings are kept as a group's header.
-    Never raises (an unparsable page yields no pairs)."""
+    A page over `max_html_bytes` yields no pairs; the search stops after `time_budget_s` keeping the pairs found so
+    far (both noted as harvest caps). Never raises (an unparsable page yields no pairs)."""
+    size = len((html or "").encode("utf-8", errors="ignore"))
+    if max_html_bytes and size > max_html_bytes:
+        note_harvest_cap(stage="structure_harvest", reason="html_too_large", html_bytes=size,
+                         limit_bytes=max_html_bytes)
+        return []
+    deadline = time.monotonic() + time_budget_s if time_budget_s else None
+
+    def late() -> bool:
+        return deadline is not None and time.monotonic() > deadline
+
     try:
         soup = clean_soup(html)
-        pairs = raw_pairs(soup)
+        pairs = raw_pairs(soup, deadline)
     except Exception:  # noqa: BLE001 - a broken page only loses its structural pairs
         return []
+    capped = late()
     groups: dict[tuple, int] = {}
     for p in pairs:
         key = (p["parent"], p["signature"])
@@ -199,6 +256,9 @@ def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, li
     headers: dict[int, str | None] = {}
     for p in pairs:
         if len(out) >= limit:
+            break
+        if late():
+            capped = True
             break
         label, value = p["label"], p["value"]
         key = (normalize_text(label), normalize_text(value))
@@ -220,4 +280,7 @@ def html_pairs(html: str, text: str, *, alias_pattern=None, trim_header=None, li
             header = headers[p["parent"]]
         out.append({"label": label, "value": value, "quote": quote, "header": header, "kind": p["kind"],
                     "repeated": repeated})
+    if capped:
+        note_harvest_cap(stage="structure_harvest", reason="time_budget", time_budget_s=time_budget_s,
+                         pairs_kept=len(out))
     return out

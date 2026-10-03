@@ -332,7 +332,7 @@ def test_requests_carry_no_tools_and_replies_are_parsed(tmp_path):
     assert {packet_of(r["messages"])["task"] for r in client.requests} == {
         "adjudicate_unambiguous", "adjudicate_ambiguous", "locate_missing"}
     assert [r["max_tokens"] for r in client.requests] == [
-        {"adjudicate_unambiguous": 1500, "adjudicate_ambiguous": 2000, "locate_missing": 1500}[
+        {"adjudicate_unambiguous": 4000, "adjudicate_ambiguous": 6000, "locate_missing": 4000}[
             packet_of(r["messages"])["task"]] for r in client.requests]
     assert summary["adjudication"]["class_counts"] == {"U": 1, "A": 1, "M": 1}
     stored = {(e["field"], e["value"]) for e in evidence_of(events)}

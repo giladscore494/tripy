@@ -2,8 +2,9 @@
 from the current field states (bundle.current_field_states, i.e. current_evaluation()) and the admitted evidence items
 (trace.evidence_items). No value ever comes from a candidate, an excerpt, a model note, the research reply or the
 finalizer. A model may only NARRATE: one small no-tool call may write `summary` and `research_trace` from a compact
-digest that carries no values; every other key of its reply is ignored, and a failed narration falls back to a
-code-written summary.
+digest that carries no values; every other key of its reply is ignored, a narration stating any number its digest
+does not state is discarded (`narration_rejected`), and a failed or rejected narration falls back to a code-written
+summary.
 
 The output keeps the finalizer's OUTPUT_SHAPE (src/agent.py), so the UI, result.json and benchmark readers keep
 working. Per field state:
@@ -24,19 +25,22 @@ evidence ids of a backed conflict_resolved declaration when the evaluator accept
 these ids themselves, so they are recomputed here with the evaluator's own predicates (never a different rule, never a
 majority). Carriers that disagree in value are not picked from: unless the evaluator's conflict classification already
 says the values are identical (unit_equivalent) or a trim-bound scalar inside a model-line range (scalar_inside_range),
-the field is logged as `final_assembly_inconsistent` and emitted as conflicting.
+the field is logged as `final_assembly_inconsistent` and emitted as conflicting. So is an `ok` field with NO carrier in
+that scope (no fallback to other evidence ids: a non-portable item is never emitted as foreign_direct).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .storage import trace
 
 FINAL_ASSEMBLY_VERSION = "final-assembly-v1"
-NARRATION_MAX_TOKENS = 800
+NARRATION_MAX_TOKENS = 2000      # reasoning shares this budget with the reply (glm-5.3 always reasons)
 OPEN_STATES = ("foreign_market_only", "variant_not_exact", "weak_provenance")
 NARRATION_KEYS = ("summary", "research_trace")
 
@@ -122,13 +126,14 @@ def _ok_entry(spec: dict, items: list[dict], state: dict, declared: dict | None,
 
     name = spec["name"]
     carriers = _carriers(spec, items, state, declared, target_market)
-    if not carriers:     # the state does not identify the carriers: its own evidence_ids
-        ids = {str(i) for i in state.get("evidence_ids") or []}
-        carriers = [i for i in items if str(i.get("evidence_id")) in ids and i.get("value") not in (None, "")]
+    # No carrier in the evaluator's server-side scope: never fall back to the state's own evidence ids (they may name a
+    # non-portable foreign item that would be emitted as foreign_direct). The field is inconsistent: conflicting, with
+    # every admitted item as an alternative.
     identity = _value_identity(spec, carriers, state) if carriers else None
     if identity is None:
         inconsistent.append({"field": name, "evidence_ids": [str(i.get("evidence_id")) for i in carriers],
-                             "values": [i.get("value") for i in carriers][:10]})
+                             "values": [i.get("value") for i in carriers][:10],
+                             "reason": "carriers_disagree" if carriers else "no_carrier_in_scope"})
         return _conflicting_entry(name, items, state, reason="final_assembly_inconsistent")
     value_items, normalized = identity
     rep = value_items[0]
@@ -309,6 +314,46 @@ def parse_narration(text: str | None) -> dict:
     return out
 
 
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# a number with an optional unit right after it (only for reporting the offending token)
+_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)*(?:\s?(?:%|[^\W\d_]{1,8}))?")
+
+
+def _canonical_number(raw: str) -> str:
+    """One spelling per number: "4,650" / "4650" -> "4650", "1.80" / "1,8" -> "1.8", "08" -> "8"; a dotted run that is
+    no single number ("1.2.3", "01.02.2024") stays as written."""
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", raw):
+        raw = raw.replace(",", "")
+    raw = raw.replace(",", ".")
+    if raw.count(".") > 1:
+        return raw
+    try:
+        return format(Decimal(raw).normalize(), "f")
+    except InvalidOperation:
+        return raw
+
+
+def digest_numbers(digest: dict) -> set[str]:
+    """Every number the narration digest states (counts, digits inside field names, the identity, source domains)."""
+    text = json.dumps(digest, ensure_ascii=False, default=str)
+    return {_canonical_number(m.group(0)) for m in _NUMBER.finditer(text)}
+
+
+def unsupported_numbers(narration: dict, digest: dict) -> list[str]:
+    """The number tokens (with an optional unit) of a parsed narration (summary and research_trace) whose number the
+    digest sent to the model does not state. The digest carries no field values, so a narration that states a value,
+    a measurement or any other number of its own is caught here."""
+    allowed = digest_numbers(digest)
+    texts = [narration.get("summary") or ""] + list(narration.get("research_trace") or [])
+    bad: list[str] = []
+    for text in texts:
+        for m in _NUMBER_TOKEN.finditer(str(text)):
+            number = _NUMBER.match(m.group(0)).group(0)
+            if _canonical_number(number) not in allowed and m.group(0).strip() not in bad:
+                bad.append(m.group(0).strip())
+    return bad
+
+
 def run_deterministic_finalization(caller, *, run_log, events: list[dict], payload: dict, specs: list[dict],
                                    target_market: str | None, model: str, phase: str = "finalization",
                                    bundle: dict | None = None, record_id: str | None = None,
@@ -338,36 +383,52 @@ def run_deterministic_finalization(caller, *, run_log, events: list[dict], paylo
                 "api_error": None, "bundle": bundle, "info": info}
     for bad in report["inconsistent"]:
         run_log.event("final_assembly_inconsistent", **bad,
-                      note="an ok field's carrying evidence disagrees in value: emitted as conflicting, no value "
-                           "picked")
+                      note="an ok field's carrying evidence disagrees in value, or none is in its server-side scope: "
+                           "emitted as conflicting, no value picked")
     info.update({"evidence_items": report["admitted_evidence"], "states": report["states"],
                  "inconsistent_fields": [b["field"] for b in report["inconsistent"]]})
     narration: dict[str, Any] = {"status": "skipped"}
     text = None
     if narrate:
-        before = dict(caller.usage[trace.phase_group(phase)])
+        group = trace.phase_group(phase)
+        before = dict(caller.usage[group])
+        truncation_before = dict((getattr(caller, "truncation", None) or {}).get(group) or {})
+        digest = narration_digest(output, report, payload)
         messages = [{"role": "system", "content": NARRATION_SYSTEM_PROMPT},
                     {"role": "user", "content": "Run digest (JSON):\n" + json.dumps(
-                        narration_digest(output, report, payload), ensure_ascii=False, default=str)}]
+                        digest, ensure_ascii=False, default=str)}]
         try:
+            from .agent import call_with_truncation_retry
             from .phase_settings import for_phase
 
             limit = for_phase(getattr(caller, "config", None), phase).get("max_tokens")
             max_tokens = min(NARRATION_MAX_TOKENS, int(limit)) if limit else NARRATION_MAX_TOKENS
-            message = caller(messages, phase=phase, model=model, max_tokens=max_tokens)
+            # a truncated narration is retried once with a doubled max_tokens
+            message = call_with_truncation_retry(caller, messages, phase=phase, model=model, max_tokens=max_tokens)
             text = message.get("content") or ""
             parsed = parse_narration(text)
-            output.update(parsed)
-            narration = {"status": "ok" if parsed else "unparsed", "keys_used": sorted(parsed)}
+            # the narration may only restate numbers of its digest: anything else is discarded as a whole
+            bad = unsupported_numbers(parsed, digest) if parsed else []
+            if bad:
+                narration = {"status": "rejected", "keys_used": [], "unsupported_numbers": bad[:20]}
+                run_log.event("narration_rejected", phase=phase, model=model, unsupported_numbers=bad[:20],
+                              note="the narration states numbers its digest does not; the code-written summary is "
+                                   "kept")
+            else:
+                output.update({k: parsed[k] for k in NARRATION_KEYS if k in parsed})
+                narration = {"status": "ok" if parsed else "unparsed", "keys_used": sorted(parsed)}
         except Exception as exc:  # noqa: BLE001 - narration never blocks the result (timeouts included)
             error = f"{type(exc).__name__}: {str(exc)[:500]}"
             narration = {"status": "failed", "error": error,
                          "api_error": exc.as_dict() if hasattr(exc, "as_dict") else None}
             run_log.event("narration_failed", phase=phase, model=model, error=error,
                           note="the code-written summary is kept; the result is not affected")
-        after = caller.usage[trace.phase_group(phase)]
+        after = caller.usage[group]
         used = {k: after[k] - before.get(k, 0) for k in after}
         narration.update({k: used[k] for k in ("model_calls", "prompt_tokens", "completion_tokens", "total_tokens")})
+        now_trunc = (getattr(caller, "truncation", None) or {}).get(group) or {}
+        narration.update({k: int(now_trunc.get(k, 0)) - int(truncation_before.get(k, 0))
+                          for k in ("truncated_calls", "truncation_retries")})
     info.update({"status": "assembled", "error": None, "api_error": None, "parse_note": "deterministic",
                  "narration": narration, "raw_text": text, "finished_at": now(),
                  "latency_ms": int((time.monotonic() - t0) * 1000),

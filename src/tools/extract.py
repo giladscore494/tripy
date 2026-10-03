@@ -140,6 +140,8 @@ TEXT_TABLE_SETTINGS = {"vertical_strategy": "text", "horizontal_strategy": "text
                        "join_tolerance": 3, "intersection_tolerance": 5, "text_x_tolerance": 2, "text_y_tolerance": 2,
                        "min_words_vertical": 2, "min_words_horizontal": 1}
 MAX_TEXT_TABLES = 30
+TEXT_PASS_MAX_PAGES = 60          # the text-strategy pass reads at most the first 60 pages of a document ...
+TEXT_PASS_MAX_S = 5.0             # ... and stops once it has spent 5 s on the document (noted as a harvest cap)
 MIN_TEXT_TABLE_ROWS, MIN_TEXT_TABLE_COLS, MIN_TEXT_TABLE_LABELS = 3, 2, 2
 
 
@@ -243,11 +245,18 @@ def _text_strategy_tables(page, vocabulary: TableVocabulary) -> list[list[list[s
     return out
 
 
-def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary | None = None) -> list[dict]:
+def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary | None = None,
+                text_max_pages: int = TEXT_PASS_MAX_PAGES, text_max_s: float = TEXT_PASS_MAX_S) -> list[dict]:
+    import time
+
     import pdfplumber
 
+    from ..candidate_harvest import note_harvest_cap
+
     tables, extra = [], []
+    text_spent, capped, page_count = 0.0, None, 0
     with pdfplumber.open(io.BytesIO(body)) as pdf:
+        page_count = len(pdf.pages)
         for page_no, page in enumerate(pdf.pages[:max_pages], start=1):
             found = 0
             seen_first: set[str] = set()
@@ -257,8 +266,13 @@ def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary |
                     found += 1
                     seen_first |= {r[0] for r in rows if r and r[0]}
                     tables.append({"source": "pdf_table", "page": page_no, "caption": "", "rows": rows})
-            if vocabulary is None or len(extra) >= MAX_TEXT_TABLES:
+            if vocabulary is None or len(extra) >= MAX_TEXT_TABLES or capped:
                 continue
+            if page_no > text_max_pages or text_spent > text_max_s:
+                capped = {"reason": "pages", "pages_read": text_max_pages} if page_no > text_max_pages else \
+                    {"reason": "time_budget", "pages_read": page_no - 1, "time_budget_s": text_max_s}
+                continue
+            t0 = time.monotonic()
             try:      # never raises: the default tables stand
                 if not wants_text_pass(found, page.extract_text() or "", vocabulary):
                     continue
@@ -272,6 +286,10 @@ def _pdf_tables(body: bytes, max_pages: int = 200, vocabulary: TableVocabulary |
                         break
             except Exception:  # noqa: BLE001
                 continue
+            finally:
+                text_spent += time.monotonic() - t0
+    if capped:
+        note_harvest_cap(stage="pdf_text_tables", pages=min(page_count, max_pages), **capped)
     # appended after the default tables, so every default table keeps its index (candidates cite table_index)
     return tables + extra
 

@@ -4,13 +4,16 @@
             ↓  robots.txt -> its Sitemap: entries, else /sitemap.xml and /sitemap_index.xml
             ↓  XML sitemaps and sitemap indexes (also .xml.gz), standard library only (xml.etree, gzip);
             ↓  nested indexes to depth 3, <= 50 sitemap files and <= 20,000 URLs per domain
-            ↓  cached per domain under the cache root for 7 days (single flight), shared by every vehicle
+            ↓  cached per domain under the cache root for 7 days (single flight), shared by every vehicle; a crawl the
+            ↓  deadline cut short is cached as `partial: true` for 1 hour only (a URL / sitemap count cap is not partial)
     rank_urls   model / family tokens (Latin and Hebrew), model year, intent keywords per recovery cluster, .pdf;
                 URLs of another model family dropped; robots.txt Disallow respected; top 15 with reasons
 
 Discovery and routing metadata only: a sitemap is never stored as a document, never counts as an acquisition
-artifact, and nothing here is evidence or decides a field. Every entry point is bounded (a deadline, caps) and never
-raises into the run.
+artifact, and nothing here is evidence or decides a field. Every entry point is bounded and never raises into the run:
+the overall deadline is checked while a response body streams in (a slow server is cut), each file is capped at
+15 MB on the wire and 50 MB decompressed (a gzip bomb is stopped), and the per-domain single-flight wait times out at
+the remaining deadline (the caller then goes on without that domain's site map).
 """
 
 from __future__ import annotations
@@ -29,8 +32,10 @@ SITE_MAP_VERSION = "site-map-v1"
 MAX_DEPTH = 3
 MAX_SITEMAPS = 50
 MAX_URLS = 20000
-MAX_SITEMAP_BYTES = 20 * 1024 * 1024        # a decompressed sitemap file
+MAX_FILE_BYTES = 15 * 1024 * 1024           # one sitemap / robots.txt file as received
+MAX_SITEMAP_BYTES = 50 * 1024 * 1024        # a decompressed (gzip) sitemap file
 TTL_S = 7 * 24 * 3600
+PARTIAL_TTL_S = 3600                        # a crawl the deadline cut short
 TOP_N = 15
 DEFAULT_DEADLINE_S = 20.0
 FALLBACK_PATHS = ("/sitemap.xml", "/sitemap_index.xml")
@@ -50,25 +55,38 @@ INTENTS: dict[str, tuple[str, ...]] = {
 ALL_INTENTS = tuple(dict.fromkeys(k for words in INTENTS.values() for k in words)) + BROCHURE
 
 
+class SiteMapDeadline(TimeoutError):
+    """The site map's overall deadline passed (while a body was streaming in, or before a crawl step)."""
+
+
+class SitemapTooLarge(ValueError):
+    """A sitemap file decompresses beyond MAX_SITEMAP_BYTES."""
+
+
 # --- fetching --------------------------------------------------------------------------------------------------------
 
 def http_fetch(ctx, url: str, deadline: float) -> tuple[int, bytes]:
     """(status, body) through the run's HTTP session with the fetch tools' user agent; timeouts are the tool
-    timeouts, never beyond the deadline. Raises on a network error (the caller records it)."""
+    timeouts, never beyond the deadline. The body streams in chunks: past the deadline the read is aborted
+    (SiteMapDeadline); past MAX_FILE_BYTES (or the tools' response cap) it is cut. Raises on a network error (the
+    caller records it)."""
     from .tools.fetch import USER_AGENT
 
     remaining = max(0.5, deadline - time.monotonic())
     cfg = ctx.config
+    cap = min(int(getattr(cfg, "max_response_bytes", MAX_FILE_BYTES) or MAX_FILE_BYTES), MAX_FILE_BYTES)
     resp = ctx.session.get(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Language": "he,en;q=0.9"},
                            timeout=(min(cfg.connect_timeout_s, remaining), min(cfg.read_timeout_s, remaining)),
                            stream=True, allow_redirects=True)
     chunks, size = [], 0
     try:
         for chunk in resp.iter_content(64 * 1024):
+            if time.monotonic() > deadline:
+                raise SiteMapDeadline(f"site map deadline passed while reading {url}")
             if not chunk:
                 continue
             size += len(chunk)
-            if size > cfg.max_response_bytes:
+            if size > cap:
                 break
             chunks.append(chunk)
     finally:
@@ -82,10 +100,20 @@ def _local(tag: str) -> str:
 
 def parse_sitemap(body: bytes) -> tuple[str, list[str]]:
     """("urlset" | "sitemapindex" | "unknown", <loc> values) of one sitemap file (gzip or plain XML). Documents
-    declaring entities are refused (no entity expansion)."""
+    declaring entities are refused (no entity expansion). A gzip file is decompressed in chunks and refused
+    (SitemapTooLarge) once it exceeds MAX_SITEMAP_BYTES, so a gzip bomb never expands further."""
     if body[:2] == b"\x1f\x8b":
+        parts, size = [], 0
         with gzip.GzipFile(fileobj=__import__("io").BytesIO(body)) as handle:
-            body = handle.read(MAX_SITEMAP_BYTES + 1)[:MAX_SITEMAP_BYTES]
+            while True:
+                part = handle.read(1024 * 1024)
+                if not part:
+                    break
+                size += len(part)
+                if size > MAX_SITEMAP_BYTES:
+                    raise SitemapTooLarge(f"decompressed sitemap exceeds {MAX_SITEMAP_BYTES} bytes")
+                parts.append(part)
+        body = b"".join(parts)
     head = body[:4096].lower()
     if b"<!entity" in head or b"<!doctype" in head:
         return "unknown", []
@@ -103,10 +131,11 @@ def parse_sitemap(body: bytes) -> tuple[str, list[str]]:
 
 def crawl_domain(domain: str, fetch: Callable[[str], tuple[int, bytes]], *, deadline: float,
                  max_depth: int = MAX_DEPTH, max_sitemaps: int = MAX_SITEMAPS, max_urls: int = MAX_URLS) -> dict:
-    """{domain, robots, sitemaps, urls, errors, truncated} for one domain. `fetch(url) -> (status, body)` may raise;
-    every failure is recorded and the crawl goes on with what it has. Bounded by the deadline and the caps."""
+    """{domain, robots, sitemaps, urls, errors, truncated, partial} for one domain. `fetch(url) -> (status, body)` may
+    raise; every failure is recorded and the crawl goes on with what it has. Bounded by the deadline and the caps.
+    `truncated`: a cap or the deadline stopped the crawl; `partial`: the DEADLINE did (a short-lived cache entry)."""
     out: dict[str, Any] = {"domain": domain, "robots": "", "sitemaps": [], "urls": [], "errors": [],
-                           "truncated": False}
+                           "truncated": False, "partial": False}
     base = f"https://{domain}"
     roots: list[str] = []
     try:
@@ -116,6 +145,10 @@ def crawl_domain(domain: str, fetch: Callable[[str], tuple[int, bytes]], *, dead
             parser = RobotFileParser()
             parser.parse(out["robots"].splitlines())
             roots = list(parser.site_maps() or [])
+    except SiteMapDeadline:
+        out["truncated"] = out["partial"] = True
+        out["errors"].append("robots.txt: deadline")
+        return out
     except Exception as exc:  # noqa: BLE001
         out["errors"].append(f"robots.txt: {type(exc).__name__}: {str(exc)[:120]}")
     if not roots:
@@ -128,12 +161,19 @@ def crawl_domain(domain: str, fetch: Callable[[str], tuple[int, bytes]], *, dead
         url, depth = queue.pop(0)
         if url in seen_maps:
             continue
-        if len(seen_maps) >= max_sitemaps or time.monotonic() > deadline:
+        if time.monotonic() > deadline:
+            out["truncated"] = out["partial"] = True
+            break
+        if len(seen_maps) >= max_sitemaps:
             out["truncated"] = True
             break
         seen_maps.add(url)
         try:
             status, body = fetch(url)
+        except SiteMapDeadline:
+            out["truncated"] = out["partial"] = True
+            out["errors"].append(f"{url}: deadline")
+            break
         except Exception as exc:  # noqa: BLE001
             out["errors"].append(f"{url}: {type(exc).__name__}: {str(exc)[:120]}")
             continue
@@ -174,9 +214,12 @@ def _cache_path(cache, domain: str) -> Path:
 
 
 def cached_domain(cache, domain: str, crawl: Callable[[], dict], *, now: Callable[[], float] = time.time,
-                  ttl_s: float = TTL_S) -> tuple[dict, bool]:
-    """(record, cache_hit): the parsed URL list of a domain, shared by every vehicle of that importer for `ttl_s`.
-    Single flight per domain (cache.hold). A crawl that found nothing at all is not cached."""
+                  ttl_s: float = TTL_S, partial_ttl_s: float = PARTIAL_TTL_S,
+                  hold_timeout: float | None = None) -> tuple[dict, bool]:
+    """(record, cache_hit): the parsed URL list of a domain, shared by every vehicle of that importer for `ttl_s`
+    (`partial_ttl_s` for a crawl the deadline cut short: `partial: true`). Single flight per domain (cache.hold); a
+    wait longer than `hold_timeout` raises TimeoutError (the caller goes on without this domain). A crawl that found
+    nothing at all is not cached."""
     from .storage.atomic import atomic_write_text
 
     path = _cache_path(cache, domain)
@@ -186,14 +229,15 @@ def cached_domain(cache, domain: str, crawl: Callable[[], dict], *, now: Callabl
             record = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):
             return None
-        if record.get("version") != SITE_MAP_VERSION or now() - float(record.get("stored_at") or 0) > ttl_s:
+        ttl = partial_ttl_s if record.get("partial") else ttl_s
+        if record.get("version") != SITE_MAP_VERSION or now() - float(record.get("stored_at") or 0) > ttl:
             return None
         return record
 
     record = read()
     if record is not None:
         return record, True
-    with cache.hold(f"sitemap:{domain}"):
+    with cache.hold(f"sitemap:{domain}", **({"timeout": hold_timeout} if hold_timeout is not None else {})):
         record = read()
         if record is not None:
             return record, True
@@ -320,13 +364,15 @@ def build_site_map(ctx, domains: list[str], *, deadline_s: float = DEFAULT_DEADL
             continue
         try:
             record, hit = cached_domain(ctx.cache, domain, lambda: crawl_domain(
-                domain, lambda u: getter(u, deadline), deadline=deadline))
-        except Exception as exc:  # noqa: BLE001 - discovery never costs the run
+                domain, lambda u: getter(u, deadline), deadline=deadline),
+                hold_timeout=max(0.0, deadline - time.monotonic()))
+        except Exception as exc:  # noqa: BLE001 - discovery never costs the run (a timed-out single-flight wait too)
             out["domains"].append({"domain": domain, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
             out["errors"].append(f"{domain}: {type(exc).__name__}")
             continue
         out["domains"].append({"domain": domain, "cache_hit": hit, "sitemaps": len(record.get("sitemaps") or []),
                                "urls": len(record.get("urls") or []), "truncated": bool(record.get("truncated")),
+                               "partial": bool(record.get("partial")),
                                "errors": list(record.get("errors") or [])[:5]})
         out["robots"][domain] = record.get("robots") or ""
         out["urls"] += [(u, domain) for u in record.get("urls") or []]

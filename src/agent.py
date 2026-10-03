@@ -592,9 +592,11 @@ class AgentConfig:
     adjudication_max_a_candidates: int = 18    # candidates per A packet
     adjudication_max_m_fields: int = 6         # fields per M (missing, label snippets only) packet
     adjudication_max_m_snippets: int = 12      # snippets per M packet
-    adjudication_u_max_tokens: int = 1500      # max_tokens of a U / A / M call (thinking: the document_sweep phase)
-    adjudication_a_max_tokens: int = 2000
-    adjudication_m_max_tokens: int = 1500
+    # max_tokens of a U / A / M call (thinking: the document_sweep phase). glm-5.3 models always reason, and reasoning
+    # shares the completion budget with the JSON answer; a truncated reply is retried once with double the cap
+    adjudication_u_max_tokens: int = 4000
+    adjudication_a_max_tokens: int = 6000
+    adjudication_m_max_tokens: int = 4000
     # FINAL_ASSEMBLY: "deterministic" = the final output is built in code from the field states and admitted evidence
     # (src/final_assembly.py; a model may only narrate summary / research_trace); "llm" = the finalizer model writes
     # the output from the compact bundle (the previous behaviour).
@@ -768,19 +770,38 @@ FINAL_ASSEMBLY_MODES = ("deterministic", "llm")
 RECOVERY_MODES = ("reacquire", "cluster", "legacy")
 
 
+def sanitize_extra_body(extra_body: dict | None) -> tuple[dict, dict]:
+    """(extra_body without the values that must never be sent, {key: dropped value}). A `thinking` key survives only
+    as an object with type "enabled" (a string such as "disabled", a "disabled" object or anything else is dropped; a
+    "disabled" object is additionally mapped, see phase_settings.thinking_disabled_mapping); a `reasoning_effort`
+    survives only when
+    phase_settings.parse_effort accepts it (e.g. "none" is dropped)."""
+    from .phase_settings import parse_effort
+
+    extra = dict(extra_body or {}) if isinstance(extra_body, dict) else {}
+    dropped: dict = {}
+    if "thinking" in extra:
+        thinking = extra["thinking"]
+        if not (isinstance(thinking, dict) and str(thinking.get("type") or "").strip().lower() == "enabled"):
+            dropped["thinking"] = extra.pop("thinking")
+    if "reasoning_effort" in extra and not parse_effort(extra.get("reasoning_effort")):
+        dropped["reasoning_effort"] = extra.pop("reasoning_effort")
+    return extra, dropped
+
+
 def request_extra(config: AgentConfig, settings: dict | None = None) -> dict:
     """Extra fields merged into a chat request: extra_body, the thinking object and the top-level reasoning_effort.
     `settings`: one call's resolved phase settings (phase_settings.for_phase); None = the global settings only.
 
     A thinking object of type "disabled" is NEVER sent, whether configured (GLM_THINKING, a phase, the UI, a saved
-    request) or in extra_body (GLM_EXTRA_BODY): it is stripped and the call gets reasoning_effort low unless an effort
-    is set explicitly (phase_settings.thinking_disabled_mapping). An explicit effort (a phase's own or the global one)
-    and thinking "enabled" win over extra_body; extra_body's own reasoning_effort wins over a phase default."""
+    request) or in extra_body (GLM_EXTRA_BODY): it is stripped and the call gets the phase's default reasoning effort
+    unless an effort is set explicitly (phase_settings.thinking_disabled_mapping). Any other `thinking` value of
+    extra_body but {"type": "enabled"} and an invalid extra_body reasoning_effort are dropped (sanitize_extra_body). An
+    explicit effort (a phase's own or the global one) and thinking "enabled" win over extra_body; extra_body's own
+    (valid) reasoning_effort wins over a phase default."""
     from .phase_settings import PROVIDER_DEFAULT, parse_effort, thinking_disabled_mapping
 
-    extra = dict(config.extra_body or {})
-    if isinstance(extra.get("thinking"), dict) and str(extra["thinking"].get("type") or "").lower() == "disabled":
-        extra.pop("thinking")
+    extra, _ = sanitize_extra_body(config.extra_body)
     if settings is None:
         explicit = parse_effort(config.reasoning_effort)
         mapping = thinking_disabled_mapping(str(config.thinking or "").lower(), explicit, config.extra_body)
@@ -965,6 +986,20 @@ def check_cancelled(cancel_event) -> None:
         raise BatchCancelled("batch cancelled")
 
 
+# One retry of a call whose output hit its max_tokens (finish_reason "length") gets this many tokens at most.
+TRUNCATION_RETRY_MAX_TOKENS = 12000
+
+
+class OutputTruncated(Exception):
+    """A model response ended with finish_reason "length": the output (reasoning + answer share the completion budget)
+    was cut at max_tokens. Raised by ModelCaller only for calls with an explicit max_tokens; `response` is the
+    ChatResponse (already logged and booked)."""
+
+    def __init__(self, response, *, phase: str, max_tokens: int | None):
+        super().__init__(f"model output truncated at max_tokens={max_tokens} (phase {phase})")
+        self.response, self.phase, self.max_tokens = response, phase, max_tokens
+
+
 class ModelCaller:
     """Calls GLM, logs every response as a `model_response` event and books usage by phase."""
 
@@ -972,20 +1007,38 @@ class ModelCaller:
                  cancel_event=None):
         self.client, self.run_log, self.config = client, run_log, config
         self.thinking_mapped_logged = False      # thinking_disabled_mapped is logged once per run
+        self.dropped_logged: set[str] = set()    # thinking_dropped / reasoning_effort_dropped: once per run each
         self.usage = {group: trace.empty_usage() for group in trace.PHASE_GROUPS}
+        # per phase group: responses cut at max_tokens and the one-time retries with a doubled max_tokens
+        self.truncation = {group: {"truncated_calls": 0, "truncation_retries": 0} for group in trace.PHASE_GROUPS}
         self.last_content: str | None = None
         self.run_context = run_context if run_context is not None else {}
         self.cancel_event = cancel_event
 
+    def _log_once(self, key: str, kind: str, **data: Any) -> None:
+        if key in self.dropped_logged:
+            return
+        self.dropped_logged.add(key)
+        try:
+            self.run_log.event(kind, **data)
+        except Exception:  # noqa: BLE001 - telemetry never costs the call
+            pass
+
     def __call__(self, messages: list[dict], *, phase: str, tools: list[dict] | None = None,
                  model: str | None = None, meta: dict | None = None, activity: dict | None = None,
-                 max_tokens: int | None = None, settings_phase: str | None = None) -> dict:
+                 max_tokens: int | None = None, settings_phase: str | None = None,
+                 attempts_phase: str | None = None) -> dict:
         """`meta` adds explicit context to the logged model_response (e.g. the field and attempt of a
         field-recovery turn). It never changes `phase`, which usage accounting groups by. `activity`
         only labels this call's request-lifecycle events (e.g. the research turn); it is not logged
         on the model_response. `settings_phase` takes the request settings (reasoning effort, timeouts,
         attempts, model) of another phase while accounting stays with `phase` (e.g. a recovery re-acquisition
-        turn runs with the research settings and is booked as recovery)."""
+        turn runs with the research settings and is booked as recovery); `attempts_phase` then takes only the HTTP
+        max_attempts of yet another phase.
+
+        A response cut at its token cap (finish_reason "length") is logged as `model_output_truncated`; with an
+        explicit `max_tokens` it also raises OutputTruncated (the caller decides: see call_with_truncation_retry),
+        without one (research / tool turns) the response is returned as before."""
         check_cancelled(self.cancel_event)
         meta = meta or {}
         self.run_context.clear()
@@ -996,6 +1049,15 @@ class ModelCaller:
 
         settings = for_phase(self.config, settings_phase or phase)
         extra = request_extra(self.config, settings)
+        _, dropped = sanitize_extra_body(self.config.extra_body)
+        if "thinking" in dropped:
+            self._log_once("thinking", "thinking_dropped", phase=phase, value=dropped["thinking"],
+                           note="extra_body thinking is sent only as an object with type \"enabled\"; this value was "
+                                "dropped")
+        if "reasoning_effort" in dropped:
+            self._log_once("reasoning_effort", "reasoning_effort_dropped", phase=phase,
+                           value=dropped["reasoning_effort"],
+                           note="invalid extra_body reasoning_effort dropped; the phase setting applies")
         # Extra JSON must not override a call's explicit token cap or add tools to finalization.
         if max_tokens is not None and "max_tokens" in extra:
             extra["max_tokens"] = max_tokens
@@ -1008,7 +1070,7 @@ class ModelCaller:
                 self.run_log.event("thinking_disabled_mapped", phase=phase, source=settings["thinking_disabled_source"],
                                    reasoning_effort=settings["reasoning_effort"],
                                    note="thinking 'disabled' is never sent (the provider rejects it, code 1210): no "
-                                        "thinking object, reasoning_effort low unless set explicitly")
+                                        "thinking object, the phase's default reasoning_effort unless set explicitly")
             except Exception:  # noqa: BLE001 - telemetry never costs the call
                 pass
         kwargs: dict[str, Any] = {"tools": tools, "temperature": settings["temperature"],
@@ -1018,8 +1080,10 @@ class ModelCaller:
             kwargs["model"] = model
         if settings["timeout_s"]:
             kwargs["timeout_s"] = settings["timeout_s"]
-        if settings["max_attempts"]:
-            kwargs["max_attempts"] = settings["max_attempts"]
+        attempts = for_phase(self.config, attempts_phase)["max_attempts"] if attempts_phase else \
+            settings["max_attempts"]
+        if attempts:
+            kwargs["max_attempts"] = attempts
         effort = (extra or {}).get("reasoning_effort")
         try:
             response = self.client.chat(messages, **kwargs)
@@ -1027,18 +1091,22 @@ class ModelCaller:
             if not is_thinking_rejection(exc):
                 raise
             # Defensive: the provider still says thinking cannot be disabled. ONE extra request without a thinking
-            # object and with effort low; it does not count against max_attempts (the 400 was not retried), and a
-            # second rejection surfaces as a normal error.
+            # object and with the phase's default effort (an explicitly set effort is kept); it does not count against
+            # max_attempts (the 400 was not retried), and a second rejection surfaces as a normal error.
+            explicit = settings["reasoning_effort_source"] in ("phase", "global", "extra_body")
+            retry_effort = (settings["reasoning_effort"] if explicit and settings["reasoning_effort"]
+                            else settings.get("phase_default_effort") or "low")
             retry_extra = {k: v for k, v in (extra or {}).items() if k != "thinking"}
-            retry_extra["reasoning_effort"] = "low"
+            retry_extra["reasoning_effort"] = retry_effort
             self.run_log.event("reasoning_retry", phase=phase, model=model or research_model_of(self.client),
                                status=exc.status, error=_error_text(exc), sent_thinking=(extra or {}).get("thinking"),
-                               sent_reasoning_effort=effort, retry_reasoning_effort="low")
+                               sent_reasoning_effort=effort, retry_reasoning_effort=retry_effort)
             kwargs["extra"] = retry_extra
-            effort = "low"
+            effort = retry_effort
             response = self.client.chat(messages, **kwargs)
         latency = int(getattr(response, "latency_ms", 0) or 0)
-        trace.add_usage(self.usage[trace.phase_group(phase)], response.usage, latency)
+        group = trace.phase_group(phase)
+        trace.add_usage(self.usage[group], response.usage, latency)
         raw = getattr(response, "raw", {}) or {}
         content = response.message.get("content")
         if (content or "").strip():
@@ -1050,7 +1118,46 @@ class ModelCaller:
                            response_meta={k: raw.get(k) for k in ("id", "request_id", "model", "created") if k in raw},
                            content=content, reasoning_content=response.message.get("reasoning_content"),
                            tool_calls=response.message.get("tool_calls"), **(meta or {}))
+        if response.finish_reason == "length":
+            self.truncation.setdefault(group, {"truncated_calls": 0, "truncation_retries": 0})["truncated_calls"] += 1
+            self.run_log.event("model_output_truncated", phase=phase, max_tokens=kwargs["max_tokens"],
+                               usage=response.usage, reasoning_tokens=trace.reasoning_tokens(response.usage),
+                               raised=max_tokens is not None, **(meta or {}))
+            if max_tokens is not None:
+                raise OutputTruncated(response, phase=phase, max_tokens=max_tokens)
         return response.message
+
+
+def call_with_truncation_retry(caller, messages: list[dict], *, max_tokens: int, **kwargs: Any) -> dict:
+    """ONE model call with an explicit `max_tokens`; when its output is truncated (OutputTruncated), ONE retry of the
+    same request with max_tokens doubled (at most TRUNCATION_RETRY_MAX_TOKENS). The JSON repair prompt is never used
+    for truncation (it is only for complete-but-invalid JSON). A second truncation raises OutputTruncated: the caller
+    fails only its own unit (packet / document / narration)."""
+    try:
+        return caller(messages, max_tokens=max_tokens, **kwargs)
+    except OutputTruncated:
+        retry_tokens = min(TRUNCATION_RETRY_MAX_TOKENS, int(max_tokens) * 2)
+        if retry_tokens <= int(max_tokens):
+            raise
+        phase = kwargs.get("phase")
+        counts = getattr(caller, "truncation", None)
+        if isinstance(counts, dict):
+            counts.setdefault(trace.phase_group(phase), {"truncated_calls": 0, "truncation_retries": 0})[
+                "truncation_retries"] += 1
+        try:
+            caller.run_log.event("truncation_retry", phase=phase, max_tokens=max_tokens, retry_max_tokens=retry_tokens,
+                                 **(kwargs.get("meta") or {}))
+        except Exception:  # noqa: BLE001 - telemetry never costs the call
+            pass
+        meta = {**(kwargs.pop("meta", None) or {}), "truncation_retry": True}
+        return caller(messages, max_tokens=retry_tokens, meta=meta, **kwargs)
+
+
+def truncation_counts(caller, group: str, before: dict | None = None) -> dict:
+    """{truncated_calls, truncation_retries} of one phase group since `before` (a previous copy of the counts)."""
+    now = (getattr(caller, "truncation", None) or {}).get(group) or {}
+    before = before or {}
+    return {k: int(now.get(k, 0)) - int(before.get(k, 0)) for k in ("truncated_calls", "truncation_retries")}
 
 
 def run_finalization(caller: ModelCaller, *, run_log: RunLog, payload: dict, config: AgentConfig, cache=None,
@@ -2324,7 +2431,8 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
 
         1. targeted Acquire   one short episode with the CONTRACT acquisition tool surface (search / fetch only,
                               enforced by `allowed`): <= REACQUIRE_TURNS turns, cluster_search_budget billable
-                              searches, <= REACQUIRE_FETCHES fetches; research reasoning settings, booked as recovery.
+                              searches, <= REACQUIRE_FETCHES fetches; research reasoning settings with the recovery
+                              phase's HTTP max_attempts, booked as recovery.
                               Ends on {"done": true}, the budget, or a turn with no new usable document.
         2. harvest            every new document, automatically (the session hook), incl. structural pairs, PDF text
                               tables and unit anchors
@@ -2336,7 +2444,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     store_evidence calls reach Evidence Admission. A failed cluster never stops the others; RECOVERY_API_FAILURE_STOP
     consecutive API failures stop all recovery. Field states come only from current_evaluation()."""
     from .acquisition import cluster_source_type
-    from .candidate_harvest import candidate_matrix
+    from .candidate_harvest import candidate_matrix, is_model_located
     from .document_sweep import route_candidates
     from .field_recovery import vehicle_identity
     from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
@@ -2459,8 +2567,9 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                     break
                 meta = {"field": label, "cluster": name, "fields": open_fields, "attempt": 1, "turn": turn_index,
                         "turn_budget": REACQUIRE_TURNS, "mode": "reacquire"}
+                # research reasoning settings, but the recovery phase's HTTP attempts (default 1: no identical retry)
                 message = caller(outgoing_messages(messages, config), phase="field_recovery", settings_phase="research",
-                                 tools=model_tools, meta=meta)
+                                 attempts_phase="field_recovery", tools=model_tools, meta=meta)
                 turns += 1
                 messages.append(_assistant_echo(message))
                 calls = message.get("tool_calls") or []
@@ -2557,8 +2666,11 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                 reevaluate(name, open_fields)
         events = trace_events(run_log)
         matrix_after = usable_matrix(events)
-        new_candidates = sum(1 for f in open_fields for c in matrix_after["fields"].get(f) or []
-                             if str(c.get("document_id")) in set(new_useful))
+        new_cands = [c for f in open_fields for c in matrix_after["fields"].get(f) or []
+                     if str(c.get("document_id")) in set(new_useful)]
+        # deterministic harvest candidates; grounded (model-located) ones are counted apart
+        new_grounded = sum(1 for c in new_cands if is_model_located(c))
+        new_candidates = len(new_cands) - new_grounded
         executed = [c for c in session.tool_calls[calls_before:] if not c.get("blocked") and not c.get("reused")]
         searched = session.ctx.counters["search_cache_misses"] - searches_before
         state["searches"] += searched
@@ -2582,7 +2694,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                   "fetches": sum(1 for c in executed if c["name"] in trace.FETCH_TOOLS),
                   "fetch_refused": fetch_budget.refused,
                   "new_useful_documents": len(new_useful), "new_documents": new_useful,
-                  "new_candidates": new_candidates,
+                  "new_candidates": new_candidates, "new_grounded_candidates": new_grounded,
                   "grounded_items": grounded.get("items", 0), "grounded_admissible": grounded.get("admissible", 0),
                   "adjudication_accepted": adj.get("accepted", 0), "admitted": adj.get("admitted", 0),
                   "adjudication_error": adjudication.get("error"),
@@ -2648,6 +2760,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         "reacquire": {"episodes": len(attempts_log),
                       "new_useful_documents": sum(a["new_useful_documents"] for a in attempts_log),
                       "new_candidates": sum(a["new_candidates"] for a in attempts_log),
+                      "new_grounded_candidates": sum(a["new_grounded_candidates"] for a in attempts_log),
                       "grounded_items": sum(a["grounded_items"] for a in attempts_log),
                       "adjudication_accepted": sum(a["adjudication_accepted"] for a in attempts_log),
                       "admitted": sum(a["admitted"] for a in attempts_log),
@@ -2954,6 +3067,7 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
     by_name = {s["name"]: s for s in specs}
     t_sweep = time.monotonic()
     group = trace.phase_group(phase)
+    truncation_before = dict((getattr(caller, "truncation", None) or {}).get(group) or {})
     excluded = set(exclude_keys or ())
     reader = DocumentReader(cache)
     limits = {"u_items": config.adjudication_max_u_items, "a_fields": config.adjudication_max_a_fields,
@@ -3020,14 +3134,19 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                           reason="no_fields_without_admissible_candidate" if not missing else "no_documents",
                           fields=missing)
         else:
-            grounded = run_grounded_candidates(session=session, caller=caller, specs=specs, payload=payload,
-                                               config=config, run_log=run_log, cache=cache, fields=missing,
-                                               documents=docs, phase=phase, settings_phase=settings_phase,
-                                               stage=stage)
-            for name, items in grounded["admissible"].items():
-                if name in open_fields:
-                    admissible.setdefault(name, []).extend(items)
-                    grounded_fields.add(name)
+            try:     # a grounded failure (setup included) never costs the sweep: adjudication goes on without it
+                grounded = run_grounded_candidates(session=session, caller=caller, specs=specs, payload=payload,
+                                                   config=config, run_log=run_log, cache=cache, fields=missing,
+                                                   documents=docs, phase=phase, settings_phase=settings_phase,
+                                                   stage=stage)
+                for name, items in grounded["admissible"].items():
+                    if name in open_fields:
+                        admissible.setdefault(name, []).extend(items)
+                        grounded_fields.add(name)
+            except Exception as exc:  # noqa: BLE001 - (cancellation is a BaseException and propagates)
+                grounded = {"admissible": {}, "summary": {"stage": stage, "error": _error_text(exc)}}
+                run_log.event("grounded_candidates_failed", stage=stage, error=_error_text(exc),
+                              note="grounded step failed; adjudication continues with the harvested candidates")
     try:
         if prepare_failed:
             raise RuntimeError("adjudication preparation failed")
@@ -3123,28 +3242,31 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
             reply = None
             try:
                 meta = {"turn": 1, "chunk": index, "adjudication_class": cls}
-                message = caller(messages, phase=phase, settings_phase=settings_phase, meta=meta,
-                                 max_tokens=max_tokens[cls])
-                chunk_calls += 1
+                # a truncated reply (finish_reason "length") is retried once with a doubled max_tokens, never repaired
+                message = call_with_truncation_retry(caller, messages, phase=phase, settings_phase=settings_phase,
+                                                     meta=meta, max_tokens=max_tokens[cls])
                 reply, _ = parse_model_output(message.get("content"))
                 if not isinstance(reply, dict):
                     # technical repair only: ask once for valid JSON (same phase, same packet)
                     stats["repair_turns"] += 1
                     repair = messages + [_assistant_echo(message), {"role": "user", "content": REPAIR_PROMPT}]
-                    message = caller(repair, phase=phase, settings_phase=settings_phase,
-                                     meta={**meta, "turn": 2, "repair": True}, max_tokens=max_tokens[cls])
-                    chunk_calls += 1
+                    message = call_with_truncation_retry(caller, repair, phase=phase, settings_phase=settings_phase,
+                                                         meta={**meta, "turn": 2, "repair": True},
+                                                         max_tokens=max_tokens[cls])
                     reply, _ = parse_model_output(message.get("content"))
                     if not isinstance(reply, dict):
                         error = "unparseable_after_repair"
             except RecoveryCallBudgetExceeded:
                 error = "max_total_steps"
+            except OutputTruncated:
+                error = "output_truncated"
             except GLMError as exc:
                 error = _error_text(exc)
                 record = {"timeout": bool(getattr(exc, "timeout", False)), "attempts": getattr(exc, "attempts", None),
                           "api_error": exc.as_dict()}
             except Exception as exc:  # noqa: BLE001 - one packet's problem never stops the others
                 error = _error_text(exc)
+            chunk_calls = caller.usage[group]["model_calls"] - usage_chunk.get("model_calls", 0)
             model_calls += chunk_calls
             if error is None:
                 try:
@@ -3214,7 +3336,9 @@ def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: 
                                  "class_counts": {c: sum(1 for v in classes.values() if v == c) for c in "UAM"},
                                  "fields_not_sent": [f for f in open_fields if f not in classes],
                                  "dry_run": dry, "grounded_fields": sorted(grounded_fields), **stats},
-                   grounded_candidates=(grounded or {}).get("summary"))
+                   grounded_candidates=(grounded or {}).get("summary"),
+                   # replies cut at max_tokens (incl. grounded calls) and their one-time doubled-max_tokens retries
+                   **truncation_counts(caller, group, truncation_before))
     run_log.event(f"{event_prefix}_finished", **{k: v for k, v in summary.items() if k != "reply"},
                   reply=summary["reply"], stage=stage)
     return summary
@@ -3274,16 +3398,17 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
     admissible: dict[str, list[dict]] = {}
     usage_group = trace.phase_group(phase)
     usage_before = dict(caller.usage[usage_group])
+    truncation_before = dict((getattr(caller, "truncation", None) or {}).get(usage_group) or {})
     run_log.event("grounded_candidates_started", stage=stage, version=G.GROUNDED_VERSION, fields=wanted,
                   documents=[d.get("document_id") for d in documents[:G.MAX_DOCUMENTS]])
-    try:
+    try:     # setup: a failure here costs only the grounded step (adjudication still runs)
         adm = admission_context(session.ctx)
         alias = dictionary_for(specs).any_alias
+        identity = vehicle_identity(payload, config.target_market)
+        run_documents = list(session.ctx.documents_opened)
     except Exception as exc:  # noqa: BLE001
         run_log.event("grounded_candidates_failed", stage=stage, error=_error_text(exc))
         return {"admissible": {}, "summary": {**stats, "error": _error_text(exc)}}
-    identity = vehicle_identity(payload, config.target_market)
-    run_documents = list(session.ctx.documents_opened)
     for doc in documents[:G.MAX_DOCUMENTS]:
         if isinstance(caller, RecoveryModelCaller) and caller.exhausted:
             break
@@ -3307,16 +3432,23 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
                         {"role": "user", "content": "Grounded candidate task (JSON):\n"
                                                     + json.dumps(packet, ensure_ascii=False, default=str)}]
             meta_tags = {"turn": 1, "grounded_document": doc_id, "stage": stage}
-            message = caller(messages, phase=phase, settings_phase=settings_phase, meta=meta_tags,
-                             max_tokens=G.MAX_TOKENS)
-            stats["model_calls"] += 1
+            calls_before = caller.usage[usage_group]["model_calls"]
+            try:   # a truncated reply is retried once with a doubled max_tokens (never with the repair prompt)
+                message = call_with_truncation_retry(caller, messages, phase=phase, settings_phase=settings_phase,
+                                                     meta=meta_tags, max_tokens=G.MAX_TOKENS)
+            finally:
+                stats["model_calls"] += caller.usage[usage_group]["model_calls"] - calls_before
             reply, _ = parse_model_output(message.get("content"))
             if not isinstance(reply, dict):
                 stats["repair_turns"] += 1
                 repair = messages + [_assistant_echo(message), {"role": "user", "content": REPAIR_PROMPT}]
-                message = caller(repair, phase=phase, settings_phase=settings_phase,
-                                 meta={**meta_tags, "turn": 2, "repair": True}, max_tokens=G.MAX_TOKENS)
-                stats["model_calls"] += 1
+                calls_before = caller.usage[usage_group]["model_calls"]
+                try:
+                    message = call_with_truncation_retry(caller, repair, phase=phase, settings_phase=settings_phase,
+                                                         meta={**meta_tags, "turn": 2, "repair": True},
+                                                         max_tokens=G.MAX_TOKENS)
+                finally:
+                    stats["model_calls"] += caller.usage[usage_group]["model_calls"] - calls_before
                 reply, _ = parse_model_output(message.get("content"))
                 if not isinstance(reply, dict):
                     error = "unparseable_after_repair"
@@ -3344,6 +3476,8 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
                                          "reasons": list(decision.get("reasons") or [])})
         except RecoveryCallBudgetExceeded:
             error = "max_total_steps"
+        except OutputTruncated:
+            error = "output_truncated"
         except GLMError as exc:
             error = _error_text(exc)
         except Exception as exc:  # noqa: BLE001 - one document's problem never stops the others
@@ -3368,7 +3502,7 @@ def run_grounded_candidates(*, session: ToolSession, caller: ModelCaller, specs:
     used = {k: caller.usage[usage_group][k] - usage_before.get(k, 0) for k in caller.usage[usage_group]}
     stats.update(input_tokens=used.get("prompt_tokens", 0), output_tokens=used.get("completion_tokens", 0),
                  latency_ms=int((time.monotonic() - t0) * 1000),
-                 fields_with_admissible=sorted(admissible))
+                 fields_with_admissible=sorted(admissible), **truncation_counts(caller, usage_group, truncation_before))
     run_log.event("grounded_candidates_finished", **stats)
     return {"admissible": admissible, "summary": stats}
 
@@ -3866,6 +4000,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             run_log.event("deterministic_harvest_summary", **harvest_summary)
             # parser-gap telemetry (src/parser_gaps.py): labels with no harvested value; observational, never raises
             log_parser_gaps(run_log, cache=cache, adm=ctx.admission, documents=ctx.documents_opened, specs=specs)
+            truncation_before = dict(caller.truncation["document_sweep"])
             try:
                 sweep = run_document_sweep(session=tools, caller=caller, specs=specs, payload=payload, config=config,
                                            run_log=run_log, cache=cache, documents_dir=documents_dir,
@@ -3873,10 +4008,13 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             except Exception as exc:  # a sweep problem never costs the primary research
                 sweep = {"error": _error_text(exc), "model_calls": 0}
                 run_log.event("document_sweep_failed", error=sweep["error"])
+            if isinstance(sweep, dict):     # truncated replies / doubled-max_tokens retries of the whole sweep phase
+                sweep.update(truncation_counts(caller, "document_sweep", truncation_before))
 
         # ---------------- failed-field detection + targeted field retries ----------------
         if status is None:
             phase["name"] = "field_detection"
+            truncation_before = dict(caller.truncation["field_recovery"])
             try:
                 if config.recovery_mode == "reacquire":
                     recovery = run_reacquire_recovery(session=tools, caller=caller, specs=specs, payload=payload,
@@ -3897,6 +4035,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             except Exception as exc:  # recovery problems never cost the primary research
                 recovery = {"error": _error_text(exc), "attempt_count": 0}
                 run_log.event("field_recovery_failed", error=recovery["error"])
+            if isinstance(recovery, dict):  # truncated replies / doubled-max_tokens retries of the recovery phase
+                recovery.update(truncation_counts(caller, "field_recovery", truncation_before))
 
         # ---------------- finalization phase ----------------
         if status is None:
@@ -4039,7 +4179,9 @@ def harvest_report(events: list[dict], specs: list[dict], vehicle: dict | None, 
             "candidate_cache_hits": harvester.stats["candidate_cache_hits"],
             "candidate_cache_misses": harvester.stats["candidate_cache_misses"],
             "harvest_errors": harvester.stats["harvest_errors"],
+            # deterministic harvest only; model-located (grounded) candidates are counted apart
             "candidate_count_total": matrix["candidate_count"],
+            "grounded_candidate_count": matrix.get("grounded_candidate_count", 0),
             "candidate_fields_total": len(matrix["fields_with_candidates"]),
             "candidate_field_coverage_pct": matrix["candidate_field_coverage_pct"],
             "applicable_fields": matrix["applicable_fields"],
@@ -4056,6 +4198,7 @@ def layered_summary(harvest: dict | None, sweep: dict | None, recovery: dict | N
     return {
         "documents_harvested": harvest.get("documents_harvested", stats.get("documents_harvested", 0)),
         "candidate_count_total": harvest.get("candidate_count_total", stats.get("candidates_total", 0)),
+        "grounded_candidate_count": harvest.get("grounded_candidate_count", 0),
         "candidate_fields_total": harvest.get("candidate_fields_total", 0),
         "candidate_field_coverage_pct": harvest.get("candidate_field_coverage_pct", 0.0),
         "candidate_cache_hits": stats.get("candidate_cache_hits", 0),

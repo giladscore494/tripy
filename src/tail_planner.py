@@ -124,7 +124,10 @@ def candidates_fresh_first(matrix: dict, events: list[dict], fields: Iterable[st
 
 def triage(evaluation: list[dict], specs: list[dict], matrix: dict, events: list[dict], default_attempts: int,
            low_yield: Iterable[str] = ()) -> dict[str, dict]:
-    """{field: {triage, state, cluster, candidates, fresh_candidates, max_attempts}} for retry-eligible fields."""
+    """{field: {triage, state, cluster, candidates, grounded_candidates, fresh_candidates, max_attempts}} for
+    retry-eligible fields."""
+    from .candidate_harvest import is_model_located
+
     by_name = {s["name"]: s for s in specs}
     eligible = [e for e in evaluation if e["retry_eligible"]]
     fresh = fresh_candidates(matrix, events, [e["field"] for e in eligible])
@@ -147,9 +150,12 @@ def triage(evaluation: list[dict], specs: list[dict], matrix: dict, events: list
             category = "foreign_only"
         else:
             category = "true_missing"
+        cands = matrix["fields"].get(name) or []
+        grounded = sum(1 for c in cands if is_model_located(c))
+        # candidates = the deterministic harvest's; model-located (grounded) candidates are counted apart
         out[name] = {"triage": category, "state": entry["state"], "cluster": cluster_of(spec),
-                     "candidates": len(matrix["fields"].get(name) or []), "fresh_candidates": len(fresh.get(name) or []),
-                     "max_attempts": attempts}
+                     "candidates": len(cands) - grounded, "grounded_candidates": grounded,
+                     "fresh_candidates": len(fresh.get(name) or []), "max_attempts": attempts}
     return out
 
 

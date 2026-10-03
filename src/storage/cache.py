@@ -49,23 +49,28 @@ class KeyedLocks:
         self._locks: dict[str, list] = {}   # key -> [lock, users]
 
     @contextmanager
-    def hold(self, key: str) -> Iterator[bool]:
-        """Yields True when this caller had to wait for another holder of the same key."""
+    def hold(self, key: str, timeout: float | None = None) -> Iterator[bool]:
+        """Yields True when this caller had to wait for another holder of the same key. With `timeout` (seconds), a
+        wait longer than that raises TimeoutError (the key was never held by this caller)."""
         with self._guard:
             entry = self._locks.setdefault(key, [threading.Lock(), 0])
             entry[1] += 1
         lock = entry[0]
         waited = not lock.acquire(blocking=False)
-        if waited:
-            lock.acquire()
+        if waited and not lock.acquire(timeout=-1 if timeout is None else max(0.0, float(timeout))):
+            self._leave(key, entry)
+            raise TimeoutError(f"single-flight wait for {key!r} exceeded {timeout:.1f} s")
         try:
             yield waited
         finally:
             lock.release()
-            with self._guard:
-                entry[1] -= 1
-                if entry[1] == 0 and self._locks.get(key) is entry:
-                    del self._locks[key]
+            self._leave(key, entry)
+
+    def _leave(self, key: str, entry: list) -> None:
+        with self._guard:
+            entry[1] -= 1
+            if entry[1] == 0 and self._locks.get(key) is entry:
+                del self._locks[key]
 
 
 class DocumentCache:
@@ -84,9 +89,10 @@ class DocumentCache:
     # -- single flight -------------------------------------------------------------------------
 
     @contextmanager
-    def hold(self, key: str) -> Iterator[bool]:
-        """Single-flight section for one cache key; yields whether another worker held it first."""
-        with self._keys.hold(key) as waited:
+    def hold(self, key: str, timeout: float | None = None) -> Iterator[bool]:
+        """Single-flight section for one cache key; yields whether another worker held it first. `timeout`: see
+        KeyedLocks.hold (TimeoutError when the wait is longer)."""
+        with self._keys.hold(key, timeout) as waited:
             if waited:
                 self.count("cross_vehicle_cache_waits")
             yield waited

@@ -349,8 +349,14 @@ class RunManager:
     # -- start --------------------------------------------------------------------------------------------
     def start(self, request: ResearchRequest) -> StartResult:
         """Create and launch a run. Idempotent per `idempotency_key`; never starts a duplicate of an active run."""
+        from dataclasses import replace
+
+        from ..run_profiles import isolate_single_run
+
         if not request.vehicles:
             raise RunRejected("Select at least one vehicle.")
+        # a single A/B-arm run (outside a series) runs without cross-run research memory / negative routes
+        request = replace(request, agent_cfg=isolate_single_run(request.agent_cfg, in_series=bool(request.series)))
         ids = [str(v["upstream_record_id"]) for v in request.vehicles]
         with self._lock:
             if self._shutting_down:
