@@ -744,7 +744,7 @@ def request_extra(config: AgentConfig, settings: dict | None = None) -> dict:
         extra.pop("thinking", None)
     if thinking == "enabled":
         extra["thinking"] = {"type": "enabled"}
-    if effort == PROVIDER_DEFAULT or (effort is None and source in ("phase", "global")):
+    if effort == PROVIDER_DEFAULT or (effort is None and source in ("phase", "global", "extra_body")):
         extra.pop("reasoning_effort", None)       # an explicit "provider default": send no effort at all
     elif effort and not (source == "phase_default" and extra.get("reasoning_effort")):
         extra["reasoning_effort"] = effort
@@ -945,6 +945,12 @@ class ModelCaller:
 
         settings = for_phase(self.config, phase)
         extra = request_extra(self.config, settings)
+        # Extra JSON must not override a call's explicit token cap or add tools to finalization.
+        if max_tokens is not None and "max_tokens" in extra:
+            extra["max_tokens"] = max_tokens
+        if trace.phase_group(phase) == "finalization":
+            extra.pop("tools", None)
+            extra.pop("tool_choice", None)
         if settings["thinking_disabled_mapped"] and not self.thinking_mapped_logged:
             self.thinking_mapped_logged = True
             try:

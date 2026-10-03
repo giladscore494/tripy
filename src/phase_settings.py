@@ -128,11 +128,13 @@ def for_phase(config, phase_name: str | None) -> dict:
     defaults = PHASE_DEFAULTS.get(phase, {})
     own_effort = parse_effort(own.get("reasoning_effort"))
     global_effort = parse_effort(getattr(config, "reasoning_effort", "") or "")
-    explicit = own_effort or global_effort
+    extra_body = getattr(config, "extra_body", None)
+    extra_effort = parse_effort(extra_body.get("reasoning_effort")) if isinstance(extra_body, dict) else None
+    explicit = own_effort or global_effort or extra_effort
     thinking = str(own.get("thinking", getattr(config, "thinking", "") or "") or "").lower()
     mapping = thinking_disabled_mapping(thinking, explicit, getattr(config, "extra_body", None))
     effort = mapping["effort"] or defaults.get("reasoning_effort")
-    source = ("phase" if own_effort else "global" if global_effort else
+    source = ("phase" if own_effort else "global" if global_effort else "extra_body" if extra_effort else
               "thinking_disabled" if mapping["mapped"] else "phase_default" if effort else None)
     return {
         "phase": phase,

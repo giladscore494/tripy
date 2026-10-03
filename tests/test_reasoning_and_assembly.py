@@ -114,6 +114,28 @@ def test_thinking_enabled_is_still_sent(tmp_path):
     assert all(p["thinking"] == {"type": "enabled"} for p in session.payloads)
 
 
+def test_extra_json_effort_matches_the_recorded_configuration(tmp_path):
+    from src.agent import effective_glm_config
+    from src.tools import ToolConfig
+
+    cfg = AgentConfig(extra_body={"reasoning_effort": "max", "thinking": {"type": "disabled"}})
+    caller, session, _ = http_caller(tmp_path, cfg)
+    recorded = effective_glm_config(caller.client, cfg, ToolConfig())["phase_settings"]
+    every_phase(caller)
+    for phase, payload in zip(PHASES, session.payloads):
+        resolved = for_phase(cfg, phase)
+        assert recorded[resolved["phase"]]["reasoning_effort"] == payload["reasoning_effort"] == "max"
+        assert "thinking" not in payload
+
+
+def test_extra_json_cannot_expand_narration_or_add_tools(tmp_path):
+    cfg = AgentConfig(extra_body={"max_tokens": 10000, "tools": [{"type": "function"}], "tool_choice": "auto"})
+    caller, session, _ = http_caller(tmp_path, cfg)
+    caller([{"role": "user", "content": "digest"}], phase="finalization", max_tokens=800)
+    assert session.payloads[0]["max_tokens"] == 800
+    assert "tools" not in session.payloads[0] and "tool_choice" not in session.payloads[0]
+
+
 def test_default_efforts_are_top_level_and_env_or_ui_override_them(tmp_path):
     caller, session, log = http_caller(tmp_path / "a", AgentConfig())
     every_phase(caller)
