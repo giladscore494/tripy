@@ -98,6 +98,8 @@ class VehiclePipeline:
         self.evidence_rejected = 0
         self.errors: list[dict] = []
         self.retrying = False                 # a finalize-existing retry is in progress
+        self.max_turns: int | None = None
+        self._sweep_fields: set[str] = set()
         self.events_seen = 0
 
     # -- stage helpers ----------------------------------------------------------------------------------
@@ -149,11 +151,17 @@ class VehiclePipeline:
     def _on_run_started(self, e: dict, ts) -> None:
         self.started_at = self.started_at or ts
         self.layered = bool((e.get("agent_config") or {}).get("layered_harvest_enabled", True))
+        self.max_turns = (e.get("agent_config") or {}).get("max_steps") or e.get("max_steps")
         self._start("acquisition", ts)
 
     def _on_primary_research_turn(self, e: dict, ts) -> None:
         self.acquisition.update({k: e.get(k) for k in ("turn", "useful_documents", "fields_with_candidates",
                                                        "candidate_field_coverage_pct", "scoped_coverage_pct")})
+        after = e.get("state_after") or {}          # diagnostic state (newer runs only)
+        if after:
+            self.acquisition.update({"official_sources": after.get("official_documents"),
+                                     "target_market_documents": after.get("target_market_documents"),
+                                     "candidates_live": after.get("candidates")})
 
     def _on_primary_research_summary(self, e: dict, ts) -> None:
         self.acquisition.update({k: e.get(k) for k in (
@@ -193,9 +201,14 @@ class VehiclePipeline:
             self._start("sweep", ts)
         chunk = e.get("chunk") or {}
         self.sweep["chunk"] = f"{chunk.get('index')}/{chunk.get('of')}" if (chunk.get("of") or 1) > 1 else None
+        self._sweep_fields.update(e.get("fields_to_review") or [])
+        self.sweep["fields_entering"] = len(self._sweep_fields)
 
     def _on_document_sweep_finished(self, e: dict, ts) -> None:
         self.sweep["fields_resolved"] = (self.sweep.get("fields_resolved") or 0) + (e.get("unique_fields_resolved") or 0)
+        self.sweep.update({k: e.get(k) for k in ("fields_unresolved_before", "document_sweep_calls",
+                                                  "document_sweep_latency_ms", "deterministic_misses_found",
+                                                  "document_sweep_timeouts")})
         self._finish("sweep", DONE, ts)
 
     def _on_document_sweep_skipped(self, e: dict, ts) -> None:
@@ -357,6 +370,10 @@ class VehiclePipeline:
             "finished_at": self.finished_at,
             "errors": self.errors,
             "events_seen": self.events_seen,
+            "acquisition": {**self.acquisition, "max_turns": self.max_turns,
+                            "research_turns": self.model_calls_by_stage.get("acquisition", 0),
+                            "searches": self.live.search_api_calls},
+            "sweep": dict(self.sweep),
         }
 
 

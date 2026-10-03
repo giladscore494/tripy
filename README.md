@@ -222,6 +222,57 @@ websocket drop or Streamlit rerun never interrupts it, but a redeploy, restart o
 the run is then shown as `INTERRUPTED`, everything it acquired stays on the volume, and it can be finalized from the
 preserved research or restarted. Run one replica only.
 
+## Acquisition and document-sweep diagnostics
+
+Observational telemetry for benchmarking where performance is lost: search / source acquisition, source selection,
+deterministic extraction, document-sweep reasoning, latency / timeouts or orchestration. **It never changes research
+behaviour:** no model escalation, no routing, no threshold changes. The engine only adds fields to two existing events
+(`primary_research_turn.state_before/state_after`; `document_sweep_started.packet_document_ids /
+candidates_per_field / estimated_input_tokens`); everything else is rebuilt from `events.jsonl` by
+`src/diagnostics.py`.
+
+**Where it is stored** (durable, under `TRIPY_DATA_DIR`, i.e. the Railway Volume):
+
+```
+runs/<run_id>/<record_id>/diagnostics.json    schema tripy-diagnostics/1: acquisition {summary, turns[]},
+                                               document_sweep {summary, calls[]}, summary_text, configured models
+runs/<run_id>/<record_id>/diagnostics.jsonl   one line per acquisition turn and per sweep call
+runs/<run_id>/diagnostics/                    benchmark.json, per_vehicle.jsonl / .csv for the run's vehicles
+benchmarks/<UTC stamp>/                       python -m src.diagnostics [--runs-dir …] [run_id …] [--rebuild]
+```
+
+They are written on every exit path of a vehicle run (also interrupted ones) and can be rebuilt from `events.jsonl`
+at any time (`--rebuild`). The compact summary is also logged to stdout. Secrets are redacted before writing.
+
+- **Acquisition turn:** configured model vs provider-reported (`resolved_model`; null when the provider returns
+  none), latency, tokens, attempts / retries / timeouts; search queries, result count, result URLs / domains with
+  source class, official and target-market flags, whether a result was later fetched (`selected`), repeated queries
+  / URLs, billable search requests; fetches attempted / succeeded / failed by category (`http_forbidden`,
+  `http_not_found`, `http_rate_limited`, `http_server_error`, `timeout`, `connection`, `empty_content`, …); the
+  acquisition state before and after the turn (useful, official and target-market documents, candidates, candidate
+  fields, scoped coverage, admitted evidence) with deltas; the acquisition artifacts, no-artifact streak, base-gate
+  status, a stop the gate deferred, extension beyond the normal budget and the stop reason, exactly as the existing
+  policy recorded them. The final turn that answers without tools is listed but not measured by the policy.
+- **Document-sweep call** (one packet / chunk, up to the configured model turns): models, latency, timeout,
+  retries, tokens; packet fields, documents, characters, estimated tokens and candidates per field; per field the
+  state before / after, whether this call resolved it, candidates, admitted evidence before, whether local
+  inspection located it, evidence admitted / rejected (with rejection reasons) and malformed tool output; malformed
+  final reply; success.
+- **`DETERMINISTIC_HARVEST_MISS`** is assigned to a sweep evidence item only when the field was resolved by that
+  call, the evidence was admitted and bound to the target, its document was in the run before the sweep, and the
+  deterministic harvest produced **no** candidate for that field from that document. A candidate with another value
+  is `DETERMINISTIC_VALUE_MISMATCH` (precision / normalization, not recall), the same value `PROMOTED_CANDIDATE`,
+  anything unprovable `UNCLASSIFIED`. The pre-existing `document_sweep_deterministic_misses_found` (misses and
+  mismatches together) is reported alongside.
+- **UI:** *Technical details* shows concise Source acquisition and Document sweep blocks and a *Detailed
+  diagnostics* expander (summary, per-turn table, per-call table, per-field table, raw JSON). The sidebar's
+  *Benchmark diagnostics* aggregates chosen runs and downloads `benchmark.json` / `per_vehicle.csv`.
+- **Benchmark aggregate:** acquisition turns (mean / median), searches, useful / official / target-market
+  documents, scoped coverage after each turn, coverage gain per turn and per search, no-artifact turns, repeated
+  searches, hard-max rate, latency; sweep calls, fields entering / resolved, resolution rate, harvest misses
+  recovered, evidence rejection rate, tokens, latency, timeout rate, resolved fields per model call; plus every
+  vehicle's row.
+
 ## Z.ai API: confirmed and unverified
 
 Confirmed against the official Z.ai documentation (2026-10-01) and used as defaults:
@@ -1369,6 +1420,8 @@ runs/<batch>/<record_id>/training_feedback.jsonl   labelled engineering feedback
 runs/_cache/                           shared documents + search results (+ derived tables / candidates)
 runs/_cache/memory/                    verified facts (one file per fact), negative routes and recovery yield (per run)
 runs/_feedback/                        --export-feedback: training_feedback.jsonl / .csv / _summary.json
+runs/<batch>/<record_id>/diagnostics.json / .jsonl   acquisition + document-sweep diagnostics (src/diagnostics.py)
+runs/<batch>/diagnostics/              benchmark.json, per_vehicle.jsonl / .csv of the batch
 ```
 
 ## Tests

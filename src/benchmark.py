@@ -580,7 +580,18 @@ def research_one(vehicle: dict, row: dict, *, client, cache, runs_dir: Path | st
         result["metrics"] = compute_metrics(result, vehicle, cache)
         log.write_result(result)
 
-    return run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
-                       config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle, batch_id=batch_id,
-                       ordinal=vehicle.get("ordinal"), session=session, pricing=pricing, persist=persist,
-                       cancel_event=cancel_event)
+    try:
+        return run_vehicle(row, build_level15_payload(row), client=client, cache=cache, run_log=log,
+                           config=agent_cfg, tool_config=tool_cfg, vehicle_meta=vehicle, batch_id=batch_id,
+                           ordinal=vehicle.get("ordinal"), session=session, pricing=pricing, persist=persist,
+                           cancel_event=cancel_event)
+    finally:
+        # Observational diagnostics (src/diagnostics.py), rebuilt from events.jsonl on every exit path; never raises.
+        from .diagnostics import write_vehicle_diagnostics
+
+        diag = write_vehicle_diagnostics(log.dir, run_id=batch_id)
+        if diag:
+            from .server_logging import get_logger
+
+            get_logger("diagnostics").info("run %s vehicle %s diagnostics:\n%s", batch_id,
+                                           vehicle["upstream_record_id"], diag["summary_text"])

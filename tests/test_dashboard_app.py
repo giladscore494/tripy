@@ -138,3 +138,45 @@ def test_history_lists_runs_and_the_url_selects_one(data_env):
     app.run()
     assert not app.exception, app.exception
     assert "Research stopped during Finalization." in texts(app)
+
+
+def test_technical_details_show_acquisition_and_sweep_diagnostics(data_env, monkeypatch):
+    monkeypatch.setenv("GLM_API_KEY", "k")
+    monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")
+    specs = [{"name": "torque_nm", "applicable": True}, {"name": "wheelbase_mm", "applicable": True}]
+    state0 = {"useful_documents": 0, "official_documents": 0, "target_market_documents": 0, "candidates": 0,
+              "candidate_fields": 0, "scoped_coverage_pct": 0.0}
+    state1 = {"useful_documents": 3, "official_documents": 2, "target_market_documents": 1, "candidates": 9,
+              "candidate_fields": 2, "scoped_coverage_pct": 50.0}
+    events = [("run_started", {"agent_config": {"max_steps": 6, "layered_harvest_enabled": True},
+                               "requested_field_specs": specs, "target_market": "IL"}),
+              ("model_response", {"phase": "research", "model": "glm-5.3-flash", "latency_ms": 1200,
+                                  "usage": {"prompt_tokens": 500, "completion_tokens": 20}, "tool_calls": [{"id": "a"}]}),
+              ("tool_call", {"step": 1, "phase": "research", "call_id": "a", "name": "search_web",
+                             "arguments": "{\"query\": \"xpeng g6 specs\"}"}),
+              ("primary_research_turn", {"turn": 1, "artifacts": ["new_usable_document:3"], "no_artifact_streak": 0,
+                                         "minimum_acquisition_met": True, "useful_documents": 3,
+                                         "fields_with_candidates": 2, "scoped_coverage_pct": 50.0,
+                                         "state_before": state0, "state_after": state1}),
+              ("model_response", {"phase": "research", "model": "glm-5.3-flash", "tool_calls": []}),
+              ("research_stopped", {"reason": "model_finished"}),
+              ("primary_research_summary", {"turns": 2, "useful_documents": 3, "official_sources": 2,
+                                            "target_market_documents": 1, "candidate_fields": 2,
+                                            "stop_reason": "model_finished", "scoped_coverage_pct": 50.0}),
+              ("document_sweep_started", {"fields_to_review": ["torque_nm"], "documents": 3, "packet_chars": 900,
+                                          "candidates_presented": 1, "candidates_per_field": {"torque_nm": 1}}),
+              ("model_response", {"phase": "document_sweep", "model": "glm-5.3-flash", "latency_ms": 18400,
+                                  "usage": {"prompt_tokens": 800, "completion_tokens": 30}, "tool_calls": []}),
+              ("document_sweep_finished", {"deterministic_misses_found": 0, "unique_fields_resolved": 0}),
+              ("run_finished", {"status": "completed"})]
+    done = {"record_id": "101122", "status": "completed", "output": {"summary": "ok", "fields": {}}, "documents": []}
+    make_run(data_env, "20261001T100000Z-diag", status=M.COMPLETED, engine_status="completed", events=events,
+             result=done)
+    app = app_test()
+    app.run()
+    assert not app.exception, app.exception
+    body = texts(app)
+    assert "Source acquisition" in body and "Research turn" in body and "Scoped coverage" in body
+    assert "Fields entering" in body and "18.4 s" in body
+    assert any(e.label == "Detailed diagnostics" for e in app.expander)
+    assert any("SOURCE ACQUISITION" in str(c.value) for c in app.code)          # the compact run summary
