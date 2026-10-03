@@ -70,6 +70,9 @@ NAMED_TRIM = re.compile(r"(?:\b(?:version|trim)\s*:?\s*|(?:גרסת|גרסה|ר�
                         r"|\b([a-z][\w-]{2,})\s+(?:version|trim)\b")
 GENERIC_NAMED = {"the", "this", "that", "each", "every", "all", "base", "entry", "top", "new", "old", "other", "same",
                  "hybrid", "היברידית", "היברידי", "חשמלית", "הבסיס", "הבסיסית", "העליונה", "החדשה", "level", "line"}
+# These words are harmless descriptors for legacy trim matching, but for a generic-only target (MAX/PRO/BASE) an
+# explicit "Base version" / "Top version" is a real competing tier and must not inherit the target trim from the page.
+GENERIC_TIER_WORDS = {"base", "entry", "top", "הבסיס", "הבסיסית", "העליונה"}
 # between the model family and a generic trim word: nothing, a space / hyphen, or a Hebrew "version" connector
 TRIM_CONNECTOR = r"(?:\s*(?:בגרסת|גרסת|ברמת גימור|רמת גימור|ב-|ה-)\s*|[\s\-]*)"
 # a generic trim word's written forms ("business edi" is the catalog's "business edition")
@@ -374,10 +377,16 @@ def _family_status(text: str, identity: TargetIdentity, vocab: dict) -> set[str]
     return found
 
 
+def _named_trim_noise(identity: TargetIdentity) -> set[str]:
+    """Words that do not identify a competing trim. Generic tier labels become meaningful for generic-only targets."""
+    return GENERIC_NAMED - GENERIC_TIER_WORDS if identity.qualified_trim_phrases else GENERIC_NAMED
+
+
 def other_trims_named(text: str, identity: TargetIdentity) -> list[str]:
-    """Trim names the text gives ("the Premium version", "גרסת Business") that are not the target's own words."""
+    """Trim names the text gives ("the Premium version", "Base version", "גרסת Business") that are not the target."""
     named = [w for groups in NAMED_TRIM.findall(normalize_text(text or "")) for w in groups if w]
-    return sorted({w for w in named if w not in identity.trim_words and w not in GENERIC_NAMED})
+    noise = _named_trim_noise(identity)
+    return sorted({w for w in named if w not in identity.trim_words and w not in noise})
 
 
 def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
@@ -392,7 +401,8 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     trims = _terms(("trim", phrase), [phrase]) if phrase else _qualified_pattern(identity, vocab)
     trim = ""
     named = [w for w in NAMED_TRIM.findall(norm) for w in w if w]
-    if identity.trim_words and any(w not in identity.trim_words and w not in GENERIC_NAMED for w in named):
+    named_noise = _named_trim_noise(identity)
+    if identity.trim_words and any(w not in identity.trim_words and w not in named_noise for w in named):
         trim = "negated"        # "the Premium version", "גרסת ה-Premium": a fact about ANOTHER named trim
     for m in trims.finditer(norm) if trims else ():
         # "not available on Business", "לא בגרסת Business": the trim is named to EXCLUDE it
