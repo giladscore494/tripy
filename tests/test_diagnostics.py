@@ -159,6 +159,7 @@ def test_search_and_fetch_details(tmp_path):
 
 # --- document sweep calls --------------------------------------------------------------------------------------
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_call_records_a_real_deterministic_harvest_miss(tmp_path, make_ctx):
     """The parser has no candidate for ventilated_seats in the cached interior document; the sweep recovers it."""
@@ -196,6 +197,7 @@ def test_sweep_call_records_a_real_deterministic_harvest_miss(tmp_path, make_ctx
     assert summary["document_sweep_deterministic_misses_found"] == 1          # the pre-existing counter agrees
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_a_promoted_candidate_is_never_called_a_harvest_miss(tmp_path, make_ctx):
     ctx = make_ctx({})

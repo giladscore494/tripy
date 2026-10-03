@@ -272,6 +272,7 @@ def cadillac(make_ctx):
     return ctx, d, a, b
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, counted):
     ctx, D, A, B = cadillac(make_ctx)

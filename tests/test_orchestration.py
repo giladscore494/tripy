@@ -402,6 +402,7 @@ def sweep_run(tmp_path, client, routes=None, **cfg):
 PRIMARY_FETCH = [turn(_call("a", "fetch_url", {"url": EU}), _call("b", "fetch_url", {"url": tail.CARTUBE}))]
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_is_local_first_and_settled_fields_never_reach_it(tmp_path):
     store = tail._store("s", "torque_nm", 142, tail.CARTUBE, "מומנט מנוע בנזין: 142 ניוטון-מטר", "Nm")
@@ -427,6 +428,7 @@ def test_sweep_is_local_first_and_settled_fields_never_reach_it(tmp_path):
     assert m["primary_research_stop_reason"] == "model_finished" and m["primary_research_documents_added"] == 2
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 def test_chunked_sweep_reevaluates_between_chunks_and_a_reply_is_never_a_state(tmp_path):
     def sweep(packet, messages):
         # chunk 1 promotes the EU fuel tank and claims (without evidence) that wheelbase is settled
@@ -557,6 +559,7 @@ def test_glm_client_per_call_timeout_keeps_retry_semantics(monkeypatch):
 
 # --- the orchestration benchmark (offline) -------------------------------------------------------------------------
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
     from fixtures import corolla_orchestration as bench
@@ -580,6 +583,7 @@ def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
 
 # --- audit follow-ups ---------------------------------------------------------------------------------------------
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 def test_fields_without_a_dictionary_entry_are_never_reported_as_not_found_locally(tmp_path):
     custom = {"name": "engine_oil_capacity_l", "description": "engine oil capacity", "group": "technical"}
     client = SweepGLM(PRIMARY_FETCH + [say({"summary": "p", "fields": {}})])
