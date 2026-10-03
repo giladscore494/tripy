@@ -127,6 +127,7 @@ def test_report_field_status_requires_evidence_for_conflict_resolved(make_ctx):
     assert dispatch(ctx, "report_field_status", {"field": "torque_nm", "status": "unresolved"})["recorded"]
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_unbacked_reply_keeps_conflict_and_backed_reply_resolves(tmp_path, make_ctx):
     script = [

@@ -166,8 +166,10 @@ below.
 | `GLM_CHAT_PATH` | Chat completions endpoint, relative to the base URL or a full URL (default `chat/completions`). |
 | `GLM_SEARCH_PATH` | Web search endpoint, relative to the base URL or a full URL (default `web_search`). |
 | `GLM_SEARCH_ENGINE` | Engine name for the standalone search API (default `search-prime`). |
-| `GLM_THINKING` | Empty = provider default (nothing sent); `enabled` / `disabled` sends `{"thinking": {"type": ...}}`. |
-| `GLM_EXTRA_BODY` | JSON merged into every chat request. |
+| `GLM_REASONING_EFFORT` | `low` / `medium` / `high` / `max`, sent as the top-level `reasoning_effort` field. Empty = each phase's `GLM_<PHASE>_REASONING_EFFORT`, else the code defaults: research `high`, document sweep / recovery / finalizer `low`. |
+| `GLM_THINKING` | Empty = provider default (nothing sent); `enabled` sends `{"thinking": {"type": "enabled"}}`. glm-5.3 models always think and reject `disabled` (HTTP 400, code 1210), so `disabled` is never sent: it maps to no thinking object + reasoning effort `low` (unless an effort is set explicitly), logged once per run as `thinking_disabled_mapped`. A 400 with code 1210 is retried once without a thinking object and with effort `low` (`reasoning_retry`; not counted against max attempts). |
+| `GLM_EXTRA_BODY` | JSON merged into every chat request. A `thinking` object of type `disabled` in it is stripped (same mapping as `GLM_THINKING=disabled`). |
+| `FINAL_ASSEMBLY` | `deterministic` (default): the final output values are assembled in code from the field states and admitted evidence; a model writes at most `summary` / `research_trace`. `llm`: the finalizer model writes the output (previous behaviour). See [Deterministic Final Assembly](#deterministic-final-assembly). |
 | `GLM_PRICE_INPUT_PER_MTOK` / `GLM_PRICE_OUTPUT_PER_MTOK` / `GLM_PRICE_WEB_SEARCH_PER_CALL` | Optional overrides of the built-in price defaults (see [Cost](#cost)). |
 
 `render_page` needs Playwright (`pip install playwright && playwright install chromium`).
@@ -232,31 +234,38 @@ experiment never needs an env edit or a redeploy (and a stale env value, e.g. `D
 deployment, cannot leak into a profiled run). The **Run profile** selector sits next to *Start research*
 (`src/run_profiles.py`):
 
-| Profile | acquisition_mode | document card | sweep thinking | sweep max attempts | sweep max fields / candidates |
-|---|---|---|---|---|---|
-| Production (default) | contract | off | disabled | 1 | 12 / 16 |
-| Benchmark: Baseline | legacy | off | disabled | 1 | 12 / 16 |
-| Benchmark: Treatment | contract | off | disabled | 1 | 12 / 16 |
-| Benchmark: Treatment + card | contract | on | disabled | 1 | 12 / 16 |
-| Custom | the Advanced settings as edited (their defaults come from env) | | | | |
+| Profile | acquisition_mode | document card |
+|---|---|---|
+| Production (default) | contract | off |
+| Benchmark: Baseline | legacy | off |
+| Benchmark: Treatment | contract | off |
+| Benchmark: Treatment + card | contract | on |
+| Custom | the Advanced settings as edited (their defaults come from env) | |
 
-A named profile also pins every setting listed below under *env overrides* to its code default (research turn ceiling
-6, hard ceiling 12, minimum base 3 documents / 50 %, sweep packet 28000 chars, 2 sweep turns, 3 candidates per field);
-everything else (models, timeouts, recovery, other phases' settings) still comes from Advanced settings / env. The one
-intended difference between *Production* and the previous env-only defaults is document-sweep thinking `disabled`
-(previously inherited from the global thinking setting, i.e. provider default). The research model is never part of
-a profile.
+Every named profile also runs: sweep mode `adjudication`, sweep 12 fields / 16 candidates per chunk, final assembly
+`deterministic`, reasoning effort research `high` / document sweep `low` / recovery `low` / finalizer `low`, no
+thinking object (a `thinking` object in `GLM_EXTRA_BODY` is dropped, its other keys stay), and one HTTP attempt per
+sweep and recovery request. A named profile pins every setting listed below under *env overrides* to its code default
+(also research turn ceiling 6, hard ceiling 12, minimum base 3 documents / 50 %, sweep packet 28000 chars, 2 sweep
+turns, 3 candidates per field, the `ADJUDICATION_*` limits); everything else (models, timeouts, recovery budgets, other
+phases' thinking / max_tokens) still comes from Advanced settings / env. *Production* with no env set is exactly the
+code defaults. The research model is never part of a profile.
 
-**Advanced settings** has the per-run controls the Custom profile uses (acquisition mode, document card, document
-sweep thinking / max attempts 1-3 / max fields / max candidates per chunk). Its phase settings are merged per phase and
-per key over the env phase settings (another phase's env setting such as `GLM_RECOVERY_THINKING` survives;
-"provider default" removes an env sweep-thinking value). It also lists every env variable that differs from its code
-default as `VAR = env value (code default X)` for `ACQUISITION_MODE`, `ACQUISITION_DOCUMENT_CARD`,
-`DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_MAX_PACKET_CHARS`,
-`DOCUMENT_SWEEP_MAX_TURNS`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD`, `GLM_DOCUMENT_SWEEP_THINKING`,
-`GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`,
-`PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE` (the same list is logged as
-`env_overrides` in `run_started` and result.json).
+**Advanced settings** has the per-run controls the Custom profile uses (acquisition mode, document card, a
+*Reasoning effort* select per phase — research, document sweep, recovery, finalizer: provider default / low / medium /
+high / max, defaulting to env, else the code defaults —, document sweep max attempts 1-3 / max fields / max candidates
+per chunk). The *Extra request JSON* field warns when it contains `thinking.type = disabled` (stripped). Its phase
+settings are merged per phase and per key over the env phase settings (another phase's env setting such as
+`GLM_RECOVERY_THINKING` survives). It also lists every env variable that differs from its code default as
+`VAR = env value (code default X)` for `ACQUISITION_MODE`, `ACQUISITION_DOCUMENT_CARD`, `DOCUMENT_SWEEP_MAX_FIELDS`,
+`DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_TURNS`,
+`DOCUMENT_SWEEP_CANDIDATES_PER_FIELD`, `SWEEP_MODE`, `FINAL_ASSEMBLY`, `GLM_REASONING_EFFORT`,
+`GLM_<PHASE>_REASONING_EFFORT` (research, document sweep, recovery, finalizer), `GLM_THINKING`,
+`GLM_DOCUMENT_SWEEP_THINKING`, `GLM_EXTRA_BODY` (only when it carries a `thinking` object),
+`GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `GLM_RECOVERY_MAX_ATTEMPTS`, the `ADJUDICATION_*` limits,
+`PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`, `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`,
+`PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE` (the same list is logged as `env_overrides` in `run_started` and
+result.json).
 
 Every run records its effective configuration: `run_profile`, `acquisition_mode`, `acquisition_document_card`,
 `research_prompt_hash` (of the research system prompt actually sent) and `env_overrides` in `run_started` /
@@ -354,8 +363,10 @@ at any time (`--rebuild`). The compact summary is also logged to stdout. Secrets
   first turn that met the minimum acquisition base and the research tokens spent until then, research
   `tool_blocked` calls, and `official_urls_discovered`. Interrupted / incomplete runs are flagged and reported
   under `interrupted`, never averaged into `end_to_end`. `by_config` repeats the statistics per configuration
-  (acquisition mode, research / sweep model, sweep thinking, sweep max attempts, sweep limits), so a legacy and a
-  contract arm compare from one `benchmark.json`.
+  (acquisition mode, research / sweep model, sweep thinking, sweep max attempts, sweep limits, the reasoning effort
+  of every phase, final assembly), so a legacy and a contract arm compare from one `benchmark.json`. Totals also sum
+  provider-reported reasoning tokens per phase (`usage.completion_tokens_details.reasoning_tokens`, null when not
+  reported).
 - **Official documents:** newer runs record official documents that were *fetched* (`official_documents`, UI
   "Official docs (fetched)") separately from official URLs merely *discovered* in search results
   (`official_urls_discovered`, UI "Official URLs (discovered)"); an older run's single number keeps its old label.
@@ -379,7 +390,9 @@ Confirmed against the official Z.ai documentation (2026-10-01) and used as defau
 
 Still unverified until the first real run:
 
-- The thinking request shape `{"thinking": {"type": "enabled" | "disabled"}}` and how each model reacts to it.
+- The thinking request shape `{"thinking": {"type": "enabled"}}`. Confirmed in production: glm-5.3 models reject
+  `{"type": "disabled"}` with HTTP 400 code 1210 ("always engages in thinking ... please use low, high, or max"), so
+  it is never sent; the control is the top-level `reasoning_effort`.
 - The `search_recency_filter` value sent by default (`noLimit`).
 - That the cached-token detail is reported as `prompt_tokens_details.cached_tokens`.
 - Error bodies, status codes and rate-limit behaviour. Retries cover timeouts, connection errors and
@@ -645,10 +658,12 @@ only judges:
 
 ### Phase-specific model settings
 
-`src/phase_settings.py`: `research`, `document_sweep`, `recovery` and `finalizer` may each set `model`, `thinking`,
-`max_tokens`, `temperature` and `timeout_s` (read timeout per HTTP attempt; the attempt count and retry policy are
-unchanged) through `AgentConfig.phase_settings` or `GLM_<PHASE>_*` (see the settings table). Unset values inherit the
-global configuration, so the defaults behave exactly as before. The research model stays `GLM_MODEL` and the
+`src/phase_settings.py`: `research`, `document_sweep`, `recovery` and `finalizer` may each set `model`,
+`reasoning_effort`, `thinking`, `max_tokens`, `temperature`, `timeout_s` (read timeout per HTTP attempt) and
+`max_attempts` through `AgentConfig.phase_settings` or `GLM_<PHASE>_*` (see the settings table). Unset values inherit
+the global configuration, then the built-in phase defaults (`PHASE_DEFAULTS`): reasoning effort research `high`,
+document sweep / recovery / finalizer `low`; max attempts 1 for document sweep and recovery (a timed-out request is
+not re-sent identically). The research model stays `GLM_MODEL` and the
 finalizer model `GLM_FINALIZER_MODEL`; a sweep / recovery phase on its own model is priced with that model's prices
 (`cost_details.<phase>_tokens_usd`). The effective settings of every phase are recorded in
 `glm_config.phase_settings`.
@@ -784,6 +799,40 @@ phase, API attempt statistics, the partial research bundle and the last model co
 fabricated structured fields. Ctrl+C makes no further model call. The CLI saves the partial result
 and exits with code 130.
 
+### Deterministic Final Assembly
+
+With `FINAL_ASSEMBLY=deterministic` (the default) no model decides a final value (`src/final_assembly.py`). The
+output keeps the finalizer's shape (so the UI, result.json and benchmark readers keep working) and is built from the
+current field states (`current_evaluation()`) and the admitted evidence items only; candidates, excerpts, model notes,
+the research reply and any model output are never a source of values. Per field state:
+
+| State | Output entry |
+|---|---|
+| `ok` | `value` / `unit` / `market` / `valid_as_of` from the evidence that carries the value; `provenance` `israel_direct` (target-market evidence) or `foreign_direct` (a portable foreign item, its `portability_basis` in `notes`); `evidence_ids` = those items |
+| `conflicting` | `value: null`, every distinct admitted value in `alternatives`, the field in `conflicts` with its `conflict_class` |
+| `foreign_market_only` / `variant_not_exact` / `weak_provenance` | `value: null`, the admitted items as `alternatives`, `provenance: unresolved`, a note naming the state |
+| `not_applicable` | `value: null`, `provenance: unresolved`, note `not_applicable` |
+| `missing` / `unresolved` | `value: null`, `provenance: unresolved` |
+
+The items that carry an `ok` value are the field's admitted items in the evaluator's server-side target scope
+(`in_server_scope`: binding reaches the field's requirement, target market or portable), narrowed to the evidence ids
+of a backed `conflict_resolved` declaration when the evaluator accepted one. If they disagree in value (and the
+evaluator's conflict classification did not already establish `unit_equivalent` or a trim-bound
+`scalar_inside_range`), the run logs `final_assembly_inconsistent` and emits the field as `conflicting`: a value is
+never picked by majority or order. `provenance_summary` is computed from the entries; `variant_identity.government`
+comes from the Level 1.5 record and `local_commercial_name` only from an `ok` `local_trim_name` field
+(`mapping_basis: explicit_source`), else null with `inference`.
+
+After assembly, ONE small no-tool narration call (phase `finalization`, the finalizer's reasoning effort,
+`max_tokens` <= 800) may write `summary` and `research_trace` from a digest of field-state counts, ok / open field
+names and source domains (no values). Only those two keys are taken from its reply. If it fails or times out the
+code-written summary stays and the status is unchanged. The durable `finalization_pending` checkpoint is still written
+before it. `result.json` records `final_assembly` and `output_source` (`code`; `model` with `FINAL_ASSEMBLY=llm`, which
+keeps the previous finalizer exactly). `--finalize-existing` and the UI's finalize retry use the same assembly. In
+`benchmark.compute_metrics`, `coverage_pct` / `target_filled` count only output values whose `evidence_ids` all exist in
+the run's evidence; `filled_by_output` / `coverage_pct_by_output` keep the old count. The diagnostics' final-state
+counts stay the primary metric.
+
 ### Clustered tail recovery (default)
 
 After the document sweep, the fields that are still open (the "tail") are recovered in **clusters**, not one
@@ -807,6 +856,11 @@ current_evaluation() → tail triage → recovery clusters → breadth-first clu
   is pruned, and the model's next turn is told which fields are now resolved and which new candidates
   appeared. Candidates are still promoted only through `store_evidence` and the admission gate (the
   reliability rules allow no automatic promotion).
+- **Failure isolation.** An API error (timeout, 5xx, ...) in a cluster attempt ends that attempt only: it is logged
+  (`field_recovery_failed`), the attempt is marked `failed`, its candidates stay fresh and the next cluster still runs.
+  Only two consecutive failed attempts stop all recovery (`stopped: api_failure`, `api_failure_stop: true`, a
+  provider-outage guard). Recovery requests make one HTTP attempt by default (`GLM_RECOVERY_MAX_ATTEMPTS`), so a
+  timed-out request is not re-sent identically. The summary reports `failed_attempts` and `api_failure_stop`.
 - **Local-first.** While a cluster has candidates no model has seen, it first gets one pass with cached-document
   tools only (the packet shows those unseen candidates first), and every round runs such local passes before any
   web attempt. The local pass does not use up the cluster's web attempts. With no unseen local material that
@@ -1302,8 +1356,9 @@ python -m src.cli --finalize-existing --batch-id 20261001T185509Z-glm-5.3-one --
 ```
 
 The dry run prints the bundle size and calls nothing. The real run builds the bundle from the saved
-events and cache, then makes only the finalization call, using `GLM_FINALIZER_MODEL`, else `GLM_MODEL`.
-There is no search and no fetch. History is preserved:
+events and cache, then makes only the finalization call, using `GLM_FINALIZER_MODEL`, else `GLM_MODEL`
+(with `FINAL_ASSEMBLY=deterministic`, the default, the output is assembled in code exactly as in a live run and that
+call is only the narration). There is no search and no fetch. History is preserved:
 
 - events are appended to `events.jsonl`, with sequence numbers continuing;
 - an existing `result.json` is first copied to `result.pre-recovery-<stamp>.json`;
@@ -1445,13 +1500,13 @@ vehicles is measured honestly.
 
 ## Output
 
-The model is asked for one JSON object with `summary`, `variant_identity`, `fields`
+The output is one JSON object with `summary`, `variant_identity`, `fields`
 (`{name: {value, unit, market, provenance, alternatives, notes, evidence_ids}}`), `conflicts`,
-`provenance_summary`, `additional_findings`, `level3` and `research_trace`. There is no forced
-found/not-found enum. Nulls, free text, multiple values and unrequested fields are
-all kept and shown. Parsing only exists to render the UI. If the final reply is not
-JSON, the finalizer gets one repair request (still compact context), and the raw text is kept either
-way.
+`provenance_summary`, `additional_findings`, `level3` and `research_trace`. By default it is assembled in code
+(see [Deterministic Final Assembly](#deterministic-final-assembly); each field entry also carries its `state`).
+With `FINAL_ASSEMBLY=llm` the finalizer model writes it: there is no forced found/not-found enum, nulls, free text,
+multiple values and unrequested fields are all kept and shown, and if the final reply is not JSON, the finalizer gets
+one repair request (still compact context), and the raw text is kept either way.
 
 ## Concurrent batches
 

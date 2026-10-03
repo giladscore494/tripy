@@ -625,6 +625,11 @@ def recovery_summary(events: list[dict]) -> dict:
         "fields_open_before": len(before) if primary is not None else None,
         "fields_open_after": len(after) if final is not None else None,
         "fields_resolved": len(before - after) if primary is not None and final is not None else None,
+        # cluster attempts that ended on an API error (each ends only its own attempt), and whether consecutive
+        # failures stopped all recovery (provider-outage guard)
+        "failed_attempts": sum(1 for e in window if e.get("kind") == "field_recovery_failed"
+                               and e.get("attempt") is not None),
+        "api_failure_stop": any(e.get("kind") == "field_recovery_api_failure_stop" for e in window),
     }
 
 
@@ -653,8 +658,18 @@ def run_totals(events: list[dict], result: dict | None = None) -> dict:
     from .storage import trace
 
     by_phase = trace.usage_by_phase(events)
+    reasoning = {group: None for group in by_phase}
+    for e in events:         # provider-reported reasoning tokens (usage.completion_tokens_details.reasoning_tokens)
+        if e.get("kind") == "model_response":
+            tokens = e.get("reasoning_tokens")
+            if tokens is None:
+                tokens = trace.reasoning_tokens(e.get("usage"))
+            if tokens is not None:
+                group = trace.phase_group(e.get("phase"))
+                reasoning[group] = (reasoning.get(group) or 0) + int(tokens)
     phases = {group: {"model_calls": u.get("model_calls", 0), "input_tokens": u.get("prompt_tokens", 0),
-                      "output_tokens": u.get("completion_tokens", 0)} for group, u in by_phase.items()}
+                      "output_tokens": u.get("completion_tokens", 0), "reasoning_tokens": reasoning.get(group)}
+              for group, u in by_phase.items()}
     finished = next((e for e in reversed(events) if e.get("kind") == "run_finished"), None) or {}
     started = next((e for e in events if e.get("kind") == "run_started"), None) or {}
     wall = (result or {}).get("duration_s") or finished.get("duration_s") \
@@ -663,6 +678,9 @@ def run_totals(events: list[dict], result: dict | None = None) -> dict:
     return {"model_calls": sum(p["model_calls"] for p in phases.values()),
             "input_tokens": sum(p["input_tokens"] for p in phases.values()),
             "output_tokens": sum(p["output_tokens"] for p in phases.values()),
+            # null when no response reported reasoning tokens
+            "reasoning_tokens": sum(p["reasoning_tokens"] for p in phases.values() if p["reasoning_tokens"] is not None)
+            if any(p["reasoning_tokens"] is not None for p in phases.values()) else None,
             "by_phase": phases, "cost_usd": cost.get("total_usd") if isinstance(cost, dict) else None,
             "cost_source": "result.json" if (result or {}).get("cost") else "run_finished" if finished.get("cost")
             else None, "wall_time_s": wall}
@@ -700,7 +718,8 @@ def run_configuration(events: list[dict]) -> dict:
     started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
     agent = started.get("agent_config") or {}
     glm = started.get("glm_config") or {}
-    sweep = (glm.get("phase_settings") or {}).get("document_sweep") or {}
+    phases = glm.get("phase_settings") or {}
+    sweep = phases.get("document_sweep") or {}
     return {"acquisition_mode": started.get("acquisition_mode") or agent.get("acquisition_mode") or "legacy",
             # runs logged before SWEEP_MODE existed used the tool-loop sweep
             "sweep_mode": started.get("sweep_mode") or agent.get("sweep_mode") or "legacy",
@@ -709,6 +728,11 @@ def run_configuration(events: list[dict]) -> dict:
             "sweep_thinking": sweep.get("thinking") or (glm.get("thinking") if isinstance(glm.get("thinking"), str)
                                                         else None),
             "sweep_max_attempts": sweep.get("max_attempts") or glm.get("chat_max_attempts"),
+            # the effective reasoning effort per phase (null for runs logged before reasoning_effort existed)
+            **{f"{label}_reasoning_effort": (phases.get(phase) or {}).get("reasoning_effort")
+               for label, phase in REASONING_PHASES},
+            # runs before FINAL_ASSEMBLY used the finalizer model ("llm")
+            "final_assembly": started.get("final_assembly") or agent.get("final_assembly") or "llm",
             "sweep_max_fields": agent.get("document_sweep_max_fields"),
             "sweep_max_candidates": agent.get("document_sweep_max_candidates"),
             "sweep_max_packet_chars": agent.get("document_sweep_packet_max_chars"),
@@ -720,11 +744,17 @@ def run_configuration(events: list[dict]) -> dict:
             "env_overrides": [o.get("text") for o in started.get("env_overrides") or [] if isinstance(o, dict)]}
 
 
+REASONING_PHASES = (("research", "research"), ("sweep", "document_sweep"), ("recovery", "recovery"),
+                    ("finalizer", "finalizer"))
+
+
 def config_key(config: dict) -> str:
     return " | ".join(f"{k}={config.get(k)}" for k in ("run_profile", "acquisition_mode", "sweep_mode",
                                                          "document_card", "research_model", "sweep_model",
                                                          "sweep_thinking", "sweep_max_attempts", "sweep_max_fields",
-                                                         "sweep_max_candidates"))
+                                                         "sweep_max_candidates", "research_reasoning_effort",
+                                                         "sweep_reasoning_effort", "recovery_reasoning_effort",
+                                                         "finalizer_reasoning_effort", "final_assembly"))
 
 
 # --- run level ----------------------------------------------------------------------------------------------------------
@@ -904,11 +934,13 @@ def vehicle_row(diag: dict) -> dict:
             "final_ok_fields": ",".join(final.get("ok_fields") or []) if final.get("ok_fields") is not None else None,
             "total_model_calls": totals.get("model_calls"), "total_input_tokens": totals.get("input_tokens"),
             "total_output_tokens": totals.get("output_tokens"),
+            "total_reasoning_tokens": totals.get("reasoning_tokens"),
             **{f"{p}_{k}": (phases.get(g) or {}).get(k) for p, g in (("research", "research"),
                                                                      ("sweep", "document_sweep"),
                                                                      ("recovery", "field_recovery"),
                                                                      ("finalizer", "finalization"))
-               for k in ("model_calls", "input_tokens", "output_tokens")},
+               for k in ("model_calls", "input_tokens", "output_tokens", "reasoning_tokens")},
+            "rec_failed_attempts": rec.get("failed_attempts"), "rec_api_failure_stop": rec.get("api_failure_stop"),
             "research_tokens": (research.get("input_tokens") or 0) + (research.get("output_tokens") or 0)
             if research else None,
             "cost_usd": totals.get("cost_usd"), "wall_time_s": totals.get("wall_time_s")}
@@ -916,10 +948,10 @@ def vehicle_row(diag: dict) -> dict:
 
 E2E_KEYS = ("final_ok", "final_conflicting", "final_unresolved_or_missing", "final_foreign_market_only",
             "final_variant_not_exact", "final_not_applicable", "rec_attempts", "rec_model_calls",
-            "rec_billable_searches", "rec_fetches", "rec_fields_resolved", "total_model_calls", "total_input_tokens",
-            "total_output_tokens", "research_tokens", "acq_tokens", "acq_tokens_until_min_base",
-            "acq_turn_reached_min_base", "acq_tool_blocked", "acq_official_urls_discovered", "cost_usd",
-            "wall_time_s")
+            "rec_billable_searches", "rec_fetches", "rec_fields_resolved", "rec_failed_attempts", "total_model_calls",
+            "total_input_tokens", "total_output_tokens", "total_reasoning_tokens", "research_tokens", "acq_tokens",
+            "acq_tokens_until_min_base", "acq_turn_reached_min_base", "acq_tool_blocked",
+            "acq_official_urls_discovered", "cost_usd", "wall_time_s")
 
 
 def aggregate(diagnostics: list[dict]) -> dict:

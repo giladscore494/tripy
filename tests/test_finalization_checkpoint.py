@@ -83,6 +83,7 @@ def test_checkpoint_survives_a_hard_death_and_finalize_existing_needs_one_call(t
     assert Path(result["recovery"]["prior_result_preserved_as"]).is_file()
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_runs_that_need_no_finalizer_write_no_checkpoint(tmp_path, make_ctx):
     ctx = make_ctx({})

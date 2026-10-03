@@ -37,8 +37,10 @@ def test_a_named_profile_ignores_stale_env_values():
     assert (cfg.acquisition_mode, cfg.document_sweep_max_fields, cfg.document_sweep_max_candidates) == ("legacy", 12, 16)
     assert cfg.acquisition_document_card is False and cfg.run_profile == R.BASELINE
     assert cfg.max_steps == AgentConfig().max_steps                     # pinned to the code default as well
-    assert cfg.phase_settings["document_sweep"] == {"thinking": "disabled", "max_attempts": 1}
-    assert cfg.phase_settings["recovery"] == {"thinking": "enabled"}  # not a profile setting: env still applies
+    # pinned to the code defaults: GLM_DOCUMENT_SWEEP_THINKING / _MAX_ATTEMPTS ignored, never thinking "disabled"
+    assert cfg.phase_settings["document_sweep"] == {"reasoning_effort": "low", "max_attempts": 1}
+    # recovery thinking is not a profile setting (env still applies); its effort and max attempts are pinned
+    assert cfg.phase_settings["recovery"] == {"thinking": "enabled", "reasoning_effort": "low", "max_attempts": 1}
     for name, (mode, card) in {R.PRODUCTION: ("contract", False), R.TREATMENT: ("contract", False),
                                R.TREATMENT_CARD: ("contract", True)}.items():
         cfg = R.build_agent_config(STALE.get, {}, name)
@@ -79,16 +81,23 @@ def test_the_ui_settings_object_builds_the_run_config(monkeypatch):
     assert named.acquisition_document_card is False and named.phase_settings["document_sweep"]["max_attempts"] == 1
 
 
-def test_production_without_env_is_todays_defaults_plus_sweep_thinking_disabled():
+def test_production_without_env_is_exactly_the_code_defaults():
     cfg = R.build_agent_config({}.get, {}, R.PRODUCTION)
-    today = dataclasses.asdict(AgentConfig(acquisition_mode="contract"))   # the code default
+    today = dataclasses.asdict(AgentConfig(acquisition_mode="contract", sweep_mode="adjudication",
+                                           final_assembly="deterministic"))   # the code defaults
     got = dataclasses.asdict(cfg)
     diff = {k for k in today if today[k] != got[k]}
     assert diff == {"phase_settings", "run_profile"}
-    # max_attempts 1 was already the sweep's phase default: the one intended difference is thinking "disabled"
-    assert got["phase_settings"] == {"document_sweep": {"thinking": "disabled", "max_attempts": 1}}
+    # the pins spell out the code defaults (PHASE_DEFAULTS): no thinking object anywhere
+    assert got["phase_settings"] == {"research": {"reasoning_effort": "high"},
+                                     "document_sweep": {"reasoning_effort": "low", "max_attempts": 1},
+                                     "recovery": {"reasoning_effort": "low", "max_attempts": 1},
+                                     "finalizer": {"reasoning_effort": "low"}}
     from src.phase_settings import for_phase
-    assert for_phase(AgentConfig(), "document_sweep")["max_attempts"] == for_phase(cfg, "document_sweep")["max_attempts"]
+    for phase in ("research", "document_sweep", "field_recovery", "finalization"):
+        pinned, default = for_phase(cfg, phase), for_phase(AgentConfig(), phase)
+        assert {k: pinned[k] for k in ("reasoning_effort", "thinking", "max_attempts")} == \
+            {k: default[k] for k in ("reasoning_effort", "thinking", "max_attempts")}
 
 
 # --- Part G: env overrides --------------------------------------------------------------------------------------
@@ -151,8 +160,8 @@ def test_a_saved_request_round_trips_the_run_configuration(tmp_path):
     assert dataclasses.asdict(restored) == dataclasses.asdict(cfg)
     assert (restored.acquisition_mode, restored.acquisition_document_card, restored.document_sweep_max_fields,
             restored.document_sweep_max_candidates, restored.run_profile) == ("contract", True, 12, 16, R.TREATMENT_CARD)
-    assert restored.phase_settings["document_sweep"] == {"thinking": "disabled", "max_attempts": 1}
-    assert restored.phase_settings["finalizer"] == {"max_tokens": 900}
+    assert restored.phase_settings["document_sweep"] == {"reasoning_effort": "low", "max_attempts": 1}
+    assert restored.phase_settings["finalizer"] == {"max_tokens": 900, "reasoning_effort": "low"}
 
 
 # --- Part F: the A/B series -------------------------------------------------------------------------------------

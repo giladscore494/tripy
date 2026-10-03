@@ -184,6 +184,7 @@ def test_glm_errors_stay_distinct_from_interruptions(tmp_path, monkeypatch):
     assert result["api_errors"][0]["status"] == 401
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_completed_runs_and_level3_listing(tmp_path, make_ctx):
     script = [turn(store("p1", "torque_nm", 1066, "IL")), say({"summary": "done", "fields": {"torque_nm": {"value": 1066}}})]

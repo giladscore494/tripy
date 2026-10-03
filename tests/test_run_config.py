@@ -112,6 +112,7 @@ def test_client_keeps_raw_errors_and_full_search_fields():
     assert raw["endpoint"] == "chat/completions"
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_run_records_effective_config_trace_and_cost(tmp_path):
     page = "https://www.xpeng.com/g6"

@@ -562,6 +562,19 @@ def render_documents_tab(cache: DocumentCache, results: list[dict], runs_dir: Pa
                      height=300, key=f"doc_text_{doc_id}")
 
 
+def output_source_caption(results: list[dict]) -> str:
+    """Where the shown values came from (result.json `output_source`: code = Deterministic Final Assembly)."""
+    sources = {r.get("output_source") or ("model" if r.get("output") is not None else None) for r in results
+               if r.get("output") is not None}
+    if sources == {"code"}:
+        return ("Output source: code (deterministic final assembly). Values come only from admitted evidence and the "
+                "engine's field states; a model wrote at most the summary text. No reliability pass/fail is applied.")
+    if sources == {"model"}:
+        return "Output source: model. Values exactly as the model returned them. No reliability pass/fail is applied."
+    return ("Output source: mixed (code for deterministic final assembly runs, model for the others; see each run). "
+            "No reliability pass/fail is applied.")
+
+
 def render_results_tab(results: list[dict], labels: dict[str, str], runs_dir: Path,
                        cache: DocumentCache | None = None) -> None:
     rows = []
@@ -575,7 +588,7 @@ def render_results_tab(results: list[dict], labels: dict[str, str], runs_dir: Pa
     without_output = [r for r in results if r.get("output") is None]
     if rows:
         df = pd.DataFrame(rows)
-        st.caption("Values exactly as the model returned them. No reliability pass/fail is applied.")
+        st.caption(output_source_caption(results))
         view = st.radio("Layout", ["Long", "Wide (vehicle × field)"], horizontal=True, key="results_layout")
         if view.startswith("Wide"):
             st.dataframe(df.pivot_table(index="vehicle", columns="field", values="value", aggfunc="first"),

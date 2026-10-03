@@ -14,7 +14,8 @@ from typing import Callable
 import streamlit as st
 
 from ..agent import agent_config_from_env, tool_config_from_env
-from ..phase_settings import PHASE_DEFAULTS
+from ..phase_settings import (PHASE_DEFAULTS, PROVIDER_DEFAULT, REASONING_EFFORTS, extra_body_disables_thinking,
+                              parse_effort)
 from ..run_profiles import CUSTOM, NAMED_PROFILES, PROFILE_LABELS, build_agent_config, env_overrides
 from ..concurrency import SEARCH_PRIME_PROVIDER_LIMIT, DEFAULT_SEARCH_MAX_INFLIGHT, batch_max_workers_from_env
 from ..glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_MAX_ATTEMPTS, DEFAULT_CHAT_PATH, DEFAULT_CHAT_TIMEOUT_S,
@@ -91,6 +92,51 @@ def pricing_defaults(model: str, secret: Callable[[str], str]) -> dict:
             except ValueError:
                 pass
     return pricing
+
+
+EFFORT_PHASES = (("research", "Research"), ("document_sweep", "Document sweep"), ("recovery", "Recovery"),
+                 ("finalizer", "Finalizer"))
+EFFORT_OPTIONS = ["provider default"] + list(REASONING_EFFORTS)
+
+
+def effort_default(secret: Callable[[str], str], phase: str) -> str:
+    """The select's default: GLM_<PHASE>_REASONING_EFFORT, else GLM_REASONING_EFFORT, else the code default."""
+    for raw in (secret(f"GLM_{phase.upper()}_REASONING_EFFORT"), secret("GLM_REASONING_EFFORT")):
+        value = parse_effort(raw)
+        if value:
+            return "provider default" if value == PROVIDER_DEFAULT else value
+    return PHASE_DEFAULTS.get(phase, {}).get("reasoning_effort") or "provider default"
+
+
+def merge_effort_settings(phases: dict, efforts: dict[str, str]) -> dict:
+    """The UI's per-phase reasoning effort merged into its phase settings ("provider default" = send no effort)."""
+    out = {phase: dict(values) for phase, values in phases.items()}
+    for phase, choice in efforts.items():
+        out.setdefault(phase, {})["reasoning_effort"] = PROVIDER_DEFAULT if choice == "provider default" else choice
+    return out
+
+
+def extra_json_disables_thinking(raw: str) -> bool:
+    try:
+        return extra_body_disables_thinking(json.loads(raw)) if (raw or "").strip() else False
+    except ValueError:
+        return False
+
+
+def render_reasoning_efforts(secret: Callable[[str], str]) -> dict[str, str]:
+    """One "Reasoning effort" select per phase (replaces the thinking selects: thinking cannot be disabled on these
+    models; a configured "disabled" is mapped to effort low)."""
+    st.caption("Reasoning effort per phase (sent as `reasoning_effort`). Defaults: environment, else research high and "
+               "everything else low.")
+    columns = st.columns(len(EFFORT_PHASES))
+    out = {}
+    for column, (phase, label) in zip(columns, EFFORT_PHASES):
+        default = effort_default(secret, phase)
+        with column:
+            out[phase] = st.selectbox(f"{label} reasoning effort", EFFORT_OPTIONS, key=f"cfg_effort_{phase}",
+                                      index=EFFORT_OPTIONS.index(default),
+                                      help=f"GLM_{phase.upper()}_REASONING_EFFORT / GLM_REASONING_EFFORT")
+    return out
 
 
 def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: bool) -> UISettings:
@@ -173,14 +219,13 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
         temperature = st.slider("Temperature", 0.0, 1.5, 0.6, 0.05, key="cfg_temp") if use_temp else None
         max_tokens = st.number_input("max_tokens per model turn (0 = provider default)", 0, 131072, 0, step=1024,
                                      key="cfg_maxtok")
-        thinking_options = ["provider default", "enabled", "disabled"]
-        thinking_env = secret("GLM_THINKING").strip().lower()
-        thinking_choice = st.selectbox("Thinking / reasoning", thinking_options, key="cfg_thinking",
-                                       index=thinking_options.index(thinking_env) if thinking_env in thinking_options
-                                       else 0)
-        thinking = "" if thinking_choice == "provider default" else thinking_choice
+        efforts = render_reasoning_efforts(secret)
         extra_raw = st.text_area("Extra request JSON (merged into every chat payload)", value=secret("GLM_EXTRA_BODY"),
-                                 placeholder='{"thinking": {"type": "enabled"}}', height=80, key="cfg_extra")
+                                 placeholder='{"custom_flag": true}', height=80, key="cfg_extra")
+        if extra_json_disables_thinking(extra_raw):
+            st.warning('This JSON contains thinking.type = "disabled". It is stripped from every request (the '
+                       "provider rejects it: these models always think); requests use reasoning effort low instead "
+                       "unless an effort is set above.")
 
         st.markdown("**Experiment settings** (used by the Custom run profile; a named profile sets these itself)")
         mode_options = ["contract", "legacy"]
@@ -193,13 +238,6 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
                                    key="cfg_card", help="ACQUISITION_DOCUMENT_CARD (contract research only): fetch "
                                    "results carry server-computed scheduling metadata, never evidence.")
         sweep_env = env_agent.phase_settings.get("document_sweep") or {}
-        sweep_thinking_options = ["provider default", "enabled", "disabled"]
-        sweep_thinking_env = str(sweep_env.get("thinking") or "provider default")
-        sweep_thinking = st.selectbox("Document sweep thinking", sweep_thinking_options, key="cfg_sweep_thinking",
-                                      index=sweep_thinking_options.index(sweep_thinking_env)
-                                      if sweep_thinking_env in sweep_thinking_options else 0,
-                                      help="GLM_DOCUMENT_SWEEP_THINKING; provider default = inherit the global "
-                                           "Thinking setting.")
         sweep_attempts = st.number_input("Document sweep max attempts", 1, 3, max(1, min(3, int(
             sweep_env.get("max_attempts") or PHASE_DEFAULTS["document_sweep"]["max_attempts"]))),
             key="cfg_sweep_attempts", help="GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS (total HTTP attempts per sweep request).")
@@ -217,8 +255,9 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
         else:
             st.caption("No experiment-relevant environment variable differs from its code default.")
         st.caption("With a named run profile (" + ", ".join(PROFILE_LABELS[p] for p in NAMED_PROFILES)
-                   + ") the research turn ceiling, minimum acquisition base and document sweep limits come from the "
-                     "profile (code defaults), not from the values above.")
+                   + ") the research turn ceiling, minimum acquisition base, document sweep mode and limits, reasoning "
+                     "efforts, recovery max attempts and the deterministic final assembly come from the profile (code "
+                     "defaults), not from the values above.")
 
         st.markdown("**Cost reporting**")
         price_defaults = pricing_defaults(model_id, secret)
@@ -256,13 +295,12 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
                      primary_research_no_artifact_stop=int(no_artifact), field_recovery_enabled=bool(recovery_on),
                      field_recovery_max_attempts=int(recovery_attempts), field_recovery_max_steps=int(recovery_steps),
                      field_recovery_max_total_steps=int(recovery_total), max_tokens=int(max_tokens) or None,
-                     include_level3=include_level3, thinking=thinking, extra_body=extra_body,
+                     include_level3=include_level3, extra_body=extra_body,
                      acquisition_mode=acquisition_mode, acquisition_document_card=card_choice == "on",
                      document_sweep_max_fields=int(sweep_fields), document_sweep_max_candidates=int(sweep_candidates),
                      # merged per phase / key over the env phase settings (None removes the env value)
-                     phase_settings={"document_sweep": {
-                         "thinking": None if sweep_thinking == "provider default" else sweep_thinking,
-                         "max_attempts": int(sweep_attempts)}})
+                     phase_settings=merge_effort_settings(
+                         {"document_sweep": {"max_attempts": int(sweep_attempts)}}, efforts))
     return UISettings(model_id=model_id.strip(), finalizer_model_id=finalizer_model_id, base_url=base_url,
                       chat_path=chat_path, api_key=api_key, api_key_from_ui=from_ui, search_backend=search_backend,
                       search_path=search_path, search_engine=search_engine, chat_attempts=int(chat_attempts),

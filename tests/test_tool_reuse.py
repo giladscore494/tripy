@@ -86,6 +86,7 @@ def tool_json(message):
 
 # --- 1-7: pre-dispatch reuse ---------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_find_in_document_is_replayed_not_executed(tmp_path, make_ctx, counted):
     ctx = make_ctx()
@@ -109,6 +110,7 @@ def test_identical_find_in_document_is_replayed_not_executed(tmp_path, make_ctx,
     assert (m["tool_calls"], m["duplicate_calls_suppressed"]) == (1, 1)
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_cached_document_and_fetch_execute_once(tmp_path, make_ctx, counted):
     ctx = make_ctx({PAGE: FakeResponse(b"<html><body>Escalade IQ 205 kWh</body></html>")})
@@ -126,6 +128,7 @@ def test_identical_cached_document_and_fetch_execute_once(tmp_path, make_ctx, co
     assert "text_preview" not in tool_json(tool_messages(client)[-1])
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_search_is_replayed_and_billed_once(tmp_path, make_ctx, counted):
     ctx = make_ctx(search_backend="glm")

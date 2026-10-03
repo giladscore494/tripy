@@ -507,9 +507,14 @@ def test_phase_settings_default_to_the_global_configuration(tmp_path):
     caller, client = _caller(tmp_path, AgentConfig(thinking="enabled", max_tokens=900, temperature=0.2))
     for phase in ("research", "document_sweep", "field_recovery", "finalization"):
         caller([{"role": "user", "content": "x"}], phase=phase)
-    base = {"tools": None, "temperature": 0.2, "max_tokens": 900, "extra": {"thinking": {"type": "enabled"}}}
-    # no model / timeout override sent; the document sweep's only built-in default is one HTTP attempt (no retry)
-    assert client.kwargs == [base, {**base, "max_attempts": 1}, base, base]
+    base = {"tools": None, "temperature": 0.2, "max_tokens": 900}
+
+    def extra(effort):
+        return {"extra": {"thinking": {"type": "enabled"}, "reasoning_effort": effort}}
+    # no model / timeout override sent; built-in phase defaults: one HTTP attempt for sweep and recovery (no identical
+    # retry), reasoning effort research high, everything else low
+    assert client.kwargs == [{**base, **extra("high")}, {**base, **extra("low"), "max_attempts": 1},
+                             {**base, **extra("low"), "max_attempts": 1}, {**base, **extra("low")}]
 
 
 def test_phase_settings_override_only_their_own_phase(tmp_path):
@@ -521,8 +526,10 @@ def test_phase_settings_override_only_their_own_phase(tmp_path):
     caller([{"role": "user", "content": "x"}], phase="document_sweep")
     caller([{"role": "user", "content": "x"}], phase="finalization", model="glm-5.3")
     research, sweep, final = client.kwargs
-    assert research["extra"] == {"thinking": {"type": "enabled"}} and "timeout_s" not in research
-    assert sweep["extra"] == {"thinking": {"type": "disabled"}} and sweep["timeout_s"] == 90
+    assert research["extra"] == {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
+    assert "timeout_s" not in research
+    # a configured thinking "disabled" is never sent: no thinking object, effort low
+    assert sweep["extra"] == {"reasoning_effort": "low"} and sweep["timeout_s"] == 90
     assert sweep["model"] == "glm-5.3-flashx"
     assert final["max_tokens"] == 2000 and final["temperature"] == 0.0 and final["model"] == "glm-5.3"
     assert for_phase(config, "field_recovery")["thinking"] == "enabled"         # recovery inherits

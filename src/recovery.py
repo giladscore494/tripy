@@ -8,7 +8,9 @@ harvest, document sweep and field recovery are never repeated; only the finalize
 
 Reads the run's input.json and events.jsonl (and result.json if one exists),
 builds the compact research bundle from the logged evidence, tool results and
-cached documents, and makes ONLY the finalization call. No search, no fetch.
+cached documents, and makes ONLY the finalization call. No search, no fetch. With
+FINAL_ASSEMBLY=deterministic (the default) the output is assembled in code exactly as
+in a live run (src/final_assembly.py) and the only model call is the narration.
 
 History is preserved: events are appended to events.jsonl (sequence numbers
 continue), a pre-existing result.json is first copied to
@@ -26,7 +28,8 @@ from typing import Callable
 
 from .agent import (AgentConfig, ModelCaller, effective_glm_config, finalizer_messages, finalizer_model_of,
                     run_finalization)
-from .bundle import build_research_bundle
+from .bundle import _is_electrified, _requested, build_research_bundle
+from .final_assembly import run_deterministic_finalization
 from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_models_of, phase_run_cost
 from .storage import trace
 from .storage.atomic import atomic_write_json
@@ -76,13 +79,16 @@ def plan_recovery(runs_dir: Path | str, batch_id: str, record_id: str, *, cache=
                                    include_level3=config.include_level3,
                                    max_chars=config.finalizer_bundle_max_chars, stop_reason=base.get("stop_reason"))
     messages = finalizer_messages(bundle)
+    deterministic = config.final_assembly != "llm"
     return {"run_dir": str(run_dir), "prior_status": base.get("status"), "prior_result_json": prior is not None,
             "prior_has_output": base.get("output") is not None, "stop_reason": base.get("stop_reason"),
             "events": len(events), "evidence_items": len(bundle["evidence"]),
             "documents": len(bundle["documents"]), "excerpts": len(bundle["document_excerpts"]),
             "bundle_chars": bundle["bundle_chars"],
             "finalizer_input_chars": sum(len(m["content"]) for m in messages),
-            "research_events_sent_to_finalizer": 0}
+            "research_events_sent_to_finalizer": 0,
+            # deterministic: values are assembled in code; the only model call is a small narration (no values)
+            "final_assembly": "deterministic" if deterministic else "llm"}
 
 
 def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *, client, cache,
@@ -155,10 +161,24 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     client.hook = api_hook
     client.activity_hook = activity_hook
     caller = ModelCaller(client, log, config)
+    deterministic = config.final_assembly != "llm"
     try:
-        fin = run_finalization(caller, run_log=log, payload=payload, config=config, cache=cache,
-                               documents_dir=documents_dir, stop_reason=base.get("stop_reason"), phase=phase,
-                               model=finalizer_model, request_path=recovery_dir / "finalizer_request.json")
+        if deterministic:     # the same Deterministic Final Assembly as a live run (src/final_assembly.py)
+            events_before = read_events(run_dir / "events.jsonl")
+            bundle = build_research_bundle(events_before, payload, cache=cache, documents_dir=documents_dir,
+                                           include_level3=config.include_level3,
+                                           max_chars=config.finalizer_bundle_max_chars,
+                                           stop_reason=base.get("stop_reason"),
+                                           target_market=base.get("target_market") or config.target_market)
+            fin = run_deterministic_finalization(
+                caller, run_log=log, events=events_before, payload=payload,
+                specs=_requested(events_before, payload, _is_electrified(payload)),
+                target_market=base.get("target_market") or config.target_market, model=finalizer_model, phase=phase,
+                bundle=bundle, record_id=record_id)
+        else:
+            fin = run_finalization(caller, run_log=log, payload=payload, config=config, cache=cache,
+                                   documents_dir=documents_dir, stop_reason=base.get("stop_reason"), phase=phase,
+                                   model=finalizer_model, request_path=recovery_dir / "finalizer_request.json")
     except BaseException as exc:  # Ctrl+C: log it; the prior state on disk is untouched
         log.event("interrupted", phase=phase, exception=type(exc).__name__)
         client.hook = previous_hook
@@ -208,6 +228,8 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
         "finalizer_error": fin["error"],
         "finalizer_model": finalizer_model,
         "finalization": fin["info"],
+        "final_assembly": "deterministic" if deterministic else "llm",
+        "output_source": None if fin["output"] is None else ("code" if deterministic else "model"),
         "usage_research": usage_research,
         "usage_finalizer": usage_finalizer,
         "usage_field_recovery": usage_recovery,
