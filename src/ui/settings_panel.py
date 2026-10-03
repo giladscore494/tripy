@@ -14,6 +14,8 @@ from typing import Callable
 import streamlit as st
 
 from ..agent import agent_config_from_env, tool_config_from_env
+from ..phase_settings import PHASE_DEFAULTS
+from ..run_profiles import CUSTOM, NAMED_PROFILES, PROFILE_LABELS, build_agent_config, env_overrides
 from ..concurrency import SEARCH_PRIME_PROVIDER_LIMIT, DEFAULT_SEARCH_MAX_INFLIGHT, batch_max_workers_from_env
 from ..glm_client import (DEFAULT_BASE_URL, DEFAULT_CHAT_MAX_ATTEMPTS, DEFAULT_CHAT_PATH, DEFAULT_CHAT_TIMEOUT_S,
                           DEFAULT_SEARCH_ENGINE, DEFAULT_SEARCH_MAX_ATTEMPTS, DEFAULT_SEARCH_PATH, GLMSettings)
@@ -43,6 +45,7 @@ class UISettings:
     dsn: str
     extra_error: str = ""
     notes: list = field(default_factory=list)
+    env_overrides: list = field(default_factory=list)   # env values differing from the code defaults (Part G)
 
     def glm_settings(self) -> GLMSettings:
         """A fresh settings object per run (the API key stays in memory; never persisted)."""
@@ -52,8 +55,10 @@ class UISettings:
                            search_engine=self.search_engine or DEFAULT_SEARCH_ENGINE, timeout_s=float(self.chat_timeout),
                            chat_max_attempts=int(self.chat_attempts), search_max_attempts=int(self.search_attempts))
 
-    def agent_config(self, secret: Callable[[str], str]):
-        return agent_config_from_env(env=secret, **self.agent_overrides)
+    def agent_config(self, secret: Callable[[str], str], profile: str = CUSTOM):
+        """The run's AgentConfig: env defaults, these Advanced settings (phase settings merged per phase and key over
+        the env ones), then a named run profile's values, which ignore env (src/run_profiles.py)."""
+        return build_agent_config(secret, self.agent_overrides, profile)
 
     def tool_config(self, secret: Callable[[str], str]):
         return tool_config_from_env(env=secret, search_backend=self.search_backend)
@@ -177,6 +182,44 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
         extra_raw = st.text_area("Extra request JSON (merged into every chat payload)", value=secret("GLM_EXTRA_BODY"),
                                  placeholder='{"thinking": {"type": "enabled"}}', height=80, key="cfg_extra")
 
+        st.markdown("**Experiment settings** (used by the Custom run profile; a named profile sets these itself)")
+        mode_options = ["contract", "legacy"]
+        acquisition_mode = st.selectbox("Acquisition mode", mode_options, key="cfg_acq_mode",
+                                        index=mode_options.index(env_agent.acquisition_mode)
+                                        if env_agent.acquisition_mode in mode_options else 0,
+                                        help="ACQUISITION_MODE. contract = primary research is source acquisition only; "
+                                             "legacy = the previous behaviour (benchmark baseline).")
+        card_choice = st.selectbox("Document card", ["off", "on"], index=1 if env_agent.acquisition_document_card else 0,
+                                   key="cfg_card", help="ACQUISITION_DOCUMENT_CARD (contract research only): fetch "
+                                   "results carry server-computed scheduling metadata, never evidence.")
+        sweep_env = env_agent.phase_settings.get("document_sweep") or {}
+        sweep_thinking_options = ["provider default", "enabled", "disabled"]
+        sweep_thinking_env = str(sweep_env.get("thinking") or "provider default")
+        sweep_thinking = st.selectbox("Document sweep thinking", sweep_thinking_options, key="cfg_sweep_thinking",
+                                      index=sweep_thinking_options.index(sweep_thinking_env)
+                                      if sweep_thinking_env in sweep_thinking_options else 0,
+                                      help="GLM_DOCUMENT_SWEEP_THINKING; provider default = inherit the global "
+                                           "Thinking setting.")
+        sweep_attempts = st.number_input("Document sweep max attempts", 1, 3, max(1, min(3, int(
+            sweep_env.get("max_attempts") or PHASE_DEFAULTS["document_sweep"]["max_attempts"]))),
+            key="cfg_sweep_attempts", help="GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS (total HTTP attempts per sweep request).")
+        sweep_fields = st.number_input("Document sweep max fields per chunk", 1, 200,
+                                       int(env_agent.document_sweep_max_fields), key="cfg_sweep_fields",
+                                       help="DOCUMENT_SWEEP_MAX_FIELDS")
+        sweep_candidates = st.number_input("Document sweep max candidates per chunk", 1, 500,
+                                           int(env_agent.document_sweep_max_candidates), key="cfg_sweep_cands",
+                                           help="DOCUMENT_SWEEP_MAX_CANDIDATES")
+        overridden = env_overrides(secret)
+        if overridden:
+            st.caption("Environment values that differ from the code defaults (named profiles ignore them; Custom "
+                       "uses them as the defaults above):")
+            st.code("\n".join(o["text"] for o in overridden), language=None)
+        else:
+            st.caption("No experiment-relevant environment variable differs from its code default.")
+        st.caption("With a named run profile (" + ", ".join(PROFILE_LABELS[p] for p in NAMED_PROFILES)
+                   + ") the research turn ceiling, minimum acquisition base and document sweep limits come from the "
+                     "profile (code defaults), not from the values above.")
+
         st.markdown("**Cost reporting**")
         price_defaults = pricing_defaults(model_id, secret)
         st.caption(f"Defaults: {price_defaults['source']}")
@@ -213,10 +256,17 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
                      primary_research_no_artifact_stop=int(no_artifact), field_recovery_enabled=bool(recovery_on),
                      field_recovery_max_attempts=int(recovery_attempts), field_recovery_max_steps=int(recovery_steps),
                      field_recovery_max_total_steps=int(recovery_total), max_tokens=int(max_tokens) or None,
-                     include_level3=include_level3, thinking=thinking, extra_body=extra_body)
+                     include_level3=include_level3, thinking=thinking, extra_body=extra_body,
+                     acquisition_mode=acquisition_mode, acquisition_document_card=card_choice == "on",
+                     document_sweep_max_fields=int(sweep_fields), document_sweep_max_candidates=int(sweep_candidates),
+                     # merged per phase / key over the env phase settings (None removes the env value)
+                     phase_settings={"document_sweep": {
+                         "thinking": None if sweep_thinking == "provider default" else sweep_thinking,
+                         "max_attempts": int(sweep_attempts)}})
     return UISettings(model_id=model_id.strip(), finalizer_model_id=finalizer_model_id, base_url=base_url,
                       chat_path=chat_path, api_key=api_key, api_key_from_ui=from_ui, search_backend=search_backend,
                       search_path=search_path, search_engine=search_engine, chat_attempts=int(chat_attempts),
                       search_attempts=int(search_attempts), chat_timeout=float(chat_timeout), workers=int(workers),
                       chat_limits=chat_limits, search_limit=int(search_limit), agent_overrides=overrides,
-                      pricing=pricing, data_source=data_source, dsn=dsn, extra_error=extra_error)
+                      pricing=pricing, data_source=data_source, dsn=dsn, extra_error=extra_error,
+                      env_overrides=overridden)

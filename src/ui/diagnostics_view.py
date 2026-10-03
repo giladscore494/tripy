@@ -180,9 +180,12 @@ def render_detailed(diag: dict | None) -> None:
             st.json(diag, expanded=False)
 
 
-def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str, str]) -> None:
-    """Sidebar: aggregate acquisition / sweep diagnostics over chosen runs and download them (read-only)."""
+def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str, str],
+                            series: list[dict] | None = None) -> None:
+    """Sidebar: aggregate acquisition / sweep diagnostics over chosen runs and download them (read-only); the
+    benchmark files an A/B series wrote over exactly its own runs."""
     with st.expander("Benchmark diagnostics"):
+        _render_series_benchmarks(series or [])
         if not run_ids:
             st.caption("No runs yet.")
             return
@@ -207,3 +210,28 @@ def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str
                            file_name="tripy_benchmark.json", mime="application/json", width="stretch")
         st.download_button("Download per_vehicle.csv", buf.getvalue(), file_name="tripy_per_vehicle.csv",
                            mime="text/csv", width="stretch", disabled=not result["per_vehicle"])
+        gaps = diag_mod.parser_gap_rows(diags)
+        st.download_button("Download parser_gaps.jsonl", "".join(_json.dumps(r, ensure_ascii=False, default=str) + "\n"
+                                                                 for r in gaps),
+                           file_name="tripy_parser_gaps.jsonl", mime="application/x-ndjson", width="stretch",
+                           disabled=not gaps)
+
+
+def _render_series_benchmarks(series: list[dict]) -> None:
+    """The benchmark.json / parser_gaps.jsonl each finished A/B series wrote (runs/_series/<id>/)."""
+    done = [s for s in series if (s.get("benchmark") or {}).get("dir")]
+    if not done:
+        return
+    st.markdown("**A/B series**")
+    for item in done:
+        bench = item["benchmark"]
+        st.caption(f"{item.get('label')} · {item.get('status')} · {len(bench.get('run_ids') or [])} run(s)"
+                   + ("" if bench.get("complete") else " · partial"))
+        folder = Path(bench["dir"])
+        for name, mime in (("benchmark.json", "application/json"),
+                           (diag_mod.PARSER_GAPS_FILE, "application/x-ndjson")):
+            path = folder / name
+            if path.is_file():
+                st.download_button(f"Download {name}", path.read_bytes(), file_name=f"{item['series_id']}_{name}",
+                                   mime=mime, width="stretch", key=f"dl_{item['series_id']}_{name}")
+    st.divider()
