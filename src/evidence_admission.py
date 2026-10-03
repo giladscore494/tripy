@@ -978,6 +978,13 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if not quote_in_source(material, quote):
         return reject(["quote_not_in_source"])
     checks.setdefault("quote", "verbatim_in_source")
+    # Semantic exclusions outrank a missing label in a deliberately short model quote.  Inspect the source line
+    # containing that quote as well: e.g. a model quoting only "185 Nm" must not hide that the source calls it
+    # "system torque".  This is the same admission gate and dictionary rule used below, not a downstream filter.
+    quote_lines = [line for line in material.text.splitlines() if squash(quote) in squash(line)]
+    early_violation = semantic_violation(adm, spec, [quote, *quote_lines], value)
+    if early_violation:
+        return reject(["semantic_mismatch"], semantic_note=early_violation)
     entailment = entail(adm, spec, value, quote, material)
     if not entailment.ok:
         return reject([entailment.reason or "value_not_in_quote"])
@@ -997,12 +1004,6 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
                                                *[h for h in headings if not re.search(r"\d", h)]], value)
     if violation:
         return reject(["semantic_mismatch"], semantic_note=violation)
-    if spec.get("catalog_trim_hint") and material.meta.get("doc_type") == "html":
-        from .structure_harvest import clean_soup
-        html = cache.read_body(material.document_id).decode("utf-8", errors="replace")
-        clean = " " + squash(clean_soup(html).get_text(" ")) + " "
-        if " " + squash(quote) + " " not in clean:
-            return reject(["semantic_mismatch"], semantic_note="navigation / menu / footer block")
     checks["semantics"] = "ok"
 
     # identity: server-side binding (the model's variant text can only veto)

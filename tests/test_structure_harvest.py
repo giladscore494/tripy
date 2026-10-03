@@ -153,7 +153,7 @@ def test_page_where_old_harvester_found_nothing_now_yields_and_golden_candidates
 
 
 def test_harvester_version_bumped():
-    assert HARVESTER_VERSION == "harvest-v5"
+    assert HARVESTER_VERSION == "harvest-v6"
 
 
 # --- Part B -------------------------------------------------------------------------------------------------------
@@ -251,6 +251,6 @@ def test_corolla_coverage_table_before_vs_after(tmp_path):
     assert all(not row["lost"] for row in rows.values())                  # nothing disappears anywhere
     assert rows["existing Corolla fixtures"]["after"] >= rows["existing Corolla fixtures"]["before"]
     structural = rows["structural fixtures (PR #31)"]
-    assert (structural["before"], structural["after"]) == (14, 19)
-    assert structural["gained"] == ["list_price", "local_trim_name", "vehicle_warranty", "warranty_km",
-                                    "warranty_years"]
+    assert (structural["before"], structural["after"]) == (12, 19)
+    assert structural["gained"] == ["list_price", "local_trim_name", "tire_size_front", "tire_size_rear",
+                                    "vehicle_warranty", "warranty_km", "warranty_years"]

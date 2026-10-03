@@ -2,6 +2,7 @@
 import pytest
 from src.fields import resolve_requested_fields, sanity_specs
 from src.candidate_harvest import harvest_text, collect_candidate_rejections
+from src.ui.live_state import candidate_table_rows, format_value_unit
 
 
 def values(text, field, *, segment=None, gross=None, propulsion='battery_electric'):
@@ -77,3 +78,24 @@ def test_rejected_cargo_keeps_its_reason_at_origin():
         assert values('Cargo volume seats folded: 1374 l', 'cargo_volume_l') == []
     assert any(r['field'] == 'cargo_volume_l' and r['value'] == 1374 and 'seats-folded' in r['rejection']
                for r in rejected)
+
+
+def test_unit_formatter_never_duplicates_charging_time_unit():
+    assert format_value_unit('12 min', 'min') == '12 min'
+    assert format_value_unit(12, 'min') == '12 min'
+
+
+def test_candidate_table_separates_live_candidates_from_rejections_and_keeps_provenance():
+    specs = resolve_requested_fields(['cargo_volume_l'], propulsion='battery_electric')
+    events = [
+        {'kind': 'candidates_harvested', 'document_id': 'doc-live', 'candidates': [
+            {'field': 'cargo_volume_l', 'value': 571, 'unit': 'l', 'origin': 'table',
+             'document_id': 'doc-live', 'block': 'table:0:row:2'}]},
+        {'kind': 'candidate_rejected', 'field': 'cargo_volume_l', 'value': 1374,
+         'rejection': 'seats-folded capacity, not standard cargo volume', 'origin': 'line',
+         'document_id': 'doc-rejected', 'block': 'Cargo volume seats folded: 1374 l'},
+    ]
+    row = candidate_table_rows(events, specs)[0]
+    assert row['מועמדים שנמצאו'] == '571 l' and '1374' not in row['מועמדים שנמצאו']
+    assert 'table · doc-live · table:0:row:2' in row['origin']
+    assert '1374: seats-folded' in row['rejection']

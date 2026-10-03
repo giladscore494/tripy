@@ -231,21 +231,21 @@
   "binding_level": "exact_technical_variant",
   "variant_match": "unclear"
  },
- "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
-  "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
  },
- "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
   "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
-  "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
  },
- "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
   "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
  "[\"A\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
   "binding_level": "exact_technical_variant",
@@ -595,21 +595,21 @@
   "binding_level": "exact_market_trim",
   "variant_match": "exact"
  },
- "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
   "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
-  "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
  },
- "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
   "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
-  "binding_level": "exact_technical_variant",
-  "variant_match": "unclear"
+ "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
+  "binding_level": "exact_market_trim",
+  "variant_match": "exact"
  },
  "[\"A2\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
   "binding_level": "exact_technical_variant",
@@ -959,21 +959,21 @@
   "binding_level": "body_powertrain",
   "variant_match": "different"
  },
- "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
   "binding_level": "body_powertrain",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_front\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
   "binding_level": "body_powertrain",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:205/55r16\", null, \"Tyres | 205/55 R16 (1.8 Hybrid Business)\"]": {
   "binding_level": "body_powertrain",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
- "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres   205/55 R16   225/45 R17\"]": {
+ "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"tire_size_rear\", \"txt:225/45r17\", null, \"Tyres | 225/45 R17 (1.8 Hybrid Premium)\"]": {
   "binding_level": "body_powertrain",
-  "variant_match": "unclear"
+  "variant_match": "different"
  },
  "[\"B\", \"pdf:https://www.toyota.co.il/media/corolla-2024-brochure.pdf\", \"top_speed_kmh\", \"num:180.0\", \"km/h\", \"Top speed | 180 km/h (1.8 Hybrid Business)\"]": {
   "binding_level": "body_powertrain",

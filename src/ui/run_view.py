@@ -435,6 +435,9 @@ def render_candidates(result: dict, runs_dir: Path) -> None:
     rows = candidate_table_rows(events, specs, started.get("vehicle_label")) if specs else []
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.download_button("Download candidates.csv", pd.DataFrame(rows).to_csv(index=False),
+                           file_name="tripy_candidates.csv", mime="text/csv",
+                           key=_key(result, "candidate_csv"), width="stretch")
     else:
         st.caption("No deterministic candidates were recorded for this run.")
     with st.expander("Raw candidates / layered metrics (JSON)"):
