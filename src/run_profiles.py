@@ -25,7 +25,8 @@ attempt for sweep and recovery requests (PHASE_DEFAULTS in src/phase_settings.py
 
 A NAMED profile also pins every experiment-relevant setting listed in ENV_OVERRIDE_VARS to its code default, so a
 stale env value (e.g. DOCUMENT_SWEEP_MAX_FIELDS=30 or SWEEP_MODE=legacy left on a deployment) cannot leak into a
-profiled run: among them the cluster recovery budgets (CLUSTER_*), the recovery turn cap
+profiled run: among them the cluster recovery budgets (CLUSTER_*), the re-acquisition stage search cap
+(REACQUIRE_STAGE_SEARCH_CAP, 8 billable searches per vehicle), the recovery turn cap
 (FIELD_RECOVERY_MAX_TOTAL_STEPS) and the research / recovery HTTP attempts. A named profile ignores extra_body
 (GLM_EXTRA_BODY) entirely. Everything else (models, timeouts, other phases' thinking / max_tokens ...) comes from the
 Advanced settings / env as before. The research model stays outside profiles. UI phase settings are MERGED per phase
@@ -109,6 +110,7 @@ ENV_OVERRIDE_VARS: tuple[tuple[str, Any, str], ...] = (
     ("CLUSTER_BASE_TURNS", "cluster_base_turns", "int"),
     ("CLUSTER_MAX_TURNS", "cluster_max_turns", "int"),
     ("CLUSTER_SEARCH_BUDGET", "cluster_search_budget", "int"),
+    ("REACQUIRE_STAGE_SEARCH_CAP", "reacquire_stage_search_cap", "int"),
     ("FIELD_RECOVERY_MAX_TOTAL_STEPS", "field_recovery_max_total_steps", "int"),
 )
 

@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .document_binding import LEVELS, bind, is_trim_gap
+from .document_binding import LEVELS, bind, binding_gaps, is_trim_gap
 from .field_recovery import (NON_TARGET_VARIANTS, attempted_operations, material_key,
                              max_attempts_for, related_searches, vehicle_identity)
 from .fields import normalize_field_name, public_spec, semantic_notes
@@ -194,6 +194,53 @@ def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: d
                    and any(str(i).startswith("binding_gap:trim_") for i in (evaluation.get(f) or {}).get("info") or [])]
     return {"fields": kept, "skipped": [] if exception else list(gaps), "gaps": gaps, "trim_exception": exception,
             "search_cap": 1 if exception and set(kept) <= set(gaps) else None, "trim_fields": trim_fields}
+
+
+TECHNICAL_GAP_SEARCHES = 2     # billable searches of an episode whose fields are open only on a technical binding gap
+TRIM_GAP_SEARCHES = 1          # ... only on the trim (PR #34)
+
+
+def field_binding_gaps(entry: dict, evidence: list[dict], target_market: str) -> list[str] | None:
+    """The binding gap that keeps an open field open when binding is the blocker, else None. A `variant_not_exact`
+    field: its `binding_gap:*` info. A `conflicting` field (current_evaluation() records no binding gap for it): the
+    binding_gaps() of the evidence its `conflict_evidence_ids` name. Either only with ADMITTED evidence from an official
+    target-market source (as binding_gap_gate). A gap of "market" alone is no binding gap. Scheduling only."""
+    market = str(target_market or "").upper()
+    state = entry.get("state")
+    official = [e for e in evidence if e.get("source_authority") in OFFICIAL_AUTHORITIES
+                and str(e.get("market") or "").upper() == market]
+    if state == "variant_not_exact":
+        gaps = [str(i).split(":", 1)[1] for i in entry.get("info") or [] if str(i).startswith("binding_gap:")]
+    elif state == "conflicting":
+        ids = {str(i) for i in entry.get("conflict_evidence_ids") or []}
+        conflict = [e for e in evidence if str(e.get("evidence_id")) in ids]
+        official = [e for e in official if str(e.get("evidence_id")) in ids]
+        gaps = sorted({g for e in conflict for g in binding_gaps(e)})
+    else:
+        return None
+    gaps = [g for g in gaps if g != "market"]
+    return gaps if gaps and official else None
+
+
+def binding_budget(fields: list[str], evaluation: dict[str, dict], evidence: dict[str, list[dict]],
+                   target_market: str) -> dict:
+    """Billable-search budget of ONE re-acquisition episode while binding is the blocker (RECOVERY_MODE=reacquire).
+
+    Per field, field_binding_gaps(): a TECHNICAL gap (power / drivetrain / year / body / displacement / propulsion /
+    model: any gap that is not the trim) or a TRIM-only gap. When EVERY field of the episode is open on a binding gap,
+    the episode gets at most TECHNICAL_GAP_SEARCHES (any technical gap) or TRIM_GAP_SEARCHES (trim only) billable
+    searches; a field open for another reason (true missing, foreign only, a value conflict with exact bindings, ...)
+    keeps the cluster's normal budget (search_cap None). `technical_fields` get the official spec page / PDF
+    instruction. Scheduling only: never a field state."""
+    gaps = {f: g for f in fields if (g := field_binding_gaps(evaluation.get(f) or {}, evidence.get(f) or [],
+                                                             target_market)) is not None}
+    technical = [f for f, g in gaps.items() if any(not is_trim_gap(x) for x in g)]
+    trim = [f for f, g in gaps.items() if f not in technical]
+    if gaps and set(fields) <= set(gaps):
+        reason, cap = ("technical_gap", TECHNICAL_GAP_SEARCHES) if technical else ("trim_gap", TRIM_GAP_SEARCHES)
+    else:
+        reason, cap = ("other", None)
+    return {"reason": reason, "search_cap": cap, "gaps": gaps, "technical_fields": technical, "trim_fields": trim}
 
 
 def plan_clusters(triaged: dict[str, dict], specs: list[dict]) -> list[dict]:
