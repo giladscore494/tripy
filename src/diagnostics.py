@@ -714,8 +714,16 @@ def run_totals(events: list[dict], result: dict | None = None) -> dict:
             if tokens is not None:
                 group = trace.phase_group(e.get("phase"))
                 reasoning[group] = (reasoning.get(group) or 0) + int(tokens)
+    # responses cut at max_tokens (finish_reason "length") and the one-time retries with a doubled max_tokens
+    truncated = {group: {"truncated_calls": 0, "truncation_retries": 0} for group in by_phase}
+    for e in events:
+        key = {"model_output_truncated": "truncated_calls", "truncation_retry": "truncation_retries"}.get(e.get("kind"))
+        if key:
+            truncated.setdefault(trace.phase_group(e.get("phase")), {"truncated_calls": 0, "truncation_retries": 0})[
+                key] += 1
     phases = {group: {"model_calls": u.get("model_calls", 0), "input_tokens": u.get("prompt_tokens", 0),
-                      "output_tokens": u.get("completion_tokens", 0), "reasoning_tokens": reasoning.get(group)}
+                      "output_tokens": u.get("completion_tokens", 0), "reasoning_tokens": reasoning.get(group),
+                      **truncated.get(group, {"truncated_calls": 0, "truncation_retries": 0})}
               for group, u in by_phase.items()}
     finished = next((e for e in reversed(events) if e.get("kind") == "run_finished"), None) or {}
     started = next((e for e in events if e.get("kind") == "run_started"), None) or {}
@@ -767,7 +775,10 @@ def run_configuration(events: list[dict]) -> dict:
     glm = started.get("glm_config") or {}
     phases = glm.get("phase_settings") or {}
     sweep = phases.get("document_sweep") or {}
-    return {"acquisition_mode": started.get("acquisition_mode") or agent.get("acquisition_mode") or "legacy",
+    acquisition_mode = started.get("acquisition_mode") or agent.get("acquisition_mode") or "legacy"
+    recovery_mode = started.get("recovery_mode") or agent.get("recovery_mode") or "cluster"
+    site_map = bool(started.get("site_map", agent.get("site_map", False)))
+    return {"acquisition_mode": acquisition_mode,
             # runs logged before SWEEP_MODE existed used the tool-loop sweep
             "sweep_mode": started.get("sweep_mode") or agent.get("sweep_mode") or "legacy",
             "research_model": started.get("research_model") or started.get("model"),
@@ -787,9 +798,15 @@ def run_configuration(events: list[dict]) -> dict:
             "document_card": bool(started.get("acquisition_document_card", agent.get("acquisition_document_card"))),
             "run_profile": started.get("run_profile") or agent.get("run_profile") or None,
             # PR #31 switches; runs logged before them had no site map, no grounded candidates and cluster recovery
-            "site_map": bool(started.get("site_map", agent.get("site_map", False))),
+            "site_map": site_map,
+            # the site map only acts in contract acquisition and reacquire recovery (it is part of the Treatment)
+            "site_map_used": site_map and (acquisition_mode == "contract" or recovery_mode == "reacquire"),
             "grounded_candidates": bool(started.get("grounded_candidates", agent.get("grounded_candidates", False))),
-            "recovery_mode": started.get("recovery_mode") or agent.get("recovery_mode") or "cluster",
+            "recovery_mode": recovery_mode,
+            # cross-run research memory (fact reuse, recovery yield) and negative-route blocking (off for single runs
+            # of the A/B arms outside a series, src/run_profiles.isolate_single_run)
+            "research_memory": bool(agent.get("research_memory_enabled", True)),
+            "negative_route_blocking": bool(agent.get("negative_route_blocking", True)),
             # informational (env values differing from the code defaults; a named profile ignores them): not part of
             # config_key, whose other entries already hold the effective values
             "env_overrides": [o.get("text") for o in started.get("env_overrides") or [] if isinstance(o, dict)]}
@@ -806,7 +823,9 @@ def config_key(config: dict) -> str:
                                                          "sweep_max_candidates", "research_reasoning_effort",
                                                          "sweep_reasoning_effort", "recovery_reasoning_effort",
                                                          "finalizer_reasoning_effort", "final_assembly",
-                                                         "site_map", "grounded_candidates", "recovery_mode"))
+                                                         "site_map", "site_map_used", "grounded_candidates",
+                                                         "recovery_mode", "research_memory",
+                                                         "negative_route_blocking"))
 
 
 # --- run level ----------------------------------------------------------------------------------------------------------
@@ -994,7 +1013,8 @@ def vehicle_row(diag: dict) -> dict:
                                                                      ("sweep", "document_sweep"),
                                                                      ("recovery", "field_recovery"),
                                                                      ("finalizer", "finalization"))
-               for k in ("model_calls", "input_tokens", "output_tokens", "reasoning_tokens")},
+               for k in ("model_calls", "input_tokens", "output_tokens", "reasoning_tokens", "truncated_calls",
+                         "truncation_retries")},
             "rec_failed_attempts": rec.get("failed_attempts"), "rec_api_failure_stop": rec.get("api_failure_stop"),
             "rec_mode": rec.get("mode"), "rec_reacquire_new_useful_documents": rec.get("reacquire_new_useful_documents"),
             "rec_reacquire_admitted": rec.get("reacquire_admitted"),

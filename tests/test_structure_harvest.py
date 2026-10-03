@@ -153,7 +153,7 @@ def test_page_where_old_harvester_found_nothing_now_yields_and_golden_candidates
 
 
 def test_harvester_version_bumped():
-    assert HARVESTER_VERSION == "harvest-v3"
+    assert HARVESTER_VERSION == "harvest-v4"
 
 
 # --- Part B -------------------------------------------------------------------------------------------------------

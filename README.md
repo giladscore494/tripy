@@ -145,7 +145,7 @@ below.
 | `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off), once the minimum acquisition base is met. |
 | `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `PRIMARY_RESEARCH_HARD_MAX_TURNS` | Fail-safe minimum acquisition base (defaults **3** useful documents AND **50**% in-scope candidate coverage; both 0 = off) and the hard ceiling an under-acquired run may extend to (default **12**). See [Minimum acquisition base](#minimum-acquisition-base-fail-safe-stop). |
 | `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
-| `SWEEP_MODE`, `ADJUDICATION_MAX_U_ITEMS`, `ADJUDICATION_MAX_A_FIELDS`, `ADJUDICATION_MAX_A_CANDIDATES`, `ADJUDICATION_MAX_M_FIELDS`, `ADJUDICATION_MAX_M_SNIPPETS`, `ADJUDICATION_U_MAX_TOKENS`, `ADJUDICATION_A_MAX_TOKENS`, `ADJUDICATION_M_MAX_TOKENS` | `adjudication` (default): the document sweep only asks the model to JUDGE pre-checked candidates in small no-tool JSON packets (defaults 40 U items; A 6 fields / 18 candidates; M 6 fields / 12 snippets; max_tokens 1500 / 2000 / 1500). `legacy`: the tool-loop sweep below. See [Candidate adjudication sweep](#candidate-adjudication-sweep-default). |
+| `SWEEP_MODE`, `ADJUDICATION_MAX_U_ITEMS`, `ADJUDICATION_MAX_A_FIELDS`, `ADJUDICATION_MAX_A_CANDIDATES`, `ADJUDICATION_MAX_M_FIELDS`, `ADJUDICATION_MAX_M_SNIPPETS`, `ADJUDICATION_U_MAX_TOKENS`, `ADJUDICATION_A_MAX_TOKENS`, `ADJUDICATION_M_MAX_TOKENS` | `adjudication` (default): the document sweep only asks the model to JUDGE pre-checked candidates in small no-tool JSON packets (defaults 40 U items; A 6 fields / 18 candidates; M 6 fields / 12 snippets; max_tokens 4000 / 6000 / 4000: glm-5.3 always reasons and reasoning shares this budget; a reply cut at the cap is retried once with double the cap, at most 12000). `legacy`: the tool-loop sweep below. See [Candidate adjudication sweep](#candidate-adjudication-sweep-default). |
 | `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | `SWEEP_MODE=legacy` only (the chunk limits; the per-field count also sizes the pre-sweep snippets): adaptive document sweep: one call while the packet fits (defaults 28000 chars, 12 fields, 16 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
 | `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_<PHASE>_MAX_ATTEMPTS`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting, except `GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, whose default is `1` (no identical retry of a timed-out sweep packet). See [Phase-specific model settings](#phase-specific-model-settings). |
 | `ACQUISITION_DOCUMENT_CARD` | `off` (default) / `on` (also `true`/`false`/`1`/`0`). Contract research only: successful `fetch_url` / `fetch_pdf` results carry a server-computed `document_card` (scheduling metadata, never evidence) and the research prompt gets one paragraph about it. See [Run profiles and A/B series](#run-profiles-and-ab-series). |
@@ -238,18 +238,23 @@ deployment, cannot leak into a profiled run). The **Run profile** selector sits 
 | Profile | acquisition_mode | document card |
 |---|---|---|
 | Production (default) | contract | off |
-| Benchmark: Baseline | legacy | off |
+| Benchmark: Baseline | legacy (site map off: it is part of the Treatment) | off |
 | Benchmark: Treatment | contract | off |
 | Benchmark: Treatment + card | contract | on |
 | Custom | the Advanced settings as edited (their defaults come from env) | |
 
 Every named profile also runs: sweep mode `adjudication`, sweep 12 fields / 16 candidates per chunk, final assembly
 `deterministic`, reasoning effort research `high` / document sweep `low` / recovery `low` / finalizer `low`, no
-thinking object (a `thinking` object in `GLM_EXTRA_BODY` is dropped, its other keys stay), and one HTTP attempt per
-sweep and recovery request. A named profile pins every setting listed below under *env overrides* to its code default
+thinking object (`GLM_EXTRA_BODY` / the extra request JSON is ignored entirely), and one HTTP attempt per sweep and
+recovery request. The importer site map is part of the Treatment: it only acts in contract acquisition and reacquire
+recovery, so Baseline has it off and `run_configuration()` records `site_map_used`. A single run of an A/B arm
+(Baseline, Treatment, Treatment + card) started outside a series runs with research memory and negative-route blocking
+off (no fact reuse or route verdicts from earlier runs); series runs keep their private per-run memory and Production
+keeps memory on (`research_memory` / `negative_route_blocking` in `run_configuration()`). A named profile pins every setting listed below under *env overrides* to its code default
 (also research turn ceiling 6, hard ceiling 12, minimum base 3 documents / 50 %, sweep packet 28000 chars, 2 sweep
-turns, 3 candidates per field, the `ADJUDICATION_*` limits); everything else (models, timeouts, recovery budgets, other
-phases' thinking / max_tokens) still comes from Advanced settings / env. *Production* with no env set is exactly the
+turns, 3 candidates per field, the `ADJUDICATION_*` limits, the `CLUSTER_*` recovery budgets, the recovery turn cap and
+the research / recovery HTTP attempts); everything else (models, timeouts, other phases' thinking / max_tokens) still
+comes from Advanced settings / env. *Production* with no env set is exactly the
 code defaults. The research model is never part of a profile.
 
 **Advanced settings** has the per-run controls the Custom profile uses (acquisition mode, document card, a
@@ -262,11 +267,12 @@ settings are merged per phase and per key over the env phase settings (another p
 `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_TURNS`,
 `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD`, `SWEEP_MODE`, `FINAL_ASSEMBLY`, `GLM_REASONING_EFFORT`,
 `GLM_<PHASE>_REASONING_EFFORT` (research, document sweep, recovery, finalizer), `GLM_THINKING`,
-`GLM_DOCUMENT_SWEEP_THINKING`, `GLM_EXTRA_BODY` (only when it carries a `thinking` object),
-`GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `GLM_RECOVERY_MAX_ATTEMPTS`, the `ADJUDICATION_*` limits,
-`PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`, `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`,
-`PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `SITE_MAP`, `GROUNDED_CANDIDATES`, `RECOVERY_MODE` (the same list is
-logged as `env_overrides` in `run_started` and result.json).
+`GLM_DOCUMENT_SWEEP_THINKING`, `GLM_EXTRA_BODY` (whenever it is a non-empty object),
+`GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `GLM_RESEARCH_MAX_ATTEMPTS`, `GLM_RECOVERY_MAX_ATTEMPTS`, the `ADJUDICATION_*`
+limits, `PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`, `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`,
+`PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `SITE_MAP`, `GROUNDED_CANDIDATES`, `RECOVERY_MODE`,
+`CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET`,
+`FIELD_RECOVERY_MAX_TOTAL_STEPS` (the same list is logged as `env_overrides` in `run_started` and result.json).
 
 Every run records its effective configuration: `run_profile`, `acquisition_mode`, `acquisition_document_card`,
 `research_prompt_hash` (of the research system prompt actually sent) and `env_overrides` in `run_started` /
@@ -825,11 +831,14 @@ comes from the Level 1.5 record and `local_commercial_name` only from an `ok` `l
 (`mapping_basis: explicit_source`), else null with `inference`.
 
 After assembly, ONE small no-tool narration call (phase `finalization`, the finalizer's reasoning effort,
-`max_tokens` <= 800) may write `summary` and `research_trace` from a digest of field-state counts, ok / open field
-names and source domains (no values). Only those two keys are taken from its reply. If it fails or times out the
-code-written summary stays and the status is unchanged. The durable `finalization_pending` checkpoint is still written
+`max_tokens` <= 2000, one retry with double the cap if the reply is cut) may write `summary` and `research_trace` from a
+digest of field-state counts, ok / open field names and source domains (no values). Only those two keys are taken from
+its reply, and only if every number they state also occurs in the digest; otherwise the narration is discarded
+(`narration_rejected` with the offending tokens). If it fails, times out or is rejected the code-written summary stays
+and the status is unchanged. The durable `finalization_pending` checkpoint is still written
 before it. `result.json` records `final_assembly` and `output_source` (`code`; `model` with `FINAL_ASSEMBLY=llm`, which
-keeps the previous finalizer exactly). `--finalize-existing` and the UI's finalize retry use the same assembly. In
+keeps the previous finalizer exactly). `--finalize-existing` and the UI's finalize retry use the same assembly: the mode
+the run recorded in `run_started`, never the current environment. In
 `benchmark.compute_metrics`, `coverage_pct` / `target_filled` count only output values whose `evidence_ids` all exist in
 the run's evidence; `filled_by_output` / `coverage_pct_by_output` keep the old count. The diagnostics' final-state
 counts stay the primary metric.
@@ -842,18 +851,25 @@ CANDIDATES or routing hints only, and only `admit()` turns anything into evidenc
 
 - **Structural HTML pairs** (`src/structure_harvest.py`, method `dom_pair`, routed like a table row): `<dl>`,
   two-column elements (`li > span + span`, card rows), "label: value" inside one element; repeated sibling groups or a
-  dictionary alias; nav / footer / header / consent / hidden elements skipped; quotes "label | value" checked against
-  the text admission reads; at most 400 pairs per page. **Borderless PDF tables**: a pdfplumber text-strategy pass
-  (`source: pdf_table_text`) on pages without ruled tables or with >= 3 aliases. **Unit anchors** (`unit_anchor`):
+  dictionary alias; nav / footer / header / consent / hidden elements skipped (also ARIA roles navigation / menu /
+  banner / contentinfo and class / id words nav, menu, breadcrumb, footer, header, cookie, consent); quotes
+  "label | value" checked against the text admission reads; at most 400 pairs per page; pages over 3 MB skipped and 2 s
+  per page (`harvest_capped`). **Borderless PDF tables**: a pdfplumber text-strategy pass
+  (`source: pdf_table_text`) on pages without ruled tables or with >= 3 aliases (first 60 pages, 5 s per document). **Unit anchors** (`unit_anchor`):
   number + unit with exactly one field's alias within the clause / 60 chars (existing candidates always win).
-  `HARVESTER_VERSION` is `harvest-v3`.
+  `HARVESTER_VERSION` is `harvest-v4`, so older cached candidates are recomputed with these exclusions and limits.
 - **Importer site map** (`SITE_MAP`, `src/site_map.py`): robots.txt / sitemap indexes / `.xml.gz` with the standard
   library (depth 3, 50 files, 20,000 URLs per domain, 7-day per-domain cache, robots `Disallow` respected); the top 15
-  ranked URLs go into the first contract-acquisition message (20 s bound; a failure logs `site_map_failed`).
+  ranked URLs go into the first contract-acquisition message (20 s bound; a failure logs `site_map_failed`). The bound
+  holds while bodies stream in (a slow server is cut), each file is capped at 15 MB / 50 MB decompressed, the
+  per-domain single-flight wait times out at the remaining deadline, and a crawl the deadline cut short is cached as
+  `partial: true` for 1 hour only.
 - **Grounded candidates** (`GROUNDED_CANDIDATES`, `src/grounded.py`): for open fields with no admissible candidate after
   the adjudication dry run, one no-tool call per top document (max 3, 15 fields, 24,000 chars of numbered blocks); the
   model returns block offsets, code cuts the quote, checks it against the document and dry-runs admission; admissible
-  ones are adjudicated as class A.
+  ones are adjudicated as class A. A grounded candidate keeps `extraction_method: grounded_llm` everywhere: a field with
+  any admissible grounded candidate is always class A (re-acquisition included), and coverage / triage count them apart
+  (`grounded_candidate_count`; `candidate_count_total` stays the deterministic harvest's).
 
 ### Targeted re-acquisition (default)
 

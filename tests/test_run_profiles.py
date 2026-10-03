@@ -366,7 +366,7 @@ YIELD_ENV = {"SITE_MAP": "off", "GROUNDED_CANDIDATES": "off", "RECOVERY_MODE": "
 
 @pytest.mark.parametrize("profile,expected", [
     (R.PRODUCTION, (True, True, "reacquire")), (R.TREATMENT, (True, True, "reacquire")),
-    (R.TREATMENT_CARD, (True, True, "reacquire")), (R.BASELINE, (True, False, "cluster"))])
+    (R.TREATMENT_CARD, (True, True, "reacquire")), (R.BASELINE, (False, False, "cluster"))])
 def test_each_named_profile_pins_the_candidate_yield_switches_regardless_of_env(profile, expected):
     for env in (YIELD_ENV, {"SITE_MAP": "on", "GROUNDED_CANDIDATES": "on", "RECOVERY_MODE": "reacquire"}, {}):
         cfg = R.build_agent_config(env.get, {"site_map": False, "recovery_mode": "legacy"}, profile)

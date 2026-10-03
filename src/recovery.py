@@ -10,7 +10,8 @@ Reads the run's input.json and events.jsonl (and result.json if one exists),
 builds the compact research bundle from the logged evidence, tool results and
 cached documents, and makes ONLY the finalization call. No search, no fetch. With
 FINAL_ASSEMBLY=deterministic (the default) the output is assembled in code exactly as
-in a live run (src/final_assembly.py) and the only model call is the narration.
+in a live run (src/final_assembly.py) and the only model call is the narration. The mode is the one the run recorded in
+its `run_started` event (recorded_final_assembly), never the current environment.
 
 History is preserved: events are appended to events.jsonl (sequence numbers
 continue), a pre-existing result.json is first copied to
@@ -56,6 +57,17 @@ def _read_json(path: Path) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def recorded_final_assembly(events: list[dict], config: AgentConfig) -> str:
+    """The final assembly mode the run itself recorded in `run_started` ("deterministic" | "llm"), never the current
+    environment: a run from before FINAL_ASSEMBLY existed used the finalizer model ("llm"). Only a run without any
+    run_started event falls back to `config`."""
+    started = trace.first_event(events, "run_started")
+    if started is None:
+        return "llm" if config.final_assembly == "llm" else "deterministic"
+    mode = started.get("final_assembly") or (started.get("agent_config") or {}).get("final_assembly") or "llm"
+    return "llm" if mode == "llm" else "deterministic"
+
+
 def _base_record(runs_dir: Path, batch_id: str, record_id: str, cache, batch_info: dict) -> tuple[dict, dict | None]:
     prior = _read_json(runs_dir / batch_id / record_id / "result.json")
     if prior is not None:
@@ -79,7 +91,7 @@ def plan_recovery(runs_dir: Path | str, batch_id: str, record_id: str, *, cache=
                                    include_level3=config.include_level3,
                                    max_chars=config.finalizer_bundle_max_chars, stop_reason=base.get("stop_reason"))
     messages = finalizer_messages(bundle)
-    deterministic = config.final_assembly != "llm"
+    deterministic = recorded_final_assembly(events, config) != "llm"
     return {"run_dir": str(run_dir), "prior_status": base.get("status"), "prior_result_json": prior is not None,
             "prior_has_output": base.get("output") is not None, "stop_reason": base.get("stop_reason"),
             "events": len(events), "evidence_items": len(bundle["evidence"]),
@@ -161,7 +173,8 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     client.hook = api_hook
     client.activity_hook = activity_hook
     caller = ModelCaller(client, log, config)
-    deterministic = config.final_assembly != "llm"
+    # the mode the run recorded at its start, not the current environment's FINAL_ASSEMBLY
+    deterministic = recorded_final_assembly(read_events(run_dir / "events.jsonl"), config) != "llm"
     try:
         if deterministic:     # the same Deterministic Final Assembly as a live run (src/final_assembly.py)
             events_before = read_events(run_dir / "events.jsonl")

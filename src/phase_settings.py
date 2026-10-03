@@ -7,7 +7,8 @@ settings, then the built-in phase default (PHASE_DEFAULTS).
                               top-level `reasoning_effort` request field.
     GLM_<PHASE>_THINKING      enabled | disabled            (empty: inherit GLM_THINKING). "disabled" is never sent:
                               glm-5.3 models always think (HTTP 400, code 1210). It is mapped to "no thinking object +
-                              reasoning_effort low" unless an effort is set explicitly (see thinking_disabled_mapping).
+                              the PHASE default reasoning_effort" unless an effort is set explicitly (see
+                              thinking_disabled_mapping).
     GLM_<PHASE>_MAX_TOKENS    integer                       (empty: inherit)
     GLM_<PHASE>_TEMPERATURE   float                         (empty: inherit)
     GLM_<PHASE>_TIMEOUT_S     read timeout per HTTP attempt (empty: inherit GLM_CHAT_TIMEOUT_S; retries unchanged)
@@ -38,7 +39,8 @@ PHASE_DEFAULTS: dict[str, dict] = {"research": {"reasoning_effort": "high"},
                                    "document_sweep": {"max_attempts": 1, "reasoning_effort": "low"},
                                    "recovery": {"max_attempts": 1, "reasoning_effort": "low"},
                                    "finalizer": {"reasoning_effort": "low"}}
-# the effort a configured thinking "disabled" maps to when no effort is set explicitly
+# the effort a configured thinking "disabled" maps to when no effort is set explicitly and no phase is known (the global
+# description); a resolved phase maps to its own PHASE_DEFAULTS effort (research high, the others low)
 DISABLED_THINKING_EFFORT = "low"
 # trace.phase_group(phase) -> settings phase
 GROUP_TO_PHASE = {"research": "research", "document_sweep": "document_sweep", "field_recovery": "recovery",
@@ -105,12 +107,14 @@ def extra_body_disables_thinking(extra_body: dict | None) -> bool:
     return isinstance(thinking, dict) and str(thinking.get("type") or "").strip().lower() == "disabled"
 
 
-def thinking_disabled_mapping(thinking: str, explicit_effort: str | None, extra_body: dict | None = None) -> dict:
+def thinking_disabled_mapping(thinking: str, explicit_effort: str | None, extra_body: dict | None = None,
+                              phase_default: str | None = None) -> dict:
     """THE mapping of a configured thinking "disabled" (env, UI, a saved request, an old profile, GLM_EXTRA_BODY):
-    send no thinking object and reasoning_effort low unless an effort is set explicitly. {thinking (never "disabled"),
-    effort (None = not decided here), mapped (bool), source}."""
+    send no thinking object and the phase's default reasoning effort (`phase_default`: research high, the others low;
+    low when no phase is known) unless an effort is set explicitly. {thinking (never "disabled"), effort (None = not
+    decided here), mapped (bool), source}."""
     if thinking == "disabled" or (not thinking and extra_body_disables_thinking(extra_body)):
-        return {"thinking": "", "effort": explicit_effort or DISABLED_THINKING_EFFORT, "mapped": True,
+        return {"thinking": "", "effort": explicit_effort or phase_default or DISABLED_THINKING_EFFORT, "mapped": True,
                 "source": "thinking" if thinking == "disabled" else "extra_body"}
     return {"thinking": thinking, "effort": explicit_effort, "mapped": False, "source": None}
 
@@ -132,7 +136,8 @@ def for_phase(config, phase_name: str | None) -> dict:
     extra_effort = parse_effort(extra_body.get("reasoning_effort")) if isinstance(extra_body, dict) else None
     explicit = own_effort or global_effort or extra_effort
     thinking = str(own.get("thinking", getattr(config, "thinking", "") or "") or "").lower()
-    mapping = thinking_disabled_mapping(thinking, explicit, getattr(config, "extra_body", None))
+    mapping = thinking_disabled_mapping(thinking, explicit, getattr(config, "extra_body", None),
+                                        defaults.get("reasoning_effort"))
     effort = mapping["effort"] or defaults.get("reasoning_effort")
     source = ("phase" if own_effort else "global" if global_effort else "extra_body" if extra_effort else
               "thinking_disabled" if mapping["mapped"] else "phase_default" if effort else None)
@@ -141,6 +146,8 @@ def for_phase(config, phase_name: str | None) -> dict:
         "model": own.get("model"),
         "reasoning_effort": None if effort == PROVIDER_DEFAULT else effort,
         "reasoning_effort_source": source,
+        # the effort a provider rejection of thinking (code 1210) is retried with when none is set explicitly
+        "phase_default_effort": defaults.get("reasoning_effort"),
         "thinking": mapping["thinking"],
         "thinking_disabled_mapped": mapping["mapped"],
         "thinking_disabled_source": mapping["source"],

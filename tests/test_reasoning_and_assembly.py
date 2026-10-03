@@ -87,14 +87,14 @@ def test_no_request_ever_carries_thinking_disabled(tmp_path, name, profile):
     mapped = [e for e in read_events(log.events_path) if e["kind"] == "thinking_disabled_mapped"]
     if profile != R.CUSTOM:        # a named profile pins every phase to the code defaults: nothing to map
         assert efforts == ["high", "low", "low", "low"] and mapped == []
-        if name == "GLM_EXTRA_BODY":                           # the profile drops only the thinking object
-            assert all(p["custom_flag"] is True for p in session.payloads)
+        if name == "GLM_EXTRA_BODY":                           # a named profile ignores extra_body entirely
+            assert not any("custom_flag" in p for p in session.payloads)
         return
     if name == "GLM_DOCUMENT_SWEEP_THINKING":   # only the sweep is configured "disabled"
         assert efforts == ["high", "low", "low", "low"]
         assert len(mapped) == 1 and mapped[0]["phase"] == "document_sweep"
-    else:                                       # every phase: low unless an effort is set explicitly
-        assert efforts == ["low", "low", "low", "low"]
+    else:                                       # every phase: its phase default unless an effort is set explicitly
+        assert efforts == ["high", "low", "low", "low"]
         assert len(mapped) == 1 and mapped[0]["phase"] == "research"      # logged once per run
     if name == "GLM_EXTRA_BODY":
         assert all(p["custom_flag"] is True for p in session.payloads)      # the rest of extra_body is kept
@@ -245,8 +245,10 @@ def test_the_env_override_list_shows_the_new_variables():
     shown = [o["var"] for o in R.env_overrides(env.get)]
     assert shown == ["SWEEP_MODE", "FINAL_ASSEMBLY", "GLM_REASONING_EFFORT", "GLM_DOCUMENT_SWEEP_REASONING_EFFORT",
                      "GLM_THINKING", "GLM_EXTRA_BODY", "GLM_RECOVERY_MAX_ATTEMPTS", "ADJUDICATION_MAX_A_FIELDS"]
-    # GLM_EXTRA_BODY only when it carries a thinking object; the research default "high" is not a difference
-    assert R.env_overrides({"GLM_EXTRA_BODY": '{"custom_flag": true}'}.get) == []
+    # GLM_EXTRA_BODY whenever it is a non-empty object (a named profile ignores all of it); the research default
+    # "high" is not a difference
+    assert [o["var"] for o in R.env_overrides({"GLM_EXTRA_BODY": '{"custom_flag": true}'}.get)] == ["GLM_EXTRA_BODY"]
+    assert R.env_overrides({"GLM_EXTRA_BODY": "{}"}.get) == []
     assert R.env_overrides({"GLM_RESEARCH_REASONING_EFFORT": "high", "SWEEP_MODE": "adjudication",
                             "FINAL_ASSEMBLY": "deterministic", "GLM_RECOVERY_MAX_ATTEMPTS": "1"}.get) == []
     vars_ = {v for v, _, _ in R.ENV_OVERRIDE_VARS}
@@ -411,7 +413,7 @@ def test_a_run_assembles_values_in_code_and_the_model_only_narrates(tmp_path):
     assert result["final_assembly"] == "deterministic" and result["output_source"] == "code"
     assert result["status"] == "completed"           # the research model finished: status semantics unchanged
     assert len(client.narrations) == 1 and client.narrations[0]["tools"] is None
-    assert client.narrations[0]["max_tokens"] <= 800
+    assert client.narrations[0]["max_tokens"] <= 2000
     digest = json.loads(client.narrations[0]["messages"][1]["content"].split("\n", 1)[1])
     assert set(digest) == {"vehicle", "field_state_counts", "ok_fields", "open_fields", "conflicts",
                            "admitted_evidence_items", "sources_used"}       # names and counts only, never a value

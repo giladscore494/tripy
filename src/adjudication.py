@@ -46,7 +46,7 @@ CONTEXT_CHARS = 700           # an A candidate's context
 SNIPPET_CHARS = 600           # an M snippet
 QUOTE_CHARS = 300             # a quote as shown to the model (the stored quote is never cut)
 DEFAULT_LIMITS = {"u_items": 40, "a_fields": 6, "a_candidates": 18, "m_fields": 6, "m_snippets": 12}
-DEFAULT_MAX_TOKENS = {"U": 1500, "A": 2000, "M": 1500}
+DEFAULT_MAX_TOKENS = {"U": 4000, "A": 6000, "M": 4000}
 
 
 def _domain(url: str | None) -> str | None:
@@ -288,11 +288,24 @@ def candidate_hints(cand: dict, keys: Iterable[str]) -> dict:
     return {k: cand.get(k) for k in keys if cand.get(k) not in (None, "", [], {}, False)}
 
 
+GROUNDED_METHOD = "grounded_llm"        # src/grounded.METHOD (a model-located candidate)
+
+
+def is_grounded(item: dict) -> bool:
+    """An adjudication item (or a bare candidate) located by a model (grounded candidates), not by the parser."""
+    cand = item.get("candidate") if isinstance(item.get("candidate"), dict) else item
+    return bool(item.get("grounded")) or cand.get("extraction_method") == GROUNDED_METHOD
+
+
 def field_class(admissible: list[dict], candidates: list[dict], has_snippets: bool,
                 keys: Iterable[str] = AMBIGUITY_HINTS) -> str | None:
     """U | A | M | None (nothing to adjudicate: recovery). `admissible` items carry {candidate, flags}; `candidates`
-    are all of the field's candidates from usable documents (their hints count)."""
+    are all of the field's candidates from usable documents (their hints count). A field with ANY admissible grounded
+    candidate is always A: a model-located candidate is judged a second time, in context (also in re-acquisition,
+    where an earlier stage's grounded candidate comes back through the candidate matrix)."""
     keys = tuple(keys)
+    if any(is_grounded(a) for a in admissible):
+        return "A"
     if admissible:
         values = {material_key(a["candidate"].get("value")) for a in admissible}
         hinted = any(candidate_hints(c, keys) for c in candidates)

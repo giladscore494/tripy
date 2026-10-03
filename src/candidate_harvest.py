@@ -30,15 +30,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import urlparse
 
 from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name
 
 # v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
 # PDF tables without ruling lines (tools/extract), unit-anchored candidates
-HARVESTER_VERSION = "harvest-v3"
+# v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
+HARVESTER_VERSION = "harvest-v4"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -1294,6 +1297,27 @@ def deterministic_candidates_from_events(events: Iterable[dict]) -> list[dict]:
     return candidates_from_events(e for e in events if not e.get("source"))
 
 
+# Harvest caps (structure_harvest size / time, the PDF text-strategy pass's pages / time) are noted here by the pure
+# extractors and logged by RunHarvester as `harvest_capped` for the document being harvested.
+_HARVEST_CAPS: ContextVar[list | None] = ContextVar("harvest_caps", default=None)
+
+
+def note_harvest_cap(**info: Any) -> None:
+    sink = _HARVEST_CAPS.get()
+    if sink is not None:
+        sink.append(info)
+
+
+@contextmanager
+def collect_harvest_caps() -> Iterator[list]:
+    sink: list = []
+    token = _HARVEST_CAPS.set(sink)
+    try:
+        yield sink
+    finally:
+        _HARVEST_CAPS.reset(token)
+
+
 def candidates_from_events(events: Iterable[dict]) -> list[dict]:
     """Every candidate of the run: the deterministic harvest's (one event per document) and, as separate
     harvest-equivalent events of the same document, other candidate sources (`source`, e.g. grounded_llm; each
@@ -1327,12 +1351,22 @@ def candidate_matrix(events: list[dict], specs: list[dict], vehicle: dict | None
         fields[name].sort(key=lambda c: (-(c.get("parser_confidence") or 0), not c.get("market_hint")))
         if per_field:
             fields[name] = fields[name][:per_field]
-    with_cands = [n for n in names if fields[n]]
+    # coverage and counts are the deterministic harvest's; model-located (grounded) candidates stay in `fields` (they
+    # keep extraction_method grounded_llm) but are counted apart
+    grounded = {n: sum(1 for c in fields[n] if is_model_located(c)) for n in names}
+    with_cands = [n for n in names if len(fields[n]) > grounded[n]]
     return {"fields": fields, "fields_with_candidates": with_cands,
-            "fields_without_candidates": [n for n in names if not fields[n]],
-            "candidate_count": sum(len(v) for v in fields.values()), "documents": len(documents),
-            "applicable_fields": len(names),
+            "fields_without_candidates": [n for n in names if n not in with_cands],
+            "candidate_count": sum(len(v) for v in fields.values()) - sum(grounded.values()),
+            "grounded_candidate_count": sum(grounded.values()),
+            "fields_with_grounded_candidates": [n for n in names if grounded[n]],
+            "documents": len(documents), "applicable_fields": len(names),
             "candidate_field_coverage_pct": round(100 * len(with_cands) / len(names), 1) if names else 0.0}
+
+
+def is_model_located(cand: dict) -> bool:
+    """A candidate a model located (grounded candidates, extraction_method grounded_llm), not the parser."""
+    return cand.get("extraction_method") == "grounded_llm"
 
 
 class RunHarvester:
@@ -1355,7 +1389,10 @@ class RunHarvester:
                 continue
             self.done.add(document_id)
             try:
-                cands, hit = harvest_document(self.cache, document_id, self.specs)
+                with collect_harvest_caps() as caps:
+                    cands, hit = harvest_document(self.cache, document_id, self.specs)
+                for cap in caps:
+                    self.run_log.event("harvest_capped", document_id=document_id, phase=phase, **cap)
             except Exception as exc:  # never break research because of the parser
                 self.stats["harvest_errors"] += 1
                 self.run_log.event("candidate_harvest_failed", document_id=document_id, phase=phase,
