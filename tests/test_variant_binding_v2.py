@@ -438,7 +438,7 @@ def test_binding_gap_gate_rules():
 # --- versions ---------------------------------------------------------------------------------------------------------------
 
 def test_binding_version_bumped_and_memory_ignores_facts_of_the_old_version(tmp_path, monkeypatch):
-    assert BINDING_VERSION == "binding-v2"
+    assert BINDING_VERSION != "binding-v1"          # binding-v3 since PR #35 (tests/test_binding_v3.py pins it)
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",

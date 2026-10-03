@@ -25,8 +25,10 @@ def diagnostics_for(run_dir: Path) -> dict | None:
     """diagnostics.json if present (a finished run); otherwise built in memory from events (cached by file size)."""
     events_path = run_dir / "events.jsonl"
     try:
+        replay_path = run_dir / "binding_replay_summary.json"
         stamp = (events_path.stat().st_size, (run_dir / diag_mod.DIAGNOSTICS_FILE).stat().st_mtime_ns
-                 if (run_dir / diag_mod.DIAGNOSTICS_FILE).exists() else 0)
+                 if (run_dir / diag_mod.DIAGNOSTICS_FILE).exists() else 0,
+                 replay_path.stat().st_mtime_ns if replay_path.exists() else 0)
     except OSError:
         return None
     key = str(run_dir)
@@ -37,7 +39,9 @@ def diagnostics_for(run_dir: Path) -> dict | None:
     data = diag_mod.load_vehicle_diagnostics(run_dir, rebuild_if_missing=False)
     if data is None or not data.get("complete"):
         events = read_events(events_path)
-        data = diag_mod.vehicle_diagnostics(events, run_id=run_dir.parent.name, record_id=run_dir.name) if events else None
+        data = diag_mod.with_binding_replay(diag_mod.vehicle_diagnostics(events, run_id=run_dir.parent.name,
+                                                                         record_id=run_dir.name), run_dir) \
+            if events else None
     if data is not None:
         with _LOCK:
             _CACHE[key] = (stamp, data)
@@ -178,6 +182,67 @@ def render_detailed(diag: dict | None) -> None:
                 st.caption("No field entered the document sweep.")
         with tabs[4]:
             st.json(diag, expanded=False)
+
+
+def _domain(url) -> str:
+    from urllib.parse import urlparse
+
+    host = urlparse(str(url or "")).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def binding_rows(items: list[dict]) -> list[dict]:
+    """One row per replayed item: field · value · source · column header / identity · level recorded -> now ·
+    gap / veto · would be ok."""
+    rows = []
+    for r in items:
+        column = " · ".join(str(x) for x in dict.fromkeys(
+            [r.get("column_header"), r.get("effective_column_identity") or r.get("column_identity")]) if x)
+        if not column and r.get("candidate_match_count"):
+            column = f"{r['candidate_match_count']} candidates" + (" (ambiguous)" if r.get("candidate_match_ambiguous")
+                                                                  else "")
+        now = "missing document" if r.get("missing_document") else r.get("replay_error") or r.get("binding_level_now")
+        recorded = r.get("binding_level_recorded") if r["kind"] == "evidence" else "candidate"
+        rows.append({"field": r.get("field"), "value": str(r.get("value")), "source": _domain(r.get("source_url")),
+                     "column header / identity": column, "level recorded → now": f"{recorded} → {now}",
+                     "match now": r.get("variant_match_now"),
+                     "gap / veto": ", ".join(r.get("binding_veto_now") or r.get("binding_gap_now") or []),
+                     "year": (r.get("year_context") or {}).get("status"), "would be ok": r.get("would_be_ok")})
+    return rows
+
+
+def render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -> None:
+    """Technical details · Binding: Binding Replay of one finished vehicle run (src/binding_replay.py), on demand and
+    cached next to the run until the binding code changes. Read-only: the run's events and evidence never change."""
+    from .. import binding_replay as replay_mod
+
+    st.caption("Today's server-side binding over this run's admitted evidence and open-field candidates (no model, "
+               "no network). Nothing in the run changes; `would be ok` is the field evaluator on an in-memory copy.")
+    if not (run_dir / "events.jsonl").is_file():
+        st.caption("This vehicle run has no events.jsonl yet.")
+        return
+    replay = replay_mod.load_replay(run_dir)
+    if replay is None and st.button("Run binding replay", key=f"binding_replay_{key}"):
+        with st.spinner("Replaying binding…"):
+            replay = replay_mod.replay_run(run_dir, cache_root)
+    if replay is None:
+        st.caption(f"No replay for the current binding code ({replay_mod.code_version()}) yet.")
+        return
+    summary, vehicle = replay["summary"], replay["summary"]["vehicle"]
+    cols = st.columns(4)
+    cols[0].metric("Fields ok (recorded → now)", f"{vehicle['fields_ok_recorded']} → {vehicle['fields_ok_now']}")
+    cols[1].metric("Evidence exact (recorded → now)",
+                   f"{vehicle['evidence_exact_recorded']} → {vehicle['evidence_exact_now']}")
+    cols[2].metric("Rose by the year rules", vehicle["evidence_rose_by_year_rules"])
+    cols[3].metric("Missing documents", vehicle["missing_documents"])
+    if vehicle.get("gap_counts"):
+        st.caption("Blocking dimensions now: " + ", ".join(f"{k} {v}" for k, v in
+                                                          sorted(vehicle["gap_counts"].items(), key=lambda kv: -kv[1])))
+    rows = binding_rows(replay["items"])
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    with st.expander("Replay JSON"):
+        st.json({"summary": summary, "items": replay["items"]}, expanded=False)
 
 
 def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str, str],

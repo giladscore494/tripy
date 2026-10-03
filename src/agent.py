@@ -616,6 +616,8 @@ class AgentConfig:
     cluster_base_turns: int = 2               # turns every cluster attempt may use
     cluster_max_turns: int = 4                # ceiling (never above 4): extra turns only after real novelty
     cluster_search_budget: int = 4            # billable provider searches per cluster attempt (cache hits are free)
+    # RECOVERY_MODE=reacquire: billable provider searches of the whole re-acquisition stage of one vehicle (0 = no cap)
+    reacquire_stage_search_cap: int = 8
     cluster_candidates_per_field: int = 6
     cluster_packet_max_chars: int = 30000
     # Cross-run research memory (src/research_memory.py): verified fact reuse, negative routes, recovery yield.
@@ -662,6 +664,7 @@ AGENT_ENV = {
     "cluster_base_turns": "CLUSTER_BASE_TURNS",
     "cluster_max_turns": "CLUSTER_MAX_TURNS",
     "cluster_search_budget": "CLUSTER_SEARCH_BUDGET",
+    "reacquire_stage_search_cap": "REACQUIRE_STAGE_SEARCH_CAP",
 }
 TOOL_ENV = {
     "preview_chars": "TOOL_PREVIEW_CHARS",
@@ -2394,11 +2397,14 @@ def _usable_new(cache, adm, documents: list[str]) -> list[str]:
 def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], evaluation: dict[str, dict],
                      identity: dict, target_market: str, source_type: str, site_urls: list[dict],
                      fetched_urls: list[str], negative: dict[str, list[str]], search_budget: int,
-                     fetch_budget: int, turns: int, trim_fields: list[str] | None = None) -> dict:
+                     fetch_budget: int, turns: int, trim_fields: list[str] | None = None,
+                     technical_fields: list[str] | None = None) -> dict:
     """The small task of ONE targeted acquisition episode (F1.1): identity, the cluster's missing fields with
     one-line definitions, the source type, site-map URLs ranked for the cluster, URLs already fetched, negative
     routes. A conflicting field asks for the DECIDING source (F3); a variant_not_exact field whose binding gap is the
-    trim asks for a target-market official page that names the trim."""
+    trim asks for a target-market official page that names the trim; a field whose binding gap is technical (power,
+    drivetrain, year, body, displacement) asks for an official spec page / PDF stating the target's power and
+    drivetrain next to the values."""
     by_name = {s["name"]: s for s in specs}
 
     def line(name: str) -> str:
@@ -2427,6 +2433,14 @@ def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], eval
             "Existing sources already state these values, but they do not tie them to this exact trim. Fetch an "
             "official target-market page that names the trim together with its price / equipment: the importer's "
             "price list or its trim comparison page.")
+    if technical_fields:
+        target = ", ".join(f"{k} {identity[k]}" for k in ("power_hp", "drivetrain", "powertrain") if identity.get(k))
+        packet["technical_binding_fields"] = list(technical_fields)
+        packet["technical_binding_instruction"] = (
+            "Existing sources already state these values, but not next to this exact technical variant (several "
+            "variants on one page, or no power / drivetrain beside the values). Fetch an official specification page "
+            f"or specification PDF that states the target's power and drivetrain ({target or 'see vehicle_identity'}) "
+            "next to these values.")
     if negative:
         packet["known_unproductive_routes"] = negative
     return packet
@@ -2460,9 +2474,9 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     from .field_recovery import vehicle_identity
     from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
     from .site_map import run_site_map
-    from .tail_planner import (OFFICIAL_AUTHORITIES, binding_gap_gate, candidate_key, document_profile_for,
-                               plan_clusters, presented_keys, rejected_keys, stored_keys, triage,
-                               usable_candidate_matrix)
+    from .tail_planner import (OFFICIAL_AUTHORITIES, binding_budget, binding_gap_gate, candidate_key,
+                               document_profile_for, plan_clusters, presented_keys, rejected_keys, stored_keys,
+                               triage, usable_candidate_matrix)
     from .tools.search import default_domains, search_provider
 
     def usable_matrix(events: list[dict]) -> dict:
@@ -2557,6 +2571,9 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         open_fields = gate["fields"]
         if not open_fields:
             continue
+        # binding as the blocker: a technical gap gets <= 2 billable searches, a trim-only gap <= 1; the stage as a
+        # whole <= reacquire_stage_search_cap (true missing fields keep the cluster budget)
+        spend = binding_budget(open_fields, current, evidence_by_field, market)
         cap = config.field_recovery_max_total_steps
         if cap and state["total_steps"] >= cap:
             state["stopped"] = "max_total_steps"
@@ -2583,20 +2600,28 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         known_dead = {f: labels for f in open_fields if f in negative
                       and (labels := [route_label(r) for r in negative[f]["routes"] if route_applies(r, provider)][:8])}
         limit = max(0, int(config.cluster_search_budget))
-        budget = SearchBudget(min(limit, gate["search_cap"]) if gate["search_cap"] is not None else limit)
+        caps = [c for c in (gate["search_cap"], spend["search_cap"]) if c is not None]
+        stage_cap = max(0, int(config.reacquire_stage_search_cap or 0))
+        billable_used = session.ctx.counters["search_api_calls"] - billable_before
+        stage_left = max(0, stage_cap - billable_used) if stage_cap else None
+        budget = SearchBudget(min([limit, *caps] + ([stage_left] if stage_left is not None else [])))
+        budget_reason = "trim_gap" if gate["search_cap"] is not None and spend["reason"] != "technical_gap" \
+            else spend["reason"]
         fetch_budget = SearchBudget(REACQUIRE_FETCHES)
         packet = reacquire_packet(cluster=name, fields=open_fields, specs=specs, evaluation=current,
                                   identity=identity, target_market=market,
                                   source_type=cluster_source_type([by_name[f] for f in open_fields], market),
                                   site_urls=site_urls, fetched_urls=fetched_urls, negative=known_dead,
                                   search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS,
-                                  trim_fields=gate["trim_fields"])
+                                  trim_fields=gate["trim_fields"], technical_fields=spend["technical_fields"])
         states_before = {f: current[f]["state"] for f in open_fields}
         run_log.event("reacquire_started", cluster=name, fields=open_fields, mode="reacquire",
                       triage={f: (triaged.get(f) or {}).get("triage") for f in open_fields},
                       site_map_urls=[u["url"] for u in site_urls], search_budget=budget.limit,
                       fetch_budget=fetch_budget.limit, turn_budget=REACQUIRE_TURNS,
-                      conflicting=packet.get("conflicting_fields") or [])
+                      conflicting=packet.get("conflicting_fields") or [], budget_reason=budget_reason,
+                      binding_gaps=spend["gaps"], stage_search_cap=stage_cap or None,
+                      stage_searches_used=billable_used, stage_searches_left=stage_left)
         session.search_budget, session.fetch_budget = budget, fetch_budget
         session.route_guard = _route_guard(negative, open_fields, by_name, specs, default_domains(session.ctx.vehicle),
                                            provider) if (negative and config.negative_route_blocking) else None
@@ -2722,6 +2747,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         new_candidates = len(new_cands) - new_grounded
         executed = [c for c in session.tool_calls[calls_before:] if not c.get("blocked") and not c.get("reused")]
         searched = session.ctx.counters["search_cache_misses"] - searches_before
+        billable = session.ctx.counters["search_api_calls"] - billable_before - billable_used
         state["searches"] += searched
         used = {k: caller.usage["field_recovery"][k] - usage_before.get(k, 0) for k in caller.usage["field_recovery"]}
         state["total_steps"] = caller.used
@@ -2739,7 +2765,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                   "turns": turns, "turn_budget": REACQUIRE_TURNS, "stop": stop, "error": error,
                   "failed": error is not None, "reply_text": reply_text,
                   "searches": searched, "search_provider_calls": searched, "search_budget": budget.limit,
-                  "search_refused": budget.refused,
+                  "search_refused": budget.refused, "billable_searches": billable, "budget_reason": budget_reason,
                   "fetches": sum(1 for c in executed if c["name"] in trace.FETCH_TOOLS),
                   "fetch_refused": fetch_budget.refused,
                   "new_useful_documents": len(new_useful), "new_documents": new_useful,
@@ -2807,6 +2833,9 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         "fetch_budget_refusals": state["fetch_refusals"],
         "negative_route_cache_hits": state["negative_route_blocks"],
         "reacquire_skipped_fields": skipped_binding_gap,
+        "reacquire_stage_search_cap": config.reacquire_stage_search_cap or None,
+        "reacquire_searches_by_reason": {r: sum(a["billable_searches"] for a in attempts_log if a["budget_reason"] == r)
+                                         for r in dict.fromkeys(a["budget_reason"] for a in attempts_log)},
         "reacquire": {"episodes": len(attempts_log),
                       "new_useful_documents": sum(a["new_useful_documents"] for a in attempts_log),
                       "new_candidates": sum(a["new_candidates"] for a in attempts_log),
