@@ -526,6 +526,8 @@ def sweep_calls(events: list[dict]) -> list[dict]:
         resolved_count = sum(1 for f in per_field if f["resolved_by_this_call"])
         records.append({
             "type": "sweep_call", "sweep_call_number": index, "chunk": start.get("chunk"),
+            # adjudication packets are no-tool calls with a JSON reply; legacy chunks are tool loops
+            "sweep_mode": start.get("sweep_mode") or "legacy", "packet_class": start.get("packet_class"),
             "model": model[-1] if model else None, "model_calls": model, "model_call_count": len(model),
             "latency_ms": latency or None, "wall_latency_s": _seconds(start.get("ts"),
                                                                        (window[-1] if window else start).get("ts")),
@@ -700,6 +702,8 @@ def run_configuration(events: list[dict]) -> dict:
     glm = started.get("glm_config") or {}
     sweep = (glm.get("phase_settings") or {}).get("document_sweep") or {}
     return {"acquisition_mode": started.get("acquisition_mode") or agent.get("acquisition_mode") or "legacy",
+            # runs logged before SWEEP_MODE existed used the tool-loop sweep
+            "sweep_mode": started.get("sweep_mode") or agent.get("sweep_mode") or "legacy",
             "research_model": started.get("research_model") or started.get("model"),
             "sweep_model": sweep.get("model") or started.get("research_model") or started.get("model"),
             "sweep_thinking": sweep.get("thinking") or (glm.get("thinking") if isinstance(glm.get("thinking"), str)
@@ -717,9 +721,9 @@ def run_configuration(events: list[dict]) -> dict:
 
 
 def config_key(config: dict) -> str:
-    return " | ".join(f"{k}={config.get(k)}" for k in ("run_profile", "acquisition_mode", "document_card",
-                                                         "research_model", "sweep_model", "sweep_thinking",
-                                                         "sweep_max_attempts", "sweep_max_fields",
+    return " | ".join(f"{k}={config.get(k)}" for k in ("run_profile", "acquisition_mode", "sweep_mode",
+                                                         "document_card", "research_model", "sweep_model",
+                                                         "sweep_thinking", "sweep_max_attempts", "sweep_max_fields",
                                                          "sweep_max_candidates"))
 
 

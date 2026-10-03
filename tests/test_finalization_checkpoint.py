@@ -23,6 +23,7 @@ class ProcessDied(BaseException):
     """Stands in for SIGKILL: raised inside the finalizer request after the on-disk state was snapshotted."""
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_checkpoint_survives_a_hard_death_and_finalize_existing_needs_one_call(tmp_path, make_ctx):
     ctx = make_ctx({})

@@ -9,8 +9,8 @@ from conftest import FakeResponse
 from fixtures.cadillac_lyriq import IL_SPEC, PAYLOAD, US_PAGE, VEHICLE, put_documents
 from test_tools_smoke import ScriptedGLM, _call
 
-from src.agent import (DOCUMENT_SWEEP_SYSTEM_PROMPT, FIELD_RECOVERY_SYSTEM_PROMPT, AgentConfig, research_system_prompt,
-                       run_vehicle)
+from src.agent import (ADJUDICATION_SYSTEM_PROMPT, DOCUMENT_SWEEP_SYSTEM_PROMPT, FIELD_RECOVERY_SYSTEM_PROMPT,
+                       AgentConfig, research_system_prompt, run_vehicle)
 from src.benchmark import compute_metrics
 from src.document_sweep import DOCUMENT_SWEEP_TOOLS
 from src.glm_client import ChatResponse
@@ -62,6 +62,9 @@ class PhaseGLM:
         elif system == FIELD_RECOVERY_SYSTEM_PROMPT:
             self.calls["field_recovery"] += 1
             message = self.recover_fn(packet, turn_no)
+        elif system == ADJUDICATION_SYSTEM_PROMPT:      # the adjudication sweep: judges nothing here
+            self.calls["document_sweep"] += 1
+            message = say({"decisions": [], "fields": []})
         else:
             self.calls["finalization"] += 1
             if self.on_finalizer:
@@ -85,6 +88,7 @@ def read_docs(ids):
 
 # --- the document sweep ------------------------------------------------------------------------------
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches(tmp_path, make_ctx):
     ctx = make_ctx({})
@@ -139,6 +143,7 @@ def tool_messages(messages):
     return [m for m in messages if m.get("role") == "tool"]
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_path, make_ctx):
     """Real conversational ordering: turn 1 does not know the value and inspects the cached document; only the
@@ -189,6 +194,7 @@ def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_
     assert not [e for e in events if e["kind"] == "field_recovery_started" and e["field"] == "ventilated_seats"]
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_fast_path_promotes_a_candidate_in_one_turn(tmp_path, make_ctx):
     ctx = make_ctx({})
@@ -209,6 +215,7 @@ def test_sweep_fast_path_promotes_a_candidate_in_one_turn(tmp_path, make_ctx):
     assert "wheelbase_mm" in result["document_sweep"]["fields_resolved"]
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_empty_inspections_and_a_one_turn_budget_never_buy_a_second_turn(tmp_path, make_ctx):
     ctx = make_ctx({})
@@ -239,6 +246,7 @@ def test_empty_inspections_and_a_one_turn_budget_never_buy_a_second_turn(tmp_pat
     assert client2.calls["document_sweep"] == 1                                  # DOCUMENT_SWEEP_MAX_TURNS=1
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_the_sweep_never_exceeds_two_turns(tmp_path, make_ctx):
     ctx = make_ctx({})
@@ -270,6 +278,7 @@ def test_recovery_starts_only_after_the_sweep_and_harvest(tmp_path, make_ctx):
     assert kinds.index("finalization_checkpoint_written") < kinds.index("finalization_started")
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_breadth_first_recovery_after_the_sweep_and_candidate_context(tmp_path, make_ctx):
     ctx = make_ctx({})
@@ -331,6 +340,7 @@ def test_documents_fetched_during_recovery_are_harvested_for_every_field(tmp_pat
 
 # --- Cadillac acceptance ----------------------------------------------------------------------------------
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recovery(tmp_path, make_ctx):
     ctx = make_ctx({})

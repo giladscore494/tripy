@@ -80,8 +80,13 @@ def presented_keys(events: Iterable[dict]) -> set[str]:
 
 
 def rejected_keys(events: Iterable[dict]) -> set[str]:
-    """(field, document, value) a store_evidence request already failed admission for."""
-    return {candidate_key(e) for e in events if e.get("kind") == "evidence_rejected" and e.get("field")}
+    """(field, document, value) a store_evidence request already failed admission for, or the adjudication sweep's
+    admission dry run found not admissible (`adjudication_not_admissible`: re-offering it cannot pass admission)."""
+    out = {candidate_key(e) for e in events if e.get("kind") == "evidence_rejected" and e.get("field")}
+    for event in events:
+        if event.get("kind") == "adjudication_not_admissible":
+            out.update(str(row.get("candidate_key")) for row in event.get("rows") or [] if row.get("candidate_key"))
+    return out
 
 
 def stored_keys(events: Iterable[dict]) -> set[str]:
@@ -288,6 +293,29 @@ def usable_document(cache, document_id: str) -> bool:
     if isinstance(status, int) and not 200 <= status < 300:
         return False
     return bool(meta.get("text_chars", 1))
+
+
+def usable_candidate_matrix(matrix: dict, cache) -> dict:
+    """The candidate matrix without candidates harvested from UNUSABLE documents (non-2xx, empty or failed fetches,
+    see usable_document): an error page's "candidates" are no material to present, count as fresh or triage.
+    The matrix totals (candidate_count, documents, coverage) are left as computed, so harvest telemetry is unchanged;
+    `candidates_from_unusable_documents` says how many were dropped. Never raises: on a cache problem the candidate
+    is kept (the filter only removes what is known to be unusable)."""
+    usable: dict[str, bool] = {}
+
+    def ok(cand: dict) -> bool:
+        doc = str(cand.get("document_id"))
+        if doc not in usable:
+            try:
+                usable[doc] = usable_document(cache, doc) if cand.get("document_id") else True
+            except Exception:  # noqa: BLE001 - a broken cache entry never hides a candidate
+                usable[doc] = True
+        return usable[doc]
+
+    fields = {name: [c for c in cands if ok(c)] for name, cands in (matrix.get("fields") or {}).items()}
+    dropped = sum(len(v) for v in (matrix.get("fields") or {}).values()) - sum(len(v) for v in fields.values())
+    return {**matrix, "fields": fields, "candidates_from_unusable_documents": dropped,
+            "unusable_documents": sorted(d for d, good in usable.items() if not good)}
 
 
 def snapshot(*, events: list[dict], evaluation: list[dict], documents: list[str], open_fields: Iterable[str],

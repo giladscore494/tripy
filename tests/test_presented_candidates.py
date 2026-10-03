@@ -4,6 +4,7 @@ still gives their cluster its free local-only pass. Scripted GLM / fake HTTP onl
 
 import json
 
+import pytest
 from fixtures import corolla_tail as tail
 from test_phase_contracts import EU, GATE_OFF, PhaseClient, _timeout, fetch, run, say
 from test_tools_smoke import _call
@@ -12,6 +13,8 @@ from src.fields import resolve_requested_fields
 from src.tail_planner import candidate_key, fresh_candidates, presented_keys, triage
 
 SPECS = resolve_requested_fields(tail.FIELDS, propulsion="hybrid")
+# these runs script the legacy tool-loop sweep (the adjudication sweep has its own tests: test_adjudication.py)
+pytestmark = pytest.mark.sweep_mode("legacy")
 
 
 def _sweep_starts(events):

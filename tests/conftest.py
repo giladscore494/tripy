@@ -112,6 +112,8 @@ def seed_evidence_sources(cache, script, headers: dict | None = None, default_he
 def pytest_configure(config):
     config.addinivalue_line("markers", "acquisition_mode(mode): pin the AgentConfig default acquisition mode "
                                        "(legacy | contract) for this test")
+    config.addinivalue_line("markers", "sweep_mode(mode): pin the AgentConfig default document sweep mode "
+                                       "(adjudication | legacy) for this test")
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +131,26 @@ def _acquisition_mode_default(request, monkeypatch):
 
     def init(self, *args, **kwargs):
         kwargs.setdefault("acquisition_mode", mode)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _sweep_mode_default(request, monkeypatch):
+    """The AgentConfig default sweep mode of a test: its `sweep_mode` marker (tests encoding the legacy tool-loop
+    sweep), else SWEEP_MODE from the environment, else the code default (adjudication). An explicit sweep_mode=...
+    argument always wins."""
+    marker = request.node.get_closest_marker("sweep_mode")
+    mode = marker.args[0] if marker else (os.environ.get("SWEEP_MODE") or "").strip().lower()
+    if mode not in ("legacy", "adjudication"):
+        return
+    from src import agent
+
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs.setdefault("sweep_mode", mode)
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(agent.AgentConfig, "__init__", init)

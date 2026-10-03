@@ -145,7 +145,8 @@ below.
 | `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off), once the minimum acquisition base is met. |
 | `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `PRIMARY_RESEARCH_HARD_MAX_TURNS` | Fail-safe minimum acquisition base (defaults **3** useful documents AND **50**% in-scope candidate coverage; both 0 = off) and the hard ceiling an under-acquired run may extend to (default **12**). See [Minimum acquisition base](#minimum-acquisition-base-fail-safe-stop). |
 | `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
-| `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 12 fields, 16 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
+| `SWEEP_MODE`, `ADJUDICATION_MAX_U_ITEMS`, `ADJUDICATION_MAX_A_FIELDS`, `ADJUDICATION_MAX_A_CANDIDATES`, `ADJUDICATION_MAX_M_FIELDS`, `ADJUDICATION_MAX_M_SNIPPETS`, `ADJUDICATION_U_MAX_TOKENS`, `ADJUDICATION_A_MAX_TOKENS`, `ADJUDICATION_M_MAX_TOKENS` | `adjudication` (default): the document sweep only asks the model to JUDGE pre-checked candidates in small no-tool JSON packets (defaults 40 U items; A 6 fields / 18 candidates; M 6 fields / 12 snippets; max_tokens 1500 / 2000 / 1500). `legacy`: the tool-loop sweep below. See [Candidate adjudication sweep](#candidate-adjudication-sweep-default). |
+| `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | `SWEEP_MODE=legacy` only (the chunk limits; the per-field count also sizes the pre-sweep snippets): adaptive document sweep: one call while the packet fits (defaults 28000 chars, 12 fields, 16 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
 | `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_<PHASE>_MAX_ATTEMPTS`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting, except `GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, whose default is `1` (no identical retry of a timed-out sweep packet). See [Phase-specific model settings](#phase-specific-model-settings). |
 | `ACQUISITION_DOCUMENT_CARD` | `off` (default) / `on` (also `true`/`false`/`1`/`0`). Contract research only: successful `fetch_url` / `fetch_pdf` results carry a server-computed `document_card` (scheduling metadata, never evidence) and the research prompt gets one paragraph about it. See [Run profiles and A/B series](#run-profiles-and-ab-series). |
 | `ACQUISITION_MODE` | `contract` (default): primary research is source acquisition only (search / fetch tools only, acquisition prompt, progress = new usable / target-market documents and new candidates, an under-acquired extension beyond the normal ceiling ends after an extension turn with no search / fetch or two extension turns without a new usable document, always finalized from the bundle). `legacy`: the previous behaviour exactly. |
@@ -607,6 +608,40 @@ tokens ((system prompt + packet) / 4, before the call), fields, candidates, docu
 timeouts, input / output tokens and per chunk: index, clusters, fields, candidates, packet chars, calls, latency,
 tokens; plus the pre-sweep inspection summary. The timeout itself is not raised by default: the fix is a smaller
 packet, not a longer wait.
+
+### Candidate adjudication sweep (default)
+
+`SWEEP_MODE=adjudication` (`src/adjudication.py`). The legacy sweep made the model re-type every valid candidate as a
+full `store_evidence` call inside a 2-turn tool loop; it is output-bound (production chunks of 30 fields hit the 240 s
+read timeout) and the re-typing itself caused admission rejections. Now code does the mechanical work and the model
+only judges:
+
+- **Usable documents only.** Candidates harvested from a non-2xx, empty or failed document are never swept,
+  presented, counted as fresh or triaged in recovery (`tail_planner.usable_candidate_matrix`, both sweep modes); the
+  harvest totals stay unfiltered and `candidates_from_unusable_documents` counts what was dropped.
+- **Grouping.** Per open field: routed candidates, grouped by value, at most 2 per distinct value, packet-local ids.
+- **Admission dry run.** `admit()` on the request the candidate itself makes (value, unit, document, quote); nothing is
+  stored. A mechanical rejection (`field_label_not_in_quote`, `value_not_stated`, `quote_not_in_source`) gets ONE
+  widened verbatim quote of the same place (a table candidate's header line + row, else the quote's line, else ±160
+  characters) and one more dry run. Still rejected: never shown, logged once in `adjudication_not_admissible`, and
+  treated like a rejected key by recovery (never fresh again).
+- **Classes.** U = one admissible value bound `exact` and no harvester hint (`trim_mentioned`, `variant_hints`,
+  `year_hint_differs`, ambiguity-rule hints); A = any other field with an admissible candidate; M = nothing admissible
+  but the pre-sweep inspection located label snippets; anything else goes straight to recovery.
+- **Packets** per recovery cluster (schema order), NO tools, JSON only: U `{"decisions": [{id, accept, reason}]}`,
+  A `{"fields": [{field, accept: [ids], reject: [{id, reason}]}]}` (each candidate with ≤700 chars of context),
+  M `{"fields": [{field, value, unit, snippet, span}]}`. One repair turn for an unparseable reply. Unknown ids,
+  out-of-range spans and fields not in the packet are ignored and logged (`adjudication_invalid_decision`).
+- **Storage** through the normal tool path: accepted candidates (their own value / unit / document / admissible
+  quote; `variant_match: exact` only for reason `ok`) and M statements (`snippet[start:end]`, verified verbatim in the
+  cached document) become synthetic `store_evidence` calls in `ToolSession.execute`. Admission decides.
+- **Failures.** `candidates_presented` (`source: adjudication`) is logged only for a packet whose call returned and
+  parsed. A failed packet (timeout, API error, unparseable after repair) presents nothing; its fields stay open and
+  their candidates fresh for recovery's local pass; the next packet still runs.
+- The phase stays `document_sweep` (usage, pricing, `GLM_DOCUMENT_SWEEP_*` thinking / timeout / max attempts). The
+  `DOCUMENT_SWEEP_*` chunk limits do not apply; `DOCUMENT_SWEEP_MAX_TURNS=0` still skips the sweep. The summary keeps
+  the legacy keys and adds `sweep_mode`, `adjudication` {classes, packets per class, decisions, accepted, admitted,
+  rejected_by_admission, dry_run stats} and per-packet latency / tokens in `document_sweep_chunk_details`.
 
 ### Phase-specific model settings
 

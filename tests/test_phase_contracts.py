@@ -346,6 +346,7 @@ def test_the_real_run_sequence_still_reaches_its_productive_turn(tmp_path):
     assert not any(e["kind"] == "primary_research_extension_exhausted" for e in events)
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 def test_two_extension_turns_without_a_new_document_end_research(tmp_path):
     script = [fetch("a", EU), search("s2", "corolla q2"), search("s3", "corolla q3"), search("s4", "corolla q4"),
               search("s5", "never reached")]
@@ -440,6 +441,7 @@ def _timeout() -> GLMError:
     return exc
 
 
+@pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 def test_a_failed_sweep_chunk_never_ends_the_sweep(tmp_path):
     def sweep(call_number):
         if call_number == 1:

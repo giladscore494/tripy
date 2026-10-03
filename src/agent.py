@@ -389,12 +389,39 @@ When done (or when nothing more can be found), reply with ONLY one JSON object (
  unresolved | conflicting | foreign_market_only | variant_not_exact", "evidence_ids": ["e12"], "notes": "..."}],
  "notes": "..."}"""
 
+ADJUDICATION_SYSTEM_PROMPT = """You are the candidate-adjudication step of a vehicle research benchmark. The target is ONE exact
+vehicle variant from the Israeli government catalog (`vehicle_identity`: model year, government trim, model code,
+powertrain, power) and the target market (`target_market`). Each requested field has a definition: it says exactly which
+quantity the field means.
+
+A deterministic parser located the candidate values below in documents that research already downloaded, and every
+candidate (or snippet) already passed the deterministic source checks: the quote occurs in the document and names the
+field with the value. You do NOT search, fetch, store or retype anything, and you have no tools. Your only job is to
+judge whether each candidate states the requested quantity for THIS exact variant: the right trim, model year,
+powertrain and market, and not, for example, another trim's column, a "from" price, a peak instead of a nominal figure,
+a system value instead of the engine value, or another quantity entirely. Use the quote, the context, the source domain,
+market, binding_level (how specifically the document is about this variant), variant_match and the parser hints.
+When two values are both credible for the target, accept both: conflicts are handled later. Never invent a value.
+
+reason codes: ok | other_trim | other_year | other_market | other_powertrain | wrong_quantity | not_this_field | unclear
+(ok = it states this field for this exact variant).
+
+Reply with ONLY one JSON object, no prose, in the shape the task asks for:
+- task adjudicate_unambiguous: {"decisions": [{"id": "c1", "accept": true, "reason": "ok"}, ...]} (one per item).
+- task adjudicate_ambiguous: {"fields": [{"field": "<name>", "accept": ["c3"], "reject": [{"id": "c4",
+  "reason": "other_trim"}]}]}.
+- task locate_missing: for each field a snippet states, {"fields": [{"field": "<name>", "value": <value>, "unit":
+  "<unit>", "snippet": "s2", "span": [start, end]}]}, where span are character offsets [start, end) inside that
+  snippet's text covering the statement of the value (its label and the value). Omit a field the snippets do not
+  state; never guess."""
+
 REPAIR_PROMPT = ("Your last reply could not be parsed as JSON. Return the same content as ONE valid JSON object "
                  "and nothing else.")
 
 PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + ACQUISITION_SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT
                                  + FIELD_RECOVERY_SYSTEM_PROMPT + DOCUMENT_SWEEP_SYSTEM_PROMPT
-                                 + CLUSTER_RECOVERY_SYSTEM_PROMPT + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
+                                 + CLUSTER_RECOVERY_SYSTEM_PROMPT + ADJUDICATION_SYSTEM_PROMPT
+                                 + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
 
 
@@ -508,6 +535,17 @@ class AgentConfig:
     document_sweep_packet_max_chars: int = 28000
     document_sweep_max_fields: int = 12
     document_sweep_max_candidates: int = 16
+    # SWEEP_MODE: "adjudication" = the model only judges pre-checked candidates in small no-tool JSON packets (src/
+    # adjudication.py; the DOCUMENT_SWEEP_* chunk limits above do not apply); "legacy" = the tool-loop sweep above.
+    sweep_mode: str = "adjudication"
+    adjudication_max_u_items: int = 40         # candidates per U (unambiguous) packet
+    adjudication_max_a_fields: int = 6         # fields per A (ambiguous) packet
+    adjudication_max_a_candidates: int = 18    # candidates per A packet
+    adjudication_max_m_fields: int = 6         # fields per M (missing, label snippets only) packet
+    adjudication_max_m_snippets: int = 12      # snippets per M packet
+    adjudication_u_max_tokens: int = 1500      # max_tokens of a U / A / M call (thinking: the document_sweep phase)
+    adjudication_a_max_tokens: int = 2000
+    adjudication_m_max_tokens: int = 1500
     # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
     recovery_mode: str = "cluster"
     cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
@@ -548,6 +586,14 @@ AGENT_ENV = {
     "document_sweep_packet_max_chars": "DOCUMENT_SWEEP_MAX_PACKET_CHARS",
     "document_sweep_max_fields": "DOCUMENT_SWEEP_MAX_FIELDS",
     "document_sweep_max_candidates": "DOCUMENT_SWEEP_MAX_CANDIDATES",
+    "adjudication_max_u_items": "ADJUDICATION_MAX_U_ITEMS",
+    "adjudication_max_a_fields": "ADJUDICATION_MAX_A_FIELDS",
+    "adjudication_max_a_candidates": "ADJUDICATION_MAX_A_CANDIDATES",
+    "adjudication_max_m_fields": "ADJUDICATION_MAX_M_FIELDS",
+    "adjudication_max_m_snippets": "ADJUDICATION_MAX_M_SNIPPETS",
+    "adjudication_u_max_tokens": "ADJUDICATION_U_MAX_TOKENS",
+    "adjudication_a_max_tokens": "ADJUDICATION_A_MAX_TOKENS",
+    "adjudication_m_max_tokens": "ADJUDICATION_M_MAX_TOKENS",
     "cluster_max_attempts": "CLUSTER_MAX_ATTEMPTS",
     "cluster_base_turns": "CLUSTER_BASE_TURNS",
     "cluster_max_turns": "CLUSTER_MAX_TURNS",
@@ -622,6 +668,8 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
         values["phase_settings"] = phases
     if (env("ACQUISITION_MODE") or "").strip().lower() in ACQUISITION_MODES:
         values["acquisition_mode"] = env("ACQUISITION_MODE").strip().lower()
+    if (env("SWEEP_MODE") or "").strip().lower() in ("adjudication", "legacy"):
+        values["sweep_mode"] = env("SWEEP_MODE").strip().lower()
     card = _env_bool(env("ACQUISITION_DOCUMENT_CARD"))
     if card is not None:
         values["acquisition_document_card"] = card
@@ -813,7 +861,8 @@ class ModelCaller:
         self.cancel_event = cancel_event
 
     def __call__(self, messages: list[dict], *, phase: str, tools: list[dict] | None = None,
-                 model: str | None = None, meta: dict | None = None, activity: dict | None = None) -> dict:
+                 model: str | None = None, meta: dict | None = None, activity: dict | None = None,
+                 max_tokens: int | None = None) -> dict:
         """`meta` adds explicit context to the logged model_response (e.g. the field and attempt of a
         field-recovery turn). It never changes `phase`, which usage accounting groups by. `activity`
         only labels this call's request-lifecycle events (e.g. the research turn); it is not logged
@@ -829,7 +878,7 @@ class ModelCaller:
         settings = for_phase(self.config, phase)
         extra = request_extra(self.config, settings["thinking"]) if settings["overridden"] else self.extra
         kwargs: dict[str, Any] = {"tools": tools, "temperature": settings["temperature"],
-                                  "max_tokens": settings["max_tokens"], "extra": extra or None}
+                                  "max_tokens": max_tokens or settings["max_tokens"], "extra": extra or None}
         model = model or settings["model"]
         if model:
             kwargs["model"] = model
@@ -1579,7 +1628,13 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     from .document_sweep import compact_candidate
     from .field_recovery import related_searches, vehicle_identity
     from .tail_planner import (LOCAL_TOOLS, candidate_key, candidates_fresh_first, cluster_packet, fresh_candidates,
-                               novelty, plan_clusters, rank_documents, search_hints, snapshot, triage)
+                               novelty, plan_clusters, rank_documents, search_hints, snapshot, triage,
+                               usable_candidate_matrix)
+
+    def usable_matrix(events: list[dict]) -> dict:
+        # candidates of unusable documents (a 404 / 403 error page, an empty fetch) are never presented, fresh or
+        # triaged (src/tail_planner.usable_candidate_matrix)
+        return usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
 
     market = config.target_market
     adm = session.ctx.admission
@@ -1589,7 +1644,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     events = trace_events(run_log)
     primary = current_evaluation(events, specs, market)
     run_log.event("field_evaluation", stage="primary", fields=primary, summary=_state_counts(primary))
-    matrix = candidate_matrix(events, specs, vehicle)
+    matrix = usable_matrix(events)
     triaged = triage(primary, specs, matrix, events, config.field_recovery_max_attempts) \
         if config.field_recovery_enabled else {}
     clusters = plan_clusters(triaged, specs)
@@ -1661,7 +1716,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         name = plan["cluster"]
         open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
         events = trace_events(run_log)
-        matrix = candidate_matrix(events, specs, vehicle)
+        matrix = usable_matrix(events)
         tri = triage(list(current.values()), specs, matrix, events, config.field_recovery_max_attempts, low_yield)
         mode = "local_only" if local else "web"
         attempted_fields.update(open_fields)
@@ -1746,7 +1801,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 watched = [f for f in queued if current[f]["retry_eligible"]]
                 before = snapshot(events=events, evaluation=list(current.values()),
                                   documents=list(session.ctx.documents_opened), open_fields=watched,
-                                  matrix=candidate_matrix(events, specs, vehicle))
+                                  matrix=usable_matrix(events))
                 meta = {"field": label, "cluster": name, "fields": open_fields, "attempt": attempt,
                         "max_attempts": max_attempts, "turn": turn_index, "turn_budget": base,
                         "turn_ceiling": ceiling, "mode": mode}
@@ -1774,7 +1829,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 # (admitted evidence -> current_evaluation) and prune every cluster before any further paid turn.
                 reevaluate(name, attempt)
                 events = trace_events(run_log)
-                matrix_now = candidate_matrix(events, specs, vehicle)
+                matrix_now = usable_matrix(events)
                 after = snapshot(events=events, evaluation=list(current.values()),
                                  documents=list(session.ctx.documents_opened), open_fields=watched, matrix=matrix_now)
                 found = novelty(before, after, adm, cache)
@@ -1877,7 +1932,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         if plan["cluster"] in local_done:
             return False
         events = trace_events(run_log)
-        fresh = fresh_candidates(candidate_matrix(events, specs, vehicle), events,
+        fresh = fresh_candidates(usable_matrix(events), events,
                                  [f for f in plan["fields"] if current[f]["retry_eligible"]])
         return bool(fresh)
 
@@ -2028,14 +2083,16 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, ROUTING_AUTHORITY,
                                  inspection_has_content, packet_size, plan_chunks, promoted_or_missed, route_candidates,
                                  sweep_packet, sweep_summary, sweep_tool_specs)
-    from .tail_planner import candidate_key, document_profile_for, usable_document
+    from .tail_planner import candidate_key, document_profile_for, usable_candidate_matrix, usable_document
     from .tail_planner import presented_keys as shown_keys
 
     market = config.target_market
     events = trace_events(run_log)
     before = current_evaluation(events, specs, market)
     max_turns = max(0, min(int(config.document_sweep_max_turns or 0), MAX_SWEEP_TURNS))
-    matrix = candidate_matrix(events, specs, vehicle)
+    # candidates of unusable documents (a 404 / 403 error page, an empty fetch) are never swept (both modes)
+    matrix = usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
+    unusable_candidates = matrix["candidates_from_unusable_documents"]
     doc_metas = _doc_metas(events, cache, documents_dir)
     eligible = [e["field"] for e in before if e["retry_eligible"]]
     skipped = None
@@ -2054,7 +2111,9 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                                 model_calls=0, turns=0, blocked=0, external_calls=0, reply=None, skipped=skipped)
         summary.update(_sweep_telemetry(chunks=[], packet_chars=0, est_tokens=0, fields=0, candidates=0,
                                         documents=len(doc_metas), latency_ms=0, timeouts=0, usage=None, pre=None))
-        run_log.event("document_sweep_skipped", reason=skipped, fields_unresolved=len(eligible))
+        summary.update(sweep_mode=config.sweep_mode, candidates_from_unusable_documents=unusable_candidates)
+        run_log.event("document_sweep_skipped", reason=skipped, fields_unresolved=len(eligible),
+                      sweep_mode=config.sweep_mode)
         return summary
     phase_ref["name"] = "document_sweep"
     start_seq = run_log.seq
@@ -2098,6 +2157,13 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     current = current_evaluation(events, specs, market)
     open_fields = [e["field"] for e in current if e["retry_eligible"] and by_name.get(e["field"], {}).get(
         "applicable", True)]
+    if config.sweep_mode != "legacy":
+        # the Candidate Adjudication sweep (src/adjudication.py): its own packet limits, no tools offered
+        return run_adjudication_sweep(session=session, caller=caller, specs=specs, payload=payload, config=config,
+                                      run_log=run_log, cache=cache, before=before, routed=routed, snippets=snippets,
+                                      profiles=profiles, open_fields=open_fields, doc_metas=doc_metas, pre=pre,
+                                      start_seq=start_seq, usage_before=usage_before,
+                                      unusable_candidates=unusable_candidates)
 
     def build(fields: list[str], max_chars: int, chunk: dict | None = None) -> dict:
         return sweep_packet(payload=payload, specs=specs, evaluation=current, matrix=matrix, events=events,
@@ -2238,9 +2304,319 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
         est_tokens=sum((len(DOCUMENT_SWEEP_SYSTEM_PROMPT) + c["packet_chars"]) // 4 for c in sent),
         fields=sum(c["fields_count"] for c in sent), candidates=presented, documents=len(doc_metas),
         latency_ms=latency_ms, timeouts=timeouts, usage=used, pre=pre))
+    summary.update(sweep_mode="legacy", candidates_from_unusable_documents=unusable_candidates)
     run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
                   reply=summary["reply"])
     return summary
+
+
+def run_adjudication_sweep(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
+                           config: AgentConfig, run_log: RunLog, cache, before: list[dict], routed: dict[str, list[dict]],
+                           snippets: dict[str, list[dict]], profiles: dict[str, dict], open_fields: list[str],
+                           doc_metas: list[dict], pre: dict, start_seq: int, usage_before: dict,
+                           unusable_candidates: int) -> dict:
+    """The Candidate Adjudication sweep (SWEEP_MODE=adjudication, src/adjudication.py). Code groups the open fields'
+    usable candidates, dry-runs admission on each (nothing stored), classifies the fields U / A / M and sends small
+    no-tool JSON packets per recovery cluster; accepted candidates and located statements become synthetic
+    store_evidence calls through ToolSession.execute, so Evidence Admission stays the only gate. A packet that fails
+    (GLMError, timeout, unparseable after one repair turn, or any local error) presents nothing and leaves its fields
+    open for recovery; the next packet still runs. Control-flow exceptions (cancellation) propagate."""
+    from .adjudication import (ADJUDICATION_VERSION, MECHANICAL_REASONS, SNIPPET_CHARS, DocumentReader, a_packet,
+                               assign_ids, candidate_context, candidate_request, decision_flags, dry_run, field_class,
+                               group_by_value, hint_keys, m_packet, packet_chars, plan_packets, u_packet)
+    from .document_sweep import _domain, promoted_or_missed, sweep_summary
+    from .field_recovery import vehicle_identity
+    from .tail_planner import candidate_key, cluster_of
+    from .tail_planner import presented_keys as shown_keys
+    from .tools.evidence import admission_context
+
+    market = config.target_market
+    by_name = {s["name"]: s for s in specs}
+    t_sweep = time.monotonic()
+    reader = DocumentReader(cache)
+    limits = {"u_items": config.adjudication_max_u_items, "a_fields": config.adjudication_max_a_fields,
+              "a_candidates": config.adjudication_max_a_candidates, "m_fields": config.adjudication_max_m_fields,
+              "m_snippets": config.adjudication_max_m_snippets}
+    max_tokens = {"U": config.adjudication_u_max_tokens, "A": config.adjudication_a_max_tokens,
+                  "M": config.adjudication_m_max_tokens}
+    dry = {"candidates_total": 0, "admissible_initial": 0, "admissible_after_widen": 0, "widen_attempts": 0,
+           "not_admissible": 0, "not_admissible_by_reason": {}}
+    admissible: dict[str, list[dict]] = {}
+    not_admissible: list[dict] = []
+    classes: dict[str, str] = {}
+    packets: list[dict] = []
+    # ---- B0 grouping + B1 admission dry run + B2 classes (code only; a local failure leaves fields to recovery) ----
+    try:
+        adm = admission_context(session.ctx)
+        documents = list(session.ctx.documents_opened)
+        for name in open_fields:
+            for cand in group_by_value(routed.get(name) or []):
+                dry["candidates_total"] += 1
+                decision = dry_run(adm, cache, candidate_request(name, cand), documents)
+                quote, widened = cand.get("quote"), False
+                reasons = list(decision.get("reasons") or [])
+                if not decision.get("accepted") and set(reasons) & set(MECHANICAL_REASONS):
+                    wider = widen_quote_safe(reader, cand)
+                    if wider:
+                        dry["widen_attempts"] += 1
+                        second = dry_run(adm, cache, candidate_request(name, cand, wider), documents)
+                        if second.get("accepted"):
+                            decision, quote, widened = second, wider, True
+                        else:
+                            reasons += [f"after_widen:{r}" for r in second.get("reasons") or []]
+                if decision.get("accepted"):
+                    dry["admissible_after_widen" if widened else "admissible_initial"] += 1
+                    admissible.setdefault(name, []).append({"field": name, "candidate": cand, "key": candidate_key(cand),
+                                                            "quote": quote, "widened": widened,
+                                                            "flags": decision_flags(decision)})
+                    continue
+                dry["not_admissible"] += 1
+                for reason in reasons:
+                    if not reason.startswith("after_widen:"):
+                        dry["not_admissible_by_reason"][reason] = dry["not_admissible_by_reason"].get(reason, 0) + 1
+                not_admissible.append({"candidate_key": candidate_key(cand), "field": name,
+                                       "document_id": cand.get("document_id"), "reasons": reasons})
+        for name in open_fields:
+            cls = field_class(admissible.get(name) or [], routed.get(name) or [], bool(snippets.get(name)),
+                              hint_keys(by_name.get(name)))
+            if cls:
+                classes[name] = cls
+        sizes = {f: (len(snippets.get(f) or []) if c == "M" else len(admissible.get(f) or []))
+                 for f, c in classes.items()}
+        packets = plan_packets(fields=open_fields, classes=classes,
+                               clusters={f: cluster_of(by_name.get(f) or {"name": f}) for f in open_fields},
+                               sizes=sizes, limits=limits)
+    except Exception as exc:  # noqa: BLE001 - never costs the run: every open field simply goes to recovery
+        run_log.event("adjudication_prepare_failed", error=_error_text(exc))
+        packets = []
+    if not_admissible:   # one event per run: recovery treats these keys like rejected ones (never fresh again)
+        run_log.event("adjudication_not_admissible", rows=not_admissible, count=len(not_admissible))
+    run_log.event("adjudication_plan", version=ADJUDICATION_VERSION, fields=open_fields, classes=classes,
+                  not_sent=[f for f in open_fields if f not in classes], limits=limits, dry_run=dry,
+                  packets=[{k: p[k] for k in ("class", "cluster", "fields", "items")} for p in packets])
+
+    identity = vehicle_identity(payload, market)
+    model_calls, presented = 0, 0
+    chunk_log: list[dict] = []
+    chunk_errors: list[str] = []
+    failed_fields: list[str] = []
+    failed_offered: list[str] = []
+    replies: list[Any] = []
+    stats = {"packets": {"U": 0, "A": 0, "M": 0}, "failed_packets": {"U": 0, "A": 0, "M": 0}, "decisions": 0,
+             "accepted": 0, "rejected_by_model": 0, "invalid_decisions": 0, "located": 0, "store_requests": 0,
+             "admitted": 0, "duplicates": 0, "rejected_by_admission": 0, "quote_not_in_document": 0,
+             "repair_turns": 0}
+    for index, plan in enumerate(packets, start=1):
+        cls = plan["class"]
+        info = {"index": index, "of": len(packets), "class": cls, "clusters": [plan["cluster"]]}
+        usage_chunk = dict(caller.usage["document_sweep"])
+        t_chunk = time.monotonic()
+        items: list[dict] = []
+        offered: list[str] = []
+        error, chunk_calls, size = None, 0, 0
+        record: dict[str, Any] = {}
+        try:
+            if cls == "M":
+                rows = []
+                for name in plan["fields"]:
+                    for snip in (snippets.get(name) or [])[:limits["m_snippets"]]:
+                        meta = cache.get(str(snip["document_id"])) or {}
+                        rows.append({"field": name, "document_id": snip["document_id"],
+                                     "source": _domain(meta.get("final_url") or meta.get("url")),
+                                     "text": str(snip.get("snippet") or "")[:SNIPPET_CHARS]})
+                ids = assign_ids(rows, prefix="s")
+                for sid, row in ids.items():
+                    row["id"] = sid
+                packet = m_packet(identity=identity, target_market=market, specs=by_name, snippets=rows)
+            else:
+                cap = limits["u_items"] if cls == "U" else limits["a_candidates"]
+                items = [dict(item) for name in plan["fields"] for item in (admissible.get(name) or [])[:cap]]
+                ids = assign_ids(items)
+                for cid, item in ids.items():
+                    item["id"] = cid
+                    if cls == "A":
+                        item["context"] = candidate_context(reader, item["candidate"])
+                offered = [item["key"] for item in items]
+                packet = u_packet(identity=identity, target_market=market, specs=by_name, items=items) \
+                    if cls == "U" else a_packet(identity=identity, target_market=market, specs=by_name, items=items,
+                                                hints={f: hint_keys(by_name.get(f)) for f in plan["fields"]})
+            size = packet_chars(packet)
+        except Exception as exc:  # noqa: BLE001
+            error = f"packet_build_failed: {_error_text(exc)}"
+            packet = None
+        if packet is not None:
+            stats["packets"][cls] += 1
+            run_log.event("document_sweep_started", sweep_mode="adjudication", packet_class=cls,
+                          fields_to_review=plan["fields"], candidates_presented=len(items),
+                          fields_without_candidates=plan["fields"] if cls == "M" else [],
+                          documents=len(doc_metas), packet_chars=size, allowed_tools=[],
+                          offered_candidate_keys=offered, chunk=info,
+                          local_snippet_fields=plan["fields"] if cls == "M" else [],
+                          packet_document_ids=sorted({str(i["candidate"].get("document_id")) for i in items}),
+                          candidates_per_field={f: sum(1 for i in items if i["field"] == f) for f in plan["fields"]}
+                          if cls != "M" else {},
+                          estimated_input_tokens=(len(ADJUDICATION_SYSTEM_PROMPT) + size) // 4)
+            messages = [{"role": "system", "content": ADJUDICATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": "Adjudication task (JSON):\n"
+                                                    + json.dumps(packet, ensure_ascii=False, default=str)}]
+            reply = None
+            try:
+                meta = {"turn": 1, "chunk": index, "adjudication_class": cls}
+                message = caller(messages, phase="document_sweep", meta=meta, max_tokens=max_tokens[cls])
+                chunk_calls += 1
+                reply, _ = parse_model_output(message.get("content"))
+                if not isinstance(reply, dict):
+                    # technical repair only: ask once for valid JSON (same phase, same packet)
+                    stats["repair_turns"] += 1
+                    repair = messages + [_assistant_echo(message), {"role": "user", "content": REPAIR_PROMPT}]
+                    message = caller(repair, phase="document_sweep", meta={**meta, "turn": 2, "repair": True},
+                                     max_tokens=max_tokens[cls])
+                    chunk_calls += 1
+                    reply, _ = parse_model_output(message.get("content"))
+                    if not isinstance(reply, dict):
+                        error = "unparseable_after_repair"
+            except GLMError as exc:
+                error = _error_text(exc)
+                record = {"timeout": bool(getattr(exc, "timeout", False)), "attempts": getattr(exc, "attempts", None),
+                          "api_error": exc.as_dict()}
+            except Exception as exc:  # noqa: BLE001 - one packet's problem never stops the others
+                error = _error_text(exc)
+            model_calls += chunk_calls
+            if error is None:
+                try:
+                    record = _apply_adjudication(session=session, run_log=run_log, cache=cache, reader=reader,
+                                                 cls=cls, plan=plan, items=items, ids=ids, reply=reply, info=info,
+                                                 offered=offered, stats=stats)
+                    # A local failure while applying the packet must leave its candidates fresh for recovery.
+                    # Announce them only after the entire packet was handled successfully.
+                    if offered:
+                        run_log.event("candidates_presented", source="adjudication", chunk=info,
+                                      presented_candidate_keys=offered)
+                    presented += len(offered)
+                    replies.append(reply)
+                except Exception as exc:  # noqa: BLE001
+                    error = f"apply_failed: {_error_text(exc)}"
+        if error is not None:
+            stats["failed_packets"][cls] += 1
+            chunk_errors.append(error)
+            failed_fields.extend(f for f in plan["fields"] if f not in failed_fields)
+            failed_offered.extend(offered)
+            run_log.event("document_sweep_failed", error=error, api_error=record.get("api_error"), chunk=info,
+                          sweep_mode="adjudication")
+            run_log.event("document_sweep_chunk_failed", **info, fields=plan["fields"], error=error,
+                          timeout=bool(record.get("timeout")), attempts=record.get("attempts"),
+                          note="packet failed; its fields stay open for recovery and the next packet still runs")
+        used = {k: caller.usage["document_sweep"][k] - usage_chunk.get(k, 0) for k in caller.usage["document_sweep"]}
+        chunk_log.append({**info, "fields": plan["fields"], "fields_count": len(plan["fields"]),
+                          "candidates": len(items), "packet_chars": size, "model_calls": chunk_calls,
+                          "latency_ms": int((time.monotonic() - t_chunk) * 1000),
+                          "model_latency_ms": used.get("model_latency_ms", 0),
+                          "prompt_tokens": used.get("prompt_tokens", 0),
+                          "completion_tokens": used.get("completion_tokens", 0), "error": error,
+                          "failed": error is not None,
+                          **{k: record.get(k) for k in ("decisions", "accepted", "admitted", "rejected_by_admission",
+                                                        "invalid") if k in record}})
+    latency_ms = int((time.monotonic() - t_sweep) * 1000)
+    events = trace_events(run_log)
+    after = current_evaluation(events, specs, market)
+    sweep_evidence = [e["evidence"] for e in events if e.get("kind") == "evidence" and (e.get("seq") or 0) > start_seq
+                      and isinstance(e.get("evidence"), dict)]
+    promoted, missed = promoted_or_missed(sweep_evidence, events)
+    for item in missed:
+        run_log.event("candidate_missed_by_deterministic_harvest", field=item.get("field"), value=item.get("value"),
+                      unit=item.get("unit"), document_id=item.get("document_id"), source_url=item.get("source_url"),
+                      quote=item.get("quote"), evidence_id=item.get("evidence_id"))
+    summary = sweep_summary(before=before, after=after, sweep_evidence=sweep_evidence, promoted=promoted,
+                            missed=missed, presented=presented, model_calls=model_calls, turns=model_calls,
+                            blocked=0, external_calls=0, reply=replies or None)
+    summary["error"] = (chunk_errors[0] if len(chunk_errors) == 1 else chunk_errors) if chunk_errors else None
+    summary["chunk_errors"] = chunk_errors
+    summary["failed_chunk_fields"] = failed_fields
+    seen = shown_keys(events)
+    summary["failed_chunk_candidates_kept_fresh"] = len({k for k in failed_offered if k not in seen})
+    summary["follow_up_turn"] = None
+    timeouts = sum(1 for e in events if e.get("kind") == "api_error" and (e.get("seq") or 0) > start_seq
+                   and e.get("phase") == "document_sweep" and e.get("timeout"))
+    used = {k: caller.usage["document_sweep"][k] - usage_before.get(k, 0) for k in caller.usage["document_sweep"]}
+    sent = [c for c in chunk_log if c.get("model_calls")]
+    summary.update(_sweep_telemetry(
+        chunks=chunk_log, packet_chars=sum(c["packet_chars"] for c in sent),
+        est_tokens=sum((len(ADJUDICATION_SYSTEM_PROMPT) + c["packet_chars"]) // 4 for c in sent),
+        fields=sum(c["fields_count"] for c in sent), candidates=presented, documents=len(doc_metas),
+        latency_ms=latency_ms, timeouts=timeouts, usage=used, pre=pre))
+    summary.update(sweep_mode="adjudication", candidates_from_unusable_documents=unusable_candidates,
+                   adjudication={"version": ADJUDICATION_VERSION, "classes": classes,
+                                 "class_counts": {c: sum(1 for v in classes.values() if v == c) for c in "UAM"},
+                                 "fields_not_sent": [f for f in open_fields if f not in classes],
+                                 "dry_run": dry, **stats})
+    run_log.event("document_sweep_finished", **{k: v for k, v in summary.items() if k != "reply"},
+                  reply=summary["reply"])
+    return summary
+
+
+def widen_quote_safe(reader, cand: dict) -> str | None:
+    from .adjudication import widen_quote
+
+    try:
+        return widen_quote(reader, cand)
+    except Exception:  # noqa: BLE001 - no widening is a normal outcome
+        return None
+
+
+def _apply_adjudication(*, session: ToolSession, run_log: RunLog, cache, reader, cls: str, plan: dict,
+                        items: list[dict], ids: dict, reply: dict, info: dict, offered: list[str],
+                        stats: dict) -> dict:
+    """B4 + B5 for one packet whose call returned a parsed reply: log the presented candidates, ignore (and log)
+    invalid decisions, and turn accepted candidates / located statements into synthetic store_evidence calls that
+    run through the normal tool path (admission decides; a rejection is only logged)."""
+    from .adjudication import located_arguments, parse_a_reply, parse_m_reply, parse_u_reply, store_arguments, \
+        synthetic_call
+
+    calls: list[dict] = []
+    if cls == "M":
+        decisions, invalid = parse_m_reply(reply, ids, plan["fields"])
+        stats["located"] += len(decisions)
+        for item in decisions:
+            text = reader.text(item["document_id"])
+            if not item["quote"].strip() or item["quote"] not in text:
+                stats["quote_not_in_document"] += 1
+                invalid.append({"problem": "quote_not_in_document", "field": item["field"], "snippet": item["snippet"]})
+                continue
+            calls.append(synthetic_call(f"adj{info['index']}_{item['snippet']}", located_arguments(item)))
+        accepted = len(calls)
+    else:
+        decisions, invalid = (parse_u_reply if cls == "U" else parse_a_reply)(reply, ids)
+        accepted = 0
+        for decision in decisions:
+            if decision["accept"]:
+                accepted += 1
+                calls.append(synthetic_call(f"adj{info['index']}_{decision['id']}",
+                                            store_arguments(ids[decision["id"]], decision)))
+            else:
+                stats["rejected_by_model"] += 1
+    stats["decisions"] += len(decisions)
+    stats["accepted"] += accepted
+    stats["invalid_decisions"] += len(invalid)
+    if invalid:
+        run_log.event("adjudication_invalid_decision", chunk=info, rows=invalid,
+                      note="ignored: unknown ids, ids of another packet or field, spans outside the snippet, "
+                           "fields not in the packet")
+    admitted = rejected = 0
+    if calls:
+        stats["store_requests"] += len(calls)
+        session.execute(calls, [], phase="document_sweep", allowed=("store_evidence",))
+        for result in session.turn_results:
+            outcome = result.get("result") if isinstance(result.get("result"), dict) else {}
+            if outcome.get("stored"):
+                admitted += 1
+            elif outcome.get("reused"):
+                stats["duplicates"] += 1
+            elif outcome.get("rejected") or outcome.get("error"):
+                rejected += 1
+    stats["admitted"] += admitted
+    stats["rejected_by_admission"] += rejected
+    return {"decisions": len(decisions), "accepted": accepted, "admitted": admitted,
+            "rejected_by_admission": rejected, "invalid": len(invalid)}
 
 
 def _sweep_telemetry(*, chunks: list[dict], packet_chars: int, est_tokens: int, fields: int, candidates: int,
@@ -2389,7 +2765,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
                   target_market=config.target_market, vehicle_label=vehicle_ctx,
                   tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode,
-                  acquisition_mode=config.acquisition_mode,
+                  acquisition_mode=config.acquisition_mode, sweep_mode=config.sweep_mode,
                   acquisition_document_card=config.acquisition_document_card, run_profile=config.run_profile,
                   research_prompt_hash=research_prompt_hash, env_overrides=env_overrides)
     try:
@@ -2468,6 +2844,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "requested_fields": requested_fields,
             "target_market": config.target_market,
             "acquisition_mode": config.acquisition_mode,
+            "sweep_mode": config.sweep_mode,
             "acquisition_document_card": config.acquisition_document_card,
             "run_profile": config.run_profile,
             "research_prompt_hash": research_prompt_hash,
@@ -2787,8 +3164,14 @@ def harvest_report(events: list[dict], specs: list[dict], vehicle: dict | None, 
     """Summary of the deterministic harvest for the run (logged once, before the document sweep)."""
     from .candidate_harvest import candidate_matrix
 
+    from .tail_planner import usable_candidate_matrix
+
     matrix = candidate_matrix(events, specs, vehicle)
     evaluation = current_evaluation(events, specs, config.target_market)
+    try:     # telemetry only: the totals below stay the unfiltered matrix's
+        unusable = usable_candidate_matrix(matrix, getattr(harvester, "cache", None))["candidates_from_unusable_documents"]
+    except Exception:  # noqa: BLE001
+        unusable = None
     return {"documents_harvested": harvester.stats["documents_harvested"],
             "candidate_cache_hits": harvester.stats["candidate_cache_hits"],
             "candidate_cache_misses": harvester.stats["candidate_cache_misses"],
@@ -2800,6 +3183,7 @@ def harvest_report(events: list[dict], specs: list[dict], vehicle: dict | None, 
             "fields_with_candidates": matrix["fields_with_candidates"],
             "fields_without_candidates": matrix["fields_without_candidates"],
             "fields_unresolved_before_harvest": sum(1 for e in evaluation if e["retry_eligible"]),
+            "candidates_from_unusable_documents": unusable,
             "note": "candidate coverage is not factual accuracy; candidates are not evidence"}
 
 
