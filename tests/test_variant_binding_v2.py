@@ -79,6 +79,7 @@ def test_xpeng_g6_max_binds_the_market_trim_through_the_qualified_phrase():
 @pytest.mark.parametrize("text", [
     "max power 486 hp", "Max. speed 200 km/h, MAX range", "g6 maximum comfort",
     "XPeng G6 MAX power 486 hp", "XPeng G6 - MAX power 486 hp", "G6\nMAX power 486 hp",
+    'אקספנג G6 MAX הספק 486 כ"ס',
 ])
 def test_generic_max_metric_wording_is_never_the_trim(text):
     assert mentions(text, xpeng())["trim"] != "match"
