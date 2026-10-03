@@ -23,6 +23,9 @@ from src.tail_planner import (cluster_of, novelty, plan_clusters, search_hints, 
 from src.tools import ToolConfig
 from src.typed_values import typed_value
 
+# these tests encode the cluster recovery agent (RECOVERY_MODE=cluster, the pre-#31 default) and its model call order
+pytestmark = [pytest.mark.recovery_mode("cluster"), pytest.mark.grounded_candidates(False)]
+
 SPECS = {s["name"]: s for s in load_schema()}
 CLUSTERS = {"technical_spec", "performance", "charging_ev", "equipment", "multimedia", "tires_wheels", "commercial",
             "warranty"}
@@ -517,7 +520,10 @@ def test_global_turn_cap_holds_across_clusters(tmp_path):
 def test_recovery_mode_from_env():
     from src.agent import agent_config_from_env
 
-    assert AgentConfig().recovery_mode == "reacquire"           # PR #31: targeted re-acquisition is the default
+    import dataclasses
+
+    # PR #31: targeted re-acquisition is the code default (this module pins "cluster" through its marker)
+    assert {f.name: f.default for f in dataclasses.fields(AgentConfig)}["recovery_mode"] == "reacquire"
     assert agent_config_from_env({"RECOVERY_MODE": "cluster"}.get).recovery_mode == "cluster"
     env = {"RECOVERY_MODE": "legacy", "CLUSTER_SEARCH_BUDGET": "2", "CLUSTER_MAX_TURNS": "3"}
     config = agent_config_from_env(env.get)

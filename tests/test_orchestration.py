@@ -27,6 +27,9 @@ from src.storage.cache import DocumentCache, document_id_for
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig, dispatch
 
+# these tests encode the cluster recovery agent (RECOVERY_MODE=cluster, the pre-#31 default) and its model call order
+pytestmark = [pytest.mark.recovery_mode("cluster"), pytest.mark.grounded_candidates(False)]
+
 SPECS = resolve_requested_fields(None, propulsion="hybrid")
 EU = tail.EU_SPEC
 EU_DOC = document_id_for("fetch", EU)

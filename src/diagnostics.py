@@ -615,6 +615,23 @@ def _evaluation_event(events: list[dict], stage: str) -> dict | None:
     return next((e for e in reversed(events) if e.get("kind") == "field_evaluation" and e.get("stage") == stage), None)
 
 
+def _reacquire_summary(window: list[dict]) -> dict:
+    episodes = [e for e in window if e.get("kind") == "field_recovery_finished" and e.get("mode") == "reacquire"]
+    if not episodes:
+        return {}
+    total = lambda key: sum(int(e.get(key) or 0) for e in episodes)   # noqa: E731
+    return {"mode": "reacquire", "reacquire_episodes": len(episodes),
+            "reacquire_new_useful_documents": total("new_useful_documents"),
+            "reacquire_new_candidates": total("new_candidates"), "reacquire_grounded_items": total("grounded_items"),
+            "reacquire_adjudication_accepted": total("adjudication_accepted"), "reacquire_admitted": total("admitted"),
+            "reacquire_fields_resolved": sum(len(e.get("fields_resolved") or []) for e in episodes),
+            "reacquire_site_map_urls": total("site_map_urls"),
+            "reacquire_clusters": [{k: e.get(k) for k in ("cluster", "searches", "fetches", "new_useful_documents",
+                                                          "new_candidates", "grounded_items", "adjudication_accepted",
+                                                          "admitted", "fields_resolved", "model_calls", "tokens",
+                                                          "stop", "error")} for e in episodes]}
+
+
 def recovery_summary(events: list[dict]) -> dict:
     """Tail recovery from events: model calls, billable searches, fetches, attempts, and fields resolved between the
     primary evaluation and the after-recovery evaluation."""
@@ -628,7 +645,10 @@ def recovery_summary(events: list[dict]) -> dict:
     after = {f.get("field") for f in (final or {}).get("fields") or [] if f.get("retry_eligible")}
     return {
         "ran": primary is not None,
-        "attempts": sum(1 for e in window if e.get("kind") in ("field_recovery_started", "cluster_recovery_started")),
+        "attempts": sum(1 for e in window if e.get("kind") in ("field_recovery_started", "cluster_recovery_started",
+                                                                "reacquire_started")),
+        # RECOVERY_MODE=reacquire: per-cluster episodes (targeted acquire -> harvest -> grounded -> adjudicate)
+        **_reacquire_summary(window),
         "model_calls": len(calls),
         "input_tokens": sum((e.get("usage") or {}).get("prompt_tokens") or 0 for e in calls) or None,
         "output_tokens": sum((e.get("usage") or {}).get("completion_tokens") or 0 for e in calls) or None,

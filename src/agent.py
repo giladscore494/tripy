@@ -461,6 +461,14 @@ PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + ACQUISITION_SYSTEM_PROMPT + FIN
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
 
 
+def reacquire_system_prompt() -> str:
+    """REACQUIRE_SYSTEM_PROMPT without tools this host cannot run (e.g. render_page without Playwright)."""
+    prompt = REACQUIRE_SYSTEM_PROMPT
+    for name in unavailable_tools():
+        prompt = prompt.replace(f" {name},", "").replace(f" / {name}", "")
+    return prompt
+
+
 def research_system_prompt(mode: str = "legacy", document_card: bool = False) -> str:
     """The research system prompt of an acquisition mode (contract: ACQUISITION_SYSTEM_PROMPT; legacy: SYSTEM_PROMPT)
     without tools this host cannot run (e.g. render_page without Playwright). `document_card` (contract only) adds
@@ -1133,6 +1141,7 @@ class ToolSession:
         self.blocked = 0
         self.turn_results: list[dict] = []
         self.search_budget: SearchBudget | None = None   # set per cluster attempt; None = no per-attempt budget
+        self.fetch_budget: SearchBudget | None = None    # set per re-acquisition episode: executed fetches allowed
         # set per cluster attempt: refuses a web route equivalent to one an earlier run found unproductive
         self.route_guard: Callable[[str, dict], dict | None] | None = None
         self.route_blocks = 0
@@ -1204,6 +1213,21 @@ class ToolSession:
                                         "document_id": None, "duplicate": False, "blocked": True})
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
                 continue
+            fetches = self.fetch_budget if name in trace.FETCH_TOOLS else None
+            if fetches is not None and fetches.remaining <= 0:
+                fetches.refused += 1
+                self.blocked += 1
+                result = {"error": "fetch_budget_exhausted", "message": (f"{name} refused: this episode's fetch budget "
+                                                                         f"({fetches.limit}) is used up.")}
+                self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                   arguments=raw_args, reason="fetch_budget_exhausted", **tags)
+                self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name, "arguments": raw_args,
+                                        "duration_ms": 0, "cache_hit": None, "error": result["error"],
+                                        "document_id": None, "duplicate": False, "blocked": True})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
+                continue
+            if fetches is not None:
+                fetches.used += 1
             budget = self.search_budget if name in trace.SEARCH_TOOLS else None
             if budget is not None:
                 from .tools.search import planned_provider_calls
@@ -2209,6 +2233,383 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
+
+REACQUIRE_TURNS = 2           # turns of one targeted acquisition episode
+REACQUIRE_FETCHES = 3         # executed fetches of one episode
+
+
+def _usable_new(cache, adm, documents: list[str]) -> list[str]:
+    """Documents that are usable material (2xx with content) and not server-side bound to another variant."""
+    from .tail_planner import document_profile_for, usable_document
+
+    out = []
+    for doc in documents:
+        try:
+            if usable_document(cache, doc) and document_profile_for(adm, cache, doc).get("variant_match") != "different":
+                out.append(doc)
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], evaluation: dict[str, dict],
+                     identity: dict, target_market: str, source_type: str, site_urls: list[dict],
+                     fetched_urls: list[str], negative: dict[str, list[str]], search_budget: int,
+                     fetch_budget: int, turns: int) -> dict:
+    """The small task of ONE targeted acquisition episode (F1.1): identity, the cluster's missing fields with
+    one-line definitions, the source type, site-map URLs ranked for the cluster, URLs already fetched, negative
+    routes. A conflicting field asks for the DECIDING source (F3)."""
+    by_name = {s["name"]: s for s in specs}
+
+    def line(name: str) -> str:
+        spec = by_name.get(name) or {"name": name}
+        text = str(spec.get("description") or spec.get("semantic_definition") or name)
+        return text.split(". ")[0][:160]
+
+    packet = {
+        "vehicle_identity": identity, "target_market": target_market, "cluster": cluster,
+        "source_type": source_type,
+        "missing_fields": [{"field": f, "definition": line(f), "state": (evaluation.get(f) or {}).get("state")}
+                           for f in fields],
+        "official_site_urls": [{"url": u["url"], "reasons": u.get("reasons")} for u in site_urls],
+        "already_fetched_urls": fetched_urls[-40:],
+        "budget": {"turns": turns, "billable_searches": search_budget, "fetches": fetch_budget},
+    }
+    conflicting = [f for f in fields if (evaluation.get(f) or {}).get("state") == "conflicting"]
+    if conflicting:
+        packet["conflicting_fields"] = conflicting
+        packet["conflict_instruction"] = ("Sources disagree on these fields. Fetch the DECIDING source for the exact "
+                                          "trim: the official importer's model page, its price list, or the "
+                                          "specification PDF of this exact trim.")
+    if negative:
+        packet["known_unproductive_routes"] = negative
+    return packet
+
+
+def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
+                           config: AgentConfig, run_log: RunLog, cache, documents_dir: Path,
+                           operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None,
+                           memory: ResearchMemory | None = None, site_map_state: dict | None = None) -> dict:
+    """RECOVERY_MODE=reacquire (Part F): the tail is recovered with the engine's two primitives, Acquire and
+    Adjudicate, instead of a tool-using recovery agent. Per recovery cluster (breadth-first, ONE pass each;
+    policy_blocked fields are never scheduled):
+
+        1. targeted Acquire   one short episode with the CONTRACT acquisition tool surface (search / fetch only,
+                              enforced by `allowed`): <= REACQUIRE_TURNS turns, cluster_search_budget billable
+                              searches, <= REACQUIRE_FETCHES fetches; research reasoning settings, booked as recovery.
+                              Ends on {"done": true}, the budget, or a turn with no new usable document.
+        2. harvest            every new document, automatically (the session hook), incl. structural pairs, PDF text
+                              tables and unit anchors
+        3. grounded           grounded candidates on the NEW documents for the cluster's still-open fields
+        4. Adjudicate         the adjudication runner over the cluster's still-open fields and candidates no model
+                              has seen yet (presented / rejected / stored ones excluded)
+
+    The recovery model never receives store_evidence or a cached-document tool; only adjudication's synthetic
+    store_evidence calls reach Evidence Admission. A failed cluster never stops the others; RECOVERY_API_FAILURE_STOP
+    consecutive API failures stop all recovery. Field states come only from current_evaluation()."""
+    from .acquisition import cluster_source_type
+    from .candidate_harvest import candidate_matrix
+    from .document_sweep import route_candidates
+    from .field_recovery import vehicle_identity
+    from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
+    from .site_map import run_site_map
+    from .tail_planner import (candidate_key, document_profile_for, plan_clusters, presented_keys, rejected_keys,
+                               stored_keys, triage, usable_candidate_matrix)
+    from .tools.search import default_domains, search_provider
+
+    def usable_matrix(events: list[dict]) -> dict:
+        return usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
+
+    market = config.target_market
+    adm = session.ctx.admission
+    billable_before = session.ctx.counters["search_api_calls"]
+    by_name = {s["name"]: s for s in specs}
+    identity = vehicle_identity(payload, market)
+    events = trace_events(run_log)
+    primary = current_evaluation(events, specs, market)
+    run_log.event("field_evaluation", stage="primary", fields=primary, summary=_state_counts(primary))
+    triaged = triage(primary, specs, usable_matrix(events), events, config.field_recovery_max_attempts) \
+        if config.field_recovery_enabled else {}
+    clusters = plan_clusters(triaged, specs)
+    queued = [f for c in clusters for f in c["fields"]]
+    run_log.event("field_retry_queue", fields=queued, enabled=config.field_recovery_enabled,
+                  order="breadth_first_clusters", mode="reacquire",
+                  queue=[{"field": f, **triaged[f]} for f in queued], clusters=clusters,
+                  policy_blocked=[f for f, t in triaged.items() if t["triage"] == "policy_blocked"])
+    current = {e["field"]: e for e in primary}
+    state = {"total_steps": 0, "stopped": None, "searches": 0, "search_refusals": 0, "fetch_refusals": 0,
+             "negative_route_blocks": 0, "failed_attempts": 0, "consecutive_api_failures": 0}
+    provider = search_provider(session.ctx)
+    target = getattr(adm, "identity", None)
+    route_keys = {f: k for f in queued if not by_name[f].get("time_sensitive")
+                  and (k := scope_key(target, reuse_level(by_name[f]) or "exact_market_trim"))}
+    route_ids = {f: spec_identity(by_name[f]) for f in route_keys}
+    negative: dict = {}
+    if memory is not None:
+        try:
+            negative = memory.negative_routes(route_keys, route_ids)
+        except Exception as exc:  # unreadable memory never costs the recovery
+            run_log.event("research_memory_read_failed", error=_error_text(exc))
+    attempts_log: list[dict] = []
+    resolved_indirectly: dict[str, dict] = {}
+    site_map_state = dict(site_map_state or {})
+    built_site = site_map_state.get("site")
+
+    def reevaluate(cluster: str, fields: list[str]) -> None:
+        for entry in current_evaluation(trace_events(run_log), specs, market):
+            name, was = entry["field"], current[entry["field"]]
+            current[name] = entry
+            if name in queued and was["retry_eligible"] and not entry["retry_eligible"] and name not in fields:
+                resolved_indirectly.setdefault(name, {"resolved_during_field": f"cluster:{cluster}", "attempt": 1,
+                                                      "state": entry["state"]})
+                run_log.event("field_recovery_queue_resolved_indirectly", field=name,
+                              resolved_during_field=f"cluster:{cluster}", attempt=1, state=entry["state"])
+
+    for plan in clusters:
+        if state["stopped"]:
+            break
+        name = plan["cluster"]
+        open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
+        if not open_fields:
+            continue
+        cap = config.field_recovery_max_total_steps
+        if cap and state["total_steps"] >= cap:
+            state["stopped"] = "max_total_steps"
+            break
+        label = f"cluster:{name}"
+        phase_ref["name"] = "field_recovery"
+        t0 = time.monotonic()
+        usage_before = dict(caller.usage["field_recovery"])
+        calls_before = len(session.tool_calls)
+        searches_before = session.ctx.counters["search_cache_misses"]
+        docs_before = list(session.ctx.documents_opened)
+        events = trace_events(run_log)
+        doc_metas = _doc_metas(events, cache, documents_dir)
+        fetched_urls = list(dict.fromkeys(str(m.get("final_url") or m.get("url")) for m in doc_metas
+                                          if m.get("final_url") or m.get("url")))
+        site_urls: list[dict] = []
+        if config.site_map:
+            result = run_site_map(session.ctx, run_log, payload=payload, vehicle=vehicle, target_market=market,
+                                  cluster=name, exclude=fetched_urls + [m.get("url") for m in doc_metas],
+                                  site=built_site, stage="reacquire")
+            built_site = result.get("site") or built_site
+            site_urls = result.get("offered") or []
+        known_dead = {f: labels for f in open_fields if f in negative
+                      and (labels := [route_label(r) for r in negative[f]["routes"] if route_applies(r, provider)][:8])}
+        budget = SearchBudget(max(0, int(config.cluster_search_budget)))
+        fetch_budget = SearchBudget(REACQUIRE_FETCHES)
+        packet = reacquire_packet(cluster=name, fields=open_fields, specs=specs, evaluation=current,
+                                  identity=identity, target_market=market,
+                                  source_type=cluster_source_type([by_name[f] for f in open_fields], market),
+                                  site_urls=site_urls, fetched_urls=fetched_urls, negative=known_dead,
+                                  search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS)
+        states_before = {f: current[f]["state"] for f in open_fields}
+        run_log.event("reacquire_started", cluster=name, fields=open_fields, mode="reacquire",
+                      triage={f: (triaged.get(f) or {}).get("triage") for f in open_fields},
+                      site_map_urls=[u["url"] for u in site_urls], search_budget=budget.limit,
+                      fetch_budget=fetch_budget.limit, turn_budget=REACQUIRE_TURNS,
+                      conflicting=packet.get("conflicting_fields") or [])
+        session.search_budget, session.fetch_budget = budget, fetch_budget
+        session.route_guard = _route_guard(negative, open_fields, by_name, specs, default_domains(session.ctx.vehicle),
+                                           provider) if (negative and config.negative_route_blocking) else None
+        messages = [{"role": "system", "content": reacquire_system_prompt()},
+                    {"role": "user", "content": "Targeted re-acquisition task (JSON):\n"
+                                                + json.dumps(packet, ensure_ascii=False, default=str)}]
+        model_tools = acquisition_tool_specs(tool_specs())
+        turns, error, stop, reply_text = 0, None, None, None
+        dead_routes: list[dict] = []
+        new_useful: list[str] = []
+        try:
+            for turn_index in range(1, REACQUIRE_TURNS + 1):
+                if cap and state["total_steps"] >= cap:
+                    stop = "max_total_steps"
+                    state["stopped"] = "max_total_steps"
+                    break
+                meta = {"field": label, "cluster": name, "fields": open_fields, "attempt": 1, "turn": turn_index,
+                        "turn_budget": REACQUIRE_TURNS, "mode": "reacquire"}
+                message = caller(outgoing_messages(messages, config), phase="field_recovery", settings_phase="research",
+                                 tools=model_tools, meta=meta)
+                turns += 1
+                state["total_steps"] += 1
+                messages.append(_assistant_echo(message))
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    reply_text = message.get("content") or ""
+                    stop = "done"
+                    break
+                turn_start = len(session.tool_calls)
+                opened_before = list(session.ctx.documents_opened)
+                session.execute(calls, messages, phase="field_recovery", allowed=ACQUISITION_TOOLS, cluster=name,
+                                attempt=1)
+                fresh = _usable_new(cache, adm, [d for d in session.ctx.documents_opened if d not in opened_before
+                                                 and d not in docs_before])
+                new_useful += [d for d in fresh if d not in new_useful]
+                if not fresh:
+                    dead_routes.extend(_routes_of(session.tool_calls[turn_start:]))
+                    stop = "no_new_usable_document"
+                    break
+                if budget.remaining <= 0 and fetch_budget.remaining <= 0:
+                    stop = "budget"
+                    break
+                if turn_index < REACQUIRE_TURNS:
+                    messages[-1]["content"] += (
+                        f"\n[operational note] New usable document(s) this turn: {len(fresh)}. Billable searches left: "
+                        f"{budget.remaining}; fetches left: {fetch_budget.remaining}. One more turn is allowed; reply "
+                        '{"done": true, ...} when the right document is fetched.')
+            else:
+                stop = stop or "turn_budget"
+        except GLMError as exc:
+            error = _error_text(exc)
+            state["failed_attempts"] += 1
+            state["consecutive_api_failures"] += 1
+            run_log.event("field_recovery_failed", field=label, cluster=name, attempt=1, error=error, mode="reacquire",
+                          api_error=exc.as_dict(), consecutive_api_failures=state["consecutive_api_failures"])
+            if state["consecutive_api_failures"] >= RECOVERY_API_FAILURE_STOP:
+                state["stopped"] = "api_failure"
+                run_log.event("field_recovery_api_failure_stop", cluster=name, attempt=1, mode="reacquire",
+                              consecutive_api_failures=state["consecutive_api_failures"])
+        else:
+            state["consecutive_api_failures"] = 0
+        finally:
+            state["search_refusals"] += budget.refused
+            state["fetch_refusals"] += fetch_budget.refused
+            session.search_budget = session.fetch_budget = None
+            state["negative_route_blocks"] += session.route_blocks
+            session.route_blocks = 0
+            session.route_guard = None
+        reevaluate(name, open_fields)
+        # ---- grounded candidates on the new documents + adjudication of the cluster's unseen candidates ----
+        adjudication: dict = {}
+        still_open = [f for f in open_fields if current[f]["retry_eligible"]]
+        if error is None and still_open:
+            events = trace_events(run_log)
+            seen = presented_keys(events) | rejected_keys(events) | stored_keys(events)
+            matrix = usable_matrix(events)
+            fresh_cands = {f: [c for c in matrix["fields"].get(f) or [] if candidate_key(c) not in seen]
+                           for f in still_open}
+            if new_useful or any(fresh_cands.values()):
+                doc_metas = _doc_metas(events, cache, documents_dir)
+                profiles = {str(m.get("document_id")): {**document_profile_for(adm, cache, str(m.get("document_id"))),
+                                                        "doc_type": m.get("doc_type")} for m in doc_metas}
+                routed = {f: route_candidates(fresh_cands.get(f) or [], profiles, market,
+                                              str(by_name.get(f, {}).get("market_sensitivity")) == "high")
+                          for f in still_open}
+                try:
+                    adjudication = run_adjudication_sweep(
+                        session=session, caller=caller, specs=specs, payload=payload, config=config, run_log=run_log,
+                        cache=cache, before=list(current.values()), routed=routed, snippets={}, profiles=profiles,
+                        open_fields=still_open, doc_metas=doc_metas, pre={}, start_seq=run_log.seq,
+                        usage_before=dict(caller.usage["field_recovery"]), unusable_candidates=0, vehicle=vehicle,
+                        phase="field_recovery", settings_phase="document_sweep",
+                        event_prefix="reacquire_adjudication", stage="reacquire", exclude_keys=seen,
+                        grounded_pool=list(new_useful))
+                except GLMError as exc:          # packets catch their own; defensive
+                    adjudication = {"error": _error_text(exc)}
+                except Exception as exc:  # noqa: BLE001 - one cluster's problem never stops the others
+                    adjudication = {"error": _error_text(exc)}
+                    run_log.event("reacquire_adjudication_failed", cluster=name, error=adjudication["error"])
+                reevaluate(name, open_fields)
+        events = trace_events(run_log)
+        matrix_after = usable_matrix(events)
+        new_candidates = sum(1 for f in open_fields for c in matrix_after["fields"].get(f) or []
+                             if str(c.get("document_id")) in set(new_useful))
+        executed = [c for c in session.tool_calls[calls_before:] if not c.get("blocked") and not c.get("reused")]
+        searched = session.ctx.counters["search_cache_misses"] - searches_before
+        state["searches"] += searched
+        used = {k: caller.usage["field_recovery"][k] - usage_before.get(k, 0) for k in caller.usage["field_recovery"]}
+        adj = adjudication.get("adjudication") or {}
+        grounded = adjudication.get("grounded_candidates") or {}
+        resolved = [f for f in open_fields if not current[f]["retry_eligible"]]
+        record = {"field": label, "cluster": name, "fields": open_fields, "attempt": 1, "round": 1,
+                  "mode": "reacquire", "states_before": states_before,
+                  "states_after": {f: current[f]["state"] for f in open_fields},
+                  "state_before": f"{sum(1 for f in open_fields if states_before[f] in RETRY_STATES)} open",
+                  "state_after": f"{sum(1 for f in open_fields if current[f]['retry_eligible'])} open",
+                  "turns": turns, "turn_budget": REACQUIRE_TURNS, "stop": stop, "error": error,
+                  "failed": error is not None, "reply_text": reply_text,
+                  "searches": searched, "search_provider_calls": searched, "search_budget": budget.limit,
+                  "search_refused": budget.refused,
+                  "fetches": sum(1 for c in executed if c["name"] in trace.FETCH_TOOLS),
+                  "fetch_refused": fetch_budget.refused,
+                  "new_useful_documents": len(new_useful), "new_documents": new_useful,
+                  "new_candidates": new_candidates,
+                  "grounded_items": grounded.get("items", 0), "grounded_admissible": grounded.get("admissible", 0),
+                  "adjudication_accepted": adj.get("accepted", 0), "admitted": adj.get("admitted", 0),
+                  "adjudication_error": adjudication.get("error"),
+                  "fields_resolved": resolved, "model_calls": used.get("model_calls", 0),
+                  "tokens": used.get("total_tokens", 0), "input_tokens": used.get("prompt_tokens", 0),
+                  "output_tokens": used.get("completion_tokens", 0),
+                  "site_map_urls": len(site_urls), "latency_ms": int((time.monotonic() - t0) * 1000),
+                  "byproduct_resolutions": sorted(f for f, v in resolved_indirectly.items()
+                                                  if v.get("resolved_during_field") == label)}
+        record["documents_fetched"] = record["fetches"]
+        record["_routes"] = dead_routes
+        attempts_log.append(record)
+        run_log.event("field_recovery_finished", **{k: v for k, v in record.items() if k != "_routes"})
+    final = [current[e["field"]] for e in primary]
+    run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
+    if memory is not None:
+        try:
+            # a web episode without a new usable document leaves its routes as unproductive for the still-open fields
+            _record_recovery_memory(memory, [{**a, "mode": "web"} for a in attempts_log], current, route_keys, target,
+                                    run_log, by_name, route_ids, specs)
+        except Exception as exc:  # memory problems never cost the run
+            run_log.event("research_memory_write_failed", error=_error_text(exc))
+    for a in attempts_log:
+        a.pop("_routes", None)
+    attempted = sorted({f for a in attempts_log for f in a["fields"]})
+    not_attempted = [f for f in queued if f not in attempted and current[f]["retry_eligible"]]
+    cap = config.field_recovery_max_total_steps
+    total = state["total_steps"]
+    metrics = tail_metrics(primary, final, model_calls=sum(a["model_calls"] for a in attempts_log),
+                           search_calls=state["searches"],
+                           billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before)
+    return {
+        "enabled": config.field_recovery_enabled,
+        "mode": "reacquire",
+        "order": "breadth_first_clusters",
+        "planner_version": "tail-planner-v1",
+        "field_recovery_turn_budget": cap or None,
+        "field_recovery_turns_used": total,
+        "field_recovery_turns_remaining": max(0, cap - total) if cap else None,
+        "fields_not_attempted_due_to_budget": not_attempted if state["stopped"] == "max_total_steps" else [],
+        "requested": len(specs),
+        "primary_states": _state_counts(primary),
+        "final_states": _state_counts(final),
+        "queue": queued,
+        "triage": triaged,
+        "clusters": clusters,
+        "fields_retried": attempted,
+        "fields_recovered": [f for f in attempted if not current[f]["retry_eligible"]],
+        "fields_still_failed": [f for f in attempted if current[f]["retry_eligible"]],
+        "fields_resolved_directly": [f for f in attempted if not current[f]["retry_eligible"]
+                                     and f not in resolved_indirectly],
+        "fields_resolved_indirectly": resolved_indirectly,
+        "fields_not_attempted": not_attempted,
+        "attempts": attempts_log,
+        "attempt_count": len(attempts_log),
+        "attempt_order": [f"{a['field']}#{a['attempt']}" for a in attempts_log],
+        "turns": total,
+        "cluster_attempts": len(attempts_log),
+        "fields_resolved_by_cluster": {a["cluster"]: a["fields_resolved"] for a in attempts_log if a["fields_resolved"]},
+        "search_budget_refusals": state["search_refusals"],
+        "fetch_budget_refusals": state["fetch_refusals"],
+        "negative_route_cache_hits": state["negative_route_blocks"],
+        "reacquire": {"episodes": len(attempts_log),
+                      "new_useful_documents": sum(a["new_useful_documents"] for a in attempts_log),
+                      "new_candidates": sum(a["new_candidates"] for a in attempts_log),
+                      "grounded_items": sum(a["grounded_items"] for a in attempts_log),
+                      "adjudication_accepted": sum(a["adjudication_accepted"] for a in attempts_log),
+                      "admitted": sum(a["admitted"] for a in attempts_log),
+                      "fields_resolved": sum(len(a["fields_resolved"]) for a in attempts_log)},
+        **metrics,
+        "stopped": state["stopped"],
+        "failed_attempts": state["failed_attempts"],
+        "api_failure_stop": state["stopped"] == "api_failure",
+        "evaluation_primary": primary,
+        "evaluation_final": final,
+    }
+
 
 def _call_document(call: dict) -> str | None:
     args = trace.parse_args(call.get("arguments"))
@@ -3419,7 +3820,13 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         if status is None:
             phase["name"] = "field_detection"
             try:
-                if config.recovery_mode == "legacy":
+                if config.recovery_mode == "reacquire":
+                    recovery = run_reacquire_recovery(session=tools, caller=caller, specs=specs, payload=payload,
+                                                      config=config, run_log=run_log, cache=cache,
+                                                      documents_dir=documents_dir, operator_notes=notes_for_variant,
+                                                      phase_ref=phase, vehicle=vehicle_ctx, memory=memory,
+                                                      site_map_state=site_map_state)
+                elif config.recovery_mode == "legacy":
                     recovery = run_field_recovery(session=tools, caller=caller, specs=specs, payload=payload,
                                                   config=config, run_log=run_log, cache=cache,
                                                   documents_dir=documents_dir, operator_notes=notes_for_variant,

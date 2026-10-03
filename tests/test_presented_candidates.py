@@ -14,7 +14,7 @@ from src.tail_planner import candidate_key, fresh_candidates, presented_keys, tr
 
 SPECS = resolve_requested_fields(tail.FIELDS, propulsion="hybrid")
 # these runs script the legacy tool-loop sweep (the adjudication sweep has its own tests: test_adjudication.py)
-pytestmark = pytest.mark.sweep_mode("legacy")
+pytestmark = [pytest.mark.sweep_mode("legacy"), pytest.mark.recovery_mode("cluster")]   # the cluster agent
 
 
 def _sweep_starts(events):

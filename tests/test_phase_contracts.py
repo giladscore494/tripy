@@ -18,7 +18,7 @@ from test_tools_smoke import _call
 from src import acquisition as A
 from src import diagnostics as D
 from src.agent import (ACQUISITION_SYSTEM_PROMPT, CLUSTER_RECOVERY_SYSTEM_PROMPT, DOCUMENT_SWEEP_SYSTEM_PROMPT,
-                       FIELD_RECOVERY_SYSTEM_PROMPT, OUTPUT_SHAPE, AgentConfig, ModelCaller, ToolSession,
+                       FIELD_RECOVERY_SYSTEM_PROMPT, GROUNDED_SYSTEM_PROMPT, OUTPUT_SHAPE, reacquire_system_prompt, AgentConfig, ModelCaller, ToolSession,
                        agent_config_from_env, build_acquisition_message, effective_glm_config, research_system_prompt,
                        run_vehicle)
 from src.fields import resolve_requested_fields
@@ -85,6 +85,10 @@ class PhaseClient:
             packet = json.loads(messages[1]["content"].split("\n", 1)[1])
             kind, message = "recovery", say({"cluster": packet["cluster"], "fields": [
                 {"field": f["field"], "status": "unresolved"} for f in packet["fields"]]})
+        elif system == reacquire_system_prompt():          # RECOVERY_MODE=reacquire: the targeted acquisition episode
+            kind, message = "recovery", say({"done": True, "reason": "nothing more"})
+        elif system == GROUNDED_SYSTEM_PROMPT:
+            kind, message = "grounded", say({"items": []})
         elif system == FIELD_RECOVERY_SYSTEM_PROMPT:
             packet = json.loads(messages[1]["content"].split("\n", 1)[1])
             kind, message = "recovery", say({"field": packet["requested_field"]["name"], "status": "unresolved"})
