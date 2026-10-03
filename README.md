@@ -696,7 +696,10 @@ current_evaluation() → tail triage → recovery clusters → breadth-first clu
 - **Local-first.** While a cluster has candidates no model has seen, it first gets one pass with cached-document
   tools only (the packet shows those unseen candidates first), and every round runs such local passes before any
   web attempt. The local pass does not use up the cluster's web attempts. With no unseen local material that
-  model pass is skipped and web research starts directly.
+  model pass is skipped and web research starts directly. A candidate counts as "seen" only once a model call
+  that carried it RETURNED (`candidates_presented` / `cluster_candidates_announced` events): a sweep chunk or
+  cluster call that failed (e.g. a read timeout) leaves its candidates fresh, so their cluster keeps its local pass
+  (`failed_chunk_candidates_kept_fresh` in the sweep summary).
 - **Ranking, not truth.** Cached documents are ranked per cluster by `source_yield_score` (open fields with
   candidates, binding level, authority, target market, tables, evidence already yielded, identity, parser
   confidence). Already-paid search results that were not fetched are passed as `search_hints` (title, snippet,
