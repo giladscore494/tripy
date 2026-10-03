@@ -130,6 +130,7 @@ def scripted_run(tmp_path, make_ctx, script, **cfg):
     return result, client, read_events(tmp_path / "runs" / "b" / "101122" / "events.jsonl")
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
     final = {"vehicle_id": "101122", "summary": "final", "fields": {"service_interval_km": {"value": 20000}}}
     script = [
@@ -216,6 +217,7 @@ def test_only_failed_requested_fields_get_focused_retries(tmp_path, make_ctx):
             m["fields_still_failed"], m["field_retry_attempts"], m["field_recovery_model_calls"]) == (5, 3, 3, 1, 2, 5, 5)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_no_retry_for_success_or_not_applicable(tmp_path, make_ctx):
     script = [
         turn(_call("p1", "store_evidence", ev("battery_usable_kwh", 80.8)),
@@ -235,6 +237,7 @@ def test_no_retry_for_success_or_not_applicable(tmp_path, make_ctx):
     assert result["finalization"] is None
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_recovery_disabled_and_budget_caps(tmp_path, make_ctx, monkeypatch):
     monkeypatch.setenv("FIELD_RECOVERY_ENABLED", "false")
     monkeypatch.setenv("FIELD_RECOVERY_MAX_ATTEMPTS", "3")

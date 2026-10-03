@@ -56,6 +56,16 @@ def _search_text(acq: dict, live: dict):
     return f"{calls} ({billable} billable)" if billable is not None and billable != calls else calls
 
 
+def _official_pairs(acq_live: dict, acq: dict) -> list[tuple]:
+    """Newer runs record fetched official documents and discovered official URLs separately; an older run's single
+    number (fetched + search-seen) keeps its old label and is never shown as "fetched"."""
+    official = acq_live.get("official_sources", acq.get("official_documents"))
+    discovered = acq_live.get("official_urls_discovered", acq.get("official_urls_discovered"))
+    if discovered is None:
+        return [("Official", official)]
+    return [("Official docs (fetched)", official), ("Official URLs (discovered)", discovered)]
+
+
 def render_brief(view: dict, diag: dict | None) -> None:
     """The two concise blocks: Source acquisition and Document sweep."""
     acq_live, sweep_live = view.get("acquisition") or {}, view.get("sweep") or {}
@@ -67,7 +77,7 @@ def render_brief(view: dict, diag: dict | None) -> None:
     pairs = [("Research turn", _frac(turns, acq_live.get("max_turns") or acq.get("max_turns"))),
              ("Search calls", _search_text(acq, acq_live)),
              ("Useful docs", acq_live.get("useful_documents", acq.get("useful_documents"))),
-             ("Official", acq_live.get("official_sources", acq.get("official_documents"))),
+             *_official_pairs(acq_live, acq),
              ("Target market", acq_live.get("target_market_documents", acq.get("target_market_documents"))),
              ("Candidate fields", _frac(acq_live.get("candidate_fields", acq_live.get("fields_with_candidates",
                                                                                    acq.get("candidate_fields"))),
@@ -106,6 +116,9 @@ def _turn_rows(diag: dict) -> list[dict]:
                      "fetch failures": ", ".join(f"{k}:{v}" for k, v in t["fetch"]["failure_categories"].items()),
                      "useful": f"{before.get('useful_documents')}→{after.get('useful_documents')}" if after else None,
                      "official": f"{before.get('official_documents')}→{after.get('official_documents')}" if after else None,
+                     "official discovered": f"{before.get('official_urls_discovered')}→"
+                                            f"{after.get('official_urls_discovered')}"
+                     if "official_urls_discovered" in after else None,
                      "target mkt": f"{before.get('target_market_documents')}→{after.get('target_market_documents')}"
                      if after else None,
                      "cand fields": f"{before.get('candidate_fields')}→{after.get('candidate_fields')}" if after else None,

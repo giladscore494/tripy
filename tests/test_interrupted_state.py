@@ -105,6 +105,7 @@ def check_current_state(bundle, recovery):
     assert "ac_max_charging_power_kw" in recovery["fields_resolved_indirectly"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_interrupted_field_recovery_persists_accurate_partial_state(tmp_path, make_ctx):
     saved, client, events, log = interrupted_run(tmp_path, make_ctx)
     assert (saved["status"], saved["partial"], saved["interrupted"], saved["interrupted_phase"],
@@ -128,6 +129,7 @@ def test_interrupted_field_recovery_persists_accurate_partial_state(tmp_path, ma
     assert not any("ac_max_charging_power_kw" in line for line in lines["unresolved"])
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_reconstruction_without_result_json_recomputes_current_state(tmp_path, make_ctx):
     saved, _, _, log = interrupted_run(tmp_path, make_ctx)
     (log.dir / "result.json").unlink()                       # as if the process had died instead
@@ -182,6 +184,7 @@ def test_glm_errors_stay_distinct_from_interruptions(tmp_path, monkeypatch):
     assert result["api_errors"][0]["status"] == 401
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_completed_runs_and_level3_listing(tmp_path, make_ctx):
     script = [turn(store("p1", "torque_nm", 1066, "IL")), say({"summary": "done", "fields": {"torque_nm": {"value": 1066}}})]
     ctx = seeded(make_ctx, script)

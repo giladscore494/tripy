@@ -45,6 +45,19 @@ def html_title(html: str) -> str:
     return re.sub(r"\s+", " ", match.group(1)).strip()[:300] if match else ""
 
 
+def html_links(html, base: str) -> list[dict]:
+    """Every http(s) outbound link of an HTML page (str or parsed soup) as {text, url}, absolute, page order, first
+    occurrence of each URL. Shared by extract_html and the research phase's navigation links."""
+    soup = _soup(html) if isinstance(html, str) else html
+    links, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        href = urljoin(base or "", a["href"])
+        if href.startswith(("http://", "https://")) and href not in seen:
+            seen.add(href)
+            links.append({"text": a.get_text(" ", strip=True)[:120], "url": href})
+    return links
+
+
 class DocumentNotFound(LookupError):
     pass
 
@@ -91,12 +104,7 @@ def extract_html(ctx, document_id: str, offset: int = 0, max_chars: int | None =
             for ul in soup.find_all(["ul", "ol"])
             if 1 < len(ul.find_all("li", recursive=False)) <= 60
         ][:25]
-        links, seen = [], set()
-        for a in soup.find_all("a", href=True):
-            href = urljoin(base, a["href"])
-            if href.startswith(("http://", "https://")) and href not in seen:
-                seen.add(href)
-                links.append({"text": a.get_text(" ", strip=True)[:120], "url": href})
+        links = html_links(soup, base)
         result["links"] = links[:ctx.config.max_links]
         result["links_total"] = len(links)
     result.update(_chunk(text, offset, max_chars))

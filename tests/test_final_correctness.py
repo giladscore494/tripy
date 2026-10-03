@@ -127,6 +127,7 @@ def test_report_field_status_requires_evidence_for_conflict_resolved(make_ctx):
     assert dispatch(ctx, "report_field_status", {"field": "torque_nm", "status": "unresolved"})["recorded"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_unbacked_reply_keeps_conflict_and_backed_reply_resolves(tmp_path, make_ctx):
     script = [
         turn(store("p1", "torque_nm", 1066), store("p2", "torque_nm", 1080)),
@@ -193,6 +194,7 @@ def test_exact_variant_still_exits_early_with_honest_metrics(tmp_path, make_ctx)
 
 # --- 8: budget semantics -------------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_not_cut_short_when_the_next_attempt_never_started(tmp_path, make_ctx):
     result, _, _, _ = run(tmp_path, make_ctx, budget_script(4), requested_fields=FIELDS, max_steps=4,
                           field_recovery_max_total_steps=4)
@@ -203,6 +205,7 @@ def test_not_cut_short_when_the_next_attempt_never_started(tmp_path, make_ctx):
 
 # --- 9: supplementary evidence survives reconstruction ------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_supplementary_evidence_is_rebuilt_from_events(tmp_path, make_ctx):
     same = {"field": "torque_nm", "value": 1066, "unit": "Nm", "market": "IL", "source_url": IL}
     script = [turn(_call("c1", "store_evidence", {**same, "quote": "Torque 1,066 Nm"})),
@@ -229,6 +232,7 @@ class StopAtEnd(ScriptedGLM):
         return super().chat(messages, tools=tools, **kwargs)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_interrupt_after_target_evidence_before_attempt_finished(tmp_path, make_ctx):
     script = [turn(store("p1", "cargo_volume_l", 2523, market="US")),
               say({"summary": "primary", "fields": {}}),
@@ -258,6 +262,7 @@ def test_interrupt_after_target_evidence_before_attempt_finished(tmp_path, make_
         assert rec["attempts"] == [] and rec["evaluation_primary"][0]["state"] == "foreign_market_only"  # history
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_foreign_evidence_is_unresolved_but_never_without_evidence(tmp_path, make_ctx):
     script = [turn(store("p1", "cargo_volume_l", 2523, market="US")), say({"summary": "s", "fields": {}})]
     result, _, _, _ = run(tmp_path, make_ctx, script, field_recovery_enabled=False,

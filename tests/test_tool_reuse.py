@@ -86,6 +86,7 @@ def tool_json(message):
 
 # --- 1-7: pre-dispatch reuse ---------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_find_in_document_is_replayed_not_executed(tmp_path, make_ctx, counted):
     ctx = make_ctx()
     doc = put_doc(ctx.cache, PAGE, "Battery 205 kWh usable. Range 742 km.")
@@ -108,6 +109,7 @@ def test_identical_find_in_document_is_replayed_not_executed(tmp_path, make_ctx,
     assert (m["tool_calls"], m["duplicate_calls_suppressed"]) == (1, 1)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_cached_document_and_fetch_execute_once(tmp_path, make_ctx, counted):
     ctx = make_ctx({PAGE: FakeResponse(b"<html><body>Escalade IQ 205 kWh</body></html>")})
     doc = put_doc(ctx.cache, "https://other.example/spec", "Battery 205 kWh")
@@ -124,6 +126,7 @@ def test_identical_cached_document_and_fetch_execute_once(tmp_path, make_ctx, co
     assert "text_preview" not in tool_json(tool_messages(client)[-1])
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_identical_search_is_replayed_and_billed_once(tmp_path, make_ctx, counted):
     ctx = make_ctx(search_backend="glm")
     q = {"query": "Escalade IQ 205 kWh"}
@@ -137,6 +140,7 @@ def test_identical_search_is_replayed_and_billed_once(tmp_path, make_ctx, counte
     assert result["cost"]["web_search_usd"] is None or result["search_api_calls"] == 1
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_different_operations_are_never_suppressed(tmp_path, make_ctx, counted):
     ctx = make_ctx(search_backend="glm")
     doc = put_doc(ctx.cache, PAGE, "Battery 205 kWh. " + "x" * 9000)
@@ -156,6 +160,7 @@ def test_different_operations_are_never_suppressed(tmp_path, make_ctx, counted):
     assert result["research_tracking"]["duplicate_calls_suppressed"] == 0
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_store_evidence_and_failed_calls_are_not_replayed(tmp_path, make_ctx, counted):
     ctx = make_ctx()
     cache_source(ctx.cache, PAGE, "Cadillac Escalade IQ: battery 205 kWh")      # a retrieved source
@@ -267,6 +272,7 @@ def cadillac(make_ctx):
     return ctx, d, a, b
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, counted):
     ctx, D, A, B = cadillac(make_ctx)
     find_a = {"document_id": A, "query": "סוללה"}

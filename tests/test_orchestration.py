@@ -107,6 +107,11 @@ def test_a_new_document_resets_the_no_artifact_counter(tmp_path):
     assert result["primary_research"]["documents_added"] == 2
 
 
+# the sweep packet limits before Phase Contracts v1 (12 fields / 16 candidates since): tests asserting a one-packet
+# sweep pin them explicitly
+SINGLE_PACKET_SWEEP = {"document_sweep_max_fields": 30, "document_sweep_max_candidates": 48}
+
+
 def _snap(**over):
     base = {"useful_documents": [], "useful_urls": set(), "target_market_urls": set(), "target_market_documents": [],
             "official_sources": set(), "candidates": set(), "evidence": set(), "best_binding": {}}
@@ -115,9 +120,10 @@ def _snap(**over):
 
 def test_a_new_candidate_for_an_applicable_field_resets_the_counter_and_nothing_else_counts():
     before = _snap(candidates={"torque_nm|d_1|142"})
-    assert artifacts(before, _snap(candidates={"torque_nm|d_1|142", "fuel_tank_l|d_1|43"})) == ["new_candidate:1"]
-    assert artifacts(before, _snap(candidates={"torque_nm|d_1|142"})) == []             # nothing new
-    assert artifacts(_snap(evidence={"e1"}), _snap(evidence={"e1", "e2"})) == ["new_admitted_evidence:1"]
+    assert artifacts(before, _snap(candidates={"torque_nm|d_1|142", "fuel_tank_l|d_1|43"}),
+                     mode="legacy") == ["new_candidate:1"]
+    assert artifacts(before, _snap(candidates={"torque_nm|d_1|142"}), mode="legacy") == []             # nothing new
+    assert artifacts(_snap(evidence={"e1"}), _snap(evidence={"e1", "e2"}), mode="legacy") == ["new_admitted_evidence:1"]
 
 
 def test_failed_fetches_and_rate_limited_searches_do_not_reset_the_counter(tmp_path):
@@ -364,7 +370,7 @@ class SweepGLM(ScriptedGLM):
         system = messages[0]["content"]
         self.requests.append({"messages": messages, "tools": tools, **kwargs})
         usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
-        if system == research_system_prompt():
+        if system in (research_system_prompt(), research_system_prompt("contract")):
             return ChatResponse(message=self.messages.pop(0), finish_reason="stop", usage=usage)
         packet = json.loads(messages[1]["content"].split("\n", 1)[1]) if "(JSON)" in messages[1]["content"] else {}
         if system == DOCUMENT_SWEEP_SYSTEM_PROMPT:
@@ -396,10 +402,11 @@ def sweep_run(tmp_path, client, routes=None, **cfg):
 PRIMARY_FETCH = [turn(_call("a", "fetch_url", {"url": EU}), _call("b", "fetch_url", {"url": tail.CARTUBE}))]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_is_local_first_and_settled_fields_never_reach_it(tmp_path):
     store = tail._store("s", "torque_nm", 142, tail.CARTUBE, "מומנט מנוע בנזין: 142 ניוטון-מטר", "Nm")
     client = SweepGLM(PRIMARY_FETCH + [turn(store), say({"summary": "p", "fields": {}})])
-    result, events = sweep_run(tmp_path, client)
+    result, events = sweep_run(tmp_path, client, **SINGLE_PACKET_SWEEP)
     assert result["research_bundle"]["field_states"]["torque_nm"]["state"] == "ok"
     packet = client.sweep_packets[0]
     assert "torque_nm" not in packet["fields_to_review"]                       # settled before the sweep
@@ -463,6 +470,7 @@ def test_recovery_still_runs_breadth_first_and_harvests_new_documents_for_all_op
     assert rec["field_recovery_turn_budget"] == 24
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_no_paid_stage_runs_when_nothing_is_open(tmp_path):
     fields = ["torque_nm"]
     store = tail._store("s", "torque_nm", 142, tail.CARTUBE, "מומנט מנוע בנזין: 142 ניוטון-מטר", "Nm")
@@ -496,8 +504,9 @@ def test_phase_settings_default_to_the_global_configuration(tmp_path):
     caller, client = _caller(tmp_path, AgentConfig(thinking="enabled", max_tokens=900, temperature=0.2))
     for phase in ("research", "document_sweep", "field_recovery", "finalization"):
         caller([{"role": "user", "content": "x"}], phase=phase)
-    assert all(k == {"tools": None, "temperature": 0.2, "max_tokens": 900, "extra": {"thinking": {"type": "enabled"}}}
-               for k in client.kwargs)                                         # no model / timeout override sent
+    base = {"tools": None, "temperature": 0.2, "max_tokens": 900, "extra": {"thinking": {"type": "enabled"}}}
+    # no model / timeout override sent; the document sweep's only built-in default is one HTTP attempt (no retry)
+    assert client.kwargs == [base, {**base, "max_attempts": 1}, base, base]
 
 
 def test_phase_settings_override_only_their_own_phase(tmp_path):
@@ -548,10 +557,11 @@ def test_glm_client_per_call_timeout_keeps_retry_semantics(monkeypatch):
 
 # --- the orchestration benchmark (offline) -------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_corolla_orchestration_benchmark_keeps_trustworthy_coverage(tmp_path):
     from fixtures import corolla_orchestration as bench
 
-    report = bench.benchmark(tmp_path)
+    report = bench.benchmark(tmp_path, **SINGLE_PACKET_SWEEP)
     follows = report["policy_follows_prompt"]
     # BEFORE (origin/main at PR #22, same fixture): 12 research calls, 36 candidates on 26 fields, 2 sweep calls,
     # 15 trustworthy fields, 7 rejected evidence requests (see the PR description)
@@ -592,6 +602,7 @@ def test_an_unpriced_phase_model_that_was_never_called_does_not_null_the_cost():
     assert cost["tokens_usd"] == expected
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_an_acquisition_snapshot_failure_never_fails_research(tmp_path, monkeypatch):
     from src import acquisition
 
@@ -655,6 +666,7 @@ def test_two_stalled_turns_on_a_thin_source_set_do_not_stop(tmp_path):
     assert "source set is still thin" in note and "Acquire NEW" in note
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_an_under_acquired_run_continues_until_the_hard_ceiling(tmp_path):
     stall = [turn(_call(f"s{i}", "find_in_document", {"document_id": EU_DOC, "query": f"label {i}"}))
              for i in range(8)]
@@ -719,6 +731,7 @@ def test_failures_rereads_and_replays_are_still_no_progress_while_under_acquired
     assert result["stop_reason"] == "model_finished" and result["research_steps"] == 4
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_the_safety_gate_never_touches_evidence_state_binding_or_conflicts(tmp_path):
     from src.acquisition import minimum_base
 

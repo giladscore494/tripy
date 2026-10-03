@@ -135,6 +135,7 @@ def corolla_family(tmp_path_factory):
     return family.benchmark(tmp_path_factory.mktemp("family"))
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_warm_related_variant_reuses_only_what_its_scope_allows(corolla_family):
     a, a2, cold = corolla_family["A"], corolla_family["A2"], corolla_family["A2_no_memory"]
     assert a["verified_fact_cache_hits"] == 0                                    # cold
@@ -403,6 +404,7 @@ def corolla_feedback_run(tmp_path):
     return result, examples, log
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_required_corolla_training_cases(tmp_path):
     result, examples, _ = corolla_feedback_run(tmp_path)
     by = {}
@@ -428,6 +430,7 @@ def test_required_corolla_training_cases(tmp_path):
     assert result["training_feedback"]["examples"] == len(examples)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_feedback_never_mislabels(tmp_path):
     result, examples, log = corolla_feedback_run(tmp_path)
     # a quote problem is a rejection, never a false positive; candidates nobody tried to promote get no label
@@ -444,6 +447,7 @@ def test_feedback_never_mislabels(tmp_path):
             assert "contradicting_value" in e or "other_field" in e["reason_code"] or "semantic" in e["reason_code"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_feedback_export_is_deterministic_and_complete(tmp_path):
     corolla_feedback_run(tmp_path / "one")
     runs = tmp_path / "one" / "runs"

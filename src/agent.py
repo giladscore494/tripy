@@ -72,7 +72,9 @@ from .storage.atomic import atomic_write_json
 from .storage.run_log import RunLog, read_events, utc_now
 from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_tools
 from .tools.evidence import EvidenceStore
-from .acquisition import AcquisitionTracker, annotate_search_result
+from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, DISCOVERY_TOOLS, AcquisitionTracker,
+                          acquisition_tool_specs, annotate_search_result, cluster_source_type, missing_categories_note,
+                          model_tokens, navigation_links, recovery_clusters)
 from .candidate_harvest import RunHarvester
 from .evidence_admission import AdmissionContext
 from .research_memory import ResearchMemory
@@ -195,6 +197,46 @@ Your role in this step: SOURCE ACQUISITION (documents are external memory).
 
 When you are done, reply with ONLY one JSON object (no tool call) shaped like:
 """ + OUTPUT_SHAPE
+
+ACQUISITION_SYSTEM_PROMPT = """You are the SOURCE ACQUISITION step of a vehicle research benchmark. Source acquisition
+is your only job.
+
+You receive the Level 1.5 record of ONE exact vehicle variant from the Israeli government catalog (model year,
+government trim, model code, power, drivetrain). Treat that record as fixed context. Obtain a compact, high-value
+document set about THIS variant. Deterministic code harvests every document you fetch for all requested fields, and
+later steps review those values and recover what is still open. You do not extract, verify or record field values,
+and you do not write the final answer.
+
+Tools in this step: search_web, search_official_domains, fetch_url, fetch_pdf, render_page, nothing else.
+fetch_url / fetch_pdf / render_page store the full document and return a document_id, metadata and a short preview.
+For HTML pages the result also has `links`: the page's most useful outbound links (same site, PDFs, specification,
+brochure, price list and warranty pages first).
+
+Variant identity: prefer documents about the exact variant (model year, trim, powertrain, market). A document about
+another market or trim is still usable (its market and variant are recorded by code); mention it in your final
+reason only if it matters.
+
+Where to look first (search results carry acquisition_priority; 1 = try first):
+  1. the official importer's model / price-list / brochure pages for the target market;
+  2. the official manufacturer's technical specifications;
+  3. official technical PDFs and documents;
+  4. official media / press kits;
+  5. high-quality publishers, then aggregators, then marketplaces and communities.
+priority_technical orders sources for technical specifications; priority_commercial orders them for market-bound
+information (price, licence fee, local trim name, warranty), where target-market sources come before foreign
+manufacturer pages. Lower-priority sources stay allowed when they are what exists; nothing is forbidden.
+
+How to work:
+- From an importer or manufacturer model page, follow its `links` to the specification PDF, brochure, price list
+  and warranty page rather than searching again.
+- Do not re-fetch a URL or repeat a search. Failed fetches (403 / 404 / 429) and repeated searches are not progress;
+  research ends automatically when turns stop acquiring new usable documents.
+- A turn may end with an [operational note] listing the source categories still missing: prioritize them.
+- You have a small budget of turns.
+
+When the document set is good enough (or nothing more can be found), reply with ONLY this JSON object and no tool
+call:
+{"done": true, "reason": "<short>"}"""
 
 FINALIZER_SYSTEM_PROMPT = """You are the finalization step of a vehicle research benchmark.
 
@@ -342,15 +384,16 @@ When done (or when nothing more can be found), reply with ONLY one JSON object (
 REPAIR_PROMPT = ("Your last reply could not be parsed as JSON. Return the same content as ONE valid JSON object "
                  "and nothing else.")
 
-PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT + FIELD_RECOVERY_SYSTEM_PROMPT
-                                 + DOCUMENT_SWEEP_SYSTEM_PROMPT + CLUSTER_RECOVERY_SYSTEM_PROMPT
-                                 + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
+PROMPT_VERSION = hashlib.sha256((SYSTEM_PROMPT + ACQUISITION_SYSTEM_PROMPT + FINALIZER_SYSTEM_PROMPT
+                                 + FIELD_RECOVERY_SYSTEM_PROMPT + DOCUMENT_SWEEP_SYSTEM_PROMPT
+                                 + CLUSTER_RECOVERY_SYSTEM_PROMPT + BUNDLE_VERSION).encode("utf-8")).hexdigest()[:12]
 CLUSTER_TURN_CEILING = 4    # absolute per-attempt ceiling, whatever CLUSTER_MAX_TURNS says
 
 
-def research_system_prompt() -> str:
-    """The research system prompt without tools this host cannot run (e.g. render_page without Playwright)."""
-    prompt = SYSTEM_PROMPT
+def research_system_prompt(mode: str = "legacy") -> str:
+    """The research system prompt of an acquisition mode (contract: ACQUISITION_SYSTEM_PROMPT; legacy: SYSTEM_PROMPT)
+    without tools this host cannot run (e.g. render_page without Playwright)."""
+    prompt = ACQUISITION_SYSTEM_PROMPT if mode == "contract" else SYSTEM_PROMPT
     for name in unavailable_tools():
         prompt = prompt.replace(f" {name},", "").replace(f" / {name}", "")
     return prompt
@@ -369,13 +412,14 @@ class SearchBudget:
         return max(0, self.limit - self.used)
 
 STOP_REASONS = ("model_finished", "max_steps", "no_new_research", "no_new_artifact", "acquisition_sufficient",
-                "user_cancelled", "api_failure", "research_exception")
+                "extension_exhausted", "user_cancelled", "api_failure", "research_exception")
 STATUSES = ("completed", "max_steps_finalized", "no_new_research_finalized", "completed_unparsed",
             "finalization_failed", "research_failed", "interrupted", "incomplete", "recovered_finalized",
-            "finalization_pending", "acquisition_sufficient_finalized")
+            "finalization_pending", "acquisition_sufficient_finalized", "under_acquired_finalized")
 FINALIZED_STATUS = {"max_steps": "max_steps_finalized", "no_new_research": "no_new_research_finalized",
                     "no_new_artifact": "no_new_research_finalized",
-                    "acquisition_sufficient": "acquisition_sufficient_finalized"}
+                    "acquisition_sufficient": "acquisition_sufficient_finalized",
+                    "extension_exhausted": "under_acquired_finalized"}
 # finalization_pending: the durable pre-finalization checkpoint (research complete, finalizer not finished).
 PARTIAL_STATUSES = ("interrupted", "research_failed", "finalization_failed", "incomplete", "finalization_pending")
 PHASE_LABELS = {"research": "Research", "deterministic_harvest": "Deterministic Harvest",
@@ -396,6 +440,10 @@ class AgentConfig:
     keep_recent_tool_results: int = 4         # newest tool results kept as sent; older ones are compacted
     compact_tool_output_chars: int = 700      # size of a compacted older tool result
     no_new_research_turns: int = 2            # finalize after N consecutive idle turns; 0 = off
+    # ACQUISITION_MODE: "contract" = primary research is source acquisition only (search / fetch tools, acquisition
+    # prompt, progress = new documents and candidates, extension futility, always finalized from the bundle);
+    # "legacy" = the previous behaviour exactly.
+    acquisition_mode: str = "contract"
     # Primary research is source acquisition (src/acquisition.py). It stops after N consecutive turns that acquired
     # nothing (no new usable document, official source, candidate for an open field, admitted evidence or better
     # binding; re-reads, repeated searches and failed fetches are no progress). 0 = off.
@@ -440,8 +488,8 @@ class AgentConfig:
     # The per-field limit only shapes the packet: every candidate stays stored and reachable through local tools.
     document_sweep_candidates_per_field: int = 3
     document_sweep_packet_max_chars: int = 28000
-    document_sweep_max_fields: int = 30
-    document_sweep_max_candidates: int = 48
+    document_sweep_max_fields: int = 12
+    document_sweep_max_candidates: int = 16
     # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
     recovery_mode: str = "cluster"
     cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
@@ -554,6 +602,8 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
     phases = phase_settings_from_env(env)
     if phases:
         values["phase_settings"] = phases
+    if (env("ACQUISITION_MODE") or "").strip().lower() in ACQUISITION_MODES:
+        values["acquisition_mode"] = env("ACQUISITION_MODE").strip().lower()
     if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
         values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
     return AgentConfig(**{**values, **overrides})
@@ -597,7 +647,8 @@ def effective_glm_config(client, config: AgentConfig, tool_config: ToolConfig) -
     from .phase_settings import describe
 
     phases = describe(config, {"research_model": research_model_of(client), "finalizer_model":
-                               settings["finalizer_model"], "timeout_s": settings.get("timeout_s")})
+                               settings["finalizer_model"], "timeout_s": settings.get("timeout_s"),
+                               "chat_max_attempts": settings.get("chat_max_attempts")})
     return {
         **settings,
         "thinking": extra.get("thinking", "provider_default"),
@@ -652,6 +703,36 @@ def build_user_message(payload: dict, include_level3: bool, max_steps: int | Non
                   + (f" Once enough sources are acquired, research also ends after {no_artifact_stop} consecutive "
                      "turns that acquire nothing new." if no_artifact_stop else "")]
     lines += ["", "Start researching."]
+    return "\n".join(lines)
+
+
+def build_acquisition_message(payload: dict, include_level3: bool, max_steps: int | None = None,
+                              notes: dict | None = None, requested: list[dict] | None = None,
+                              no_artifact_stop: int | None = None, target_market: str = "IL") -> str:
+    """The contract-mode research task: the fixed record, operator notes, the target market and the source
+    categories (recovery clusters) the requested fields need, with field NAMES only (no descriptions or semantic
+    definitions: field work happens in later steps)."""
+    specs = requested if requested is not None else resolve_requested_fields(None)
+    lines = ["Level 1.5 record (fixed context):", json.dumps(payload, ensure_ascii=False, indent=1), ""]
+    if notes:
+        lines += ["Operator notes for this variant (context and inferences, not verified facts):",
+                  json.dumps(notes, ensure_ascii=False, indent=1), ""]
+    lines += [f"Target market: {target_market}", "",
+              "Source categories to acquire (the requested fields grouped by recovery cluster, and the source type "
+              "that usually answers each; code extracts the values from the documents you fetch):"]
+    for cluster, items in recovery_clusters(specs).items():
+        names = ", ".join(s["name"] + (f" ({s['display_name_he']})" if s.get("display_name_he") else "")
+                          for s in items)
+        lines.append(f"- {cluster} [{cluster_source_type(items, target_market)}]: {names}")
+    if include_level3:
+        lines += ["", "Level 3 open research (put results under `level3`):"]
+        lines += [f"- {key}: {label}" for key, label in LEVEL3_TOPICS.items()]
+    if max_steps:
+        lines += ["", f"Research budget: about {max_steps} model turns (more only while the acquired source set is "
+                      "still too thin). You may finish earlier."
+                  + (f" Once enough sources are acquired, research also ends after {no_artifact_stop} consecutive "
+                     "turns that acquire nothing new." if no_artifact_stop else "")]
+    lines += ["", "Start acquiring sources."]
     return "\n".join(lines)
 
 
@@ -733,6 +814,8 @@ class ModelCaller:
             kwargs["model"] = model
         if settings["timeout_s"]:
             kwargs["timeout_s"] = settings["timeout_s"]
+        if settings["max_attempts"]:
+            kwargs["max_attempts"] = settings["max_attempts"]
         response = self.client.chat(messages, **kwargs)
         latency = int(getattr(response, "latency_ms", 0) or 0)
         trace.add_usage(self.usage[trace.phase_group(phase)], response.usage, latency)
@@ -870,6 +953,8 @@ class ToolSession:
             prior = self.tracker.lookup(signature)
             if prior is not None:
                 result = replay_result(prior)
+                if name == "fetch_url" and phase != "research":   # navigation links: research fetches only
+                    result.pop("links", None)
                 self.turn_results.append({"name": name, "result": result, "reused": True})
                 self.tracker.note_reused(name)
                 self.run_log.event("tool_reused", step=step, phase=phase, call_id=call.get("id"), name=name,
@@ -933,6 +1018,8 @@ class ToolSession:
                 adm = self.ctx.admission       # where to try first (src/acquisition.py): scheduling metadata only
                 maker = getattr(adm, "manufacturer", None) or self.ctx.vehicle.get("manufacturer")
                 annotate_search_result(result, maker, getattr(adm, "target_market", None) or self.config.target_market)
+            if phase == "research" and name == "fetch_url" and self.config.acquisition_mode == "contract":
+                self._attach_navigation_links(result)
             if budget is not None:
                 budget.used += self.ctx.counters["search_cache_misses"] - misses_before
             elapsed = int((time.monotonic() - t_tool) * 1000)
@@ -962,6 +1049,19 @@ class ToolSession:
                 "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
             })
         return self.tracker.end_turn()
+
+    def _attach_navigation_links(self, result: Any) -> None:
+        """Contract-mode research: a fetched HTML page carries its ranked outbound links (src/acquisition.py
+        rank_links), from the cached body; nothing is fetched. Navigation metadata only; never raises."""
+        try:
+            identity = getattr(self.ctx.admission, "identity", None)
+            tokens = model_tokens(getattr(identity, "family", None), self.ctx.vehicle.get("model"))
+            links = navigation_links(self.ctx, result, tokens)
+        except Exception as exc:  # noqa: BLE001 - navigation hints must never cost the run
+            self.run_log.event("navigation_links_failed", error=_error_text(exc))
+            return
+        if links is not None:
+            result["links"] = links
 
 
 def _doc_metas(events: list[dict], cache, documents_dir: Path) -> list[dict]:
@@ -1860,8 +1960,8 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
           otherwise deterministic chunks by recovery_cluster (fields re-evaluated before every chunk)
 
     Cached-document tools only: a search or fetch call is refused without being executed, so this stage makes 0
-    searches and 0 fetches. Returns the sweep summary; GLMError ends the sweep (recovery still runs), control-flow
-    exceptions propagate."""
+    searches and 0 fetches. Returns the sweep summary; a GLMError fails only its chunk (recorded in
+    `failed_chunk_fields`; the next chunk still runs and recovery still runs), control-flow exceptions propagate."""
     from .candidate_harvest import candidate_matrix
     from .document_inspection import inspect_document
     from .document_sweep import (DOCUMENT_SWEEP_TOOLS, EXTERNAL_TOOLS, MAX_SWEEP_TURNS, ROUTING_AUTHORITY,
@@ -1953,7 +2053,9 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     specs_for_tools = sweep_tool_specs(tool_specs())
     calls_before = len(session.tool_calls)
     blocked_before = session.blocked
-    turns, error, presented = 0, None, 0
+    turns, presented = 0, 0
+    chunk_errors: list[str] = []
+    failed_chunk_fields: list[str] = []
     replies, follow_ups, chunk_log = [], [], []
     t_sweep = time.monotonic()
     for index, plan in enumerate(chunks, start=1):
@@ -1989,7 +2091,7 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
         messages = [{"role": "system", "content": DOCUMENT_SWEEP_SYSTEM_PROMPT},
                     {"role": "user", "content": "Document sweep task (JSON):\n"
                                                 + json.dumps(packet, ensure_ascii=False, default=str)}]
-        reply_text, chunk_turns, follow_up = None, 0, None
+        reply_text, chunk_turns, follow_up, error = None, 0, None, None
         try:
             for turn_index in range(1, max_turns + 1):
                 message = caller(outgoing_messages(messages, config), phase="document_sweep", tools=specs_for_tools,
@@ -2017,8 +2119,15 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                                             "results above, then store_evidence / report_field_status. Results of "
                                             "calls made in this turn will not be shown to you.")
         except GLMError as exc:
+            # A failed chunk never ends the sweep: its fields stay open (they flow to recovery as any open field)
+            # and the next chunk still runs.
             error = _error_text(exc)
+            chunk_errors.append(error)
+            failed_chunk_fields.extend(f for f in fields if f not in failed_chunk_fields)
             run_log.event("document_sweep_failed", error=error, api_error=exc.as_dict(), chunk=info)
+            run_log.event("document_sweep_chunk_failed", **info, fields=fields, error=error,
+                          timeout=bool(getattr(exc, "timeout", False)), attempts=getattr(exc, "attempts", None),
+                          note="chunk failed; the sweep continues with the next chunk")
         used = {k: caller.usage["document_sweep"][k] - usage_chunk.get(k, 0) for k in caller.usage["document_sweep"]}
         if reply_text:
             replies.append(reply_text)
@@ -2026,9 +2135,8 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
                           "packet_chars": size["chars"], "model_calls": chunk_turns,
                           "latency_ms": int((time.monotonic() - t_chunk) * 1000),
                           "prompt_tokens": used.get("prompt_tokens", 0),
-                          "completion_tokens": used.get("completion_tokens", 0), "error": error})
-        if error:
-            break
+                          "completion_tokens": used.get("completion_tokens", 0), "error": error,
+                          "failed": error is not None})
     latency_ms = int((time.monotonic() - t_sweep) * 1000)
     events = trace_events(run_log)
     after = current_evaluation(events, specs, market)
@@ -2046,7 +2154,10 @@ def run_document_sweep(*, session: ToolSession, caller: ModelCaller, specs: list
     summary = sweep_summary(before=before, after=after, sweep_evidence=sweep_evidence, promoted=promoted,
                             missed=missed, presented=presented, model_calls=turns, turns=turns,
                             blocked=session.blocked - blocked_before, external_calls=external, reply=reply)
-    summary["error"] = error
+    # every chunk error (one string when a single chunk failed, so existing consumers still see an error)
+    summary["error"] = (chunk_errors[0] if len(chunk_errors) == 1 else chunk_errors) if chunk_errors else None
+    summary["chunk_errors"] = chunk_errors
+    summary["failed_chunk_fields"] = failed_chunk_fields
     summary["follow_up_turn"] = follow_ups[0] if len(follow_ups) == 1 else (follow_ups or None)
     timeouts = sum(1 for e in events if e.get("kind") == "api_error" and (e.get("seq") or 0) > start_seq
                    and e.get("phase") == "document_sweep" and e.get("timeout"))
@@ -2180,11 +2291,16 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     client.activity_hook = activity_hook
     if cancel_event is not None and hasattr(client, "cancel_event"):
         client.cancel_event = cancel_event
+    contract = config.acquisition_mode == "contract"
+    if contract:
+        task = build_acquisition_message(payload, config.include_level3, config.max_steps, notes_for_variant, specs,
+                                         config.primary_research_no_artifact_stop, config.target_market)
+    else:
+        task = build_user_message(payload, config.include_level3, config.max_steps, notes_for_variant, specs,
+                                  config.primary_research_no_artifact_stop)
     messages: list[dict] = [
-        {"role": "system", "content": research_system_prompt()},
-        {"role": "user", "content": build_user_message(payload, config.include_level3, config.max_steps,
-                                                       notes_for_variant, specs,
-                                                       config.primary_research_no_artifact_stop)},
+        {"role": "system", "content": research_system_prompt(config.acquisition_mode)},
+        {"role": "user", "content": task},
     ]
     run_log.write_input(payload)
     run_log.event("run_started", model=research_model, research_model=research_model,
@@ -2195,7 +2311,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   pricing_finalizer=pricing_finalizer, variant_notes=notes_for_variant,
                   requested_fields=requested_fields, requested_field_specs=[public_spec(s) for s in specs],
                   target_market=config.target_market, vehicle_label=vehicle_ctx,
-                  tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode)
+                  tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode,
+                  acquisition_mode=config.acquisition_mode)
     try:
         memory = ResearchMemory.for_cache(cache) if config.research_memory_enabled else None
     except Exception as exc:  # memory problems never cost the run
@@ -2208,7 +2325,11 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         except Exception as exc:  # memory problems never cost the run
             fact_reuse = {"error": _error_text(exc), "reused": 0}
             run_log.event("fact_reuse_failed", error=fact_reuse["error"])
-        if fact_reuse.get("fields_ok"):
+        if fact_reuse.get("fields_ok") and contract:
+            messages[1]["content"] += (
+                "\n\nAlready settled by verified facts reused from related variants (no source is needed for them): "
+                + ", ".join(fact_reuse["fields_ok"]) + ".")
+        elif fact_reuse.get("fields_ok"):
             messages[1]["content"] += (
                 "\n\nAlready supported by verified evidence reused from related variants (re-checked against this "
                 "exact variant; their evidence ids are in the store): " + ", ".join(fact_reuse["fields_ok"])
@@ -2267,6 +2388,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "bundle_version": BUNDLE_VERSION,
             "requested_fields": requested_fields,
             "target_market": config.target_market,
+            "acquisition_mode": config.acquisition_mode,
             "status": final_status,
             "stop_reason": stop_reason,
             "research_steps": steps_done,
@@ -2328,9 +2450,13 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         # turn ceiling) needs the MINIMUM ACQUISITION BASE (acquisition.minimum_base). An under-acquired run is told so
         # and keeps acquiring, up to PRIMARY_RESEARCH_HARD_MAX_TURNS; a normally acquired run stops exactly as before.
         hard_ceiling = max(config.max_steps, int(config.primary_research_hard_max_turns or 0))
+        # Contract mode: the research model gets ONLY the acquisition tools (schemas sent AND execution allowed), and
+        # an under-acquired extension beyond the normal ceiling ends once it stops acquiring (extension futility).
+        research_tools = acquisition_tool_specs(tool_specs()) if contract else tool_specs()
+        research_allowed = ACQUISITION_TOOLS if contract else None
         try:
             for step in range(1, hard_ceiling + 1):
-                message = caller(outgoing_messages(messages, config), phase="research", tools=tool_specs(),
+                message = caller(outgoing_messages(messages, config), phase="research", tools=research_tools,
                                  activity={"turn": step})
                 messages.append(_assistant_echo(message))
                 calls = message.get("tool_calls") or []
@@ -2338,7 +2464,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     final_text = message.get("content") or ""
                     stop_reason, steps_done = "model_finished", step
                     break
-                tools.execute(calls, messages, phase="research")
+                calls_before = len(tools.tool_calls)
+                tools.execute(calls, messages, phase="research", allowed=research_allowed)
                 steps_done = step
                 found = acq.after_turn(step)          # never raises: a telemetry problem counts as progress
                 base_met, base = acq.base()
@@ -2347,6 +2474,12 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     if base_met or step >= hard_ceiling:
                         stop_reason = "max_steps"
                         break
+                    if contract and step > config.max_steps:   # an extension turn: is extending still acquiring?
+                        executed = [c for c in tools.tool_calls[calls_before:] if c["name"] in DISCOVERY_TOOLS
+                                    and not c.get("blocked") and not c.get("reused")]
+                        if acq.extension_turn(step, found, len(executed)):
+                            stop_reason = "extension_exhausted"
+                            break
                     acq.defer("max_turns", step)      # under-acquired: extend, up to the hard ceiling
                     wanted = "max_turns"
                 else:
@@ -2372,14 +2505,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                  "target-market price lists or brochures, other strong spec sources); re-reading cached "
                                  f"documents does not help. At most {remaining} more turn(s).")
                 elif not found and remaining > 0:
-                    notes.append("This turn acquired nothing new (no new usable document, official source, candidate "
-                                 "or admitted evidence); re-reading cached documents is not acquisition."
+                    notes.append(("This turn acquired nothing new (no new usable document, target-market document or "
+                                  "candidate); failed fetches and repeated searches are not acquisition." if contract
+                                  else "This turn acquired nothing new (no new usable document, official source, "
+                                  "candidate or admitted evidence); re-reading cached documents is not acquisition.")
                                  + (f" Research ends after {limit - acq.streak} more turn(s) like this."
                                     if limit and base_met else ""))
                 if not wanted and 0 < remaining <= 2:
                     notes.append(f"{remaining} research turn(s) left: fetch the most valuable source still missing "
                                  "(official spec page or PDF, target-market price list or brochure) or finish. Every "
                                  "fetched document is harvested for all fields and reviewed in a later step.")
+                if contract:                          # a hint only: computed after every stop decision of this turn
+                    missing = missing_categories_note(acq.missing_categories())
+                    if missing:
+                        notes.append(missing)
                 if notes:
                     messages[-1]["content"] += "\n[operational note] " + " ".join(notes)
             else:
@@ -2434,7 +2573,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             retried = bool(recovery and recovery.get("attempt_count"))
             swept = bool(sweep and sweep.get("model_calls"))
             fin = None
-            if stop_reason == "model_finished" and not retried and not swept:
+            # contract mode: the research reply is a {"done": ...} acquisition note, never the run output; the run is
+            # always finalized from the compact bundle
+            if stop_reason == "model_finished" and not retried and not swept and not contract:
                 output, parse_note = parse_model_output(final_text)
                 if output is not None:
                     status = "completed"
@@ -2473,7 +2614,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                                            request_path=run_log.dir / "finalizer_request.json", bundle=bundle)
             if output is None and fin is not None:
                 finalization, bundle = fin["info"], fin["bundle"]
-                if stop_reason != "model_finished":
+                if stop_reason != "model_finished" or contract:
                     final_text = fin["text"]
                 if fin["error"]:
                     status, error, api_error = "finalization_failed", fin["error"], fin["api_error"]

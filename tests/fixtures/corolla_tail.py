@@ -147,7 +147,7 @@ class PolicyGLM:
     def chat(self, messages, tools=None, **kwargs):
         self.requests.append({"messages": messages, "tools": tools})
         system = messages[0]["content"]
-        if system == research_system_prompt():
+        if system in (research_system_prompt(), research_system_prompt("contract")):
             kind, message = "research", self.primary.pop(0)
         elif system in (FIELD_RECOVERY_SYSTEM_PROMPT, CLUSTER_RECOVERY_SYSTEM_PROMPT):
             kind, message = "recovery", self.recover(messages, tools)
@@ -266,7 +266,9 @@ def run_mode(mode: str, workdir: Path, *, client=None, payload=None, vehicle=Non
     session = FakeSession(routes)
     client = client or PolicyGLM()
     log = RunLog(workdir / "runs", batch or f"tail-{mode}", record_id)
-    config = AgentConfig(**{"max_steps": 4, "no_new_research_turns": 0, "requested_fields": FIELDS,
+    # the scripted research model inspects documents and stores evidence: the legacy research contract
+    config = AgentConfig(**{"acquisition_mode": "legacy", "max_steps": 4, "no_new_research_turns": 0,
+                            "requested_fields": FIELDS,
                             "recovery_mode": mode, "document_sweep_max_turns": 0, "research_memory_enabled": False,
                             **cfg})
     result = run_vehicle({"upstream_record_id": record_id}, payload or PAYLOAD, client=client, cache=cache,

@@ -145,8 +145,9 @@ below.
 | `PRIMARY_RESEARCH_NO_ARTIFACT_STOP` | Stop primary research after N consecutive turns that acquired nothing new (default **2**; 0 = off), once the minimum acquisition base is met. |
 | `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `PRIMARY_RESEARCH_HARD_MAX_TURNS` | Fail-safe minimum acquisition base (defaults **3** useful documents AND **50**% in-scope candidate coverage; both 0 = off) and the hard ceiling an under-acquired run may extend to (default **12**). See [Minimum acquisition base](#minimum-acquisition-base-fail-safe-stop). |
 | `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
-| `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 30 fields, 48 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
-| `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting. See [Phase-specific model settings](#phase-specific-model-settings). |
+| `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 12 fields, 16 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
+| `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_<PHASE>_MAX_ATTEMPTS`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting, except `GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, whose default is `1` (no identical retry of a timed-out sweep packet). See [Phase-specific model settings](#phase-specific-model-settings). |
+| `ACQUISITION_MODE` | `contract` (default): primary research is source acquisition only (search / fetch tools only, acquisition prompt, progress = new usable / target-market documents and new candidates, an under-acquired extension beyond the normal ceiling ends after an extension turn with no search / fetch or two extension turns without a new usable document, always finalized from the bundle). `legacy`: the previous behaviour exactly. |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `IDENTITY_VOCABULARY_PATH`, `SOURCE_RULES_PATH` | Alternative identity vocabulary / source-authority rule files (defaults in `data/`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
@@ -272,6 +273,18 @@ at any time (`--rebuild`). The compact summary is also logged to stdout. Secrets
   searches, hard-max rate, latency; sweep calls, fields entering / resolved, resolution rate, harvest misses
   recovered, evidence rejection rate, tokens, latency, timeout rate, resolved fields per model call; plus every
   vehicle's row.
+- **End to end** (also for old runs: rebuilt from `events.jsonl`): recovery (model calls, billable searches,
+  fetches, attempts, fields resolved), the final field states (`current_evaluation()` over the final events: ok,
+  conflicting, unresolved / missing, foreign_market_only, variant_not_exact, not_applicable, plus the ok fields),
+  totals per phase (model calls, input / output tokens), cost (the run's own `result.json` cost), wall time, the
+  first turn that met the minimum acquisition base and the research tokens spent until then, research
+  `tool_blocked` calls, and `official_urls_discovered`. Interrupted / incomplete runs are flagged and reported
+  under `interrupted`, never averaged into `end_to_end`. `by_config` repeats the statistics per configuration
+  (acquisition mode, research / sweep model, sweep thinking, sweep max attempts, sweep limits), so a legacy and a
+  contract arm compare from one `benchmark.json`.
+- **Official documents:** newer runs record official documents that were *fetched* (`official_documents`, UI
+  "Official docs (fetched)") separately from official URLs merely *discovered* in search results
+  (`official_urls_discovered`, UI "Official URLs (discovered)"); an older run's single number keeps its old label.
 
 ## Z.ai API: confirmed and unverified
 
@@ -504,7 +517,7 @@ Before any paid sweep call (`run_document_sweep` in `src/agent.py`):
 4. `current_evaluation()` runs again and settled fields are removed (`document_sweep_plan.removed_settled`);
 5. the packet carries the best `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` (default 3) candidates per field
    (`candidates_not_shown` counts the rest; storage keeps every candidate and the local tools reach them);
-6. while the packet fits `DOCUMENT_SWEEP_MAX_PACKET_CHARS` / `_MAX_FIELDS` / `_MAX_CANDIDATES` (28000 / 30 / 48) it
+6. while the packet fits `DOCUMENT_SWEEP_MAX_PACKET_CHARS` / `_MAX_FIELDS` / `_MAX_CANDIDATES` (28000 / 12 / 16) it
    is ONE call; otherwise `plan_chunks` packs the schema's `recovery_cluster`s, in schema order, into as few chunks as
    fit (a cluster that alone exceeds the limits is split by fields). Every open field is in exactly one chunk; fields
    settled by an earlier chunk are dropped before the next one. A `GLMError` still ends the sweep (retry semantics

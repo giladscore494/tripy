@@ -2,6 +2,8 @@
 binding reaches the field's binding_requirement. Model declarations (`found`, `conflict_resolved`, a claimed
 variant_match) never change that. current_evaluation() stays the one operational field-state authority."""
 
+import pytest
+
 from src.field_recovery import (RETRY_STATES, binding_satisfies, current_evaluation, early_resolution_check,
                                 evaluate_field, in_server_scope)
 
@@ -105,6 +107,7 @@ def test_legacy_items_without_a_server_binding_keep_their_behaviour():
         "variant_not_exact"
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_admitted_trim_field_below_its_requirement_is_retried_end_to_end(tmp_path, make_ctx):
     """Through the real admission gate: the XPeng spec page binds tire_size_front at exact_technical_variant
     (its trim "MAX" is a generic word, so the trim is never bound) while the field needs exact_market_trim."""

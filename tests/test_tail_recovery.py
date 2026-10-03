@@ -321,6 +321,7 @@ def corolla(tmp_path_factory):
     return {mode: run_mode(mode, root / mode) for mode in ("legacy", "cluster")}
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_corolla_benchmark_cluster_mode_resolves_as_much_with_far_less_work(corolla):
     legacy, cluster = summarize(corolla["legacy"]), summarize(corolla["cluster"])
     assert legacy["tail_start_coverage"] == cluster["tail_start_coverage"] == "3/14"
@@ -335,6 +336,7 @@ def test_corolla_benchmark_cluster_mode_resolves_as_much_with_far_less_work(coro
         ("conflicting", "unresolved", "foreign_market_only")                    # no truth was loosened
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_corolla_cluster_run_details(corolla):
     run = corolla["cluster"]
     result, events = run["result"], run["events"]
@@ -360,6 +362,7 @@ def test_corolla_cluster_run_details(corolla):
     assert m["tail_model_calls"] == rec["turns"] and m["tail_search_calls"] == 2
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_local_first_exposes_only_cached_tools(corolla):
     client = corolla["cluster"]["client"]
     first = next(r for r in client.requests if r["messages"][0]["content"] == CLUSTER_RECOVERY_SYSTEM_PROMPT)
@@ -372,6 +375,7 @@ def test_local_first_exposes_only_cached_tools(corolla):
     assert "search_web" in {t["function"]["name"] for t in perf["tools"]}      # no local material: web directly
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_every_new_document_is_harvested_for_all_fields_before_the_next_paid_turn(corolla):
     events = corolla["cluster"]["events"]
     fetch = next(e for e in events if e.get("kind") == "tool_result" and e.get("name") == "fetch_url"
@@ -387,6 +391,7 @@ def test_every_new_document_is_harvested_for_all_fields_before_the_next_paid_tur
     assert noted and "top_speed_kmh" in noted[0]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_legacy_mode_reports_the_same_tail_metrics(corolla):
     m = compute_metrics(corolla["legacy"]["result"])
     assert m["recovery_mode"] == "legacy" and m["tail_fields_at_start"] == 11 and m["tail_model_calls"] == 24
@@ -474,6 +479,7 @@ def test_cluster_search_budget_is_enforced_per_attempt(tmp_path):
     assert refused and all(e["planned"] > e["remaining"] for e in refused)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_unbacked_conflict_resolution_keeps_the_conflict_and_admission_still_applies(tmp_path):
     def resolve(packet, turn_no, messages):
         if "height_mm" not in [f["field"] for f in packet["fields"]]:

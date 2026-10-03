@@ -6,19 +6,27 @@ code (src/candidate_harvest.py) and inspected locally (src/document_inspection.p
 need to Ctrl+F every field through documents it already has. This module decides, with no model call, when that
 acquisition has stopped making progress:
 
-    acquisition artifact   what a research turn really acquired:
-                             new_usable_document       a newly retrieved page/PDF with content (2xx), not a re-read,
+    acquisition mode       ACQUISITION_MODE=contract (default) | legacy, passed explicitly (no global state).
+                           contract: the research model may only search and fetch (ACQUISITION_TOOLS); progress is
+                           only new_usable_document, new_target_market_document and new_candidate; official_sources
+                           are the official URLs of useful FETCHED documents (official_urls_discovered = fetched +
+                           seen in search results, telemetry only). legacy: the definitions below, bit for bit.
+    acquisition artifact   what a research turn really acquired (legacy; contract keeps the three marked *):
+                           * new_usable_document       a newly retrieved page/PDF with content (2xx), not a re-read,
                                                        not a document server-side bound to ANOTHER variant
                              new_official_source       an official (importer / manufacturer / media / government) URL
                                                        not seen before, retrieved or returned by a search
-                             new_target_market_document a new usable document of the target market
-                             new_candidate             a harvested candidate for an open applicable field, from a
+                           * new_target_market_document a new usable document of the target market
+                           * new_candidate             a harvested candidate for an open applicable field, from a
                                                        usable document not bound to another variant
                              new_admitted_evidence     evidence admitted for the target (not different / unbound)
                              binding_improvement       a field's best admitted binding got more exact
                            NOT artifacts: re-reading a cached document, a repeated search, a 403/404/429 or failed
                            fetch, commentary, rejected evidence, candidates of another variant.
     no-artifact stop       PRIMARY_RESEARCH_NO_ARTIFACT_STOP consecutive turns without any artifact end research.
+    extension futility     (contract) beyond the normal ceiling while the minimum base is unmet: an extension turn
+                           with no executed search / fetch, or 2 consecutive extension turns without a new usable
+                           document, end research (extension_exhausted / under_acquired_exhausted).
     acquisition sufficiency  optional: at least PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS useful documents AND at least
                            PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD % of the applicable fields covered (a
                            candidate from a useful document, or already settled). Disabled when either is 0.
@@ -31,18 +39,168 @@ a market or a conflict; current_evaluation() remains the only field-state author
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
+from urllib.parse import unquote
 
-from .source_authority import OFFICIAL_CLASSES, classify_source, url_market
+from .source_authority import OFFICIAL_CLASSES, classify_source, host_of, split_host, url_market
 from .storage import trace
 from .tail_planner import _level, candidate_key, document_profile_for, usable_document
 
 STOP_REASONS = ("model_finished", "max_turns", "hard_max_turns_under_acquired", "no_new_artifact",
-                "acquisition_sufficient", "no_new_research", "user_cancelled", "error")
+                "acquisition_sufficient", "no_new_research", "under_acquired_exhausted", "user_cancelled", "error")
 # run stop_reason -> primary_research_stop_reason
 STOP_REASON_MAP = {"model_finished": "model_finished", "max_steps": "max_turns", "no_new_artifact": "no_new_artifact",
                    "acquisition_sufficient": "acquisition_sufficient", "no_new_research": "no_new_research",
+                   "extension_exhausted": "under_acquired_exhausted",
                    "user_cancelled": "user_cancelled", "api_failure": "error", "research_exception": "error"}
+
+ACQUISITION_MODES = ("contract", "legacy")
+# The research phase's tool surface in contract mode: discovery and retrieval only. Field work (inspection, evidence,
+# field status) belongs to the harvest, the sweep and recovery. Intersected with tools.tool_specs() by the caller, so a
+# tool this host cannot run (render_page without Playwright) is never offered.
+ACQUISITION_TOOLS = ("search_web", "search_official_domains", "fetch_url", "fetch_pdf", "render_page")
+DISCOVERY_TOOLS = ("search_web", "search_official_domains", "fetch_url", "fetch_pdf", "render_page")
+
+
+def acquisition_tool_specs(specs: list[dict]) -> list[dict]:
+    """The ACQUISITION_TOOLS schemas among `specs` (the host's available tool schemas)."""
+    return [s for s in specs if s["function"]["name"] in ACQUISITION_TOOLS]
+
+
+# --- source categories (recovery clusters; scheduling hints only) -----------------------------------------------------
+
+ANY_MARKET_SOURCE = "official technical source, any market"
+
+
+def target_market_source(target_market: str = "IL") -> str:
+    return f"target-market ({target_market}) source: importer model page, brochure, price list, warranty page"
+
+
+def recovery_clusters(specs: Iterable[dict]) -> dict[str, list[dict]]:
+    """{recovery_cluster: [applicable field specs]} in schema order (a field without a cluster uses its group)."""
+    out: dict[str, list[dict]] = {}
+    for spec in specs:
+        if spec.get("applicable", True):
+            out.setdefault(str(spec.get("recovery_cluster") or spec.get("group") or "requested"), []).append(spec)
+    return out
+
+
+def cluster_source_type(specs: Iterable[dict], target_market: str = "IL") -> str:
+    """The source type that usually answers a cluster: every field market-insensitive (market_sensitivity "low") ->
+    any official technical source; otherwise a target-market source (the same scope rule as scoped coverage)."""
+    specs = list(specs)
+    if specs and all(str(s.get("market_sensitivity") or "high") == "low" for s in specs):
+        return ANY_MARKET_SOURCE
+    return target_market_source(target_market)
+
+
+def missing_source_categories(snap: dict, specs: list[dict], target_market: str = "IL") -> list[dict]:
+    """Recovery clusters with applicable OPEN fields that no in-scope source covers yet: a cluster is covered when
+    some useful document (not bound to another variant) has a harvested candidate for any of its fields from a source
+    in that field's market scope (`scoped_candidate_fields`, the rule of scoped coverage). A hint for the research
+    model only: it never gates or changes a stop decision."""
+    open_fields = set(snap.get("open_fields") or ())
+    covered = set(snap.get("scoped_candidate_fields") or ())
+    out = []
+    for cluster, items in recovery_clusters(specs).items():
+        names = [s["name"] for s in items]
+        if not any(n in open_fields for n in names) or any(n in covered for n in names):
+            continue
+        out.append({"cluster": cluster, "source_type": cluster_source_type(items, target_market),
+                    "open_fields": [n for n in names if n in open_fields]})
+    return out
+
+
+def missing_categories_note(missing: list[dict]) -> str:
+    if not missing:
+        return ""
+    return "Source categories still missing: " + "; ".join(f"{m['cluster']}: {m['source_type']}" for m in missing) + "."
+
+
+# --- navigation links in research fetch results (contract mode; scheduling metadata only) ----------------------------
+
+LINK_KEYWORDS = ("spec", "specification", "technical", "brochure", "price", "pricelist", "warranty", "מפרט",
+                 "מפרט טכני", "חוברת", "קטלוג", "מחירון", "מחיר", "אחריות")
+MAX_NAVIGATION_LINKS = 15
+
+
+def _registrable(url: str) -> str:
+    try:
+        _, label, suffix = split_host(host_of(url))
+    except Exception:  # noqa: BLE001 - a malformed host is just "another site"
+        return host_of(url)
+    return f"{label}.{suffix}" if suffix else label
+
+
+def model_tokens(*names: Any) -> list[str]:
+    """Lower-case word tokens (>= 2 chars) of the vehicle's model name(s)."""
+    out: list[str] = []
+    for name in names:
+        for token in re.split(r"[^\w]+", str(name or "").lower()):
+            if len(token) >= 2 and token not in out:
+                out.append(token)
+    return out
+
+
+def rank_links(links: Iterable[dict], page_url: str, tokens: Iterable[str] = (),
+               limit: int = MAX_NAVIGATION_LINKS) -> list[dict]:
+    """Outbound links of a fetched page ranked deterministically for navigation: same registrable domain, .pdf
+    targets, specification / brochure / price-list / warranty keywords (English and Hebrew) in the anchor or URL, and
+    tokens of the vehicle's model name. Drops non-http(s) links (mailto, tel, javascript), same-page #fragments and
+    duplicates (by URL without fragment). Ties keep page order. Returns up to `limit` {url, text}."""
+    page = str(page_url or "").split("#")[0].rstrip("/")
+    domain = _registrable(page) if page else ""
+    tokens = [t.lower() for t in tokens if t]
+    seen: set[str] = set()
+    scored = []
+    for index, link in enumerate(links or []):
+        if not isinstance(link, dict):
+            continue
+        raw = str(link.get("url") or "").strip()
+        if not raw.lower().startswith(("http://", "https://")):
+            continue
+        url = raw.split("#")[0]
+        key = url.rstrip("/")
+        if not key or key == page or key in seen:
+            continue
+        seen.add(key)
+        text = re.sub(r"\s+", " ", str(link.get("text") or "")).strip()[:120]
+        haystack = (text + " " + unquote(url)).lower()
+        score = 0
+        if domain and _registrable(url) == domain:
+            score += 8
+        if url.lower().split("?")[0].endswith(".pdf"):
+            score += 6
+        if any(k in haystack for k in LINK_KEYWORDS):
+            score += 4
+        if any(t in haystack for t in tokens):
+            score += 3
+        scored.append((-score, index, {"url": url, "text": text}))
+    return [item for _, _, item in sorted(scored, key=lambda x: (x[0], x[1]))[:max(0, int(limit))]]
+
+
+def navigation_links(ctx, result: Any, tokens: Iterable[str] = ()) -> list[dict] | None:
+    """Ranked outbound links of a successfully fetched HTML document, from the cached body (no fetch); the raw link
+    list is stored once per document in the cache's derived storage. None when not applicable."""
+    from .tools.extract import html_links
+
+    if not isinstance(result, dict) or result.get("error") or not result.get("document_id"):
+        return None
+    status = result.get("status")
+    if isinstance(status, int) and not 200 <= status < 300:
+        return None
+    doc = str(result["document_id"])
+    meta = ctx.cache.get(doc) or {}
+    if meta.get("doc_type") != "html":
+        return None
+    base = meta.get("final_url") or meta.get("url") or result.get("final_url") or result.get("url") or ""
+
+    def compute() -> list[dict]:
+        return html_links(ctx.cache.read_body(doc).decode("utf-8", errors="replace"), base)
+
+    links, _ = ctx.cache.derived(doc, "links", compute)
+    return rank_links(links or [], base, tokens)
 
 # --- source priority (scheduling only) ---------------------------------------------------------------------------
 
@@ -107,9 +265,12 @@ def _search_urls(events: Iterable[dict]) -> set[str]:
 
 
 def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[dict], matrix: dict, adm, cache,
-             target_market: str, manufacturer: str | None, sensitivity: dict[str, str] | None = None) -> dict:
+             target_market: str, manufacturer: str | None, sensitivity: dict[str, str] | None = None,
+             mode: str) -> dict:
     """What the run has acquired so far (for one before/after comparison around a research turn).
-    `sensitivity` ({field: market_sensitivity} from the schema) drives the scope-aware coverage of the safety gate."""
+    `sensitivity` ({field: market_sensitivity} from the schema) drives the scope-aware coverage of the safety gate.
+    `mode` (contract | legacy) decides what `official_sources` means: contract = official URLs of useful FETCHED
+    documents; legacy = those plus official URLs seen in search results (the historical definition)."""
     from .field_recovery import is_target_market
 
     open_fields = {e["field"] for e in evaluation if e["retry_eligible"]}
@@ -133,9 +294,10 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
                                                   for c in matrix["fields"].get(name) or [])}
     # an evidence-backed ok counts as covered; a self-reported not_applicable never ends acquisition early
     settled = {e["field"] for e in evaluation if e["state"] == "ok" and e["field"] in applicable}
-    official = {_url(cache, d) for d in useful_docs if profiles[d].get("source_authority") in OFFICIAL_CLASSES}
-    official |= {u for u in _search_urls(events)
-                 if classify_source(u, manufacturer).get("source_authority") in OFFICIAL_CLASSES}
+    fetched_official = {_url(cache, d) for d in useful_docs if profiles[d].get("source_authority") in OFFICIAL_CLASSES}
+    discovered = fetched_official | {u for u in _search_urls(events)
+                                     if classify_source(u, manufacturer).get("source_authority") in OFFICIAL_CLASSES}
+    official = fetched_official if mode == "contract" else discovered
     evidence, best = set(), {}
     for item in trace.evidence_items(events):
         if str(item.get("variant_match") or "").lower() in ("different", "unbound"):
@@ -143,24 +305,33 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
         evidence.add(str(item.get("evidence_id")))
         name = str(item.get("field"))
         best[name] = max(best.get(name, -1), _level(item.get("binding_level")))
-    return {"useful_documents": useful_docs, "useful_urls": {_url(cache, d) for d in useful_docs},
+    # a field with a candidate from a source its schema market_sensitivity lets it use (any market when "low", else a
+    # target-market source)
+    scoped_candidates = {name for name in applicable if any(
+        str(c.get("document_id")) in (good if str((sensitivity or {}).get(name) or "high") == "low"
+                                      else set(target_docs))
+        for c in matrix["fields"].get(name) or [])}
+    return {"mode": mode, "useful_documents": useful_docs, "useful_urls": {_url(cache, d) for d in useful_docs},
             "target_market_documents": target_docs, "target_market_urls": {_url(cache, d) for d in target_docs},
             "other_variant_documents": sorted(other_variant),
             "official_sources": official, "candidates": candidates, "evidence": evidence, "best_binding": best,
+            # telemetry only: official URLs of useful fetched documents / fetched + seen in search results
+            "official_fetched": fetched_official, "official_urls_discovered": discovered,
             "covered_fields": covered | settled, "applicable_fields": len(applicable),
-            # scope-aware coverage (minimum acquisition base): a field counts only with a candidate from a source its
-            # schema market_sensitivity lets it use (any market when "low", else a target-market source), or ok
-            "scoped_fields": settled | {name for name in applicable if any(
-                str(c.get("document_id")) in (good if str((sensitivity or {}).get(name) or "high") == "low"
-                                              else set(target_docs))
-                for c in matrix["fields"].get(name) or [])},
+            # scope-aware coverage (minimum acquisition base): a field counts only with a candidate from a source in
+            # its market scope, or ok
+            "scoped_fields": settled | scoped_candidates,
+            # the source-category hint (missing_source_categories): open applicable fields / in-scope candidates
+            "scoped_candidate_fields": scoped_candidates, "open_fields": open_fields & applicable,
             "fields_with_candidates": len(covered),
             # telemetry only (never read by artifacts() / minimum_base() / sufficient()): every harvested candidate
             "candidate_count_total": matrix.get("candidate_count", 0)}
 
 
-def artifacts(before: dict, after: dict) -> list[str]:
-    """Meaningful acquisition artifacts of one turn (empty: none)."""
+def artifacts(before: dict, after: dict, *, mode: str) -> list[str]:
+    """Meaningful acquisition artifacts of one turn (empty: none). contract: only a new usable document, a new
+    target-market document or a new candidate for an open field count; legacy: also a new official source (fetched
+    or merely returned by a search), newly admitted evidence and a better binding."""
     reasons = []
     fresh = after["useful_urls"] - before["useful_urls"]      # by URL: another fetch kind of a known page is no news
     if fresh:
@@ -169,11 +340,13 @@ def artifacts(before: dict, after: dict) -> list[str]:
     if target:
         reasons.append(f"new_target_market_document:{len(target)}")
     official = after["official_sources"] - before["official_sources"]
-    if official:
+    if official and mode != "contract":
         reasons.append(f"new_official_source:{len(official)}")
     cands = after["candidates"] - before["candidates"]
     if cands:
         reasons.append(f"new_candidate:{len(cands)}")
+    if mode == "contract":
+        return reasons
     evidence = after["evidence"] - before["evidence"]
     if evidence:
         reasons.append(f"new_admitted_evidence:{len(evidence)}")
@@ -186,8 +359,11 @@ def artifacts(before: dict, after: dict) -> list[str]:
 
 def state_counts(snap: dict) -> dict:
     """Observational counts of one acquisition snapshot (diagnostic telemetry; decides nothing)."""
+    fetched = snap.get("official_fetched")
     return {"useful_documents": len(snap.get("useful_documents") or ()),
-            "official_documents": len(snap.get("official_sources") or ()),
+            # official URLs of useful FETCHED documents (search-result URLs are only "discovered")
+            "official_documents": len(fetched if fetched is not None else snap.get("official_sources") or ()),
+            "official_urls_discovered": len(snap.get("official_urls_discovered") or ()),
             "target_market_documents": len(snap.get("target_market_documents") or ()),
             "candidates": snap.get("candidate_count_total"),
             "open_field_candidates": len(snap.get("candidates") or ()),
@@ -249,11 +425,16 @@ class AcquisitionTracker:
         self.market = config.target_market
         self.manufacturer = getattr(ctx.admission, "manufacturer", None) or (vehicle or {}).get("manufacturer")
         self.sensitivity = {s["name"]: str(s.get("market_sensitivity") or "high") for s in specs}
+        self.mode = getattr(config, "acquisition_mode", "contract")
         self.turns: list[dict] = []
         self.streak = 0
         self.max_streak = 0
         self.deferred: list[dict] = []     # stops the minimum acquisition base held back
         self.extended_turns = 0            # turns beyond the normal ceiling (only while under-acquired)
+        # contract: consecutive EXTENSION turns (beyond the normal ceiling, base unmet) without a new usable document;
+        # starts at 0 at the normal ceiling, so stalls before it never count
+        self.extension_idle = 0
+        self.extension_exhausted: dict | None = None
         try:
             self.start = self.last = self.take()
         except Exception as exc:     # never costs the run; an empty baseline only makes turn 1 look productive
@@ -262,7 +443,9 @@ class AcquisitionTracker:
                                       "target_market_urls": set(), "other_variant_documents": [],
                                       "official_sources": set(), "candidates": set(), "evidence": set(),
                                       "best_binding": {}, "covered_fields": set(), "applicable_fields": 0,
-                                      "scoped_fields": set(),
+                                      "scoped_fields": set(), "official_fetched": set(),
+                                      "official_urls_discovered": set(), "scoped_candidate_fields": set(),
+                                      "open_fields": set(), "mode": self.mode,
                                       "fields_with_candidates": 0}
 
     def take(self) -> dict:
@@ -275,7 +458,7 @@ class AcquisitionTracker:
                         evaluation=current_evaluation(events, self.specs, self.market),
                         matrix=candidate_matrix(events, self.specs, self.vehicle), adm=self.ctx.admission,
                         cache=self.cache, target_market=self.market, manufacturer=self.manufacturer,
-                        sensitivity=self.sensitivity)
+                        sensitivity=self.sensitivity, mode=self.mode)
 
     def after_turn(self, step: int) -> list[str]:
         try:
@@ -284,7 +467,7 @@ class AcquisitionTracker:
             self.run_log.event("primary_research_turn_unmeasured", turn=step, error=f"{type(exc).__name__}: {exc}"[:300])
             self.streak = 0
             return ["unmeasured"]
-        found = artifacts(self.last, now)
+        found = artifacts(self.last, now, mode=self.mode)
         before = self.last
         self.last = now
         self.streak = 0 if found else self.streak + 1
@@ -323,6 +506,38 @@ class AcquisitionTracker:
                            note="under-acquired: acquisition continues (hard ceiling still applies)")
         return entry
 
+    def extension_turn(self, step: int, found: list[str], discovery_calls: int) -> str | None:
+        """Contract mode, a turn BEYOND the normal ceiling while the minimum base is unmet: is the extension futile?
+        1 = the turn executed no search / fetch (blocked, reused or no discovery tool called); 2 = the second
+        consecutive extension turn without a new usable document. Returns the reason (and logs it) or None. An
+        unmeasured turn counts as progress, so a telemetry problem never ends research."""
+        new_document = any(a.startswith("new_usable_document") or a == "unmeasured" for a in found)
+        self.extension_idle = 0 if new_document else self.extension_idle + 1
+        reason = None
+        if not discovery_calls:
+            reason = "no_discovery_calls"
+        elif self.extension_idle >= 2:
+            reason = "no_new_usable_document"
+        if reason is None:
+            return None
+        _, base = self.base()
+        self.extension_exhausted = {"turn": step, "reason": reason,
+                                    "reason_code": 1 if reason == "no_discovery_calls" else 2,
+                                    "discovery_calls": discovery_calls,
+                                    "extension_turns_without_new_document": self.extension_idle, **base}
+        self.run_log.event("primary_research_extension_exhausted", **self.extension_exhausted,
+                           note="under-acquired, but extending further acquires nothing: research ends here; harvest, "
+                                "sweep and recovery still run")
+        return reason
+
+    def missing_categories(self) -> list[dict]:
+        """Source categories (recovery clusters) still missing (a hint for the research model; decides nothing).
+        Never raises."""
+        try:
+            return missing_source_categories(self.last, self.specs, self.market)
+        except Exception:  # noqa: BLE001 - a hint must never cost the run
+            return []
+
     def sufficient(self) -> bool:
         return sufficient(self.last, self.config.primary_research_min_useful_documents,
                           self.config.primary_research_candidate_field_coverage_threshold)
@@ -340,7 +555,11 @@ class AcquisitionTracker:
             "useful_documents": len(end["useful_documents"]),
             "target_market_documents": len(end["target_market_documents"]),
             "other_variant_documents": len(end["other_variant_documents"]),
-            "official_sources": len(end["official_sources"]),
+            # official URLs of useful FETCHED documents; discovered = fetched + seen in search results (telemetry)
+            "official_sources": len(end.get("official_fetched", end["official_sources"])),
+            "official_urls_discovered": len(end.get("official_urls_discovered") or ()),
+            "acquisition_mode": self.mode,
+            "extension_exhausted": self.extension_exhausted,
             "candidate_fields": end["fields_with_candidates"],
             "candidate_field_coverage_pct": coverage_pct(end),
             "no_artifact_turns": sum(1 for t in self.turns if not t["artifacts"]),

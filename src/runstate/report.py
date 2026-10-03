@@ -43,6 +43,8 @@ def vehicle_report(result: dict | None, pipeline: VehiclePipeline | None) -> dic
         "fetched_documents": pick("documents_opened", "sources"),
         "useful_documents": primary.get("useful_documents", counters.get("useful_sources")),
         "official_documents": primary.get("official_sources", counters.get("official_sources")),
+        # newer runs only (then official_documents = fetched official documents); None for older runs
+        "official_urls_discovered": primary.get("official_urls_discovered", counters.get("official_urls_discovered")),
         "target_market_documents": primary.get("target_market_documents", counters.get("target_market_sources")),
         "candidate_count": pick("candidate_count_total", "candidates"),
         "candidate_fields": pick("candidate_fields_total", "candidate_fields"),

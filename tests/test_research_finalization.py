@@ -72,6 +72,7 @@ def big_page_body() -> bytes:
 
 # 1 ----------------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_glm_model_flash_is_sent_unchanged(monkeypatch, tmp_path):
     session = ScriptedPostSession({"chat/completions": [
         chat_reply(tool_call("c1", "fetch_url", {"url": BIG_PAGE})),
@@ -89,6 +90,7 @@ def test_glm_model_flash_is_sent_unchanged(monkeypatch, tmp_path):
 
 # 2, 3, 6 -----------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp_path):
     session = ScriptedPostSession({"chat/completions": [
         chat_reply(tool_call("c1", "fetch_url", {"url": BIG_PAGE})),
@@ -144,6 +146,7 @@ def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp
 
 # 4, 5 ---------------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
     ctx = make_ctx({BIG_PAGE: FakeResponse(big_page_body())})
     doc_id = "d_" + __import__("hashlib").sha256(f"fetch:{BIG_PAGE}".encode()).hexdigest()[:16]
@@ -338,6 +341,7 @@ class InterruptingGLM(ScriptedGLM):
         return super().chat(messages, tools=tools, **kwargs)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_keyboard_interrupt_preserves_partial_artifacts(tmp_path):
     client = InterruptingGLM([{"role": "assistant", "content": "", "tool_calls": [
         _call("c1", "fetch_url", {"url": BIG_PAGE}),
@@ -565,6 +569,7 @@ def test_cli_dry_run_shows_flash_and_finalizer(monkeypatch, capsys, tmp_path):
     assert not any(tmp_path.iterdir())
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_stub_batch_e2e_successful_run_unchanged(monkeypatch, tmp_path):
     """The pre-refactor happy path: the research model returns JSON itself; no finalizer call is made."""
     session = ScriptedPostSession({

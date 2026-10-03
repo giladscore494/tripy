@@ -3,6 +3,8 @@
 import json
 import sys
 
+import pytest
+
 from conftest import FakeResponse, cache_source, minimal_pdf
 
 from src.agent import AgentConfig, run_vehicle
@@ -213,6 +215,7 @@ def _call(call_id, name, args):
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_agent_loop_end_to_end(make_ctx, tmp_path):
     url = "https://www.toyota.co.il/cars/corolla"
     ctx = make_ctx({url: FakeResponse(SPEC_PAGE.encode())})

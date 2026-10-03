@@ -187,11 +187,13 @@ class GLMClient:
         return self.settings.base_url.rstrip("/") + "/" + path.lstrip("/")
 
     def _post(self, path: str, payload: dict, request_kind: str,
-              timeout_s: float | None = None) -> tuple[dict, int]:
+              timeout_s: float | None = None, max_attempts: int | None = None) -> tuple[dict, int]:
         url = self._url(path)
         headers = {"Authorization": f"Bearer {self.settings.api_key}", "Content-Type": "application/json"}
-        max_attempts = max(1, int(self.settings.chat_max_attempts if request_kind == "chat"
-                                  else self.settings.search_max_attempts))
+        if not max_attempts:
+            max_attempts = self.settings.chat_max_attempts if request_kind == "chat" \
+                else self.settings.search_max_attempts
+        max_attempts = max(1, int(max_attempts))
         common = {"endpoint": path, "request_kind": request_kind, "max_attempts": max_attempts}
         if request_kind == "chat":
             common["model"] = payload.get("model")
@@ -276,9 +278,11 @@ class GLMClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              temperature: float | None = None, max_tokens: int | None = None,
-             extra: dict | None = None, model: str | None = None, timeout_s: float | None = None) -> ChatResponse:
+             extra: dict | None = None, model: str | None = None, timeout_s: float | None = None,
+             max_attempts: int | None = None) -> ChatResponse:
         """`model` overrides the configured model id for this one call (the finalizer, a phase override);
-        `timeout_s` the read timeout per attempt of this one call (a phase override). Retries are unchanged."""
+        `timeout_s` the read timeout per attempt of this one call (a phase override); `max_attempts` the total HTTP
+        attempts of this one call (a phase override; None = GLM_CHAT_MAX_ATTEMPTS). Retry semantics are unchanged."""
         payload: dict[str, Any] = {"model": model or self.settings.model, "messages": messages}
         if tools:
             payload["tools"] = tools
@@ -290,7 +294,7 @@ class GLMClient:
         if extra:
             payload.update(extra)
         path = self.settings.chat_path or DEFAULT_CHAT_PATH
-        data, latency = self._post(path, payload, "chat", timeout_s=timeout_s)
+        data, latency = self._post(path, payload, "chat", timeout_s=timeout_s, max_attempts=max_attempts)
         choices = data.get("choices") or []
         if not choices:
             raise GLMError("GLM returned no choices", status=200, body=json.dumps(data)[:RAW_ERROR_BODY_LIMIT],

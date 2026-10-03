@@ -3,6 +3,8 @@ Scripted GLM / fake HTTP only: no network, no paid calls."""
 
 import json
 
+import pytest
+
 from conftest import seed_evidence_sources
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -117,6 +119,7 @@ def cadillac_script(attempt2):
     ]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_unresolved_conflict_reaches_finalizer_with_both_candidates(tmp_path, make_ctx):
     attempt2 = [turn(_call("r3", "search_web", {"query": "Escalade IQ torque 1066 1080 boost mode"})),
                 say({"field": "torque_nm", "status": "conflicting",
@@ -143,6 +146,7 @@ def test_cadillac_unresolved_conflict_reaches_finalizer_with_both_candidates(tmp
     assert compute_metrics(result)["fields_conflicting_final"] == 1
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_conflict_explicitly_resolved_in_attempt_two(tmp_path, make_ctx):
     attempt2 = [turn(store("r3", 1066, quote="מומנט רציף 1,066 ניוטון-מטר; 1,080 במצב Velocity Max",
                            variant="Sport AWD", variant_match="exact")),
@@ -196,6 +200,7 @@ def budget_script(turns):
     return script
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_budget_of_24_stops_recovery_and_the_run_still_finalizes(tmp_path, make_ctx):
     result, client, events = run(tmp_path, make_ctx, budget_script(24), requested_fields=FIELDS)  # default cap 24
     rec = result["field_recovery"]
@@ -223,6 +228,7 @@ def test_budget_of_24_stops_recovery_and_the_run_still_finalizes(tmp_path, make_
     assert (m["field_recovery_turns_used"], m["fields_not_attempted_due_to_budget"]) == (24, 0)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_budget_cuts_a_field_mid_attempt(tmp_path, make_ctx):
     result, client, _ = run(tmp_path, make_ctx, budget_script(6), requested_fields=FIELDS,
                             field_recovery_max_total_steps=6)
