@@ -11,6 +11,11 @@ reasoning, latency / timeouts or orchestration.
                        acquisition state before / after the turn and the deltas; the acquisition artifacts and the
                        stop bookkeeping exactly as the existing policy recorded them (artifacts, no-artifact streak,
                        minimum-base gate, deferred stops, extension beyond the normal budget, stop reason).
+    end to end         recovery (model calls, billable searches, fetches, attempts, fields resolved), the final field
+                       states (current_evaluation over the final events), totals per phase (model calls, tokens),
+                       cost (the run's own result.json cost when present), wall time, the run status and whether it
+                       was interrupted (interrupted / incomplete runs are excluded from end-to-end means), and the
+                       run's configuration (acquisition mode, models, sweep settings) for `by_config` grouping.
     sweep call         one record per document-sweep packet (a chunk; it may use up to the configured number of model
                        turns): models, latency, tokens, timeouts, retries; the packet (fields, documents, candidates,
                        size); every field's state before / after, evidence admitted / rejected (with reasons),
@@ -276,6 +281,7 @@ def acquisition_turns(events: list[dict]) -> list[dict]:
                 a, b = after.get(key), before.get(key)
                 return round(a - b, 1) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else None
             delta = {"new_useful_documents": d("useful_documents"), "new_official_documents": d("official_documents"),
+                     "new_official_urls_discovered": d("official_urls_discovered"),
                      "new_target_market_documents": d("target_market_documents"), "new_candidates": d("candidates"),
                      "new_candidate_fields": d("candidate_fields"), "scoped_coverage_gain": d("scoped_coverage_pct"),
                      "new_admitted_evidence": d("admitted_evidence")}
@@ -341,6 +347,9 @@ def acquisition_summary(events: list[dict], turns: list[dict]) -> dict:
         "fetch_failure_categories": dict(sum((Counter(t["fetch"]["failure_categories"]) for t in turns), Counter())),
         "useful_documents": summary.get("useful_documents", last_after.get("useful_documents")),
         "official_documents": summary.get("official_sources", last_after.get("official_documents")),
+        # newer runs only: official_documents then counts FETCHED official documents, this the fetched + search-seen
+        # union; older runs recorded the union as official_documents and have no value here (never relabelled)
+        "official_urls_discovered": summary.get("official_urls_discovered", last_after.get("official_urls_discovered")),
         "target_market_documents": summary.get("target_market_documents", last_after.get("target_market_documents")),
         "candidates": last_after.get("candidates") if last_after.get("candidates") is not None
         else harvest.get("candidate_count_total"),
@@ -364,7 +373,25 @@ def acquisition_summary(events: list[dict], turns: list[dict]) -> dict:
         "output_tokens": sum(tokens_out) if tokens_out else None,
         "model_timeouts": sum(c.get("timeouts", 0) for t in turns for c in t.get("model_calls") or []),
         "model_retries": sum(c.get("retries", 0) for t in turns for c in t.get("model_calls") or []),
+        **_min_base_reached(events, turns),
+        "tool_blocked": sum(1 for e in events if e.get("kind") == "tool_blocked"
+                            and (e.get("phase") or "research") == "research"),
+        "extension_exhausted": next((e for e in events if e.get("kind") == "primary_research_extension_exhausted"),
+                                    None) is not None,
     }
+
+
+def _min_base_reached(events: list[dict], turns: list[dict]) -> dict:
+    """The first research turn whose minimum acquisition base was met (null when never), and the research tokens
+    (input + output) spent up to and including it."""
+    rows = sorted((e for e in events if e.get("kind") == "primary_research_turn"), key=lambda e: e.get("turn") or 0)
+    turn = next((e.get("turn") for e in rows if e.get("minimum_acquisition_met")), None)
+    tokens = None
+    if turn is not None:
+        used = [(c.get("input_tokens") or 0) + (c.get("output_tokens") or 0) for t in turns
+                if t["turn_number"] <= turn for c in t.get("model_calls") or []]
+        tokens = sum(used) if used else None
+    return {"turn_reached_min_base": turn, "tokens_until_min_base": tokens}
 
 
 # --- document sweep -----------------------------------------------------------------------------------------------------
@@ -558,6 +585,106 @@ def sweep_summary(events: list[dict], calls: list[dict]) -> dict:
     }
 
 
+# --- end to end -------------------------------------------------------------------------------------------------------
+
+FINAL_STATE_KEYS = ("ok", "conflicting", "unresolved_or_missing", "foreign_market_only", "variant_not_exact",
+                    "not_applicable", "other")
+
+
+def _evaluation_event(events: list[dict], stage: str) -> dict | None:
+    return next((e for e in reversed(events) if e.get("kind") == "field_evaluation" and e.get("stage") == stage), None)
+
+
+def recovery_summary(events: list[dict]) -> dict:
+    """Tail recovery from events: model calls, billable searches, fetches, attempts, and fields resolved between the
+    primary evaluation and the after-recovery evaluation."""
+    primary, final = _evaluation_event(events, "primary"), _evaluation_event(events, "after_recovery")
+    start = (primary or {}).get("seq") or 0
+    end = (final or {}).get("seq") or max([e.get("seq") or 0 for e in events] or [0])
+    window = [e for e in events if start < (e.get("seq") or 0) <= end]
+    calls = [e for e in window if e.get("kind") == "model_response"
+             and str(e.get("phase") or "").startswith("field_recovery")]
+    before = {f.get("field") for f in (primary or {}).get("fields") or [] if f.get("retry_eligible")}
+    after = {f.get("field") for f in (final or {}).get("fields") or [] if f.get("retry_eligible")}
+    return {
+        "ran": primary is not None,
+        "attempts": sum(1 for e in window if e.get("kind") in ("field_recovery_started", "cluster_recovery_started")),
+        "model_calls": len(calls),
+        "input_tokens": sum((e.get("usage") or {}).get("prompt_tokens") or 0 for e in calls) or None,
+        "output_tokens": sum((e.get("usage") or {}).get("completion_tokens") or 0 for e in calls) or None,
+        "billable_searches": sum(1 for e in window
+                                 if e.get("kind") == "api_call" and e.get("request_kind") == "search"),
+        "fetches": sum(1 for e in window if e.get("kind") == "tool_call" and e.get("name") in FETCH_TOOLS
+                       and str(e.get("phase") or "").startswith("field_recovery")),
+        "fields_open_before": len(before) if primary is not None else None,
+        "fields_open_after": len(after) if final is not None else None,
+        "fields_resolved": len(before - after) if primary is not None and final is not None else None,
+    }
+
+
+def final_field_states(events: list[dict]) -> dict:
+    """The final state of every requested field: current_evaluation() over the run's final events (the one
+    field-state authority), counted by state, plus the list of ok fields."""
+    from .field_recovery import current_evaluation
+
+    started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
+    specs = list(started.get("requested_field_specs") or [])
+    if not specs:
+        return {"counts": None, "ok_fields": None, "fields": 0}
+    evaluation = current_evaluation(events, specs, started.get("target_market"))
+    counts = {k: 0 for k in FINAL_STATE_KEYS}
+    for e in evaluation:
+        state = e["state"]
+        key = "unresolved_or_missing" if state in ("unresolved", "missing") else state if state in counts else "other"
+        counts[key] += 1
+    return {"counts": counts, "ok_fields": sorted(e["field"] for e in evaluation if e["state"] == "ok"),
+            "fields": len(evaluation)}
+
+
+def run_totals(events: list[dict], result: dict | None = None) -> dict:
+    """Model calls and tokens per phase and in total (provider usage of successful responses), cost (the run's own
+    result.json cost when present) and wall time."""
+    from .storage import trace
+
+    by_phase = trace.usage_by_phase(events)
+    phases = {group: {"model_calls": u.get("model_calls", 0), "input_tokens": u.get("prompt_tokens", 0),
+                      "output_tokens": u.get("completion_tokens", 0)} for group, u in by_phase.items()}
+    finished = next((e for e in reversed(events) if e.get("kind") == "run_finished"), None) or {}
+    started = next((e for e in events if e.get("kind") == "run_started"), None) or {}
+    wall = (result or {}).get("duration_s") or finished.get("duration_s") \
+        or _seconds(started.get("ts"), (events[-1] if events else {}).get("ts"))
+    cost = (result or {}).get("cost") or finished.get("cost") or {}
+    return {"model_calls": sum(p["model_calls"] for p in phases.values()),
+            "input_tokens": sum(p["input_tokens"] for p in phases.values()),
+            "output_tokens": sum(p["output_tokens"] for p in phases.values()),
+            "by_phase": phases, "cost_usd": cost.get("total_usd") if isinstance(cost, dict) else None,
+            "cost_source": "result.json" if (result or {}).get("cost") else "run_finished" if finished.get("cost")
+            else None, "wall_time_s": wall}
+
+
+def run_configuration(events: list[dict]) -> dict:
+    """The configuration a run used, as recorded at run start (runs before ACQUISITION_MODE are legacy)."""
+    started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
+    agent = started.get("agent_config") or {}
+    glm = started.get("glm_config") or {}
+    sweep = (glm.get("phase_settings") or {}).get("document_sweep") or {}
+    return {"acquisition_mode": started.get("acquisition_mode") or agent.get("acquisition_mode") or "legacy",
+            "research_model": started.get("research_model") or started.get("model"),
+            "sweep_model": sweep.get("model") or started.get("research_model") or started.get("model"),
+            "sweep_thinking": sweep.get("thinking") or (glm.get("thinking") if isinstance(glm.get("thinking"), str)
+                                                        else None),
+            "sweep_max_attempts": sweep.get("max_attempts") or glm.get("chat_max_attempts"),
+            "sweep_max_fields": agent.get("document_sweep_max_fields"),
+            "sweep_max_candidates": agent.get("document_sweep_max_candidates"),
+            "sweep_max_packet_chars": agent.get("document_sweep_packet_max_chars")}
+
+
+def config_key(config: dict) -> str:
+    return " | ".join(f"{k}={config.get(k)}" for k in ("acquisition_mode", "research_model", "sweep_model",
+                                                         "sweep_thinking", "sweep_max_attempts", "sweep_max_fields",
+                                                         "sweep_max_candidates"))
+
+
 # --- run level ----------------------------------------------------------------------------------------------------------
 
 def _fmt(value: Any, suffix: str = "") -> str:
@@ -570,7 +697,10 @@ def summary_text(acq: dict, sweep: dict) -> str:
     lines = ["SOURCE ACQUISITION", "",
              f"Turns: {_fmt(acq.get('turns'))}", f"Search calls: {_fmt(acq.get('search_calls'))}",
              f"Useful documents: {_fmt(acq.get('useful_documents'))}",
-             f"Official documents: {_fmt(acq.get('official_documents'))}",
+             *([f"Official docs (fetched): {_fmt(acq.get('official_documents'))}",
+                f"Official URLs (discovered): {_fmt(acq.get('official_urls_discovered'))}"]
+               if acq.get("official_urls_discovered") is not None
+               else [f"Official documents: {_fmt(acq.get('official_documents'))}"]),
              f"Target-market documents: {_fmt(acq.get('target_market_documents'))}",
              f"Candidates: {_fmt(acq.get('candidates'))}", f"Candidate fields: {fields}",
              f"Final scoped coverage: {_fmt(acq.get('final_scoped_coverage_pct'), '%')}",
@@ -594,12 +724,17 @@ def summary_text(acq: dict, sweep: dict) -> str:
     return "\n".join(lines)
 
 
-def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record_id: str | None = None) -> dict:
+def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record_id: str | None = None,
+                        result: dict | None = None) -> dict:
+    """`result`: the run's result.json when present (its cost / duration win over event-derived values)."""
     started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
     finished = next((e for e in reversed(events) if e.get("kind") == "run_finished"), None) or {}
     turns = acquisition_turns(events)
     calls = sweep_calls(events)
     acq, sweep = acquisition_summary(events, turns), sweep_summary(events, calls)
+    status = finished.get("status") or (result or {}).get("status")
+    interrupted = (not finished or status in ("interrupted", "incomplete")
+                   or bool((result or {}).get("interrupted")))
     return {
         "schema": SCHEMA, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_id": run_id, "record_id": record_id or started.get("record_id"),
@@ -608,9 +743,13 @@ def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record
         "configured_models": {phase: (((started.get("glm_config") or {}).get("phase_settings") or {}).get(phase) or {})
                               .get("model") for phase in ("research", "document_sweep", "recovery", "finalizer")}
         | {"research_fallback": started.get("research_model") or started.get("model")},
-        "run_status": finished.get("status"), "complete": bool(finished),
+        "run_status": status, "complete": bool(finished), "interrupted": interrupted,
+        "configuration": run_configuration(events),
         "acquisition": {"summary": acq, "turns": turns},
         "document_sweep": {"summary": sweep, "calls": calls},
+        "recovery": recovery_summary(events),
+        "final_fields": final_field_states(events),
+        "totals": run_totals(events, result),
         "summary_text": summary_text(acq, sweep),
         "note": "observational telemetry; nothing here changes research behaviour",
     }
@@ -627,7 +766,14 @@ def write_vehicle_diagnostics(run_dir: Path | str, *, run_id: str | None = None)
         events = read_events(run_dir / "events.jsonl")
         if not events:
             return None
-        diag = redact_obj(vehicle_diagnostics(events, run_id=run_id or run_dir.parent.name, record_id=run_dir.name))
+        result = None
+        if (run_dir / "result.json").is_file():
+            try:
+                result = json.loads((run_dir / "result.json").read_text("utf-8"))
+            except ValueError:
+                result = None
+        diag = redact_obj(vehicle_diagnostics(events, run_id=run_id or run_dir.parent.name, record_id=run_dir.name,
+                                              result=result if isinstance(result, dict) else None))
         atomic_write_json(run_dir / DIAGNOSTICS_FILE, diag, durable=True)
         lines = [json.dumps({"run_id": diag["run_id"], "record_id": diag["record_id"], **row}, ensure_ascii=False,
                             default=str) for row in diag["acquisition"]["turns"] + diag["document_sweep"]["calls"]]
@@ -658,10 +804,18 @@ def vehicle_row(diag: dict) -> dict:
     a, s = diag["acquisition"]["summary"], diag["document_sweep"]["summary"]
     turns = diag["acquisition"]["turns"]
     searches = a.get("search_calls") or 0
+    # end-to-end sections are absent from diagnostics.json files written before they existed
+    rec, final, totals = diag.get("recovery") or {}, diag.get("final_fields") or {}, diag.get("totals") or {}
+    config = diag.get("configuration") or {}
+    counts = final.get("counts") or {}
+    phases = totals.get("by_phase") or {}
+    research = phases.get("research") or {}
     return {"run_id": diag.get("run_id"), "record_id": diag.get("record_id"),
             "vehicle": " ".join(str((diag.get("vehicle") or {}).get(k) or "") for k in ("manufacturer", "model",
                                                                                          "year", "trim")).strip(),
-            "run_status": diag.get("run_status"),
+            "run_status": diag.get("run_status"), "interrupted": bool(diag.get("interrupted")),
+            "config_key": config_key(config) if config else None,
+            **{f"cfg_{k}": v for k, v in config.items()},
             "acq_turns": a.get("turns"), "acq_search_calls": searches, "acq_repeated_searches": a.get("repeated_searches"),
             "acq_useful_documents": a.get("useful_documents"), "acq_official_documents": a.get("official_documents"),
             "acq_target_market_documents": a.get("target_market_documents"), "acq_candidates": a.get("candidates"),
@@ -685,10 +839,57 @@ def vehicle_row(diag: dict) -> dict:
             "sweep_evidence_accepted": s.get("evidence_accepted"), "sweep_evidence_rejected": s.get("evidence_rejected"),
             "sweep_rejection_rate": s.get("evidence_rejection_rate"), "sweep_input_tokens": s.get("input_tokens"),
             "sweep_output_tokens": s.get("output_tokens"), "sweep_latency_ms": s.get("latency_ms"),
-            "sweep_timeouts": s.get("timeouts"), "sweep_resolved_per_model_call": s.get("resolved_per_model_call")}
+            "sweep_timeouts": s.get("timeouts"), "sweep_resolved_per_model_call": s.get("resolved_per_model_call"),
+            "acq_official_urls_discovered": a.get("official_urls_discovered"),
+            "acq_tool_blocked": a.get("tool_blocked"), "acq_turn_reached_min_base": a.get("turn_reached_min_base"),
+            "acq_tokens_until_min_base": a.get("tokens_until_min_base"),
+            "acq_tokens": (a.get("input_tokens") or 0) + (a.get("output_tokens") or 0)
+            if a.get("input_tokens") is not None or a.get("output_tokens") is not None else None,
+            "acq_extension_exhausted": a.get("extension_exhausted"),
+            "rec_attempts": rec.get("attempts"), "rec_model_calls": rec.get("model_calls"),
+            "rec_billable_searches": rec.get("billable_searches"), "rec_fetches": rec.get("fetches"),
+            "rec_fields_open_before": rec.get("fields_open_before"),
+            "rec_fields_open_after": rec.get("fields_open_after"),
+            "rec_fields_resolved": rec.get("fields_resolved"),
+            **{f"final_{k}": counts.get(k) for k in FINAL_STATE_KEYS},
+            "final_ok_fields": ",".join(final.get("ok_fields") or []) if final.get("ok_fields") is not None else None,
+            "total_model_calls": totals.get("model_calls"), "total_input_tokens": totals.get("input_tokens"),
+            "total_output_tokens": totals.get("output_tokens"),
+            **{f"{p}_{k}": (phases.get(g) or {}).get(k) for p, g in (("research", "research"),
+                                                                     ("sweep", "document_sweep"),
+                                                                     ("recovery", "field_recovery"),
+                                                                     ("finalizer", "finalization"))
+               for k in ("model_calls", "input_tokens", "output_tokens")},
+            "research_tokens": (research.get("input_tokens") or 0) + (research.get("output_tokens") or 0)
+            if research else None,
+            "cost_usd": totals.get("cost_usd"), "wall_time_s": totals.get("wall_time_s")}
+
+
+E2E_KEYS = ("final_ok", "final_conflicting", "final_unresolved_or_missing", "final_foreign_market_only",
+            "final_variant_not_exact", "final_not_applicable", "rec_attempts", "rec_model_calls",
+            "rec_billable_searches", "rec_fetches", "rec_fields_resolved", "total_model_calls", "total_input_tokens",
+            "total_output_tokens", "research_tokens", "acq_tokens", "acq_tokens_until_min_base",
+            "acq_turn_reached_min_base", "acq_tool_blocked", "acq_official_urls_discovered", "cost_usd",
+            "wall_time_s")
 
 
 def aggregate(diagnostics: list[dict]) -> dict:
+    """Benchmark statistics over every vehicle, the same statistics per configuration (`by_config`, e.g. legacy vs
+    contract in one file) and the per-vehicle rows."""
+    out = _aggregate_stats(diagnostics)
+    groups: dict[str, list[dict]] = {}
+    for d in diagnostics:
+        groups.setdefault(config_key(d.get("configuration") or {}) if d.get("configuration") else "unknown",
+                          []).append(d)
+    out["by_config"] = {key: {"configuration": (items[0].get("configuration") or {}),
+                              **{k: v for k, v in _aggregate_stats(items).items()
+                                 if k not in ("schema", "generated_at")}}
+                        for key, items in sorted(groups.items())}
+    out["per_vehicle"] = [vehicle_row(d) for d in diagnostics]
+    return out
+
+
+def _aggregate_stats(diagnostics: list[dict]) -> dict:
     rows = [vehicle_row(d) for d in diagnostics]
 
     def nums(key):
@@ -700,6 +901,7 @@ def aggregate(diagnostics: list[dict]) -> dict:
                 "n": len(values)}
 
     swept = [r for r in rows if r.get("sweep_calls")]
+    complete = [r for r in rows if not r.get("interrupted")]
     by_turn: dict[int, list[float]] = {}
     gain_by_turn: dict[int, list[float]] = {}
     for d in diagnostics:
@@ -744,8 +946,19 @@ def aggregate(diagnostics: list[dict]) -> dict:
             "timeout_rate": round(sum(1 for r in swept if r.get("sweep_timeouts")) / len(swept), 3) if swept else None,
             "resolved_fields_per_model_call": round(resolved / model_calls, 2) if model_calls else None,
         },
-        "per_vehicle": rows,
+        # end to end: complete runs only; interrupted / incomplete runs are reported separately, never averaged
+        "end_to_end": {**{k: _stat_of(complete, k) for k in E2E_KEYS},
+                       "under_acquired_exhausted": sum(1 for r in complete if r.get("acq_extension_exhausted")),
+                       "runs": len(complete)},
+        "interrupted": {"runs": len(rows) - len(complete),
+                        "record_ids": [r["record_id"] for r in rows if r.get("interrupted")]},
     }
+
+
+def _stat_of(rows: list[dict], key: str) -> dict:
+    values = [r[key] for r in rows if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool)]
+    return {"mean": _mean(values), "median": _median(values), "total": round(sum(values), 2) if values else None,
+            "n": len(values)}
 
 
 def vehicle_dirs(runs_dir: Path | str, run_ids: Iterable[str] | None = None) -> list[Path]:
@@ -794,7 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out) if args.out else resolve_paths().data_dir / "benchmarks" / datetime.now(
         timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     result = write_benchmark(args.runs_dir, args.run_ids or None, out, rebuild=args.rebuild)
-    print(json.dumps({k: v for k, v in result.items() if k != "per_vehicle"}, ensure_ascii=False, indent=1))
+    print(json.dumps({k: v for k, v in result.items() if k != "per_vehicle"}, ensure_ascii=False, indent=1,
+                     default=str))
     print(f"written to {out}", file=sys.stderr)
     return 0
 

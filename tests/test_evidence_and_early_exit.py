@@ -3,6 +3,8 @@ Scripted GLM / fake HTTP only: no network, no paid calls."""
 
 import json
 
+import pytest
+
 from test_tools_smoke import ScriptedGLM, _call
 
 from src.agent import FIELD_RECOVERY_SYSTEM_PROMPT, AgentConfig, run_vehicle
@@ -135,6 +137,7 @@ def test_reused_evidence_is_not_novelty_and_keeps_idle_streak():
     assert t.end_turn().total == 0 and t.idle_turns == 2
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
     ctx = make_ctx()
     same = {"field": "torque_nm", "value": 1066, "unit": "Nm", "source_url": IL_URL, "market": "IL",
@@ -153,6 +156,7 @@ def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
 
 # --- early recovery exit ----------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_duplicate_store_and_early_resolution(tmp_path, make_ctx):
     """Real trace: turn 3 stored battery_gross_kwh=205 (IL, document D) twice, then turn 4 only said "found"."""
     ctx = make_ctx()

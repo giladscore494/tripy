@@ -22,7 +22,7 @@ from ..app_config import redact
 from .model import STAGE_LABELS
 
 SUCCESS = ("completed", "max_steps_finalized", "no_new_research_finalized", "acquisition_sufficient_finalized",
-           "recovered_finalized")
+           "under_acquired_finalized", "recovered_finalized")
 FINALIZABLE = ("finalization_failed", "finalization_pending", "completed_unparsed", "interrupted", "incomplete",
                "research_failed")
 

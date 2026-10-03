@@ -53,7 +53,7 @@ class PhaseGLM:
             packet = json.loads(messages[1]["content"].split("\n", 1)[1])
         turn_no = sum(1 for m in messages if m["role"] == "assistant") + 1
         self.last_messages = messages          # what the model actually sees this turn (tool results included)
-        if system == research_system_prompt():
+        if system in (research_system_prompt(), research_system_prompt("contract")):
             self.calls["research"] += 1
             message = self.research.pop(0)
         elif system == DOCUMENT_SWEEP_SYSTEM_PROMPT:
@@ -85,6 +85,7 @@ def read_docs(ids):
 
 # --- the document sweep ------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_document_sweep_uses_only_cached_documents_and_never_searches_or_fetches(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -138,6 +139,7 @@ def tool_messages(messages):
     return [m for m in messages if m.get("role") == "tool"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_path, make_ctx):
     """Real conversational ordering: turn 1 does not know the value and inspects the cached document; only the
     second turn, which sees the tool result in the conversation, can store the evidence."""
@@ -187,6 +189,7 @@ def test_sweep_finds_a_parser_miss_only_after_reading_the_inspection_result(tmp_
     assert not [e for e in events if e["kind"] == "field_recovery_started" and e["field"] == "ventilated_seats"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_fast_path_promotes_a_candidate_in_one_turn(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -206,6 +209,7 @@ def test_sweep_fast_path_promotes_a_candidate_in_one_turn(tmp_path, make_ctx):
     assert "wheelbase_mm" in result["document_sweep"]["fields_resolved"]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_empty_inspections_and_a_one_turn_budget_never_buy_a_second_turn(tmp_path, make_ctx):
     ctx = make_ctx({})
     doc = ctx.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
@@ -235,6 +239,7 @@ def test_empty_inspections_and_a_one_turn_budget_never_buy_a_second_turn(tmp_pat
     assert client2.calls["document_sweep"] == 1                                  # DOCUMENT_SWEEP_MAX_TURNS=1
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_the_sweep_never_exceeds_two_turns(tmp_path, make_ctx):
     ctx = make_ctx({})
     doc = ctx.cache.put("fetch", INTERIOR_URL, INTERIOR.encode(), {"doc_type": "text", "final_url": INTERIOR_URL},
@@ -250,6 +255,7 @@ def test_the_sweep_never_exceeds_two_turns(tmp_path, make_ctx):
     assert client.calls["document_sweep"] == 2 and result["document_sweep"]["model_calls"] == 2
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_recovery_starts_only_after_the_sweep_and_harvest(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -264,6 +270,7 @@ def test_recovery_starts_only_after_the_sweep_and_harvest(tmp_path, make_ctx):
     assert kinds.index("finalization_checkpoint_written") < kinds.index("finalization_started")
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_breadth_first_recovery_after_the_sweep_and_candidate_context(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -324,6 +331,7 @@ def test_documents_fetched_during_recovery_are_harvested_for_every_field(tmp_pat
 
 # --- Cadillac acceptance ----------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recovery(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)

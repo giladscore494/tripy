@@ -236,14 +236,27 @@ def render_counters(counters: dict) -> None:
     st.markdown(facts_html(counter_pairs(counters)), unsafe_allow_html=True)
 
 
+def _known(value):
+    return "—" if value is None else value
+
+
 def render_status_panel(record: RunRecord, views: list[dict]) -> None:
     """The right-hand 'current run' facts."""
-    totals = {"sources": 0, "candidates": 0, "model_calls": 0, "searches": 0}
+    rows = status_panel_rows(record, views)
+    body = "".join(f'<div class="k">{esc(k)}</div><div class="v">{esc(v)}</div>' for k, v in rows)
+    st.markdown(f'<p class="tripy-kicker">Current run</p><div class="tripy-kv">{body}</div>', unsafe_allow_html=True)
+
+
+def status_panel_rows(record: RunRecord, views: list[dict]) -> list[tuple]:
+    """(label, value) rows of the status panel."""
+    # a total is shown only when at least one vehicle has a known value; unknown is "—", never 0
+    totals: dict[str, int | None] = {"sources": None, "candidates": None, "model_calls": None, "searches": None}
     resolved, applicable = 0, 0
     for view in views:
         c = view["counters"]
         for key in totals:
-            totals[key] += c.get(key) or 0
+            if c.get(key) is not None:
+                totals[key] = (totals[key] or 0) + c[key]
         if c.get("applicable_fields"):
             resolved += c.get("resolved_fields") or 0
             applicable += c["applicable_fields"]
@@ -262,13 +275,12 @@ def render_status_panel(record: RunRecord, views: list[dict]) -> None:
                                                          else "")),
             ("Started", fmt_time(record.started_at or record.created_at)),
             ("Elapsed" if record.active else "Duration", fmt_duration(elapsed_s(record))),
-            ("Sources", totals["sources"]), ("Candidates", totals["candidates"]),
+            ("Sources", _known(totals["sources"])), ("Candidates", _known(totals["candidates"])),
             ("Resolved fields", f"{resolved} / {applicable}" if applicable else "—"),
-            ("Search calls", totals["searches"]), ("Model calls", totals["model_calls"])]
+            ("Search calls", _known(totals["searches"])), ("Model calls", _known(totals["model_calls"]))]
     if len(record.record_ids) > 1:
         rows.insert(1, ("Vehicles", len(record.record_ids)))
-    body = "".join(f'<div class="k">{esc(k)}</div><div class="v">{esc(v)}</div>' for k, v in rows)
-    st.markdown(f'<p class="tripy-kicker">Current run</p><div class="tripy-kv">{body}</div>', unsafe_allow_html=True)
+    return rows
 
 
 def render_failure(info: dict, *, key: str, can_act: bool) -> str | None:

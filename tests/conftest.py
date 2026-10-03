@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -106,6 +107,31 @@ def seed_evidence_sources(cache, script, headers: dict | None = None, default_he
                            if url.startswith(prefix)), default_header)
         out[url] = cache_source(cache, url, header + "\n" + "\n".join(dict.fromkeys(quotes)))
     return out
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "acquisition_mode(mode): pin the AgentConfig default acquisition mode "
+                                       "(legacy | contract) for this test")
+
+
+@pytest.fixture(autouse=True)
+def _acquisition_mode_default(request, monkeypatch):
+    """The AgentConfig default acquisition mode of a test: its `acquisition_mode` marker (tests encoding one mode's
+    behaviour), else ACQUISITION_MODE from the environment (`ACQUISITION_MODE=legacy pytest` runs every unpinned test
+    in legacy), else the code default. An explicit acquisition_mode=... argument always wins."""
+    marker = request.node.get_closest_marker("acquisition_mode")
+    mode = marker.args[0] if marker else (os.environ.get("ACQUISITION_MODE") or "").strip().lower()
+    if mode not in ("legacy", "contract"):
+        return
+    from src import agent
+
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs.setdefault("acquisition_mode", mode)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
 
 
 @pytest.fixture

@@ -65,7 +65,7 @@ STAGE_TO_STATUS = {"acquisition": RESEARCHING, "harvest": HARVESTING, "sweep": S
 
 # engine result statuses (src/agent.py STATUSES + the batch worker's "error")
 ENGINE_SUCCESS = ("completed", "max_steps_finalized", "no_new_research_finalized", "acquisition_sufficient_finalized",
-                  "recovered_finalized")
+                  "under_acquired_finalized", "recovered_finalized")
 ENGINE_FAILED = ("research_failed", "finalization_failed", "completed_unparsed", "error")
 ENGINE_STOPPED = ("interrupted", "finalization_pending", "incomplete")
 

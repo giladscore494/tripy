@@ -294,7 +294,7 @@ class OrchestrationGLM(tail.PolicyGLM):
 
     def chat(self, messages, tools=None, **kwargs):
         system = messages[0]["content"]
-        if system == research_system_prompt():
+        if system in (research_system_prompt(), research_system_prompt("contract")):
             kind, message = "research", self.research(messages)
         elif system == agent_mod.DOCUMENT_SWEEP_SYSTEM_PROMPT:
             kind, message = "sweep", self.sweep(messages)
@@ -328,7 +328,8 @@ def run(workdir: Path, *, follows_prompt: bool = True, **cfg) -> dict:
         routes[url] = FakeResponse(body.encode("utf-8"), content_type=ctype, url=url, status=STATUS.get(url, 200))
     client = OrchestrationGLM(follows_prompt=follows_prompt)
     log = RunLog(workdir / "runs", "orchestration", "38626")
-    config = AgentConfig(**{"research_memory_enabled": False, **cfg})
+    # the scripted research model stores evidence during research: the legacy research contract
+    config = AgentConfig(**{"research_memory_enabled": False, "acquisition_mode": "legacy", **cfg})
     t0 = time.monotonic()
     result = run_vehicle({"upstream_record_id": "38626"}, PAYLOAD, client=client, cache=cache, run_log=log,
                          vehicle_meta=VEHICLE, config=config, tool_config=ToolConfig(), session=FakeSession(routes),

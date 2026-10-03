@@ -100,6 +100,7 @@ class VehiclePipeline:
         self.retrying = False                 # a finalize-existing retry is in progress
         self.max_turns: int | None = None
         self._sweep_fields: set[str] = set()
+        self._sweep_failed_chunks = 0
         self.events_seen = 0
 
     # -- stage helpers ----------------------------------------------------------------------------------
@@ -162,11 +163,15 @@ class VehiclePipeline:
             self.acquisition.update({"official_sources": after.get("official_documents"),
                                      "target_market_documents": after.get("target_market_documents"),
                                      "candidates_live": after.get("candidates")})
+            if "official_urls_discovered" in after:   # newer runs: official_documents = fetched official documents
+                self.acquisition["official_urls_discovered"] = after["official_urls_discovered"]
 
     def _on_primary_research_summary(self, e: dict, ts) -> None:
         self.acquisition.update({k: e.get(k) for k in (
             "turns", "useful_documents", "target_market_documents", "official_sources", "candidate_fields",
             "candidate_field_coverage_pct", "stop_reason", "minimum_acquisition_met", "scoped_coverage_pct")})
+        if "official_urls_discovered" in e:
+            self.acquisition["official_urls_discovered"] = e["official_urls_discovered"]
 
     def _on_error(self, e: dict, ts) -> None:
         stage = ENGINE_PHASE_TO_STAGE.get(e.get("phase") or "research", "acquisition")
@@ -209,15 +214,22 @@ class VehiclePipeline:
         self.sweep.update({k: e.get(k) for k in ("fields_unresolved_before", "document_sweep_calls",
                                                   "document_sweep_latency_ms", "deterministic_misses_found",
                                                   "document_sweep_timeouts")})
-        self._finish("sweep", DONE, ts)
+        # every chunk failed and no model call succeeded: the sweep failed (the run continued)
+        failed = self._sweep_failed_chunks and not e.get("document_sweep_calls")
+        self._finish("sweep", FAILED if failed else DONE, ts)
 
     def _on_document_sweep_skipped(self, e: dict, ts) -> None:
         self.stage_notes["sweep"] = f"skipped ({e.get('reason')})"
         self._finish("sweep", SKIPPED, ts)
 
     def _on_document_sweep_failed(self, e: dict, ts) -> None:
-        self.stage_notes["sweep"] = "failed; the run continued with the harvested candidates"
         self.errors.append({"stage": "sweep", "message": e.get("error"), "non_fatal": True})
+        chunk = e.get("chunk") or {}
+        if chunk.get("index"):      # one chunk failed: the sweep continues with the next chunk
+            self._sweep_failed_chunks += 1
+            self.stage_notes["sweep"] = f"chunk {chunk.get('index')}/{chunk.get('of')} failed; the sweep continued"
+            return
+        self.stage_notes["sweep"] = "failed; the run continued with the harvested candidates"
         self._finish("sweep", FAILED, ts)
 
     def _on_field_evaluation(self, e: dict, ts) -> None:
@@ -333,7 +345,11 @@ class VehiclePipeline:
             "useful_sources": self.acquisition.get("useful_documents"),
             "target_market_sources": self.acquisition.get("target_market_documents"),
             "official_sources": self.acquisition.get("official_sources"),
-            "candidates": self.harvest.get("candidate_count_total"),
+            # present only for runs that record it; then official_sources counts FETCHED official documents
+            "official_urls_discovered": self.acquisition.get("official_urls_discovered"),
+            # the harvest total when known, else the live acquisition count, else unknown (never a fake 0)
+            "candidates": next((v for v in (self.harvest.get("candidate_count_total"),
+                                            self.acquisition.get("candidates_live")) if v is not None), None),
             "candidate_fields": candidate_fields,
             "applicable_fields": applicable,
             "resolved_fields": progress["completed"] if applicable else None,

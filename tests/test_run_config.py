@@ -5,6 +5,8 @@ A real GLMClient is driven through a fake HTTP session, so no network is used.
 
 import json
 
+import pytest
+
 from conftest import FakeResponse, FakeSession
 
 from src import cli
@@ -110,6 +112,7 @@ def test_client_keeps_raw_errors_and_full_search_fields():
     assert raw["endpoint"] == "chat/completions"
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_run_records_effective_config_trace_and_cost(tmp_path):
     page = "https://www.xpeng.com/g6"
     glm_session = ScriptedPostSession({

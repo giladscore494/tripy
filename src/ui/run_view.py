@@ -24,7 +24,7 @@ from . import labels_he as he
 from .live_state import candidate_table_rows, feed_line
 
 STATUS_ICON = {"completed": "✅", "max_steps_finalized": "⏱️", "no_new_research_finalized": "⏱️",
-               "acquisition_sufficient_finalized": "⏱️",
+               "acquisition_sufficient_finalized": "⏱️", "under_acquired_finalized": "⏱️",
                "completed_unparsed": "⚠️", "recovered_finalized": "♻️", "finalization_failed": "🟠",
                "research_failed": "❌", "interrupted": "⏹️", "incomplete": "🟡", "error": "❌",
                "finalization_pending": "⏳"}

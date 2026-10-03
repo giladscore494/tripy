@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from fixtures.cadillac_lyriq import PAYLOAD, VEHICLE, put_documents
 from test_layered_pipeline import (INTERIOR, INTERIOR_URL, SMALL, PhaseGLM, read_docs, run, say, tool_messages,
                                    turn)
@@ -18,6 +20,7 @@ def ev(seq, kind, **data):
 
 # --- acquisition turns from a real engine run -------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_acquisition_turn_state_before_after_and_stop_are_recorded(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -50,6 +53,7 @@ def test_acquisition_turn_state_before_after_and_stop_are_recorded(tmp_path, mak
     assert summary["scoped_coverage_by_turn"][:2] == [rows[0]["scoped_coverage_pct"], rows[1]["scoped_coverage_pct"]]
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_no_artifact_turn_and_its_stop_reason(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -66,6 +70,7 @@ def test_no_artifact_turn_and_its_stop_reason(tmp_path, make_ctx):
     assert D.acquisition_summary(events, turns)["no_artifact_turns"] == 1
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_a_stop_deferred_by_the_base_gate_and_extension_are_visible(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -86,6 +91,7 @@ def test_a_stop_deferred_by_the_base_gate_and_extension_are_visible(tmp_path, ma
     assert summary["stop_deferred_count"] == 2 and summary["minimum_base_met"] is False
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_the_telemetry_never_changes_the_acquisition_decision(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -101,7 +107,7 @@ def test_the_telemetry_never_changes_the_acquisition_decision(tmp_path, make_ctx
                       "candidates": set(), "evidence": set(), "best_binding": {}},
                      {"useful_urls": {"u"}, "target_market_urls": set(), "official_sources": set(),
                       "candidates": set(), "evidence": set(), "best_binding": {},
-                      "candidate_count_total": 99}) == ["new_usable_document:1"]   # the new key is never read
+                      "candidate_count_total": 99}, mode="legacy") == ["new_usable_document:1"]   # never read
 
 
 def test_search_and_fetch_details(tmp_path):
@@ -153,6 +159,7 @@ def test_search_and_fetch_details(tmp_path):
 
 # --- document sweep calls --------------------------------------------------------------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_sweep_call_records_a_real_deterministic_harvest_miss(tmp_path, make_ctx):
     """The parser has no candidate for ventilated_seats in the cached interior document; the sweep recovers it."""
     ctx = make_ctx({})
@@ -189,6 +196,7 @@ def test_sweep_call_records_a_real_deterministic_harvest_miss(tmp_path, make_ctx
     assert summary["document_sweep_deterministic_misses_found"] == 1          # the pre-existing counter agrees
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_a_promoted_candidate_is_never_called_a_harvest_miss(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -296,6 +304,7 @@ def test_secrets_are_never_written(tmp_path, monkeypatch):
     assert all("sk-diag-secret-123456" not in p.read_text() for p in out.iterdir())
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_benchmark_aggregate_keeps_per_vehicle_rows(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)

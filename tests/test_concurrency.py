@@ -260,6 +260,7 @@ class SlowScripted(ScriptedPostSession):
         return super().post(url, headers=headers, data=data, timeout=timeout)
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_concurrent_vehicles_never_mix_api_events_between_traces(tmp_path):
     cache = DocumentCache(tmp_path / "cache")
     controller = ConcurrencyController()

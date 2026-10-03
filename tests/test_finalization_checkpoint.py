@@ -23,6 +23,7 @@ class ProcessDied(BaseException):
     """Stands in for SIGKILL: raised inside the finalizer request after the on-disk state was snapshotted."""
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_checkpoint_survives_a_hard_death_and_finalize_existing_needs_one_call(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
@@ -81,6 +82,7 @@ def test_checkpoint_survives_a_hard_death_and_finalize_existing_needs_one_call(t
     assert Path(result["recovery"]["prior_result_preserved_as"]).is_file()
 
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_runs_that_need_no_finalizer_write_no_checkpoint(tmp_path, make_ctx):
     ctx = make_ctx({})
     final = {"summary": "direct", "fields": {}}

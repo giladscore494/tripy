@@ -406,6 +406,7 @@ def test_legacy_evidence_without_admission_fields_is_evaluated_as_before():
 
 # --- end to end: the real run's polluted stores, replayed through run_vehicle --------------------------------
 
+@pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_corolla_run_rejects_the_polluted_evidence_end_to_end(tmp_path, make_ctx):
     from test_tools_smoke import ScriptedGLM, _call
 
