@@ -107,7 +107,8 @@ def test_streamlit_shows_the_hebrew_pending_message(tmp_path, make_ctx, monkeypa
     client.on_finalizer = die
     write_batch(tmp_path / "runs", "b", {"batch_id": "b", "record_ids": ["85095"]})
     try:
-        run(tmp_path, ctx, client, requested_fields=["torque_nm"], field_recovery_max_attempts=1)
+        run(tmp_path, ctx, client, requested_fields=["torque_nm"], field_recovery_max_attempts=1,
+            primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0)
     except ProcessDied:
         pass
     assert json.loads((dead / "b" / "85095" / "result.json").read_text("utf-8"))["status"] == "finalization_pending"
@@ -135,7 +136,7 @@ def test_the_checkpoint_is_complete_json_before_the_finalizer_is_invoked(tmp_pat
         seen["tmp_files"] = list(path.parent.glob(".result.json.*.tmp"))
 
     client.on_finalizer = inspect_disk
-    result, events, _ = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"],
+    result, events, _ = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"], primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0,
                             field_recovery_max_attempts=1)
     assert seen["checkpoint"]["status"] == "finalization_pending" and seen["checkpoint"]["output"] is None
     assert seen["tmp_files"] == [] and result["status"] == "completed"
@@ -162,7 +163,7 @@ def test_a_failed_checkpoint_write_never_reaches_the_finalizer(tmp_path, make_ct
 
     monkeypatch.setattr(atomic_mod.os, "replace", replace)
     client = PhaseGLM([read_docs(ids[:2]), say({"summary": "primary", "fields": {}})])
-    result, events, log = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"],
+    result, events, log = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"], primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0,
                               field_recovery_max_attempts=1)
     kinds = [e["kind"] for e in events]
     assert failed and client.calls["finalization"] == 0                       # no paid finalizer request

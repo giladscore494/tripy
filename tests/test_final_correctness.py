@@ -172,7 +172,8 @@ def test_unclear_variant_continues_the_attempt(tmp_path, make_ctx):
               turn(store("r2", "ac_max_charging_power_kw", 19.2, variant="Premium Sport", variant_match="exact")),
               say({"field": "ac_max_charging_power_kw", "status": "conflict_resolved", "evidence_ids": ["e2"]}),
               say({"summary": "final", "fields": {}})]
-    result, client, events, _ = run(tmp_path, make_ctx, script, requested_fields=["ac_max_charging_power_kw"])
+    result, client, events, _ = run(tmp_path, make_ctx, script, requested_fields=["ac_max_charging_power_kw"],
+                                      primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0)
     first = result["field_recovery"]["attempts"][0]
     assert first["turns"] == 3 and not first["early_resolved"] and first["state_after"] == "ok"
     assert not [e for e in events if e["kind"] == "field_recovery_early_resolved"]
@@ -182,7 +183,8 @@ def test_exact_variant_still_exits_early_with_honest_metrics(tmp_path, make_ctx)
     script = [say({"summary": "primary", "fields": {}}),
               turn(store("r1", "ac_max_charging_power_kw", 19.2, variant_match="exact")),
               say({"summary": "final", "fields": {}})]
-    result, client, events, _ = run(tmp_path, make_ctx, script, requested_fields=["ac_max_charging_power_kw"])
+    result, client, events, _ = run(tmp_path, make_ctx, script, requested_fields=["ac_max_charging_power_kw"],
+                                      primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0)
     rec = result["field_recovery"]
     assert rec["attempts"][0]["early_resolved"] and rec["attempts"][0]["turns"] == 1
     assert (rec["early_resolution_count"], rec["turn_budget_skipped_by_early_resolution"]) == (1, 3)

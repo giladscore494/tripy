@@ -27,7 +27,9 @@ from src.app_config import (Check, allow_ui_api_key, blocking_errors, endpoint_r
 from src.benchmark import HANDSHAKE_RECORD_ID, benchmark_vehicles, manufacturers, select_vehicles, vehicle_label
 from src.db import Level15Error
 from src.glm_client import GLMError
-from src.jobs.manager import ResearchRequest, RunRejected, get_manager, shared_controller
+from src.jobs.manager import (ResearchRequest, RunRejected, SeriesRequest, get_manager, series_progress,
+                              shared_controller)
+from src.run_profiles import ARMS, BASELINE, PRODUCTION, PROFILE_LABELS, PROFILES, TREATMENT
 from src.runstate.failures import explain
 from src.runstate.model import COMPLETED, STATUS_LABELS
 from src.runstate.pipeline import PipelineCache
@@ -101,7 +103,8 @@ with st.sidebar:
     access_control.render_logout(secret)
     st.fragment(run_every=5 if active_ids else None)(history_panel)()
     diagnostics_view.render_benchmark_export(paths.runs_dir, [r.run_id for r in records],
-                                             {r.run_id: ui.history_label(r) for r in records})
+                                             {r.run_id: ui.history_label(r) for r in records},
+                                             series=manager.list_series(limit=10))
     st.divider()
     settings = render_settings(secret, manager.controller, allow_ui_key=allow_ui_api_key(secret))
 
@@ -131,9 +134,24 @@ ui.render_header()
 left, right = st.columns([3, 2], gap="large")
 with left:
     st.markdown('<p class="tripy-kicker">Research target</p>', unsafe_allow_html=True)
-    mode_label = st.radio("Scope", ["One vehicle", "Manufacturer", "All 50"], horizontal=True,
+    mode_label = st.radio("Scope", ["One vehicle", "Manufacturer", "All 50", "Benchmark A/B"], horizontal=True,
                           label_visibility="collapsed", key="scope")
-    if mode_label == "One vehicle":
+    start_clicked = series_clicked = False
+    if mode_label == "Benchmark A/B":
+        ab_ids = st.multiselect("Vehicles", list(labels), default=[], format_func=labels.get, key="ab_vehicles")
+        ab_repeats = int(st.number_input("Runs per arm", 1, 5, 3, key="ab_repeats"))
+        arm_cols = st.columns(len(ARMS))
+        ab_arms = [arm for arm, col in zip(ARMS, arm_cols)
+                   if col.checkbox(PROFILE_LABELS[arm], value=arm in (BASELINE, TREATMENT), key=f"ab_arm_{arm}")]
+        selection = [vehicles_by_id[i] for i in ab_ids]
+        target_label = f"A/B · {len(selection)} vehicle(s)"
+        series_busy = next((x for x in manager.list_series(limit=5) if manager.series_executing(x["series_id"])), None)
+        series_clicked = st.button("Start A/B series", type="primary", width="stretch",
+                                   disabled=bool(blocking or not selection or not ab_arms or series_busy))
+        st.caption(f"{ab_repeats * len(ab_arms)} run(s) over {len(selection)} vehicle(s), strictly one after another, "
+                   "arms interleaved (" + ", ".join(PROFILE_LABELS[a] for a in ab_arms) + ", ...)"
+                   + (" · a series is already running" if series_busy else ""))
+    elif mode_label == "One vehicle":
         chosen_id = st.selectbox("Vehicle", list(labels), format_func=labels.get, key="vehicle",
                                  index=list(labels).index(HANDSHAKE_RECORD_ID))
         selection = select_vehicles(vehicles, "one", chosen_id)
@@ -145,12 +163,18 @@ with left:
     else:
         selection = select_vehicles(vehicles, "all")
         target_label = f"Benchmark v1 · {len(selection)} vehicles"
-    target_ids = {v["upstream_record_id"] for v in selection}
-    busy = next((r for r in records if r.active and set(r.record_ids) & target_ids), None)
-    start_clicked = st.button("Start research", type="primary", width="stretch",
-                              disabled=bool(blocking or not selection or busy))
-    st.caption(f"{len(selection)} vehicle(s) · prompt version {PROMPT_VERSION}"
-               + (" · a run for this target is already active" if busy else ""))
+    if mode_label != "Benchmark A/B":
+        target_ids = {v["upstream_record_id"] for v in selection}
+        busy = next((r for r in records if r.active and set(r.record_ids) & target_ids), None)
+        profile_col, button_col = st.columns([2, 3], vertical_alignment="bottom")
+        run_profile = profile_col.selectbox("Run profile", PROFILES, format_func=PROFILE_LABELS.get, key="run_profile",
+                                            index=PROFILES.index(PRODUCTION),
+                                            help="A named profile sets the experiment settings for this run and "
+                                                 "ignores env for them; Custom uses Advanced settings.")
+        start_clicked = button_col.button("Start research", type="primary", width="stretch",
+                                          disabled=bool(blocking or not selection or busy))
+        st.caption(f"{len(selection)} vehicle(s) · {PROFILE_LABELS[run_profile]} · prompt version {PROMPT_VERSION}"
+                   + (" · a run for this target is already active" if busy else ""))
 with right:
     st.markdown('<p class="tripy-kicker">System</p>', unsafe_allow_html=True)
     ui.render_checks(checks, reach)
@@ -158,9 +182,11 @@ with right:
         st.caption("Using an API key typed in this session (development only).")
 
 
-def research_request(vehicle_list: list[dict], label: str, scope: str, key: str | None) -> ResearchRequest:
+def research_request(vehicle_list: list[dict], label: str, scope: str, key: str | None,
+                     profile: str | None = None) -> ResearchRequest:
+    profile = profile or st.session_state.get("run_profile") or PRODUCTION
     return ResearchRequest(vehicles=vehicle_list, label=label, scope=scope, settings=settings.glm_settings(),
-                           agent_cfg=settings.agent_config(secret), tool_cfg=settings.tool_config(secret),
+                           agent_cfg=settings.agent_config(secret, profile), tool_cfg=settings.tool_config(secret),
                            pricing=settings.pricing, prompt_version=PROMPT_VERSION, data_source=settings.data_source,
                            dsn=settings.dsn, workers=settings.workers, chat_limits=settings.chat_limits,
                            search_limit=settings.search_limit, idempotency_key=key)
@@ -186,6 +212,57 @@ def launch(request: ResearchRequest) -> None:
 if start_clicked:
     with left:
         launch(research_request(selection, target_label, mode_label, st.session_state["submit_nonce"]))
+
+if series_clicked:
+    with left:
+        try:
+            manager.start_series(SeriesRequest(
+                template=research_request(selection, target_label, "Benchmark A/B", None),
+                arm_configs={arm: settings.agent_config(secret, arm) for arm in ab_arms}, repeats=ab_repeats,
+                label=target_label, idempotency_key=f"series:{st.session_state['submit_nonce']}"))
+        except RunRejected as exc:
+            st.warning(str(exc))
+        except (GLMError, Level15Error, ValueError) as exc:
+            st.error(redact(f"Could not start the series: {exc}"))
+        else:
+            st.session_state["submit_nonce"] = uuid.uuid4().hex
+            st.rerun()
+
+
+def series_panel() -> None:
+    """Progress of the latest A/B series (durable: runs/_series/<id>/series.json; refreshes while it runs)."""
+    latest = manager.list_series(limit=1)
+    if not latest:
+        return
+    series = latest[0]
+    progress = series_progress(series)
+    total = progress["total"]
+    st.markdown(f'<p class="tripy-kicker">A/B series</p><p class="tripy-title">{ui.esc(series["label"])}</p>'
+                f'<span class="tripy-status">{ui.esc(series["status"])}</span>', unsafe_allow_html=True)
+    st.caption(f"{series['series_id']} · {total['done']} / {total['planned']} done · {total['running']} running"
+               + (f" · {total['not_run']} not run" if total["not_run"] else ""))
+    import pandas as pd
+    rows = [{"Arm": PROFILE_LABELS.get(arm, arm), "Planned": c["planned"], "Done": c["done"], "Running": c["running"],
+             "Not run": c["not_run"]} for arm, c in progress["arms"].items()]
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame([{"#": i["index"] + 1, "Repeat": i["repeat"], "Arm": PROFILE_LABELS.get(i["arm"], i["arm"]),
+                                "Status": i["status"], "Run": i.get("run_id") or "—"} for i in series["planned"]]),
+                 hide_index=True, width="stretch")
+    if series.get("error"):
+        st.caption(str(series["error"]))
+    if manager.series_executing(series["series_id"]):
+        if st.button("Cancel series", key=f"cancel_{series['series_id']}",
+                     help="Stops the running run at its next safe point and cancels every planned run."):
+            manager.cancel_series(series["series_id"])
+            st.rerun()
+    elif series.get("benchmark"):
+        st.caption("The series benchmark is in the sidebar under Benchmark diagnostics.")
+
+
+if mode_label == "Benchmark A/B" or any(manager.series_executing(x["series_id"]) for x in manager.list_series(limit=3)):
+    with left:
+        running = any(manager.series_executing(x["series_id"]) for x in manager.list_series(limit=3))
+        st.fragment(run_every=5 if running else None)(series_panel)()
 
 st.divider()
 
@@ -233,7 +310,8 @@ def _render_failure(record, view: dict, info: dict) -> None:
         if vehicle is None:
             st.warning("This vehicle is not in the benchmark sample any more.")
         else:
-            launch(research_request([vehicle], titles.get(rid, rid), "One vehicle", f"restart:{uuid.uuid4().hex}"))
+            launch(research_request([vehicle], titles.get(rid, rid), "One vehicle", f"restart:{uuid.uuid4().hex}",
+                                    profile=(record.request or {}).get("run_profile")))
 
 
 def _render_vehicle_result(view: dict, result: dict | None, failed: bool) -> None:

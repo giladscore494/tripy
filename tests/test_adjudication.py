@@ -11,7 +11,7 @@ import pytest
 from conftest import FakeResponse, cache_source
 from fixtures import corolla_tail as tail
 from fixtures.corolla_touring import PAYLOAD, VEHICLE
-from test_phase_contracts import EU, ROUTES, PhaseClient, _timeout, fetch, run, say
+from test_phase_contracts import EU, GATE_OFF, ROUTES, PhaseClient, _timeout, fetch, run, say
 
 from src import adjudication as J
 from src import diagnostics as D
@@ -175,7 +175,7 @@ def test_a_404_page_never_reaches_sweep_packets_recovery_or_triage(tmp_path):
     client = AdjPhaseClient([fetch("a", EU, WARRANTY_404), say({"done": True, "reason": "x"})])
     log = RunLog(tmp_path / "runs", "b", "38626")
     config = AgentConfig(research_memory_enabled=False, requested_fields=tail.FIELDS, no_new_research_turns=0,
-                         acquisition_mode="contract")
+                         acquisition_mode="contract", **GATE_OFF)
     cache = DocumentCache(tmp_path / "c")
     result = P.run_vehicle({"upstream_record_id": "38626"}, PAYLOAD, client=client, cache=cache, run_log=log,
                            vehicle_meta=VEHICLE, config=config, tool_config=ToolConfig(), session=session)
@@ -358,6 +358,14 @@ def test_unknown_ids_and_out_of_range_spans_are_ignored_and_logged(tmp_path):
     assert summary["adjudication"]["failed_packets"] == {"U": 0, "A": 0, "M": 0}
 
 
+def test_a_missing_field_cannot_use_another_fields_snippet():
+    snippets = {"s1": {"field": "ground_clearance_mm", "document_id": "d1", "text": "Ground clearance: 160 mm"}}
+    rows, invalid = J.parse_m_reply({"fields": [{"field": "height_mm", "value": 160, "unit": "mm",
+                                               "snippet": "s1", "span": [0, 20]}]},
+                                    snippets, ["height_mm", "ground_clearance_mm"])
+    assert rows == [] and invalid[0]["problem"] == "snippet_of_another_field"
+
+
 def test_an_unparseable_reply_gets_one_repair_turn(tmp_path):
     def respond(packet, n):
         return "Sure! Here is my judgement" if n == 1 else respond_all(packet)
@@ -459,7 +467,7 @@ def test_a_timed_out_packet_presents_nothing_and_its_fields_stay_local_material(
         return _timeout() if n == 1 else respond_all(packet)
 
     client = AdjPhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})], respond=respond)
-    result, events = run(tmp_path, client, acquisition_mode="contract")
+    result, events = run(tmp_path, client, acquisition_mode="contract", **GATE_OFF)
     starts = [e for e in events if e["kind"] == "document_sweep_started"]
     first, second = starts[0], starts[1]
     assert first["offered_candidate_keys"]
@@ -476,12 +484,26 @@ def test_a_timed_out_packet_presents_nothing_and_its_fields_stay_local_material(
     assert result["document_sweep"]["failed_chunk_candidates_kept_fresh"] == len(set(first["offered_candidate_keys"]))
 
 
+def test_a_local_apply_failure_keeps_candidates_fresh_for_recovery(tmp_path, monkeypatch):
+    def broken_execute(self, calls, messages, *, phase, **kwargs):
+        raise RuntimeError("local storage failed")
+
+    monkeypatch.setattr(ToolSession, "execute", broken_execute)
+    summary, events, _, _, specs = sweep_run(tmp_path, AdjClient(), _two_class_docs(),
+                                             fields=["length_mm"], candidates={TOYOTA_IL: []})
+    assert summary["adjudication"]["failed_packets"]["U"] == 1
+    assert summary["candidates_presented"] == 0
+    assert not any(e["kind"] == "candidates_presented" for e in events)
+    matrix = candidate_matrix(events, specs, VEHICLE)
+    assert fresh_candidates(matrix, events, ["length_mm"])["length_mm"]
+
+
 # --- 8. end to end on the Corolla fixtures -----------------------------------------------------------------------
 
 @pytest.fixture
 def adjudicated(tmp_path):
     client = AdjPhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})])
-    result, events = run(tmp_path, client, acquisition_mode="contract")
+    result, events = run(tmp_path, client, acquisition_mode="contract", **GATE_OFF)
     return client, result, events
 
 
@@ -536,7 +558,7 @@ def test_sweep_mode_comes_from_the_environment():
 
 def test_legacy_mode_runs_the_tool_loop_sweep(tmp_path):
     client = AdjPhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})])
-    result, events = run(tmp_path, client, acquisition_mode="contract", sweep_mode="legacy")
+    result, events = run(tmp_path, client, acquisition_mode="contract", sweep_mode="legacy", **GATE_OFF)
     sweeps = [r for r in client.requests if r["messages"][0]["content"] == DOCUMENT_SWEEP_SYSTEM_PROMPT]
     assert sweeps and all(r["tools"] for r in sweeps) and client.adj.requests == []
     assert not any(e["kind"].startswith("adjudication") for e in events)
@@ -550,7 +572,7 @@ def test_stale_document_sweep_limits_never_change_adjudication_packets(tmp_path)
     for name, cfg in (("default", {}), ("stale", {"document_sweep_max_fields": 30, "document_sweep_max_candidates": 48,
                                                     "document_sweep_packet_max_chars": 500})):
         client = AdjPhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})])
-        run(tmp_path / name, client, acquisition_mode="contract", **cfg)
+        run(tmp_path / name, client, acquisition_mode="contract", **GATE_OFF, **cfg)
         sent.append([r["messages"][1]["content"] for r in client.adj.requests])
     assert sent[0] and sent[0] == sent[1]
     env = {"DOCUMENT_SWEEP_MAX_FIELDS": "30"}

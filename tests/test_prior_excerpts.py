@@ -176,7 +176,7 @@ def test_cadillac_ac_charging_attempt_two_gets_prior_excerpts(tmp_path, make_ctx
     payload = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "government_record_id": "85095"},
                "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
     result = run_vehicle({"upstream_record_id": "85095"}, payload, client=client, cache=ctx.cache, run_log=log,
-                         config=AgentConfig(max_steps=3, no_new_research_turns=0, recovery_mode="legacy",
+                         config=AgentConfig(max_steps=3, no_new_research_turns=0, recovery_mode="legacy", primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0,
                                             requested_fields=["ac_charging_time", "rear_legroom_mm"]),
                          tool_config=ToolConfig(), session=ctx.session)
     packets = [json.loads(r["messages"][1]["content"].split("\n", 1)[1]) for r in client.requests

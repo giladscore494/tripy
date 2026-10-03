@@ -479,6 +479,9 @@ def parse_m_reply(reply: Any, snippets: dict[str, dict], fields: Iterable[str]) 
         if sid not in snippets:
             invalid.append({"problem": "unknown_snippet", "field": field, "snippet": sid})
             continue
+        if snippets[sid]["field"] != field:
+            invalid.append({"problem": "snippet_of_another_field", "field": field, "snippet": sid})
+            continue
         text = snippets[sid]["text"]
         if (not isinstance(span, (list, tuple)) or len(span) != 2
                 or not all(isinstance(x, int) and not isinstance(x, bool) for x in span)

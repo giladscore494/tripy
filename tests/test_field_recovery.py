@@ -262,7 +262,8 @@ def test_total_retry_turn_cap(tmp_path, make_ctx):
         say({"field": "tire_size_front", "status": "unresolved"}),    # breadth-first: next field, attempt 1
         say({"summary": "final", "fields": {}}),
     ]
-    result, client, _ = scripted_run(tmp_path, make_ctx, script, field_recovery_max_total_steps=2)
+    result, client, _ = scripted_run(tmp_path, make_ctx, script, field_recovery_max_total_steps=2,
+                                      primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0)
     rec = result["field_recovery"]
     assert rec["turns"] == 2 and rec["stopped"] == "max_total_steps" and rec["attempt_count"] == 2
     assert rec["attempt_order"] == ["battery_usable_kwh#1", "tire_size_front#1"]
@@ -282,7 +283,8 @@ def test_interrupt_during_field_recovery_is_persisted_and_reconstructed(tmp_path
     log = RunLog(tmp_path / "runs", "b", "101122")
     with pytest.raises(KeyboardInterrupt):
         run_vehicle({"upstream_record_id": "101122"}, PAYLOAD, client=client, cache=ctx.cache, run_log=log,
-                    config=AgentConfig(requested_fields=FUTURE_FIELDS, recovery_mode="legacy"), tool_config=ToolConfig(), session=ctx.session)
+                    config=AgentConfig(requested_fields=FUTURE_FIELDS, recovery_mode="legacy",
+                                       primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0), tool_config=ToolConfig(), session=ctx.session)
     saved = json.loads((log.dir / "result.json").read_text("utf-8"))
     assert saved["status"] == "interrupted" and saved["error"] is None   # an interruption is not an error
     assert (saved["partial"], saved["interrupted"], saved["interrupted_phase"], saved["interruption_type"]) == \

@@ -274,7 +274,8 @@ def test_diagnostics_are_written_by_research_one_and_survive_reload(tmp_path, mo
     runs = tmp_path / "runs"
     research_one({"upstream_record_id": "101122", "manufacturer": "XPeng"}, row, client=client,
                  cache=DocumentCache(tmp_path / "cache"), runs_dir=runs, batch_id="b1",
-                 agent_cfg=AgentConfig(field_recovery_enabled=False), tool_cfg=ToolConfig(), pricing={},
+                 agent_cfg=AgentConfig(field_recovery_enabled=False, primary_research_min_base_documents=0,
+                                       primary_research_min_base_scoped_coverage=0), tool_cfg=ToolConfig(), pricing={},
                  level15_source="snapshot")
     run_dir = runs / "b1" / "101122"
     saved = json.loads((run_dir / D.DIAGNOSTICS_FILE).read_text())
