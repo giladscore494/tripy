@@ -69,8 +69,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
                    help="Retry attempts per failed field (FIELD_RECOVERY_MAX_ATTEMPTS, default 2)")
     p.add_argument("--field-recovery-max-steps", type=int, default=None,
                    help="Model turns per retry attempt (FIELD_RECOVERY_MAX_STEPS, default 4)")
-    p.add_argument("--recovery-mode", choices=["cluster", "legacy"], default=None,
-                   help="Tail recovery: cluster (default; RECOVERY_MODE) or the legacy per-field retries")
+    p.add_argument("--recovery-mode", choices=["reacquire", "cluster", "legacy"], default=None,
+                   help="Tail recovery: reacquire (default; RECOVERY_MODE), the cluster recovery agent, or the legacy "
+                        "per-field retries")
     p.add_argument("--max-tokens", type=int, default=0, help="0 = provider default")
     p.add_argument("--search-backend", choices=["glm", "duckduckgo"], default=env("SEARCH_BACKEND") or "glm")
     p.add_argument("--data-source", choices=["auto", "database", "snapshot"], default="auto")
@@ -159,6 +160,17 @@ def _worst_case_recovery_turns(agent_cfg, payload: dict, vehicle: dict) -> int:
         return 0
     specs = resolve_requested_fields(agent_cfg.requested_fields or None, propulsion=propulsion_of(payload, vehicle))
     applicable = [s for s in specs if s.get("applicable", True)]
+    if agent_cfg.recovery_mode == "reacquire":
+        from .agent import REACQUIRE_TURNS
+        from .grounded import MAX_DOCUMENTS
+        from .tail_planner import cluster_of
+
+        clusters = {cluster_of(s) for s in applicable if max_attempts_for(s, agent_cfg.field_recovery_max_attempts)}
+        # per cluster: the acquisition turns, the grounded calls and ~2 adjudication packets; the total-turn cap counts
+        # every recovery model call (a cluster started under the cap may finish its episode)
+        turns = len(clusters) * (REACQUIRE_TURNS + (MAX_DOCUMENTS if agent_cfg.grounded_candidates else 0) + 2)
+        cap = agent_cfg.field_recovery_max_total_steps
+        return min(turns, cap) if cap else turns
     if agent_cfg.recovery_mode == "cluster":
         from .agent import CLUSTER_TURN_CEILING
         from .tail_planner import cluster_of

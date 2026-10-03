@@ -194,6 +194,7 @@ def test_dashboard_never_calls_the_api(tmp_path, make_ctx, monkeypatch):
     result, events, _ = run(tmp_path, ctx, client, requested_fields=["torque_nm", "wheelbase_mm"], primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0,
                             field_recovery_max_attempts=1)
     calls_before = dict(client.calls)
+    session_before = list(ctx.session.calls)        # the run's own requests (e.g. the importer site map)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("the dashboard must not make API or network calls")
@@ -213,7 +214,7 @@ def test_dashboard_never_calls_the_api(tmp_path, make_ctx, monkeypatch):
     table = candidate_table_rows(events, started_event["requested_field_specs"])
     assert header["done"] == 1 and header["model_calls"] == sum(calls_before.values())
     assert card["status"] and rows and table
-    assert client.calls == calls_before and ctx.session.calls == []
+    assert client.calls == calls_before and ctx.session.calls == session_before
 
 
 def test_parallel_batch_smoke_in_streamlit():

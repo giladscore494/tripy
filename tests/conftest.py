@@ -116,6 +116,42 @@ def pytest_configure(config):
                                        "(adjudication | legacy) for this test")
     config.addinivalue_line("markers", "final_assembly(mode): pin the AgentConfig default final assembly "
                                        "(deterministic | llm) for this test")
+    config.addinivalue_line("markers", "recovery_mode(mode): pin the AgentConfig default recovery mode "
+                                       "(reacquire | cluster | legacy) for this test")
+    config.addinivalue_line("markers", "grounded_candidates(on): pin the AgentConfig default of GROUNDED_CANDIDATES "
+                                       "(True | False) for this test (scripts encoding the pre-#31 model call order)")
+    config.addinivalue_line("markers", "site_map(on): pin the AgentConfig default of SITE_MAP (True | False)")
+
+
+PINNED_DEFAULTS = (("recovery_mode", "RECOVERY_MODE", ("reacquire", "cluster", "legacy")),
+                   ("grounded_candidates", "GROUNDED_CANDIDATES", (True, False)),
+                   ("site_map", "SITE_MAP", (True, False)))
+
+
+@pytest.fixture(autouse=True)
+def _candidate_yield_defaults(request, monkeypatch):
+    """The AgentConfig defaults of PR #31's switches for one test: its marker (recovery_mode / grounded_candidates /
+    site_map), else the environment variable, else the code default. An explicit argument always wins."""
+    pinned = {}
+    for attr, env, allowed in PINNED_DEFAULTS:
+        marker = request.node.get_closest_marker(attr)
+        value = marker.args[0] if marker else (os.environ.get(env) or "").strip().lower()
+        if isinstance(value, str) and allowed[0] is True:
+            value = {"on": True, "true": True, "1": True, "off": False, "false": False, "0": False}.get(value, value)
+        if value in allowed and value != "":
+            pinned[attr] = value
+    if not pinned:
+        return
+    from src import agent
+
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        for key, value in pinned.items():
+            kwargs.setdefault(key, value)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
 
 
 @pytest.fixture(autouse=True)

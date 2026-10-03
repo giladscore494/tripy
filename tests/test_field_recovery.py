@@ -19,6 +19,9 @@ from src.storage.run_loader import load_runs
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
 
+# scripted model replies in the pre-#31 call order (no grounded-candidate call)
+pytestmark = pytest.mark.grounded_candidates(False)
+
 ROOT = Path(__file__).resolve().parent.parent
 FUTURE_FIELDS = ["battery_usable_kwh", "tire_size_front", "paint_code", "service_interval_km", "rear_legroom_mm"]
 PAYLOAD = {"identity": {"manufacturer": "אקספנג", "commercial_name": "G6", "year": 2026, "trim": "MAX",

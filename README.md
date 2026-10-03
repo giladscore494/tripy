@@ -153,7 +153,8 @@ below.
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `IDENTITY_VOCABULARY_PATH`, `SOURCE_RULES_PATH` | Alternative identity vocabulary / source-authority rule files (defaults in `data/`). |
 | `FIELD_RECOVERY_ENABLED`, `FIELD_RECOVERY_MAX_ATTEMPTS`, `FIELD_RECOVERY_MAX_STEPS`, `FIELD_RECOVERY_MAX_TOTAL_STEPS` | Targeted field retries (defaults `true`, `2`, `4`, `24` turns per vehicle; `0` = no cap). See [Targeted field recovery](#targeted-field-recovery-legacy-per-field-mode). |
-| `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`cluster` default, or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt). See [Clustered tail recovery](#clustered-tail-recovery-default). |
+| `RECOVERY_MODE`, `CLUSTER_MAX_ATTEMPTS`, `CLUSTER_BASE_TURNS`, `CLUSTER_MAX_TURNS`, `CLUSTER_SEARCH_BUDGET` | Tail recovery mode (`reacquire` default, `cluster` or `legacy`) and the cluster attempt limits (defaults `2` attempts, `2` base turns, ceiling `4`, `4` billable searches per attempt; `reacquire` uses `CLUSTER_SEARCH_BUDGET` per episode). See [Targeted re-acquisition](#targeted-re-acquisition-default) and [Clustered tail recovery](#clustered-tail-recovery). |
+| `SITE_MAP`, `GROUNDED_CANDIDATES` | `on` (default) / `off`. The importer site map for contract acquisition and re-acquisition, and the grounded-candidate step before adjudication. See [Candidate yield](#candidate-yield-structural-harvest-site-map-grounded-candidates). |
 | `RESEARCH_MEMORY_ENABLED`, `FACT_REUSE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_MAX_AGE_DAYS`, `NEGATIVE_ROUTE_BLOCKING` | Cross-run memory: verified fact reuse, negative routes, recovery yield (default on, 365 / 30 days). See [Verified fact reuse](#verified-fact-reuse-negative-research-memory-and-the-feedback-dataset). |
 | `DISABLED_TOOLS` | Comma-separated tools never offered to the model (tools whose runtime capability is missing, such as `render_page` without Playwright, are left out automatically). |
 | `LAYERED_HARVEST_ENABLED`, `DOCUMENT_SWEEP_MAX_TURNS` | Deterministic candidate harvest + model document sweep (defaults `true`, `2` = adaptive: a 2nd turn only after a turn-1 cached-document inspection returned content; absolute max 2). See [Layered field harvesting](#layered-field-harvesting). |
@@ -264,8 +265,8 @@ settings are merged per phase and per key over the env phase settings (another p
 `GLM_DOCUMENT_SWEEP_THINKING`, `GLM_EXTRA_BODY` (only when it carries a `thinking` object),
 `GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `GLM_RECOVERY_MAX_ATTEMPTS`, the `ADJUDICATION_*` limits,
 `PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`, `PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`,
-`PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE` (the same list is logged as `env_overrides` in `run_started` and
-result.json).
+`PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE`, `SITE_MAP`, `GROUNDED_CANDIDATES`, `RECOVERY_MODE` (the same list is
+logged as `env_overrides` in `run_started` and result.json).
 
 Every run records its effective configuration: `run_profile`, `acquisition_mode`, `acquisition_document_card`,
 `research_prompt_hash` (of the research system prompt actually sent) and `env_overrides` in `run_started` /
@@ -833,10 +834,41 @@ keeps the previous finalizer exactly). `--finalize-existing` and the UI's finali
 the run's evidence; `filled_by_output` / `coverage_pct_by_output` keep the old count. The diagnostics' final-state
 counts stay the primary metric.
 
-### Clustered tail recovery (default)
+### Candidate yield: structural harvest, site map, grounded candidates
+
+The bottleneck after the adjudication sweep is candidate YIELD: on record 38626 (Toyota COROLLA 2024 BUSINESS EDI)
+contract runs reached 24-27 of 37 fields with any candidate. Four additions raise yield; all of them produce
+CANDIDATES or routing hints only, and only `admit()` turns anything into evidence:
+
+- **Structural HTML pairs** (`src/structure_harvest.py`, method `dom_pair`, routed like a table row): `<dl>`,
+  two-column elements (`li > span + span`, card rows), "label: value" inside one element; repeated sibling groups or a
+  dictionary alias; nav / footer / header / consent / hidden elements skipped; quotes "label | value" checked against
+  the text admission reads; at most 400 pairs per page. **Borderless PDF tables**: a pdfplumber text-strategy pass
+  (`source: pdf_table_text`) on pages without ruled tables or with >= 3 aliases. **Unit anchors** (`unit_anchor`):
+  number + unit with exactly one field's alias within the clause / 60 chars (existing candidates always win).
+  `HARVESTER_VERSION` is `harvest-v3`.
+- **Importer site map** (`SITE_MAP`, `src/site_map.py`): robots.txt / sitemap indexes / `.xml.gz` with the standard
+  library (depth 3, 50 files, 20,000 URLs per domain, 7-day per-domain cache, robots `Disallow` respected); the top 15
+  ranked URLs go into the first contract-acquisition message (20 s bound; a failure logs `site_map_failed`).
+- **Grounded candidates** (`GROUNDED_CANDIDATES`, `src/grounded.py`): for open fields with no admissible candidate after
+  the adjudication dry run, one no-tool call per top document (max 3, 15 fields, 24,000 chars of numbered blocks); the
+  model returns block offsets, code cuts the quote, checks it against the document and dry-runs admission; admissible
+  ones are adjudicated as class A.
+
+### Targeted re-acquisition (default)
+
+`RECOVERY_MODE=reacquire` replaces the tool-using recovery agent with the two primitives the rest of the engine uses.
+Per recovery cluster, breadth-first, one pass: a short acquisition episode with the contract tool surface (2 turns,
+`CLUSTER_SEARCH_BUDGET` billable searches, 3 fetches; the research reasoning settings, booked as recovery; site-map
+URLs ranked for the cluster, already fetched URLs, negative routes), the automatic harvest of its new documents,
+grounded candidates on them, and adjudication of the cluster's unseen candidates. The recovery model never receives
+`store_evidence` or a cached-document tool. Two consecutive API failures stop recovery; one failed cluster never stops
+the others.
+
+### Clustered tail recovery
 
 After the document sweep, the fields that are still open (the "tail") are recovered in **clusters**, not one
-field at a time (`RECOVERY_MODE=cluster`, the default; `RECOVERY_MODE=legacy` keeps the per-field retries
+field at a time (`RECOVERY_MODE=cluster`, the default before PR #31; `RECOVERY_MODE=legacy` keeps the per-field retries
 described in the next section). Field detection, the evaluator and every PR #18 rule are shared by both modes.
 
 ```

@@ -327,8 +327,21 @@ class VehicleLive:
             self.documents[doc["document_id"]] = doc.get("final_url") or doc.get("url") or doc["document_id"]
 
     def _on_candidates_harvested(self, e: dict) -> None:
-        self.harvest["documents"] += 1
+        if e.get("source"):          # grounded candidates of an already harvested document (not another document)
+            self.harvest["grounded"] = self.harvest.get("grounded", 0) + int(e.get("candidate_count") or 0)
+        else:
+            self.harvest["documents"] += 1
         self.harvest["fields"] |= set(e.get("fields") or [])
+
+    def _on_grounded_candidates_started(self, e: dict) -> None:
+        # Grounded candidates are part of the sweep stage (or of a re-acquisition episode)
+        self.action = None
+        if e.get("stage") != "reacquire":
+            self.phase = "document_sweep"
+
+    def _on_reacquire_started(self, e: dict) -> None:
+        """RECOVERY_MODE=reacquire: one targeted acquisition episode per cluster (shown as the recovery stage)."""
+        self._on_cluster_recovery_started({**e, "attempt": 1, "max_attempts": 1, "mode": "reacquire"})
 
     def _on_deterministic_harvest_summary(self, e: dict) -> None:
         self.action = None
