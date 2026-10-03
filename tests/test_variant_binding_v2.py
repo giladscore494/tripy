@@ -95,6 +95,8 @@ def test_the_targets_own_generic_word_is_not_another_named_trim():
     ident = xpeng()
     assert mentions("The XPeng G6 MAX version", ident)["trim"] == "match"
     assert mentions("the Performance version", ident)["trim"] == "negated"
+    assert mentions("Base version: smaller battery", ident)["trim"] == "negated"
+    assert mentions("Top version: larger wheels", ident)["trim"] == "negated"
 
 
 def test_corolla_business_edi_keeps_its_matching():
@@ -158,6 +160,15 @@ def test_the_catalog_rule_needs_the_market_an_official_source_and_no_other_trim(
     assert bind_text(ident, TECH)["binding_basis"] == "single_trim_catalog"            # the baseline applies
     result = bind_text(ident, TECH, **kw)
     assert result["binding_level"] == "exact_technical_variant" and result["variant_match"] == "unclear"
+
+
+def test_catalog_inference_is_blocked_by_an_explicit_generic_competing_tier(tmp_path, index):
+    index({XPENG_KEY: {"trims": ["MAX"], "records": ["101122"]}})
+    html = PRICE_PAGE.replace("</body>", "<p>Base version: fabric seats.</p></body>")
+    record = admitted(tmp_path, "https://www.xpeng.co.il/g6/specifications", html)
+    assert record["binding_level"] == "exact_technical_variant"
+    assert record["variant_match"] == "unclear"
+    assert "binding_basis" not in record
 
 
 def test_the_catalog_rule_never_applies_with_an_unknown_other_trim_scan_or_a_veto(index):
