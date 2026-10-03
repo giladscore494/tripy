@@ -144,6 +144,27 @@ def test_an_orphaned_active_run_is_reported_interrupted_after_a_restart(data_env
     assert "Finalize from preserved research" in body
 
 
+
+def test_stale_active_record_without_live_worker_does_not_disable_start(data_env, monkeypatch):
+    """The UI must use execution-aware active runs, not a stale ACTIVE status persisted on disk."""
+    monkeypatch.setenv("GLM_API_KEY", "k")
+    monkeypatch.setenv("GLM_MODEL", "glm-5.3-flash")
+    make_run(data_env, "20261001T100000Z-stale-active", status=M.SWEEPING, engine_status=None,
+             events=FAILED_EVENTS[:5], result=None, owner={"boot_id": "stale-owner"})
+
+    from src.jobs import manager as jobs
+    monkeypatch.setattr(jobs.RunManager, "reconcile", lambda self: [])
+    monkeypatch.setattr(jobs.RunManager, "maybe_reconcile", lambda self, *a, **k: [])
+    monkeypatch.setattr(jobs.RunManager, "active_runs", lambda self: [])
+
+    app = app_test()
+    app.run()
+    assert not app.exception, app.exception
+    start = next(b for b in app.button if b.label == "Start research")
+    assert not start.disabled
+    assert "a run for this target is already active" not in texts(app)
+
+
 def test_history_lists_runs_and_the_url_selects_one(data_env):
     make_run(data_env, "20261001T090000Z-older", status=M.FAILED, engine_status="finalization_failed",
              events=FAILED_EVENTS, result={"record_id": "101122", "status": "finalization_failed", "output": None,
