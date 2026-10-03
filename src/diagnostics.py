@@ -990,16 +990,18 @@ def load_vehicle_diagnostics(run_dir: Path | str, *, rebuild_if_missing: bool = 
 
 
 def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
-    """The diagnostics with the run's Binding Replay summary (src/binding_replay.py) when one was written next to it:
-    {fields_ok_recorded, fields_ok_now, gap_counts, code_version}. Read fresh each time (a replay is written after
-    the run); a missing or unreadable summary leaves the diagnostics as they are."""
+    """The diagnostics with this run's CURRENT Binding Replay summary, when one exists.
+
+    Binding Replay summaries are cached by a content hash of the binding code/data. Never surface a stale summary in
+    benchmark diagnostics after the binding code changes: the UI / CLI can regenerate it on demand."""
     if diag is None:
         return None
-    path = Path(run_dir) / "binding_replay_summary.json"
     try:
-        summary = json.loads(path.read_text("utf-8")) if path.is_file() else None
-    except (OSError, ValueError):
-        summary = None
+        from .binding_replay import load_replay
+        replay = load_replay(run_dir)
+    except Exception:  # noqa: BLE001 - replay metadata must never break diagnostics
+        replay = None
+    summary = (replay or {}).get("summary")
     vehicle = (summary or {}).get("vehicle") if isinstance(summary, dict) else None
     if not isinstance(vehicle, dict):
         return diag
