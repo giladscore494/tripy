@@ -256,6 +256,30 @@ def test_a_series_runs_strictly_one_after_another_and_writes_its_benchmark(tmp_p
     assert not any(r.run_id.startswith("_") for r in manager.list_runs())
 
 
+def test_ab_runs_have_cold_private_caches_and_no_cross_arm_memory(tmp_path):
+    observed = []
+    scripted = profiled_research([])
+
+    def research(*args, cache, agent_cfg, **kwargs):
+        marker = cache.root / "memory" / "previous-arm.txt"
+        observed.append((agent_cfg.run_profile, cache.root, marker.exists(), cache.stats_snapshot()))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(agent_cfg.run_profile, encoding="utf-8")
+        return scripted(*args, cache=cache, agent_cfg=agent_cfg, **kwargs)
+
+    manager = series_manager(tmp_path, research)
+    series_id = manager.start_series(series_request(repeats=2, ids=("1",))).run_id
+    series = wait_series(manager, series_id)
+    assert series["status"] == JM.SERIES_COMPLETED
+    assert [row[0] for row in observed] == [R.BASELINE, R.TREATMENT] * 2
+    assert len({row[1] for row in observed}) == 4
+    assert all(not row[2] and row[3]["document_hits"] == 0 for row in observed)
+    assert not (manager.cache.root / "memory" / "previous-arm.txt").exists()
+    for index, run_id in enumerate(series["run_ids"]):
+        record = manager.get(run_id)
+        assert manager._cache_for_series_run(record.request["series"]).root == observed[index][1]
+
+
 def test_a_series_waits_for_a_vehicle_that_is_in_another_active_run(tmp_path):
     gate = threading.Event()
     runs: list = []

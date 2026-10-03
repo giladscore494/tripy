@@ -9,8 +9,8 @@ reruns and closed tabs do not affect it. Every browser session discovers runs fr
 (run_state.json) and replays the engine's own events.jsonl for progress.
 
 The research itself is exactly the engine's `research_one` / `run_batch` / `finalize_existing_run` path the old
-UI and the CLI use, with the same shared ConcurrencyController (provider limits unchanged) and the same document
-cache. Nothing in the research engine was changed for this.
+UI and the CLI use, with the same shared ConcurrencyController (provider limits unchanged). Ordinary runs share
+the document cache; A/B benchmark runs each use their own durable cold cache so one arm cannot train the next.
 
 Guards against duplicate execution:
 * `start` runs under one process lock: an idempotency key (one per form submission) returns the run it already
@@ -447,13 +447,17 @@ class RunManager:
         except Exception:  # noqa: BLE001 - research still runs; its own artifacts are the source of truth
             log.error("run %s: could not mark the run as starting", run_id, exc_info=True)
         tracker = _StageTracker(self, run_id)
+        # Every A/B run starts with an empty, durable cache. Sharing the normal cache (including its
+        # research memory) lets the later arm inherit the earlier arm's documents and verified facts.
+        # Keep this cache for a possible finalization retry of this run.
+        cache = self._cache_for_series_run(request.series) if request.series else self.cache
         make_client = self._client_factory(request.settings, self.controller, cancel)
         heartbeat = self._heartbeat(run_id)
         results: dict[str, dict] = {}
 
         def run_one(vehicle: dict, row: dict) -> dict:
             rid = str(vehicle["upstream_record_id"])
-            return self._research_fn(vehicle, row, client=make_client(), cache=self.cache, runs_dir=self.runs_dir,
+            return self._research_fn(vehicle, row, client=make_client(), cache=cache, runs_dir=self.runs_dir,
                                      batch_id=run_id, agent_cfg=request.agent_cfg, tool_cfg=request.tool_cfg,
                                      pricing=request.pricing, level15_source=level15_source,
                                      listener=tracker.listener_for(rid), cancel_event=cancel)
@@ -464,7 +468,7 @@ class RunManager:
 
         stats: dict = {}
         outcome, failure = None, None
-        cache_before = self.cache.stats_snapshot()
+        cache_before = cache.stats_snapshot()
         try:
             with self.controller.observe() as observation:
                 try:
@@ -473,7 +477,7 @@ class RunManager:
                 finally:
                     try:
                         update_batch(self.runs_dir, run_id, {"concurrency_observed": batch_observability(
-                            stats, observation, cache_before, self.cache.stats_snapshot())})
+                            stats, observation, cache_before, cache.stats_snapshot())})
                     except Exception:  # noqa: BLE001
                         log.warning("run %s: could not write concurrency observability", run_id, exc_info=True)
         except BaseException as exc:  # noqa: BLE001 - cancellation, shutdown, or an unexpected error
@@ -651,8 +655,11 @@ class RunManager:
         except Exception:  # noqa: BLE001
             pass
         try:
-            self._finalize_fn(self.runs_dir, run_id, record_id, client=client, cache=self.cache, config=config,
-                              tool_config=tool_config, metrics_fn=lambda r: compute_metrics(r, vehicle, self.cache))
+            record = self.get(run_id)
+            series = (record.request or {}).get("series") if record else None
+            cache = self._cache_for_series_run(series) if series else self.cache
+            self._finalize_fn(self.runs_dir, run_id, record_id, client=client, cache=cache, config=config,
+                              tool_config=tool_config, metrics_fn=lambda r: compute_metrics(r, vehicle, cache))
         except RecoveryError as exc:
             outcome, failure = FAILED, exc
             log.warning("run %s: finalization retry refused: %s", run_id, exc)
@@ -680,6 +687,13 @@ class RunManager:
         if not series_id or "/" in series_id or "\\" in series_id or series_id.startswith("."):
             raise RunRejected(f"invalid series id {series_id!r}")
         return self.runs_dir / SERIES_DIR / series_id
+
+    def _cache_for_series_run(self, series: dict) -> DocumentCache:
+        """Private cold cache per planned run, including its own cross-run research memory."""
+        index = series.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise RunRejected("Invalid A/B run index.")
+        return DocumentCache(self.series_dir(series.get("series_id")) / "cache" / str(index))
 
     def get_series(self, series_id: str) -> dict | None:
         import json
