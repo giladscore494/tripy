@@ -25,8 +25,10 @@ def diagnostics_for(run_dir: Path) -> dict | None:
     """diagnostics.json if present (a finished run); otherwise built in memory from events (cached by file size)."""
     events_path = run_dir / "events.jsonl"
     try:
+        replay_path = run_dir / "binding_replay_summary.json"
         stamp = (events_path.stat().st_size, (run_dir / diag_mod.DIAGNOSTICS_FILE).stat().st_mtime_ns
-                 if (run_dir / diag_mod.DIAGNOSTICS_FILE).exists() else 0)
+                 if (run_dir / diag_mod.DIAGNOSTICS_FILE).exists() else 0,
+                 replay_path.stat().st_mtime_ns if replay_path.exists() else 0)
     except OSError:
         return None
     key = str(run_dir)
