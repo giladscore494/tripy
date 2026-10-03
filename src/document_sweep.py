@@ -19,7 +19,7 @@ import json
 from typing import Any
 from urllib.parse import urlparse
 
-from .candidate_harvest import candidates_from_events
+from .candidate_harvest import deterministic_candidates_from_events
 from .field_recovery import RETRY_STATES, material_key, vehicle_identity
 from .fields import normalize_field_name, semantic_notes
 from .storage import trace
@@ -273,13 +273,15 @@ def plan_chunks(fields: list[str], specs: list[dict], build, limits: dict) -> li
 
 def promoted_or_missed(sweep_evidence: list[dict], events: list[dict]) -> tuple[list[dict], list[dict]]:
     """Split evidence stored by the sweep into (promoted deterministic candidates, facts the deterministic
-    harvest missed: no candidate for that field and value from that document)."""
+    harvest missed: no candidate for that field and value from that document). A value only grounded candidates
+    (src/grounded.py) located counts as missed by the deterministic harvest (the parser did miss it), so parser-gap
+    joins credit it."""
     by_doc: dict[tuple[str, str], set[str]] = {}
-    for cand in candidates_from_events(events):
+    for cand in deterministic_candidates_from_events(events):
         key = (normalize_field_name(cand.get("field")), str(cand.get("document_id") or cand.get("source_url")))
         by_doc.setdefault(key, set()).add(material_key(cand.get("value")))
     url_to_doc = {}
-    for cand in candidates_from_events(events):
+    for cand in deterministic_candidates_from_events(events):
         if cand.get("source_url") and cand.get("document_id"):
             url_to_doc[cand["source_url"]] = cand["document_id"]
     promoted, missed = [], []

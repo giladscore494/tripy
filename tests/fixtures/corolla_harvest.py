@@ -56,6 +56,94 @@ def put(cache, url: str, body: str, kind: str) -> str:
     return cache.put("fetch", url, body.encode("utf-8"), meta, body)["document_id"]
 
 
+# PR #31: the layouts the 38626 runs could not read (test data written to reproduce them, not copies of real pages):
+# a Hebrew importer spec page whose labels and values sit in sibling elements / cards / a definition list, and an
+# importer brochure PDF whose spec matrix has no ruling lines.
+IMPORTER_SPEC = "https://www.toyota.co.il/new-cars/corolla/specifications"
+IMPORTER_SPEC_HTML = """<html><head><title>טויוטה קורולה 2024 - מפרט טכני</title></head><body>
+<header><nav><ul><li><span>דגמים</span><span>קורולה</span></li></ul></nav></header>
+<h1>טויוטה קורולה 2024 1.8 היברידי</h1>
+<h2>מידות ומשקלים</h2>
+<dl class="dims"><dt>אורך</dt><dd>4,630</dd><dt>רוחב</dt><dd>1,780</dd><dt>גובה</dt><dd>1,435</dd></dl>
+<h3>רמת גימור BUSINESS EDI</h3>
+<ul class="spec-list">
+<li class="spec"><span class="k">בסיס גלגלים (מ"מ)</span><span class="v">2,700</span></li>
+<li class="spec"><span class="k">נפח מיכל דלק (ליטר)</span><span class="v">43</span></li>
+<li class="spec"><span class="k">משקל עצמי (ק"ג)</span><span class="v">1,385</span></li>
+<li class="spec"><span class="k">נפח תא מטען (ליטר)</span><span class="v">471</span></li>
+</ul>
+<div class="cards">
+<div class="card-row"><div class="label">אחריות</div><div class="value">3 שנים או 100,000 ק"מ</div></div>
+<div class="card-row"><div class="label">מחיר</div><div class="value">179,990 ש"ח</div></div>
+<div class="card-row"><div class="label">רמת גימור</div><div class="value">BUSINESS EDI</div></div>
+<div class="card-row"><div class="label">תיבת הילוכים</div><div class="value">e-CVT</div></div>
+</div>
+<footer><div><div>שירות לקוחות</div><div>*2800</div></div></footer>
+</body></html>"""
+BROCHURE = "https://www.toyota.co.il/media/corolla-2024-brochure.pdf"
+BROCHURE_ROWS = [("Version", "1.8 Hybrid Business", "1.8 Hybrid Premium"), ("Ground clearance", "135 mm", "135 mm"),
+                 ("Maximum torque", "142 Nm", "142 Nm"), ("Top speed", "180 km/h", "180 km/h"),
+                 ("Tyres", "205/55 R16", "225/45 R17")]
+
+
+def structural_documents(cache) -> dict[str, str]:
+    """Store the PR #31 structural fixtures; {key: document_id}."""
+    from fixtures.mini_pdf import make_pdf, spec_matrix
+
+    out = {f"html:{IMPORTER_SPEC}": put(cache, IMPORTER_SPEC, IMPORTER_SPEC_HTML, "html")}
+    body = make_pdf([spec_matrix(BROCHURE_ROWS)])
+    text = "[page 1]\n" + "\n".join("   ".join(r) for r in BROCHURE_ROWS)
+    meta = {"status": 200, "final_url": BROCHURE, "doc_type": "pdf", "content_type": "application/pdf", "pages": 1}
+    out[f"pdf:{BROCHURE}"] = cache.put("pdf", BROCHURE, body, meta, text)["document_id"]
+    return out
+
+
+def harvest_before_after(cache, doc_ids: dict[str, str]) -> tuple[dict, dict]:
+    """({key: candidates} with the pre-#31 harvester path, {key: candidates} with Parts A-C). The "before" path is the
+    same segment harvest without the PR #31 inputs: no HTML source (no structural pairs), the default ruling-line PDF
+    tables only, and no unit-anchor addition."""
+    from src.candidate_harvest import dictionary_for, harvest_document, harvest_segments, document_segments
+    from src.fields import load_schema
+    from src.tools.extract import _html_tables, _pdf_tables, document_structured
+
+    specs = load_schema()
+    d = dictionary_for(specs)
+    before, after = {}, {}
+    for key, doc in doc_ids.items():
+        meta = cache.get(doc) or {}
+        is_html = meta.get("doc_type") == "html"
+        html = cache.read_body(doc).decode("utf-8") if is_html else None
+        try:
+            tables = _html_tables(html) if is_html else (_pdf_tables(cache.read_body(doc))
+                                                       if meta.get("doc_type") == "pdf" else [])
+        except Exception:  # noqa: BLE001 - a fixture "PDF" body that is not a real PDF
+            tables = []
+        structured = document_structured(cache, doc, html) if is_html else None
+        before[key] = harvest_segments(document_segments(cache.read_text(doc), tables, structured,
+                                                         is_pdf=meta.get("doc_type") == "pdf", dictionary=d), d)
+        after[key] = harvest_document(cache, doc, specs)[0]
+    return before, after
+
+
+def coverage_table(cache) -> dict:
+    """Fields with >= 1 candidate before vs after Parts A-C: the existing Corolla fixtures, the structural fixtures,
+    and both together (all 45 schema fields; 37 apply to the 38626 hybrid)."""
+    from src.fields import resolve_requested_fields
+
+    applicable = {s["name"] for s in resolve_requested_fields(None, propulsion="hybrid") if s.get("applicable", True)}
+    existing = {f"{kind}:{url}": put(cache, url, body, kind) for url, body, kind in documents()}
+    structural = structural_documents(cache)
+    rows = {}
+    for name, ids in (("existing Corolla fixtures", existing), ("structural fixtures (PR #31)", structural),
+                      ("all", {**existing, **structural})):
+        before, after = harvest_before_after(cache, ids)
+        b = {c["field"] for v in before.values() for c in v} & applicable
+        a = {c["field"] for v in after.values() for c in v} & applicable
+        rows[name] = {"documents": len(ids), "before": len(b), "after": len(a), "gained": sorted(a - b),
+                      "lost": sorted(b - a)}
+    return {"applicable_fields": len(applicable), "rows": rows}
+
+
 def harvest_all(cache) -> dict[str, list[dict]]:
     """{document key (kind:url): candidates} for every fixture document, full schema (all fields)."""
     from src.candidate_harvest import harvest_document
@@ -92,6 +180,9 @@ if __name__ == "__main__":
         harvest = harvest_all(DocumentCache(Path(tmp)))
     keys = candidate_keys(harvest)
     report = {"candidate_keys": keys, "fields_with_candidates": fields_with_candidates(harvest)}
+    if "--table" in sys.argv:
+        with tempfile.TemporaryDirectory() as tmp:
+            print(json.dumps(coverage_table(DocumentCache(Path(tmp))), ensure_ascii=False, indent=1))
     if "--write-golden" in sys.argv:
         GOLDEN.write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n", "utf-8")
     print(json.dumps({"candidates": len(keys), "fields_with_candidates": len(report["fields_with_candidates"])}))

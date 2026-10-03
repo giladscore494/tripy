@@ -357,3 +357,49 @@ def test_a_series_needs_vehicles_and_arms_and_runs_one_at_a_time(tmp_path):
     manager.cancel_series(started.run_id)
     gate.set()
     wait_series(manager, started.run_id)
+
+
+# --- PR #31: SITE_MAP / GROUNDED_CANDIDATES / RECOVERY_MODE ---------------------------------------------------------
+
+YIELD_ENV = {"SITE_MAP": "off", "GROUNDED_CANDIDATES": "off", "RECOVERY_MODE": "legacy"}
+
+
+@pytest.mark.parametrize("profile,expected", [
+    (R.PRODUCTION, (True, True, "reacquire")), (R.TREATMENT, (True, True, "reacquire")),
+    (R.TREATMENT_CARD, (True, True, "reacquire")), (R.BASELINE, (True, False, "cluster"))])
+def test_each_named_profile_pins_the_candidate_yield_switches_regardless_of_env(profile, expected):
+    for env in (YIELD_ENV, {"SITE_MAP": "on", "GROUNDED_CANDIDATES": "on", "RECOVERY_MODE": "reacquire"}, {}):
+        cfg = R.build_agent_config(env.get, {"site_map": False, "recovery_mode": "legacy"}, profile)
+        assert (cfg.site_map, cfg.grounded_candidates, cfg.recovery_mode) == expected
+
+
+def test_custom_uses_env_and_advanced_settings_and_env_vars_are_listed():
+    cfg = R.build_agent_config(YIELD_ENV.get, {}, R.CUSTOM)
+    assert (cfg.site_map, cfg.grounded_candidates, cfg.recovery_mode) == (False, False, "legacy")
+    cfg = R.build_agent_config(YIELD_ENV.get, {"recovery_mode": "cluster", "grounded_candidates": True}, R.CUSTOM)
+    assert (cfg.site_map, cfg.grounded_candidates, cfg.recovery_mode) == (False, True, "cluster")
+    listed = {var for var, _, _ in R.ENV_OVERRIDE_VARS}
+    assert {"SITE_MAP", "GROUNDED_CANDIDATES", "RECOVERY_MODE"} <= listed
+    texts = [o["var"] for o in R.env_overrides(YIELD_ENV.get)]
+    assert texts == ["SITE_MAP", "GROUNDED_CANDIDATES", "RECOVERY_MODE"]
+    assert R.env_overrides({"SITE_MAP": "on", "GROUNDED_CANDIDATES": "true", "RECOVERY_MODE": "reacquire"}.get) == []
+
+
+def test_config_key_separates_baseline_from_treatment_on_the_new_switches():
+    def configured(profile):
+        cfg = R.build_agent_config({}.get, {}, profile)
+        events = [{"kind": "run_started", "agent_config": dataclasses.asdict(cfg), "run_profile": profile,
+                   "acquisition_mode": "contract", "site_map": cfg.site_map,
+                   "grounded_candidates": cfg.grounded_candidates, "recovery_mode": cfg.recovery_mode}]
+        return D.run_configuration(events)
+
+    baseline, treatment = configured(R.BASELINE), configured(R.TREATMENT)
+    assert (baseline["grounded_candidates"], baseline["recovery_mode"]) == (False, "cluster")
+    assert (treatment["grounded_candidates"], treatment["recovery_mode"]) == (True, "reacquire")
+    assert "recovery_mode=reacquire" in D.config_key(treatment) and "grounded_candidates=False" in D.config_key(baseline)
+    # with the profile name and acquisition mode equal, the new switches alone still separate the arms
+    same = {**baseline, "run_profile": "x"}, {**treatment, "run_profile": "x"}
+    assert D.config_key(same[0]) != D.config_key(same[1])
+    # runs logged before PR #31: no site map, no grounded candidates, the cluster agent
+    old = D.run_configuration([{"kind": "run_started", "agent_config": {}}])
+    assert (old["site_map"], old["grounded_candidates"], old["recovery_mode"]) == (False, False, "cluster")

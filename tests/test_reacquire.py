@@ -149,3 +149,19 @@ def test_a_conflicting_field_asks_for_the_deciding_source():
                               source_type="target-market", site_urls=[], fetched_urls=[], negative={},
                               search_budget=4, fetch_budget=3, turns=2)
     assert packet["conflicting_fields"] == ["list_price"] and "DECIDING source" in packet["conflict_instruction"]
+
+
+def test_live_pipeline_labels_the_recovery_stage_re_acquisition(tmp_path):
+    from src.runstate.pipeline import pipeline_from_events
+
+    def episodes(packet, turn_no):
+        return say({"done": True, "reason": "nothing more"})
+
+    client = ReacquireClient([fetch("a", EU), say({"done": True, "reason": "enough"})], episodes)
+    result, events = run(tmp_path, client, acquisition_mode="contract", requested_fields=["fuel_tank_l", "length_mm"],
+                         **GATE_OFF)
+    stages = {s["key"]: s for s in pipeline_from_events(events, "38626").view()["stages"]}
+    assert stages["recovery"]["label"] == "Re-acquisition"
+    # the sweep ran grounded candidates (length_mm had nothing admissible): shown as part of the sweep stage
+    assert any(e["kind"] == "grounded_candidates_started" for e in events)
+    assert "Grounded candidates" in stages["sweep"]["label"]

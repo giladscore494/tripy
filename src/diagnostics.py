@@ -433,7 +433,7 @@ def _documents_before(events: list[dict], seq: int) -> set[str]:
 
 def classify_sweep_evidence(item: dict, *, events: list[dict], sweep_start_seq: int, resolved: bool) -> dict:
     """The deterministic-harvest classification of one sweep evidence item (see the module docstring)."""
-    from .candidate_harvest import candidates_from_events
+    from .candidate_harvest import deterministic_candidates_from_events as candidates_from_events
     from .field_recovery import material_key
 
     field, doc = _norm_field(item.get("field")), item.get("document_id")
@@ -569,6 +569,17 @@ def sweep_calls(events: list[dict]) -> list[dict]:
     return records
 
 
+def _grounded_summary(events: list[dict]) -> dict:
+    done = [e for e in events if e.get("kind") == "grounded_candidates_finished" and e.get("stage") != "reacquire"]
+    if not done:
+        return {"grounded_calls": None, "grounded_items": None, "grounded_admissible": None}
+    return {"grounded_calls": sum(int(e.get("model_calls") or 0) for e in done),
+            "grounded_items": sum(int(e.get("items") or 0) for e in done),
+            "grounded_admissible": sum(int(e.get("admissible") or 0) for e in done),
+            "grounded_not_admissible": sum(int(e.get("not_admissible") or 0) for e in done),
+            "grounded_fields_with_admissible": sorted({f for e in done for f in e.get("fields_with_admissible") or []})}
+
+
 def sweep_summary(events: list[dict], calls: list[dict]) -> dict:
     finished = next((e for e in events if e.get("kind") in ("document_sweep_finished", "document_sweep_skipped")),
                     None) or {}
@@ -598,6 +609,8 @@ def sweep_summary(events: list[dict], calls: list[dict]) -> dict:
         "input_tokens": sum(tok_in) if tok_in else None, "output_tokens": sum(tok_out) if tok_out else None,
         "latency_ms": sum(c["latency_ms"] or 0 for c in calls) or None,
         "stage_latency_ms": finished.get("document_sweep_latency_ms"),
+        # grounded candidates (GROUNDED_CANDIDATES, sweep stage): reported apart from the deterministic harvest
+        **_grounded_summary(events),
         "timeouts": sum(c["timeouts"] for c in calls),
         "failed_calls": sum(1 for c in calls if not c["call_success"]),
         # candidates offered only in failed chunks (never seen by a model; still fresh for recovery's local pass)
@@ -773,6 +786,10 @@ def run_configuration(events: list[dict]) -> dict:
             # runs before the document card / run profiles had neither: card off, no profile
             "document_card": bool(started.get("acquisition_document_card", agent.get("acquisition_document_card"))),
             "run_profile": started.get("run_profile") or agent.get("run_profile") or None,
+            # PR #31 switches; runs logged before them had no site map, no grounded candidates and cluster recovery
+            "site_map": bool(started.get("site_map", agent.get("site_map", False))),
+            "grounded_candidates": bool(started.get("grounded_candidates", agent.get("grounded_candidates", False))),
+            "recovery_mode": started.get("recovery_mode") or agent.get("recovery_mode") or "cluster",
             # informational (env values differing from the code defaults; a named profile ignores them): not part of
             # config_key, whose other entries already hold the effective values
             "env_overrides": [o.get("text") for o in started.get("env_overrides") or [] if isinstance(o, dict)]}
@@ -788,7 +805,8 @@ def config_key(config: dict) -> str:
                                                          "sweep_thinking", "sweep_max_attempts", "sweep_max_fields",
                                                          "sweep_max_candidates", "research_reasoning_effort",
                                                          "sweep_reasoning_effort", "recovery_reasoning_effort",
-                                                         "finalizer_reasoning_effort", "final_assembly"))
+                                                         "finalizer_reasoning_effort", "final_assembly",
+                                                         "site_map", "grounded_candidates", "recovery_mode"))
 
 
 # --- run level ----------------------------------------------------------------------------------------------------------
@@ -950,6 +968,7 @@ def vehicle_row(diag: dict) -> dict:
             "sweep_output_tokens": s.get("output_tokens"), "sweep_latency_ms": s.get("latency_ms"),
             "sweep_timeouts": s.get("timeouts"), "sweep_resolved_per_model_call": s.get("resolved_per_model_call"),
             "sweep_failed_chunk_candidates_kept_fresh": s.get("failed_chunk_candidates_kept_fresh"),
+            "sweep_grounded_calls": s.get("grounded_calls"), "sweep_grounded_admissible": s.get("grounded_admissible"),
             "acq_official_urls_discovered": a.get("official_urls_discovered"),
             "acq_tool_blocked": a.get("tool_blocked"), "acq_turn_reached_min_base": a.get("turn_reached_min_base"),
             "acq_tokens_until_min_base": a.get("tokens_until_min_base"),
@@ -977,6 +996,8 @@ def vehicle_row(diag: dict) -> dict:
                                                                      ("finalizer", "finalization"))
                for k in ("model_calls", "input_tokens", "output_tokens", "reasoning_tokens")},
             "rec_failed_attempts": rec.get("failed_attempts"), "rec_api_failure_stop": rec.get("api_failure_stop"),
+            "rec_mode": rec.get("mode"), "rec_reacquire_new_useful_documents": rec.get("reacquire_new_useful_documents"),
+            "rec_reacquire_admitted": rec.get("reacquire_admitted"),
             "research_tokens": (research.get("input_tokens") or 0) + (research.get("output_tokens") or 0)
             if research else None,
             "cost_usd": totals.get("cost_usd"), "wall_time_s": totals.get("wall_time_s")}

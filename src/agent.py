@@ -2354,6 +2354,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     resolved_indirectly: dict[str, dict] = {}
     site_map_state = dict(site_map_state or {})
     built_site = site_map_state.get("site")
+    site_tried = False          # a site map that could not be built is tried once per recovery, not per cluster
 
     def reevaluate(cluster: str, fields: list[str]) -> None:
         for entry in current_evaluation(trace_events(run_log), specs, market):
@@ -2388,9 +2389,10 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         fetched_urls = list(dict.fromkeys(str(m.get("final_url") or m.get("url")) for m in doc_metas
                                           if m.get("final_url") or m.get("url")))
         site_urls: list[dict] = []
-        if config.site_map:
+        if config.site_map and (built_site is not None or not site_tried):
+            site_tried = True
             result = run_site_map(session.ctx, run_log, payload=payload, vehicle=vehicle, target_market=market,
-                                  cluster=name, exclude=fetched_urls + [m.get("url") for m in doc_metas],
+                                  cluster=name, exclude=fetched_urls + [m["url"] for m in doc_metas if m.get("url")],
                                   site=built_site, stage="reacquire")
             built_site = result.get("site") or built_site
             site_urls = result.get("offered") or []
@@ -2517,6 +2519,9 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         searched = session.ctx.counters["search_cache_misses"] - searches_before
         state["searches"] += searched
         used = {k: caller.usage["field_recovery"][k] - usage_before.get(k, 0) for k in caller.usage["field_recovery"]}
+        # the per-vehicle recovery cap (FIELD_RECOVERY_MAX_TOTAL_STEPS) counts EVERY recovery model call: the
+        # acquisition turns were counted as they ran, the grounded and adjudication calls are added here
+        state["total_steps"] += max(0, used.get("model_calls", 0) - turns)
         adj = adjudication.get("adjudication") or {}
         grounded = adjudication.get("grounded_candidates") or {}
         resolved = [f for f in open_fields if not current[f]["retry_eligible"]]

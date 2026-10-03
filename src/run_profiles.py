@@ -3,11 +3,14 @@
 Environment variables stay the source of DEFAULTS (agent_config_from_env). A run profile or a UI choice wins over env
 for that run:
 
-    Production (default)        contract, card off
-    Benchmark: Baseline         legacy,   card off
-    Benchmark: Treatment        contract, card off
-    Benchmark: Treatment + card contract, card on
+    Production (default)        contract, card off, site map on, grounded candidates on,  recovery reacquire
+    Benchmark: Baseline         legacy,   card off, site map on, grounded candidates off, recovery cluster
+    Benchmark: Treatment        contract, card off, site map on, grounded candidates on,  recovery reacquire
+    Benchmark: Treatment + card contract, card on,  site map on, grounded candidates on,  recovery reacquire
     Custom                      the Advanced settings as edited (their defaults come from env)
+
+Baseline is the pre-redesign engine (no grounded candidates, the cluster recovery agent) on the same discovery: the
+site map stays on so the arms stay comparable (it only acts in contract acquisition and reacquire recovery).
 
 Every named profile also runs: sweep mode adjudication, sweep 12 fields / 16 candidates, deterministic final assembly,
 reasoning effort research high / document sweep low / recovery low / finalizer low, no thinking object, one HTTP
@@ -44,11 +47,13 @@ _PINNED_PHASE_KEYS = (("research", "reasoning_effort"), ("document_sweep", "reas
                       ("document_sweep", "max_attempts"), ("document_sweep", "thinking"),
                       ("recovery", "reasoning_effort"), ("recovery", "max_attempts"),
                       ("finalizer", "reasoning_effort"))
+_YIELD = {"site_map": True, "grounded_candidates": True, "recovery_mode": "reacquire"}       # PR #31
 NAMED_PROFILES: dict[str, dict] = {
-    PRODUCTION: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP},
-    BASELINE: {"acquisition_mode": "legacy", "acquisition_document_card": False, **_SWEEP},
-    TREATMENT: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP},
-    TREATMENT_CARD: {"acquisition_mode": "contract", "acquisition_document_card": True, **_SWEEP},
+    PRODUCTION: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP, **_YIELD},
+    BASELINE: {"acquisition_mode": "legacy", "acquisition_document_card": False, **_SWEEP,
+               "site_map": True, "grounded_candidates": False, "recovery_mode": "cluster"},
+    TREATMENT: {"acquisition_mode": "contract", "acquisition_document_card": False, **_SWEEP, **_YIELD},
+    TREATMENT_CARD: {"acquisition_mode": "contract", "acquisition_document_card": True, **_SWEEP, **_YIELD},
 }
 
 # (env variable, AgentConfig field | ("phase", phase, key), kind): the settings a named profile pins and the
@@ -86,6 +91,9 @@ ENV_OVERRIDE_VARS: tuple[tuple[str, Any, str], ...] = (
     ("PRIMARY_RESEARCH_HARD_MAX_TURNS", "primary_research_hard_max_turns", "int"),
     ("PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS", "primary_research_min_base_documents", "int"),
     ("PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE", "primary_research_min_base_scoped_coverage", "float"),
+    ("SITE_MAP", "site_map", "bool"),
+    ("GROUNDED_CANDIDATES", "grounded_candidates", "bool"),
+    ("RECOVERY_MODE", "recovery_mode", "str"),
 )
 
 

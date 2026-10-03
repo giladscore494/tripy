@@ -241,3 +241,16 @@ def test_unit_anchor_never_replaces_existing_candidates(specs):
     added = merge_additions(existing, [{"field": "length_mm", "value": 4495.0, "extraction_method": "unit_anchor"},
                                        {"field": "width_mm", "value": 1780, "extraction_method": "unit_anchor"}])
     assert added[0] is existing[0] and [c["field"] for c in added] == ["length_mm", "width_mm"]
+
+
+def test_corolla_coverage_table_before_vs_after(tmp_path):
+    """The PR table: fields with >= 1 candidate before vs after Parts A-C (deterministic)."""
+    table = corolla_harvest.coverage_table(DocumentCache(tmp_path))
+    rows = table["rows"]
+    assert table["applicable_fields"] == 37
+    assert all(not row["lost"] for row in rows.values())                  # nothing disappears anywhere
+    assert rows["existing Corolla fixtures"]["after"] >= rows["existing Corolla fixtures"]["before"]
+    structural = rows["structural fixtures (PR #31)"]
+    assert (structural["before"], structural["after"]) == (14, 19)
+    assert structural["gained"] == ["list_price", "local_trim_name", "vehicle_warranty", "warranty_km",
+                                    "warranty_years"]

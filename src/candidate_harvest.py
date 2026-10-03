@@ -1285,6 +1285,12 @@ def vehicle_hints(cand: dict, vehicle: dict | None) -> dict:
     return out
 
 
+def deterministic_candidates_from_events(events: Iterable[dict]) -> list[dict]:
+    """The deterministic harvest's candidates only (no model-located source such as grounded_llm): what the parser
+    itself found, for "missed by the deterministic harvest" accounting."""
+    return candidates_from_events(e for e in events if not e.get("source"))
+
+
 def candidates_from_events(events: Iterable[dict]) -> list[dict]:
     """Every candidate of the run: the deterministic harvest's (one event per document) and, as separate
     harvest-equivalent events of the same document, other candidate sources (`source`, e.g. grounded_llm; each

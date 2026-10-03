@@ -67,6 +67,9 @@ def test_a_grounded_pointer_becomes_a_class_a_candidate_and_is_stored_only_throu
     # the model accepted it in adjudication -> stored through store_evidence + admission
     stored = [e for e in evidence_of(events) if e["field"] == "warranty_years"]
     assert [e["value"] for e in stored] == [3]
+    # the deterministic harvest did miss it: logged as such (parser-gap joins credit the recovery)
+    assert any(e["kind"] == "candidate_missed_by_deterministic_harvest" and e["field"] == "warranty_years"
+               for e in events)
     finished = next(e for e in events if e["kind"] == "grounded_candidates_finished")
     assert finished["admissible"] == 1 and finished["invalid"] == 3 and finished["model_calls"] == 1
     assert summary["grounded_candidates"]["admissible"] == 1

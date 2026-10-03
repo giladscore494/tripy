@@ -93,6 +93,7 @@ class VehiclePipeline:
         self.harvest: dict = {}
         self.sweep: dict = {}
         self.recovery: dict = {}
+        self.stage_labels: dict[str, str] = {}   # per-run stage label (e.g. "Re-acquisition" in reacquire mode)
         self.model_calls_by_stage: Counter = Counter()
         self.evidence_admitted = 0
         self.evidence_rejected = 0
@@ -241,12 +242,32 @@ class VehiclePipeline:
     def _on_field_retry_queue(self, e: dict, ts) -> None:
         fields = e.get("fields") or []
         self.recovery["queued_fields"] = len(fields)
+        if e.get("mode") == "reacquire":
+            self.stage_labels["recovery"] = "Re-acquisition"
+            self.recovery["mode"] = "reacquire"
         if not fields:
             self.stage_notes["recovery"] = "nothing to recover"
 
     def _on_cluster_recovery_started(self, e: dict, ts) -> None:
         self.recovery["cluster"] = e.get("cluster")
         self.recovery["attempt"] = e.get("attempt")
+
+    def _on_reacquire_started(self, e: dict, ts) -> None:
+        self.stage_labels["recovery"] = "Re-acquisition"
+        self.recovery["cluster"] = e.get("cluster")
+        self.recovery["attempt"] = 1
+        self.recovery["mode"] = "reacquire"
+
+    def _on_grounded_candidates_started(self, e: dict, ts) -> None:
+        if e.get("stage") == "reacquire":
+            return
+        self.stage_labels["sweep"] = f"{STAGE_LABELS['sweep']} · Grounded candidates"
+        self.sweep["grounded_documents"] = len(e.get("documents") or [])
+
+    def _on_grounded_candidates_finished(self, e: dict, ts) -> None:
+        key = "recovery" if e.get("stage") == "reacquire" else "sweep"
+        target = self.recovery if key == "recovery" else self.sweep
+        target["grounded_admissible"] = (target.get("grounded_admissible") or 0) + int(e.get("admissible") or 0)
 
     def _on_field_recovery_failed(self, e: dict, ts) -> None:
         if not e.get("field"):            # the whole recovery stage raised (the run still finalizes)
@@ -371,7 +392,7 @@ class VehiclePipeline:
             "record_id": self.record_id,
             "title": self.live.title,
             "current_stage": self.current_stage(),
-            "stages": [{"key": k, "label": STAGE_LABELS[k], "state": self.stages[k],
+            "stages": [{"key": k, "label": self.stage_labels.get(k, STAGE_LABELS[k]), "state": self.stages[k],
                         "icon": STAGE_ICONS[self.stages[k]], "state_label": STAGE_STATE_LABELS[self.stages[k]],
                         "duration_s": self.stage_duration_s(k), "note": self.stage_notes.get(k)}
                        for k in STAGE_KEYS],

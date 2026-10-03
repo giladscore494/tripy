@@ -237,6 +237,21 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
         card_choice = st.selectbox("Document card", ["off", "on"], index=1 if env_agent.acquisition_document_card else 0,
                                    key="cfg_card", help="ACQUISITION_DOCUMENT_CARD (contract research only): fetch "
                                    "results carry server-computed scheduling metadata, never evidence.")
+        site_map_choice = st.selectbox("Importer site map", ["on", "off"], index=0 if env_agent.site_map else 1,
+                                       key="cfg_site_map", help="SITE_MAP: contract acquisition and re-acquisition get "
+                                       "ranked real URLs from the official sites' sitemaps (discovery only).")
+        grounded_choice = st.selectbox("Grounded candidates", ["on", "off"],
+                                       index=0 if env_agent.grounded_candidates else 1, key="cfg_grounded",
+                                       help="GROUNDED_CANDIDATES: one no-tool call per top document for open fields "
+                                       "without an admissible candidate; the model points at a span, code cuts the "
+                                       "quote. Candidates only (adjudication + admission decide).")
+        recovery_options = ["reacquire", "cluster", "legacy"]
+        recovery_mode = st.selectbox("Recovery mode", recovery_options, key="cfg_recovery_mode",
+                                     index=recovery_options.index(env_agent.recovery_mode)
+                                     if env_agent.recovery_mode in recovery_options else 0,
+                                     help="RECOVERY_MODE. reacquire = per cluster a targeted acquisition episode, "
+                                          "harvest, grounded candidates and adjudication; cluster = the tool-using "
+                                          "cluster recovery agent; legacy = per-field retries.")
         sweep_env = env_agent.phase_settings.get("document_sweep") or {}
         sweep_attempts = st.number_input("Document sweep max attempts", 1, 3, max(1, min(3, int(
             sweep_env.get("max_attempts") or PHASE_DEFAULTS["document_sweep"]["max_attempts"]))),
@@ -256,8 +271,9 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
             st.caption("No experiment-relevant environment variable differs from its code default.")
         st.caption("With a named run profile (" + ", ".join(PROFILE_LABELS[p] for p in NAMED_PROFILES)
                    + ") the research turn ceiling, minimum acquisition base, document sweep mode and limits, reasoning "
-                     "efforts, recovery max attempts and the deterministic final assembly come from the profile (code "
-                     "defaults), not from the values above.")
+                     "efforts, recovery max attempts, the deterministic final assembly, the site map, grounded "
+                     "candidates and the recovery mode come from the profile (code defaults), not from the values "
+                     "above.")
 
         st.markdown("**Cost reporting**")
         price_defaults = pricing_defaults(model_id, secret)
@@ -297,6 +313,8 @@ def render_settings(secret: Callable[[str], str], controller, *, allow_ui_key: b
                      field_recovery_max_total_steps=int(recovery_total), max_tokens=int(max_tokens) or None,
                      include_level3=include_level3, extra_body=extra_body,
                      acquisition_mode=acquisition_mode, acquisition_document_card=card_choice == "on",
+                     site_map=site_map_choice == "on", grounded_candidates=grounded_choice == "on",
+                     recovery_mode=recovery_mode,
                      document_sweep_max_fields=int(sweep_fields), document_sweep_max_candidates=int(sweep_candidates),
                      # merged per phase / key over the env phase settings (None removes the env value)
                      phase_settings=merge_effort_settings(
