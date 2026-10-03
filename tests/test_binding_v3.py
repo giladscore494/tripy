@@ -12,23 +12,53 @@ from fixtures import admission_records
 # keys a record may differ in from the pre-PR golden: the binding version (admission records do not carry it today,
 # excluded as the spec allows) and the year telemetry binding-v3 adds to a record (Part D; never read by binding,
 # evaluation or Final Assembly). Every other key, the binding fields included, must be identical.
-NEW_TELEMETRY = ("binding_version", "year_context")
+NEW_TELEMETRY = ("binding_version", "year_context",
+                 # binding-v4 (PR #40) proof telemetry: the Document Variant Map decision and the rules applied
+                 "variant_map_region", "binding_rules", "binding_policy")
+# binding-v4 (PR #40) changes to this golden, each explained (no exact is lost; tests/test_pr40_binding.py covers the
+# rules). Key: [target, document, field, material value] -> (binding_level, variant_match) now.
+PR40_SPEC = "html:https://www.xpeng.co.il/g6/specifications"
+PR40_CHANGES = {
+    # the header row's trim names of the G6 spec table, for the G6 MAX target: each sits in its own column region
+    ("G6MAX", PR40_SPEC, "local_trim_name", "txt:standard"): ("body_powertrain", "different"),     # RWD 258 hp column
+    ("G6MAX", PR40_SPEC, "local_trim_name", "txt:longrange"): ("body_powertrain", "different"),    # RWD 296 hp column
+    ("G6MAX", PR40_SPEC, "local_trim_name", "txt:performance"): ("body_powertrain", "different"),  # AWD 430 hp: power
+    # the target's own column (AWD 486 hp): the technical variant is proven (dvm_region), the market trim is not (a
+    # bare generic "MAX" is never the trim, #34), so the exact_market_trim field stays unclear
+    ("G6MAX", PR40_SPEC, "local_trim_name", "txt:max"): ("exact_technical_variant", "unclear"),
+}
+
+
+def _without_telemetry(record: dict) -> dict:
+    out = {k: v for k, v in record.items() if k not in NEW_TELEMETRY}
+    # R3 records the power tolerance it used on the power dimension (telemetry)
+    dims = {d: {k: v for k, v in st.items() if k != "tolerance"} for d, st in (out.get("binding_dimensions") or {}).items()}
+    if dims:
+        out["binding_dimensions"] = dims
+    return out
 
 
 def test_admission_decisions_are_unchanged_by_the_helper_extraction():
     """The golden was written on main before binding_layers / fact_binding were extracted from admit(): the same
-    requests are accepted / rejected for the same reasons and give the same records (binding fields included)."""
+    requests are accepted / rejected for the same reasons and give the same records (binding fields included), except
+    the binding-v4 changes listed (and explained) in PR40_CHANGES."""
     golden = json.loads(admission_records.GOLDEN.read_text("utf-8"))
     current = admission_records.compute()
     assert set(current) == set(golden) and len(golden) > 400
+    changed = set()
     for key, old in golden.items():
         new = current[key]
         assert new["accepted"] == old["accepted"], key
         if not old["accepted"]:
             assert new["reasons"] == old["reasons"], key
             continue
-        strip = lambda r: {k: v for k, v in r.items() if k not in NEW_TELEMETRY}  # noqa: E731
-        assert strip(new["record"]) == strip(old["record"]), key
+        short = tuple(json.loads(key)[:4])
+        if short in PR40_CHANGES:
+            changed.add(short)
+            assert (new["record"]["binding_level"], new["record"]["variant_match"]) == PR40_CHANGES[short], key
+            continue
+        assert _without_telemetry(new["record"]) == _without_telemetry(old["record"]), key
+    assert changed == set(PR40_CHANGES)
 
 
 # --- shared fixtures ------------------------------------------------------------------------------------------------
@@ -235,7 +265,7 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
     from fixtures.corolla_touring import PAYLOAD as COROLLA, VEHICLE as COROLLA_VEHICLE
     from src.research_memory import ResearchMemory
 
-    assert BINDING_VERSION == "binding-v3"
+    assert BINDING_VERSION == "binding-v4"          # PR #40: catalog rules + Document Variant Map
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",
@@ -296,6 +326,11 @@ def replay_fixture(tmp_path):
                        binding_dimensions={**evidence[0]["binding_dimensions"], "year": {"status": "mismatch",
                                                                                          "basis": "document"}})
     evidence[0].pop("year_context", None)
+    # as binding-v3 recorded the table's 2,180 (two target columns: the column layer left out, the document's power
+    # mixed); binding-v4 binds it through the Document Variant Map (both columns are the target's catalog variant)
+    evidence[1].update(binding_level="body_powertrain", variant_match="unclear")
+    for key in ("binding_basis", "binding_rules", "variant_map_region"):
+        evidence[1].pop(key, None)
     evidence.append({**evidence[1], "evidence_id": "e3", "document_id": "0" * 24, "source_url": "https://gone.example"})
     for item in evidence:
         events.append({"kind": "evidence", "seq": len(events) + 1, "evidence": item})
@@ -328,11 +363,14 @@ def test_binding_replay_on_a_fixture_run(tmp_path):
     assert all(set(st) >= {"model", "power", "drivetrain", "trim", "year"} for st in e1["layer_statuses"].values())
     assert e1["candidate_match_count"] == 1 and not e1["candidate_match_ambiguous"]
     assert e1["matching_candidates"][0]["quote"] and "row_index" in e1
-    # e2: the table's 2,180 sits in two target columns: one candidate, two column identities -> ambiguous, unclear
+    # e2: the table's 2,180 sits in two target columns: one candidate, two column identities -> the per-value column
+    # layer stays out (ambiguous); both columns are the target's catalog variant and agree, so the Document Variant Map
+    # binds it (binding-v4, dvm_region)
     e2 = items["e2"]
     assert e2["candidate_match_count"] == 1 and e2["candidate_match_ambiguous"]
     assert " || " in e2["matching_candidates"][0]["column_identity"] and e2["effective_column_identity"] is None
-    assert e2["variant_match_now"] == "unclear" and e2["candidates_source"] == "run_events"
+    assert e2["variant_match_recorded"] == "unclear" and e2["candidates_source"] == "run_events"
+    assert e2["variant_match_now"] == "exact" and e2["binding_basis_now"] == "dvm_region"
     # e3: its document is in neither the shared cache nor the run folder: reported, not fatal
     assert items["e3"]["missing_document"] and "binding_level_now" not in items["e3"]
     summary = out["summary"]
@@ -344,7 +382,8 @@ def test_binding_replay_on_a_fixture_run(tmp_path):
     vehicle = summary["vehicle"]
     assert (vehicle["fields_ok_recorded"], vehicle["fields_ok_now"]) == (0, 1)
     assert vehicle["evidence_rose_by_year_rules"] == 1 and vehicle["missing_documents"] == 1
-    assert vehicle["gap_counts"] and "year_mismatch" not in vehicle["gap_counts"]
+    # every replayed item is exact now (e2 through the Document Variant Map): no gap left, and never a year gap
+    assert vehicle["gap_counts"] == {} and vehicle["gap_counts_recorded"] and "year_mismatch" not in vehicle["gap_counts"]
     # the open length field: its candidates get the same binding fields (no admission)
     length = [r for r in out["items"] if r["kind"] == "candidate" and r["field"] == "length_mm"]
     assert length and all("binding_level_now" in r and r["evidence_id"] is None for r in length)
@@ -452,7 +491,10 @@ DIMENSIONS_HTML = """<html><head><title>טויוטה קורולה טורינג �
 
 
 @pytest.mark.recovery_mode("reacquire")
-def test_a_technical_gap_cluster_gets_two_searches_and_the_spec_page_instruction(tmp_path):
+def test_a_technical_gap_field_gets_no_search_r7(tmp_path):
+    """PR #35 gave a technical-gap cluster <= 2 billable searches; across four production runs those searches resolved
+    nothing. R7 (PR #40): a field open because of binding (admitted evidence below its requirement) gets no new search
+    and is reported as skipped_binding_blocked."""
     def episodes(packet, turn_no):
         if turn_no == 1:
             return turn(*[_call(f"s{i}", "search_web", {"query": f"corolla touring sports spec {i}"})
@@ -468,17 +510,15 @@ def test_a_technical_gap_cluster_gets_two_searches_and_the_spec_page_instruction
     rec = result["field_recovery"]
     assert rec["triage"]["length_mm"]["binding_gap"] and not any(
         g.startswith("trim") for g in rec["triage"]["length_mm"]["binding_gap"])
-    packet = client.reacquire_requests[0]["packet"]
-    assert packet["budget"]["billable_searches"] == 2 and packet["technical_binding_fields"] == ["length_mm"]
-    assert "official specification page or specification PDF" in packet["technical_binding_instruction"]
-    episode = rec["attempts"][0]
-    assert episode["search_budget"] == 2 and episode["billable_searches"] <= 2
-    assert episode["budget_reason"] == "technical_gap"
-    started = next(e for e in events if e["kind"] == "reacquire_started")
-    assert started["budget_reason"] == "technical_gap" and started["binding_gaps"]["length_mm"]
+    assert client.reacquire_requests == [] and rec["attempts"] == []
+    assert rec["reacquire_skipped_binding_blocked"] == ["length_mm"]
+    assert rec["reacquire_searches_by_reason"] == {"skipped_binding_blocked": 0}
+    skipped = next(e for e in events if e["kind"] == "reacquire_skipped_binding_gap")
+    assert skipped["reason"] == "skipped_binding_blocked" and skipped["gaps"]["length_mm"]
     from src import diagnostics as D
-    assert D.recovery_summary(events)["reacquire_searches_by_reason"] == {"technical_gap": episode["billable_searches"]}
-    assert rec["reacquire_searches_by_reason"] == {"technical_gap": episode["billable_searches"]}
+    summary = D.recovery_summary(events)
+    assert summary["reacquire_searches_by_reason"] == {"skipped_binding_blocked": 0}
+    assert summary["reacquire_skipped_binding_blocked"] == ["length_mm"] and summary["billable_searches"] == 0
 
 
 @pytest.mark.recovery_mode("reacquire")
@@ -499,7 +539,7 @@ def test_the_stage_cap_holds_across_clusters_and_true_missing_keeps_its_budget(t
     assert budgets == [4, 4, 0]                       # true missing: the cluster budget, until the stage cap of 8
     assert sum(a["billable_searches"] for a in rec["attempts"]) <= 8 == rec["reacquire_stage_search_cap"]
     assert rec["attempts"][2]["search_refused"] >= 1 and rec["attempts"][2]["billable_searches"] == 0
-    assert {a["budget_reason"] for a in rec["attempts"]} == {"other"}
+    assert {a["budget_reason"] for a in rec["attempts"]} == {"missing"}        # R7: the real reason
     started = [e for e in events if e["kind"] == "reacquire_started"]
     assert started[-1]["stage_searches_left"] == 0 and started[-1]["stage_search_cap"] == 8
 

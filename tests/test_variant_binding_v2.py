@@ -344,11 +344,24 @@ def test_the_columns_own_power_and_drivetrain_bind_its_values(tmp_path):
         assert any(v.endswith("@column_identity") for v in out[value][1]["binding_veto"])
 
 
-def test_a_value_in_two_target_columns_stays_unclear(tmp_path):
+def test_a_value_in_two_target_columns_binds_through_the_variant_map_only_when_they_agree(tmp_path):
+    # binding-v2/v3 left a value found in two columns unclear (no single column layer). binding-v4: both columns are
+    # the target's catalog variant (AWD 486 hp) and state the same value -> dvm_region; different values -> no pick
     out, _ = weights(tmp_path, COLUMNS + [("MAX Plus", 357, 486, "AWD", "2,180")])
     cand, record = out[2180]
     assert len(cand["column_identities"]) == 2
-    assert record["variant_match"] == "unclear"
+    assert record["variant_match"] == "exact" and record["binding_basis"] == "dvm_region"
+    # two target columns that disagree: each value is bound by its own column, the map records the disagreement, and
+    # the field is conflicting once both are admitted (no silent pick)
+    out, _ = weights(tmp_path / "disagree", COLUMNS + [("MAX Plus", 357, 486, "AWD", "2,195")])
+    records = [out[value][1] for value in (2180, 2195)]
+    assert all(r["variant_match"] == "exact" and r["binding_dimensions"]["power"]["basis"] == "column_identity"
+               for r in records)
+    assert all(r["variant_map_region"]["reason"] == "target_regions_disagree" for r in records)
+    spec = {"name": "curb_weight_kg", "applicable": True, "binding_requirement": "exact_technical_variant"}
+    events = [{"kind": "run_started", "seq": 0, "target_market": "IL"}] + [
+        {"kind": "evidence", "seq": i + 1, "evidence": {**r, "evidence_id": f"e{i}"}} for i, r in enumerate(records)]
+    assert current_evaluation(events, [spec])[0]["state"] == "conflicting"
 
 
 def test_tables_store_their_column_identity():
@@ -396,20 +409,18 @@ def test_a_cluster_open_only_on_binding_makes_no_search(tmp_path):
 
 
 @pytest.mark.recovery_mode("reacquire")
-def test_the_trim_exception_allows_one_search_with_the_trim_prompt(tmp_path):
+def test_a_trim_only_gap_gets_no_search_even_without_an_official_trim_page_r7(tmp_path):
+    """PR #34's trim exception allowed one search when no official IL page named the trim. R7 (PR #40) replaces it: a
+    field open because of binding never gets a billable search; the other cluster keeps its episode."""
     result, events, client = reacquire_run(tmp_path, PRICES)       # no official IL document names the trim
     rec = result["field_recovery"]
-    assert rec["reacquire_skipped_fields"] == []
-    commercial = [r for r in client.reacquire_requests if r["packet"]["cluster"] == "commercial"]
-    assert len(commercial) == 1
-    packet = commercial[0]["packet"]
-    assert packet["budget"]["billable_searches"] == 1 and packet["trim_binding_fields"] == ["list_price"]
-    assert "do not tie them to this exact trim" in packet["trim_binding_instruction"]
-    episode = next(a for a in rec["attempts"] if a["cluster"] == "commercial")
-    assert episode["search_budget"] == 1 and episode["searches"] <= 1
-    assert any(e["kind"] == "reacquire_trim_exception" for e in events)
+    assert rec["reacquire_skipped_binding_blocked"] == ["list_price"]
+    assert not [r for r in client.reacquire_requests if r["packet"]["cluster"] == "commercial"]
+    assert not any(e["kind"] == "reacquire_trim_exception" for e in events)
     technical = next(r for r in client.reacquire_requests if r["packet"]["cluster"] == "technical_spec")
     assert technical["packet"]["budget"]["billable_searches"] > 1 and "trim_binding_fields" not in technical["packet"]
+    assert set(rec["reacquire_searches_by_reason"]) == {"missing", "skipped_binding_blocked"}
+    assert rec["reacquire_searches_by_reason"]["skipped_binding_blocked"] == 0
 
 
 def test_binding_gap_gate_rules():

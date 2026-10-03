@@ -2475,26 +2475,13 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     from .field_recovery import vehicle_identity
     from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
     from .site_map import run_site_map
-    from .tail_planner import (OFFICIAL_AUTHORITIES, binding_budget, binding_gap_gate, candidate_key,
-                               document_profile_for, plan_clusters, presented_keys, rejected_keys, stored_keys,
-                               triage, usable_candidate_matrix)
+    from .tail_planner import (SEARCH_REASON_MISSING, SKIPPED_BINDING_BLOCKED, SKIPPED_NOT_MISSING, candidate_key,
+                               document_profile_for, plan_clusters, presented_keys, rejected_keys,
+                               search_eligibility, stored_keys, triage, usable_candidate_matrix)
     from .tools.search import default_domains, search_provider
 
     def usable_matrix(events: list[dict]) -> dict:
         return usable_candidate_matrix(candidate_matrix(events, specs, vehicle), cache)
-
-    def trim_named_by_official(doc_metas: list[dict]) -> bool:
-        """Does an official target-market document of this run name the target trim?"""
-        for m in doc_metas:
-            try:
-                material = adm.material(cache, str(m.get("document_id")), None)
-            except Exception:  # noqa: BLE001 - an unreadable document names nothing
-                material = None
-            if material is not None and material.authority.get("source_authority") in OFFICIAL_AUTHORITIES \
-                    and str(material.market or "").upper() == str(market).upper() \
-                    and (material.profile.get("mentions") or {}).get("trim") == "match":
-                return True
-        return False
 
     market = config.target_market
     adm = session.ctx.admission
@@ -2533,6 +2520,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
     built_site = site_map_state.get("site")
     site_tried = False          # a site map that could not be built is tried once per recovery, not per cluster
     skipped_binding_gap: list[str] = []
+    skipped_not_missing: list[str] = []
 
     def reevaluate(cluster: str, fields: list[str]) -> None:
         for entry in current_evaluation(trace_events(run_log), specs, market):
@@ -2551,30 +2539,30 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
         if not open_fields:
             continue
-        # a trim-only binding gap with admitted official target-market evidence is usually not a broad-search problem
+        # R7 (PR #40): billable searches only for fields with NO admitted evidence; a field open because of binding
+        # (variant_not_exact, or conflicting over evidence bound below its requirement) gets no new search
         events = trace_events(run_log)
         evidence_by_field: dict[str, list[dict]] = {}
         for e in events:
             if e.get("kind") == "evidence" and isinstance(e.get("evidence"), dict):
                 evidence_by_field.setdefault(normalize_field_name(e["evidence"].get("field")), []).append(e["evidence"])
-        binding_open = any(current[f]["state"] == "variant_not_exact" for f in open_fields)
-        gate = binding_gap_gate(open_fields, current, evidence_by_field, market,
-                                trim_named_by_official(_doc_metas(events, cache, documents_dir)) if binding_open
-                                else True)
-        if gate["skipped"]:
-            skipped_binding_gap += [f for f in gate["skipped"] if f not in skipped_binding_gap]
-            run_log.event("reacquire_skipped_binding_gap", cluster=name, fields=gate["skipped"], gaps=gate["gaps"],
-                          note="trim-only variant_not_exact with admitted official target-market evidence: "
-                               "broad reacquisition skipped")
-        if gate["trim_exception"]:
-            run_log.event("reacquire_trim_exception", cluster=name, fields=sorted(gate["gaps"]), gaps=gate["gaps"],
-                          search_cap=gate["search_cap"])
+        gate = search_eligibility(open_fields, current, evidence_by_field)
+        if gate[SKIPPED_BINDING_BLOCKED]:
+            skipped_binding_gap += [f for f in gate[SKIPPED_BINDING_BLOCKED] if f not in skipped_binding_gap]
+            run_log.event("reacquire_skipped_binding_gap", cluster=name, fields=gate[SKIPPED_BINDING_BLOCKED],
+                          reason=SKIPPED_BINDING_BLOCKED,
+                          gaps={f: [str(i).split(":", 1)[1] for i in current[f].get("info") or []
+                                    if str(i).startswith("binding_gap:")] for f in gate[SKIPPED_BINDING_BLOCKED]},
+                          note="open because of binding (admitted evidence below its requirement): no new search")
+        if gate[SKIPPED_NOT_MISSING]:
+            skipped_not_missing += [f for f in gate[SKIPPED_NOT_MISSING] if f not in skipped_not_missing]
+            run_log.event("reacquire_skipped_not_missing", cluster=name, fields=gate[SKIPPED_NOT_MISSING],
+                          reason=SKIPPED_NOT_MISSING,
+                          states={f: current[f]["state"] for f in gate[SKIPPED_NOT_MISSING]},
+                          note="admitted evidence exists: billable searches are only for missing fields")
         open_fields = gate["fields"]
         if not open_fields:
             continue
-        # binding as the blocker: a technical gap gets <= 2 billable searches, a trim-only gap <= 1; the stage as a
-        # whole <= reacquire_stage_search_cap (true missing fields keep the cluster budget)
-        spend = binding_budget(open_fields, current, evidence_by_field, market)
         cap = config.field_recovery_max_total_steps
         if cap and state["total_steps"] >= cap:
             state["stopped"] = "max_total_steps"
@@ -2601,27 +2589,25 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         known_dead = {f: labels for f in open_fields if f in negative
                       and (labels := [route_label(r) for r in negative[f]["routes"] if route_applies(r, provider)][:8])}
         limit = max(0, int(config.cluster_search_budget))
-        caps = [c for c in (gate["search_cap"], spend["search_cap"]) if c is not None]
         stage_cap = max(0, int(config.reacquire_stage_search_cap or 0))
         billable_used = session.ctx.counters["search_api_calls"] - billable_before
         stage_left = max(0, stage_cap - billable_used) if stage_cap else None
-        budget = SearchBudget(min([limit, *caps] + ([stage_left] if stage_left is not None else [])))
-        budget_reason = "trim_gap" if gate["search_cap"] is not None and spend["reason"] != "technical_gap" \
-            else spend["reason"]
+        budget = SearchBudget(min([limit] + ([stage_left] if stage_left is not None else [])))
+        budget_reason = SEARCH_REASON_MISSING
         fetch_budget = SearchBudget(REACQUIRE_FETCHES)
         packet = reacquire_packet(cluster=name, fields=open_fields, specs=specs, evaluation=current,
                                   identity=identity, target_market=market,
                                   source_type=cluster_source_type([by_name[f] for f in open_fields], market),
                                   site_urls=site_urls, fetched_urls=fetched_urls, negative=known_dead,
                                   search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS,
-                                  trim_fields=gate["trim_fields"], technical_fields=spend["technical_fields"])
+                                  trim_fields=[], technical_fields=[])
         states_before = {f: current[f]["state"] for f in open_fields}
         run_log.event("reacquire_started", cluster=name, fields=open_fields, mode="reacquire",
                       triage={f: (triaged.get(f) or {}).get("triage") for f in open_fields},
                       site_map_urls=[u["url"] for u in site_urls], search_budget=budget.limit,
                       fetch_budget=fetch_budget.limit, turn_budget=REACQUIRE_TURNS,
                       conflicting=packet.get("conflicting_fields") or [], budget_reason=budget_reason,
-                      binding_gaps=spend["gaps"], stage_search_cap=stage_cap or None,
+                      binding_gaps={}, stage_search_cap=stage_cap or None,
                       stage_searches_used=billable_used, stage_searches_left=stage_left)
         session.search_budget, session.fetch_budget = budget, fetch_budget
         session.route_guard = _route_guard(negative, open_fields, by_name, specs, default_domains(session.ctx.vehicle),
@@ -2834,9 +2820,15 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         "fetch_budget_refusals": state["fetch_refusals"],
         "negative_route_cache_hits": state["negative_route_blocks"],
         "reacquire_skipped_fields": skipped_binding_gap,
+        "reacquire_skipped_binding_blocked": skipped_binding_gap,
+        "reacquire_skipped_not_missing": skipped_not_missing,
         "reacquire_stage_search_cap": config.reacquire_stage_search_cap or None,
-        "reacquire_searches_by_reason": {r: sum(a["billable_searches"] for a in attempts_log if a["budget_reason"] == r)
-                                         for r in dict.fromkeys(a["budget_reason"] for a in attempts_log)},
+        # billable searches by the real reason (R7): spent on missing fields; none for skipped fields
+        "reacquire_searches_by_reason": {
+            **{r: sum(a["billable_searches"] for a in attempts_log if a["budget_reason"] == r)
+               for r in dict.fromkeys(a["budget_reason"] for a in attempts_log)},
+            **({SKIPPED_BINDING_BLOCKED: 0} if skipped_binding_gap else {}),
+            **({SKIPPED_NOT_MISSING: 0} if skipped_not_missing else {})},
         "reacquire": {"episodes": len(attempts_log),
                       "new_useful_documents": sum(a["new_useful_documents"] for a in attempts_log),
                       "new_candidates": sum(a["new_candidates"] for a in attempts_log),

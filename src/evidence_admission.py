@@ -47,7 +47,8 @@ from .candidate_harvest import semantic_reason, owns_dimension_number, dimension
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 normalize_text, parse_number, reverse_hebrew_line)
-from .document_binding import TargetIdentity, about_target, bind, document_profile, target_identity
+from .document_binding import (OFFICIAL_AUTHORITIES, TargetIdentity, about_target, bind, document_profile,
+                               identity_zone, normalize_catalog_trim, target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
@@ -150,6 +151,7 @@ class DocumentMaterial:
     profile: dict
     authority: dict
     candidates: list[dict]
+    variant_map: dict | None = None    # src/variant_map.py (None: the map could not be built)
 
     def __getattr__(self, name: str) -> Any:            # document_id, url, meta, haystack, lines, market, ...
         return getattr(self.__dict__["doc"], name)
@@ -295,6 +297,17 @@ class AdmissionContext:
     def spec(self, name: str) -> dict:
         return self.specs.get(name) or self.fallback.get(name) or {"name": name}
 
+    def variant_map(self, cache, doc: DocumentText) -> dict | None:
+        """The document's Document Variant Map for this target family (cached with the document; never blocks)."""
+        from .variant_map import document_variant_map
+
+        try:
+            zone = identity_zone(title=doc.meta.get("title"), url=doc.url, headings=doc.headings, text=doc.text,
+                                 identity=self.identity)
+            return document_variant_map(cache, doc, self.identity, self.dictionary, zone=zone)
+        except Exception:  # noqa: BLE001 - the map is an additional layer; per-value binding stands without it
+            return None
+
     def material(self, cache, document_id: str | None, source_url: str | None,
                  run_documents: list[str] | tuple = ()) -> DocumentMaterial | None:
         """The cited document: by id, else by URL (exact cache key of any fetch kind, else a document this run
@@ -330,7 +343,8 @@ class AdmissionContext:
             doc=doc, profile=document_profile(text=doc.text, title=meta.get("title"), url=doc.url,
                                               identity=self.identity, headings=doc.headings,
                                               subheadings=doc.subheadings, body_text=doc.body_text),
-            authority=classify_source(doc.url, self.manufacturer), candidates=candidates)
+            authority=classify_source(doc.url, self.manufacturer), candidates=candidates,
+            variant_map=self.variant_map(cache, doc))
         with self._lock:
             self._docs[doc_id] = material
         return material
@@ -819,6 +833,15 @@ def _source_lines(material: DocumentMaterial, fragment: str, around: int = 0) ->
     return [material.haystack[max(0, pos - 80):pos + len(probe) + 40]] if pos >= 0 else []   # its own object
 
 
+def _line_above(material: DocumentMaterial, fragment: str) -> list[str]:
+    """The short line right above the fragment's line (a row label such as "G9" above "warranty 5 years"), raw."""
+    index = _line_index(material, fragment)
+    if not index:
+        return []
+    above = material.lines[index - 1][0]
+    return [above] if len(above) <= 40 else []
+
+
 def _section_headings(material: DocumentMaterial, fragment: str, adm: AdmissionContext) -> list[str]:
     """The nearest heading-like line above the fragment's line, within a few lines ("2.0 Hybrid", "Electric motor"
     above "Max. power 95 hp" / "Max. torque 185 Nm"): short, no value with a unit, not a menu."""
@@ -920,24 +943,147 @@ def binding_layers(material: DocumentMaterial, name: str, spec: dict, value: Any
     return {"layers": layers, "veto_layers": veto_layers, "matching": matching, "columns": columns}
 
 
+DVM_LEVELS = ("exact_technical_variant", "exact_market_trim")
+BRAND_POLICY_AUTHORITIES = ("official_manufacturer", "official_importer")
+
+
+def _value_key(value: Any) -> str:
+    numbers = numbers_in(value)
+    return json.dumps(sorted(round(float(n), 6) for n in numbers)) if numbers else squash(value)
+
+
+def document_field_values(material: DocumentMaterial, name: str, value: Any) -> int:
+    """How many materially different values the document's own harvest (plus this value) has for the field."""
+    keys = {_value_key(c.get("value")) for c in material.candidates if normalize_field_name(c.get("field")) == name}
+    return len(keys | {_value_key(value)})
+
+
+def dvm_gate(adm: AdmissionContext, material: DocumentMaterial, spec: dict, market: str | None,
+             decision: dict | None) -> dict | None:
+    """The R2 safety gates around a fact's Document Variant Map decision (adds `allowed`, and `trim` for a market-trim
+    region): exact_technical_variant / exact_market_trim fields that are not time-sensitive (a price keeps its own
+    rules: a market-trim region only, never a shared row); a target-market document, or a portable field per the
+    existing portability policy; a shared row only from an official source; a region's trim only in an official
+    target-market document."""
+    if not decision:
+        return decision
+    decision = dict(decision)
+    authority = material.authority.get("source_authority")
+    target_market = adm.identity.target_market
+    requirement = spec.get("binding_requirement") or "exact_technical_variant"
+    reasons = []
+    if requirement not in DVM_LEVELS:
+        reasons.append("requirement")
+    price = spec.get("matcher") == "price"
+    if spec.get("time_sensitive") and not price:
+        reasons.append("time_sensitive")
+    portable = str(spec.get("portability_scope") or "none") != "none" and (
+        market != "unknown" or spec.get("unknown_market_policy") == "portable")
+    if market != target_market and not portable:
+        reasons.append("market")
+    if decision.get("status") == "shared" and (authority not in OFFICIAL_AUTHORITIES or price):
+        reasons.append("shared_needs_official_non_price")
+    trims = (decision.get("identity") or {}).get("trim") or []
+    own_trim = normalize_catalog_trim(" ".join(adm.identity.trim_words))
+    if decision.get("status") == "target" and len(trims) == 1 and trims[0] == own_trim and own_trim \
+            and authority in OFFICIAL_AUTHORITIES and market == target_market:
+        decision["trim"] = "match"
+    if price and decision.get("trim") != "match":
+        reasons.append("price_needs_market_trim_region")
+    decision["allowed"] = not reasons
+    if reasons:
+        decision["blocked_by"] = reasons
+    return decision
+
+
+def brand_policy_eligibility(adm: AdmissionContext, material: DocumentMaterial, spec: dict, name: str, value: Any,
+                             market: str | None) -> dict | None:
+    """R4: a field with `brand_policy_scope` stated by an official source of the target manufacturer in the target
+    market, in a document that names no model other than the target and states one value for the field."""
+    if not spec.get("brand_policy_scope"):
+        return None
+    profile = material.profile
+    authority = material.authority.get("source_authority")
+    if authority not in BRAND_POLICY_AUTHORITIES or market != adm.identity.target_market:
+        return None
+    models = ((profile.get("full_statuses") or {}).get("model"), (profile.get("zone_statuses") or {}).get("model"))
+    if "mismatch" in models:
+        return None                                       # the document names only other models
+    if document_field_values(material, name, value) != 1:
+        return None                                       # per-model values: the normal model binding applies
+    return {"rule": "brand_policy", "source_authority": authority, "market": market}
+
+
 def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str,
                  ctx: FactContext, *, variant_text: str = "", claim: str | None = None, market: str | None = None,
                  candidates: list[dict] | None = None) -> tuple[dict, dict]:
-    """(binding, layer inputs) of one fact: src/document_binding.bind over binding_layers(). Pure; the one place both
-    Evidence Admission and Binding Replay compute a fact's binding, so the two cannot drift."""
+    """(binding, layer inputs) of one fact: src/document_binding.bind over binding_layers() plus the binding-v4 inputs
+    (the document's propulsion mentions, the R4 brand-policy eligibility and the fact's Document Variant Map region).
+    Pure; the one place both Evidence Admission and Binding Replay compute a fact's binding, so the two cannot drift."""
+    from .variant_map import fact_region
+
     inputs = binding_layers(material, name, spec, value, quote, ctx, variant_text, candidates)
     profile = material.profile
+    region = None
+    try:
+        region = fact_region(material.variant_map, adm.identity, value=value, fragment=ctx.fragment,
+                             clause=ctx.clause, source_lines=ctx.source_lines,
+                             line_index=_line_index(material, ctx.fragment), matching=inputs["matching"],
+                             field_values=document_field_values(material, name, value),
+                             doc_statuses=profile["statuses"])
+        region = dvm_gate(adm, material, spec, market, region)
+    except Exception as exc:  # noqa: BLE001 - the map is an additional layer; per-value binding stands without it
+        region = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200], "allowed": False}
     binding = bind(adm.identity, profile["statuses"], inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
                    trim_named_in_document=profile.get("trim_named_in_document", False),
                    source_authority=material.authority.get("source_authority"),
                    document_names_family=profile.get("zone_statuses", {}).get("model") == "match",
-                   other_trims_named=profile.get("other_trims_named"))
+                   other_trims_named=profile.get("other_trims_named"),
+                   document_propulsions=(profile.get("mentions") or {}).get("propulsion"),
+                   brand_policy=brand_policy_eligibility(adm, material, spec, name, value, market),
+                   region=region, safeguard_context=_line_above(material, ctx.fragment))
+    if region and region.get("status") not in (None, "none"):
+        # the proof: region id, its identity vector, the catalog candidates before / after elimination
+        binding["variant_map_region"] = {k: region.get(k) for k in (
+            "status", "region_id", "region_kind", "level", "reason", "contradicts", "identity", "identity_text",
+            "candidates_before", "candidates_after", "assignment", "trim", "allowed", "blocked_by",
+            "inventory_contains_target", "map_version", "error") if region.get(k) not in (None, [], "")}
     year = profile.get("year_context") or {}
     if year.get("statements") or year.get("ignored"):
         # telemetry only: the model-year statements behind the year dimension and the years the rules ignored
         binding["year_context"] = year
     return binding, inputs
+
+
+def early_semantic_clauses(material: DocumentMaterial, quote: str) -> list[str]:
+    """The quote and every document line holding it: semantic exclusions outrank a missing label in a deliberately
+    short quote (a model quoting only "185 Nm" must not hide that the source calls it "system torque")."""
+    return [quote, *[line for line in material.text.splitlines() if squash(quote) in squash(line)]]
+
+
+def context_semantic_clauses(quote: str, ctx: FactContext) -> list[str]:
+    """The quote, its source lines and the (number-free) section heading above it."""
+    return [quote, *ctx.source_lines, *[h for h in ctx.headings if not re.search(r"\d", h)]]
+
+
+def sanity_rejection(adm: AdmissionContext, material: DocumentMaterial, spec: dict, value: Any, quote: str,
+                     ctx: FactContext | None = None) -> dict | None:
+    """{reason, note?} when TODAY's admission sanity rules (semantic exclusions, value exclusion patterns, plausibility
+    ranges / steps scoped by propulsion and segment) reject a value, else None: the same checks admit() runs, for
+    Binding Replay's `rejected_now` on evidence stored under older rules."""
+    note = semantic_violation(adm, spec, early_semantic_clauses(material, quote), value)
+    if note:
+        return {"reason": "semantic_mismatch", "note": note}
+    if not _plausible(spec, value):
+        return {"reason": "implausible_value",
+                "note": f"outside [{spec.get('plausible_min')}, {spec.get('plausible_max')}]"
+                        + (f" step {spec['allowed_step']}" if spec.get("allowed_step") else "")}
+    if ctx is not None:
+        note = semantic_violation(adm, spec, context_semantic_clauses(quote, ctx), value)
+        if note:
+            return {"reason": "semantic_mismatch", "note": note}
+    return None
 
 
 def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | tuple = ()) -> dict:
@@ -981,8 +1127,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     # Semantic exclusions outrank a missing label in a deliberately short model quote.  Inspect the source line
     # containing that quote as well: e.g. a model quoting only "185 Nm" must not hide that the source calls it
     # "system torque".  This is the same admission gate and dictionary rule used below, not a downstream filter.
-    quote_lines = [line for line in material.text.splitlines() if squash(quote) in squash(line)]
-    early_violation = semantic_violation(adm, spec, [quote, *quote_lines], value)
+    early_violation = semantic_violation(adm, spec, early_semantic_clauses(material, quote), value)
     if early_violation:
         return reject(["semantic_mismatch"], semantic_note=early_violation)
     entailment = entail(adm, spec, value, quote, material)
@@ -998,10 +1143,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if not _plausible(spec, value):
         return reject(["implausible_value"])
     ctx = fact_context(adm, material, quote, entailment)
-    fragment, clause, source_lines, headings = ctx.fragment, ctx.clause, ctx.source_lines, ctx.headings
-    line_clauses = [_clause_in_line(line, value) for line in source_lines]
-    violation = semantic_violation(adm, spec, [quote, *source_lines,
-                                               *[h for h in headings if not re.search(r"\d", h)]], value)
+    fragment = ctx.fragment
+    violation = semantic_violation(adm, spec, context_semantic_clauses(quote, ctx), value)
     if violation:
         return reject(["semantic_mismatch"], semantic_note=violation)
     checks["semantics"] = "ok"
@@ -1053,6 +1196,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "binding_level": binding["binding_level"], "binding_requirement": binding["binding_requirement"],
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
         "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),
+        "binding_rules": binding.get("binding_rules"), "binding_policy": binding.get("binding_policy"),
+        "variant_map_region": binding.get("variant_map_region"),
         "model_variant_claim": claim,
         "market_basis": market_basis,
         "model_market_claim": model_market if model_market and normalize_market(model_market) != market else None,

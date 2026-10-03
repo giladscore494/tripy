@@ -27,7 +27,7 @@ def test_run_end_hook_writes_and_logs_without_touching_result(tmp_path):
     assert R.load_replay(folder)
     event = next(e for e in read_events(log.events_path) if e['kind'] == 'binding_replay_written')
     assert event['fields_ok_recorded'] == 0 and event['fields_ok_now'] == 1
-    assert event['gap_counts']
+    assert 'gap_counts' in event      # every replayed item of this fixture is exact under binding-v4: {}
     assert (folder / 'result.json').read_bytes() == result
 
 

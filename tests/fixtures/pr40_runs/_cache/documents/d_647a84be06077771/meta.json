@@ -1,0 +1,14 @@
+{
+ "document_id": "d_647a84be06077771",
+ "kind": "fetch",
+ "url": "https://www.xpeng.com/de-de/g6/specs",
+ "fetched_at": "2026-10-03T23:49:35+00:00",
+ "bytes": 282,
+ "sha256": "148e487410082fe80e96966dfedbea95e716699c8cd1ed80be47366efd7dca18",
+ "text_chars": 184,
+ "status": 200,
+ "final_url": "https://www.xpeng.com/de-de/g6/specs",
+ "doc_type": "html",
+ "content_type": "text/html",
+ "title": "XPENG G6 AWD Performance - Technical data"
+}

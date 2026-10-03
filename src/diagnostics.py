@@ -653,7 +653,8 @@ def _reacquire_summary(window: list[dict]) -> dict:
             "reacquire_adjudication_accepted": total("adjudication_accepted"), "reacquire_admitted": total("admitted"),
             "reacquire_fields_resolved": sum(len(e.get("fields_resolved") or []) for e in episodes),
             "reacquire_site_map_urls": total("site_map_urls"),
-            # billable searches per budget reason (technical_gap / trim_gap / other; PR #35 recovery spend caps)
+            # billable searches per budget reason (R7, PR #40: `missing`; runs before #40: technical_gap / trim_gap /
+            # other)
             "reacquire_searches_by_reason": _searches_by_reason(episodes),
             "reacquire_clusters": [{k: e.get(k) for k in ("cluster", "searches", "fetches", "new_useful_documents",
                                                           "new_candidates", "grounded_items", "adjudication_accepted",
@@ -672,15 +673,27 @@ def recovery_summary(events: list[dict]) -> dict:
              and str(e.get("phase") or "").startswith("field_recovery")]
     before = {f.get("field") for f in (primary or {}).get("fields") or [] if f.get("retry_eligible")}
     after = {f.get("field") for f in (final or {}).get("fields") or [] if f.get("retry_eligible")}
+    blocked = sorted({f for e in window if e.get("kind") == "reacquire_skipped_binding_gap"
+                      for f in e.get("fields") or []})
+    not_missing = sorted({f for e in window if e.get("kind") == "reacquire_skipped_not_missing"
+                          for f in e.get("fields") or []})
+    reacquire = _reacquire_summary(window)
+    if blocked or not_missing:
+        # R7 (PR #40): skipped fields get no billable search; their reasons are reported with 0 searches
+        reacquire["reacquire_searches_by_reason"] = {**reacquire.get("reacquire_searches_by_reason", {}),
+                                                     **({"skipped_binding_blocked": 0} if blocked else {}),
+                                                     **({"skipped_not_missing": 0} if not_missing else {})}
     return {
         "ran": primary is not None,
         "attempts": sum(1 for e in window if e.get("kind") in ("field_recovery_started", "cluster_recovery_started",
                                                                 "reacquire_started")),
         # RECOVERY_MODE=reacquire: per-cluster episodes (targeted acquire -> harvest -> grounded -> adjudicate)
-        **_reacquire_summary(window),
-        # fields no web episode was scheduled for: variant_not_exact with admitted official target-market evidence
-        "reacquire_skipped_fields": sorted({f for e in window if e.get("kind") == "reacquire_skipped_binding_gap"
-                                            for f in e.get("fields") or []}),
+        **reacquire,
+        # fields no web episode was scheduled for because binding keeps them open (R7: skipped_binding_blocked), and
+        # fields with admitted evidence open for another reason (skipped_not_missing)
+        "reacquire_skipped_fields": blocked,
+        "reacquire_skipped_binding_blocked": blocked,
+        "reacquire_skipped_not_missing": not_missing,
         "model_calls": len(calls),
         "input_tokens": sum((e.get("usage") or {}).get("prompt_tokens") or 0 for e in calls) or None,
         "output_tokens": sum((e.get("usage") or {}).get("completion_tokens") or 0 for e in calls) or None,
@@ -1012,7 +1025,8 @@ def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
                "best_binding_level_now": f.get("best_binding_level_now"),
                "blocking_dims": f.get("blocking_dimensions") or {},
                "binding_level_histogram": f.get("binding_level_histogram") or {},
-               "most_common_blocking_dimension": f.get("most_common_blocking_dimension")}
+               "most_common_blocking_dimension": f.get("most_common_blocking_dimension"),
+               "rejected_now": f.get("rejected_now"), "raised_by": f.get("raised_by") or []}
               for name, f in (summary.get("fields") or {}).items()]
     errors = list(dict.fromkeys(r["replay_error"] for r in replay["items"] if r.get("replay_error")))
     return {**diag, "binding_replay": {"code_version": summary.get("code_version"), **vehicle,
@@ -1097,7 +1111,11 @@ def vehicle_row(diag: dict) -> dict:
             if final.get("binding_gaps") is not None else None,
             "rec_reacquire_skipped_fields": len(rec["reacquire_skipped_fields"])
             if rec.get("reacquire_skipped_fields") is not None else None,
-            # re-acquisition billable searches by budget reason (technical_gap / trim_gap / other)
+            "rec_skipped_binding_blocked": len(rec["reacquire_skipped_binding_blocked"])
+            if rec.get("reacquire_skipped_binding_blocked") is not None else None,
+            "rec_skipped_not_missing": len(rec["reacquire_skipped_not_missing"])
+            if rec.get("reacquire_skipped_not_missing") is not None else None,
+            # re-acquisition billable searches by reason (R7: missing; skipped_binding_blocked / skipped_not_missing: 0)
             "rec_reacquire_searches_by_reason": json.dumps(rec["reacquire_searches_by_reason"], sort_keys=True)
             if rec.get("reacquire_searches_by_reason") is not None else None,
             # binding-v3 year telemetry over admitted evidence
@@ -1112,6 +1130,12 @@ def vehicle_row(diag: dict) -> dict:
             "replay_evidence_exact_now": replay.get("evidence_exact_now"),
             "replay_rose_by_year_rules": replay.get("evidence_rose_by_year_rules"),
             "replay_missing_documents": replay.get("missing_documents"),
+            # stored evidence today's admission sanity rules reject (counted as removed in the replayed states)
+            "replay_rejected_now": replay.get("rejected_now"),
+            "replay_evidence_rose_by_rule": json.dumps(replay["evidence_rose_by_rule"], sort_keys=True)
+            if replay.get("evidence_rose_by_rule") is not None else None,
+            "replay_fields_newly_ok_by_rule": json.dumps(replay["fields_newly_ok_by_rule"], sort_keys=True)
+            if replay.get("fields_newly_ok_by_rule") is not None else None,
             "replay_error": replay.get("replay_error"),
             "replay_fields": replay.get("fields") or [],
             "replay_gap_counts": json.dumps(replay["gap_counts"], sort_keys=True, ensure_ascii=False)
