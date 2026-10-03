@@ -72,6 +72,7 @@ def big_page_body() -> bytes:
 
 # 1 ----------------------------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_glm_model_flash_is_sent_unchanged(monkeypatch, tmp_path):
     session = ScriptedPostSession({"chat/completions": [
@@ -90,6 +91,7 @@ def test_glm_model_flash_is_sent_unchanged(monkeypatch, tmp_path):
 
 # 2, 3, 6 -----------------------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp_path):
     session = ScriptedPostSession({"chat/completions": [
@@ -146,6 +148,7 @@ def test_finalizer_model_only_changes_compact_finalization_call(monkeypatch, tmp
 
 # 4, 5 ---------------------------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_large_document_text_is_compacted_and_ids_survive(make_ctx, tmp_path):
     ctx = make_ctx({BIG_PAGE: FakeResponse(big_page_body())})
@@ -273,6 +276,7 @@ class MixedSession(ScriptedPostSession):
         return PostResponse(404, {"error": "no route"})
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 def test_finalizer_timeout_still_writes_durable_partial_result(monkeypatch, tmp_path):
     timeout = requests.ReadTimeout("Read timed out. (read timeout=240)")
     session = MixedSession({
@@ -451,6 +455,7 @@ def test_results_distinguish_missing_final_json_from_missing_research(baseline):
 
 # 15 -----------------------------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 def test_finalize_existing_run_makes_one_call_and_no_research(baseline, monkeypatch):
     def no_network(*args, **kwargs):
         raise AssertionError("recovery must not search or fetch")
@@ -569,6 +574,7 @@ def test_cli_dry_run_shows_flash_and_finalizer(monkeypatch, capsys, tmp_path):
     assert not any(tmp_path.iterdir())
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_stub_batch_e2e_successful_run_unchanged(monkeypatch, tmp_path):
     """The pre-refactor happy path: the research model returns JSON itself; no finalizer call is made."""

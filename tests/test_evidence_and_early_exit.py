@@ -137,6 +137,7 @@ def test_reused_evidence_is_not_novelty_and_keeps_idle_streak():
     assert t.end_turn().total == 0 and t.idle_turns == 2
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
     ctx = make_ctx()
@@ -156,6 +157,7 @@ def test_finalizer_bundle_contains_a_repeated_fact_once(tmp_path, make_ctx):
 
 # --- early recovery exit ----------------------------------------------------------------------------
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_duplicate_store_and_early_resolution(tmp_path, make_ctx):
     """Real trace: turn 3 stored battery_gross_kwh=205 (IL, document D) twice, then turn 4 only said "found"."""

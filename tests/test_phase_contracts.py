@@ -136,7 +136,9 @@ def test_contract_research_offers_and_executes_only_the_acquisition_tools(tmp_pa
 def test_legacy_research_keeps_every_tool(tmp_path):
     script = [fetch("a", EU), say({"summary": "primary", "fields": {}})]
     client = PhaseClient(script)
-    result, events = run(tmp_path, client, acquisition_mode="legacy", field_recovery_enabled=False)
+    # FINAL_ASSEMBLY=llm: the previous finalization (deterministic assembly never takes the research reply's values)
+    result, events = run(tmp_path, client, acquisition_mode="legacy", field_recovery_enabled=False,
+                         final_assembly="llm")
     tools = [{t["function"]["name"] for t in r["tools"] or []} for r in client.requests
              if r["messages"][0]["content"] == research_system_prompt()]
     assert tools and all(names == {s["function"]["name"] for s in tool_specs()} for names in tools)
@@ -515,7 +517,8 @@ def test_phase_max_attempts_parse_and_describe():
     defaults = {"research_model": "m", "finalizer_model": "m", "timeout_s": 240.0, "chat_max_attempts": 2}
     plain = describe(AgentConfig(), defaults)
     assert plain["document_sweep"]["max_attempts"] == 1                    # the built-in sweep default
-    assert plain["research"]["max_attempts"] == plain["recovery"]["max_attempts"] == 2      # inherit the global
+    assert plain["research"]["max_attempts"] == plain["finalizer"]["max_attempts"] == 2    # inherit the global
+    assert plain["recovery"]["max_attempts"] == 1                          # the built-in recovery default (Part D)
     assert plain["document_sweep"]["overridden"] == []
     configured = AgentConfig(phase_settings=phase_settings_from_env(env.get))
     assert describe(configured, defaults)["document_sweep"]["max_attempts"] == 2

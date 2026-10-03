@@ -30,7 +30,10 @@
                         BEFORE the paid finalizer request starts (a hard process death leaves a
                         finalizable run). If it cannot be written, the finalizer is NOT called.
           ↓
-    FINALIZATION PHASE  ONE no-tools call with GLM_FINALIZER_MODEL (default GLM_MODEL)
+    FINAL ASSEMBLY      FINAL_ASSEMBLY=deterministic (default): the output is assembled in CODE from the field states
+                        and admitted evidence (src/final_assembly.py); one small no-tool call with
+                        GLM_FINALIZER_MODEL may only narrate summary / research_trace. FINAL_ASSEMBLY=llm: ONE
+                        no-tools finalizer call writes the output from the bundle (the previous behaviour)
           ↓
     structured JSON
 
@@ -38,9 +41,12 @@ The finalizer never receives the research conversation. Every started run leaves
 a result.json, including research failures, finalization failures and
 interrupts (Ctrl+C / Streamlit stop), with whatever was collected.
 
-The loop is deliberately permissive: the model chooses tools and sources,
-decides how to handle conflicts and shapes its answer. The code only keeps the
-conversation within technical limits, notices repeated work and logs everything.
+The loop is deliberately permissive: the model chooses tools and sources and
+stores evidence. The code keeps the conversation within technical limits, notices
+repeated work, logs everything and (deterministic assembly) writes every final value.
+
+Reasoning: every request carries a top-level `reasoning_effort` (research high, document sweep / recovery /
+finalizer low by default, src/phase_settings.py); a thinking object of type "disabled" is never sent.
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -76,6 +83,7 @@ from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, CARD_TOOLS, DISC
                           acquisition_tool_specs, annotate_search_result, cluster_source_type, document_card,
                           missing_categories_note, model_tokens, navigation_links, recovery_clusters)
 from .candidate_harvest import RunHarvester
+from .final_assembly import run_deterministic_finalization
 from .parser_gaps import log_parser_gaps
 from .evidence_admission import AdmissionContext
 from .research_memory import ResearchMemory
@@ -508,7 +516,12 @@ class AgentConfig:
     temperature: float | None = None
     max_tokens: int | None = None
     include_level3: bool = False              # Level 3 open research is opt-in (INCLUDE_LEVEL3 / UI / --level3)
-    thinking: str = ""                        # "" = provider default (not sent), "enabled", "disabled"
+    # "" = provider default (not sent), "enabled", "disabled". "disabled" is never sent (glm-5.3 models always think:
+    # HTTP 400 code 1210); it maps to no thinking object + reasoning_effort low (src/phase_settings.py)
+    thinking: str = ""
+    # GLM_REASONING_EFFORT: low | medium | high | max; "" = each phase's own setting, else its phase default
+    # (research high, document_sweep / recovery / finalizer low). Sent as the top-level `reasoning_effort` field.
+    reasoning_effort: str = ""
     extra_body: dict = field(default_factory=dict)
     # Requested enrichment fields: names or specs; empty = every field of the enrichment schema.
     requested_fields: list = field(default_factory=list)
@@ -546,6 +559,10 @@ class AgentConfig:
     adjudication_u_max_tokens: int = 1500      # max_tokens of a U / A / M call (thinking: the document_sweep phase)
     adjudication_a_max_tokens: int = 2000
     adjudication_m_max_tokens: int = 1500
+    # FINAL_ASSEMBLY: "deterministic" = the final output is built in code from the field states and admitted evidence
+    # (src/final_assembly.py; a model may only narrate summary / research_trace); "llm" = the finalizer model writes
+    # the output from the compact bundle (the previous behaviour).
+    final_assembly: str = "deterministic"
     # Tail recovery: "cluster" (one attempt per recovery cluster, see src/tail_planner.py) or "legacy" (per field).
     recovery_mode: str = "cluster"
     cluster_max_attempts: int = 2             # per cluster; the cluster's own fields' recovery_attempts cap it too
@@ -675,6 +692,23 @@ def agent_config_from_env(env: Callable[[str], str | None] = os.environ.get, **o
         values["acquisition_document_card"] = card
     if (env("RECOVERY_MODE") or "").strip().lower() in ("cluster", "legacy"):
         values["recovery_mode"] = env("RECOVERY_MODE").strip().lower()
+    if (env("FINAL_ASSEMBLY") or "").strip().lower() in FINAL_ASSEMBLY_MODES:
+        values["final_assembly"] = env("FINAL_ASSEMBLY").strip().lower()
+    from .phase_settings import parse_effort
+
+    effort = parse_effort(env("GLM_REASONING_EFFORT"))
+    if effort:
+        values["reasoning_effort"] = effort
+    if (env("GLM_THINKING") or "").strip().lower() in ("enabled", "disabled"):
+        values["thinking"] = env("GLM_THINKING").strip().lower()      # "disabled" is mapped, never sent
+    raw_extra = (env("GLM_EXTRA_BODY") or "").strip()
+    if raw_extra:
+        try:
+            extra = json.loads(raw_extra)
+            if isinstance(extra, dict):
+                values["extra_body"] = extra
+        except ValueError:
+            pass        # reported by app_config.validate_config
     return AgentConfig(**{**values, **overrides})
 
 
@@ -682,14 +716,46 @@ def tool_config_from_env(env: Callable[[str], str | None] = os.environ.get, **ov
     return ToolConfig(**{**_env_ints(TOOL_ENV, env), **overrides})
 
 
-def request_extra(config: AgentConfig, thinking: str | None = None) -> dict:
-    """Extra fields merged into every chat request. The explicit thinking setting (a phase's own, else the global one)
-    wins over extra_body."""
+FINAL_ASSEMBLY_MODES = ("deterministic", "llm")
+
+
+def request_extra(config: AgentConfig, settings: dict | None = None) -> dict:
+    """Extra fields merged into a chat request: extra_body, the thinking object and the top-level reasoning_effort.
+    `settings`: one call's resolved phase settings (phase_settings.for_phase); None = the global settings only.
+
+    A thinking object of type "disabled" is NEVER sent, whether configured (GLM_THINKING, a phase, the UI, a saved
+    request) or in extra_body (GLM_EXTRA_BODY): it is stripped and the call gets reasoning_effort low unless an effort
+    is set explicitly (phase_settings.thinking_disabled_mapping). An explicit effort (a phase's own or the global one)
+    and thinking "enabled" win over extra_body; extra_body's own reasoning_effort wins over a phase default."""
+    from .phase_settings import PROVIDER_DEFAULT, parse_effort, thinking_disabled_mapping
+
     extra = dict(config.extra_body or {})
-    thinking = config.thinking if thinking is None else thinking
-    if thinking:
-        extra["thinking"] = {"type": thinking}
+    if isinstance(extra.get("thinking"), dict) and str(extra["thinking"].get("type") or "").lower() == "disabled":
+        extra.pop("thinking")
+    if settings is None:
+        explicit = parse_effort(config.reasoning_effort)
+        mapping = thinking_disabled_mapping(str(config.thinking or "").lower(), explicit, config.extra_body)
+        thinking, effort, mapped = mapping["thinking"], mapping["effort"], mapping["mapped"]
+        source = "global" if explicit else "thinking_disabled" if mapped else None
+    else:
+        thinking, effort = settings.get("thinking") or "", settings.get("reasoning_effort")
+        source, mapped = settings.get("reasoning_effort_source"), settings.get("thinking_disabled_mapped")
+    if mapped:              # a configured "disabled" means no thinking object at all, not extra_body's own one
+        extra.pop("thinking", None)
+    if thinking == "enabled":
+        extra["thinking"] = {"type": "enabled"}
+    if effort == PROVIDER_DEFAULT or (effort is None and source in ("phase", "global")):
+        extra.pop("reasoning_effort", None)       # an explicit "provider default": send no effort at all
+    elif effort and not (source == "phase_default" and extra.get("reasoning_effort")):
+        extra["reasoning_effort"] = effort
     return extra
+
+
+def is_thinking_rejection(exc: BaseException) -> bool:
+    """HTTP 400 "This model always engages in thinking and cannot be disabled" (provider code 1210)."""
+    body = str(getattr(exc, "body", "") or "")
+    return getattr(exc, "status", None) == 400 and (re.search(r"\b1210\b", body) is not None
+                                                     or "cannot be disabled" in body.lower())
 
 
 def research_model_of(client) -> str:
@@ -721,6 +787,8 @@ def effective_glm_config(client, config: AgentConfig, tool_config: ToolConfig) -
     return {
         **settings,
         "thinking": extra.get("thinking", "provider_default"),
+        # the effective effort of each phase is in phase_settings[phase].reasoning_effort
+        "reasoning_effort": {phase: values.get("reasoning_effort") for phase, values in phases.items()},
         "max_tokens": config.max_tokens if config.max_tokens else "provider_default",
         "temperature": config.temperature if config.temperature is not None else "provider_default",
         "tool_choice": "auto",
@@ -854,7 +922,7 @@ class ModelCaller:
     def __init__(self, client, run_log: RunLog, config: AgentConfig, run_context: dict | None = None,
                  cancel_event=None):
         self.client, self.run_log, self.config = client, run_log, config
-        self.extra = request_extra(config)
+        self.thinking_mapped_logged = False      # thinking_disabled_mapped is logged once per run
         self.usage = {group: trace.empty_usage() for group in trace.PHASE_GROUPS}
         self.last_content: str | None = None
         self.run_context = run_context if run_context is not None else {}
@@ -876,7 +944,16 @@ class ModelCaller:
         from .phase_settings import for_phase
 
         settings = for_phase(self.config, phase)
-        extra = request_extra(self.config, settings["thinking"]) if settings["overridden"] else self.extra
+        extra = request_extra(self.config, settings)
+        if settings["thinking_disabled_mapped"] and not self.thinking_mapped_logged:
+            self.thinking_mapped_logged = True
+            try:
+                self.run_log.event("thinking_disabled_mapped", phase=phase, source=settings["thinking_disabled_source"],
+                                   reasoning_effort=settings["reasoning_effort"],
+                                   note="thinking 'disabled' is never sent (the provider rejects it, code 1210): no "
+                                        "thinking object, reasoning_effort low unless set explicitly")
+            except Exception:  # noqa: BLE001 - telemetry never costs the call
+                pass
         kwargs: dict[str, Any] = {"tools": tools, "temperature": settings["temperature"],
                                   "max_tokens": max_tokens or settings["max_tokens"], "extra": extra or None}
         model = model or settings["model"]
@@ -886,7 +963,23 @@ class ModelCaller:
             kwargs["timeout_s"] = settings["timeout_s"]
         if settings["max_attempts"]:
             kwargs["max_attempts"] = settings["max_attempts"]
-        response = self.client.chat(messages, **kwargs)
+        effort = (extra or {}).get("reasoning_effort")
+        try:
+            response = self.client.chat(messages, **kwargs)
+        except GLMError as exc:
+            if not is_thinking_rejection(exc):
+                raise
+            # Defensive: the provider still says thinking cannot be disabled. ONE extra request without a thinking
+            # object and with effort low; it does not count against max_attempts (the 400 was not retried), and a
+            # second rejection surfaces as a normal error.
+            retry_extra = {k: v for k, v in (extra or {}).items() if k != "thinking"}
+            retry_extra["reasoning_effort"] = "low"
+            self.run_log.event("reasoning_retry", phase=phase, model=model or research_model_of(self.client),
+                               status=exc.status, error=_error_text(exc), sent_thinking=(extra or {}).get("thinking"),
+                               sent_reasoning_effort=effort, retry_reasoning_effort="low")
+            kwargs["extra"] = retry_extra
+            effort = "low"
+            response = self.client.chat(messages, **kwargs)
         latency = int(getattr(response, "latency_ms", 0) or 0)
         trace.add_usage(self.usage[trace.phase_group(phase)], response.usage, latency)
         raw = getattr(response, "raw", {}) or {}
@@ -894,7 +987,8 @@ class ModelCaller:
         if (content or "").strip():
             self.last_content = content
         self.run_log.event("model_response", phase=phase, model=model or research_model_of(self.client),
-                           finish_reason=response.finish_reason, usage=response.usage,
+                           finish_reason=response.finish_reason, usage=response.usage, reasoning_effort=effort,
+                           reasoning_tokens=trace.reasoning_tokens(response.usage),
                            latency_ms=getattr(response, "latency_ms", None),
                            response_meta={k: raw.get(k) for k in ("id", "request_id", "model", "created") if k in raw},
                            content=content, reasoning_content=response.message.get("reasoning_content"),
@@ -1608,6 +1702,10 @@ def tail_metrics(primary: list[dict], final: list[dict], *, model_calls: int, se
     }
 
 
+# consecutive cluster attempts failing with an API error (timeout, 5xx, ...) before all recovery stops (provider outage)
+RECOVERY_API_FAILURE_STOP = 2
+
+
 def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: list[dict], payload: dict,
                          config: AgentConfig, run_log: RunLog, cache, documents_dir: Path,
                          operator_notes: dict | None, phase_ref: dict, vehicle: dict | None = None,
@@ -1656,7 +1754,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     current = {e["field"]: e for e in primary}
     state = {"total_steps": 0, "stopped": None, "cut_short": None, "early_count": 0, "budget_skipped": 0,
              "no_novelty_stops": 0, "budget_extensions": 0, "searches": 0, "search_refusals": 0,
-             "negative_route_blocks": 0}
+             "negative_route_blocks": 0, "failed_attempts": 0, "consecutive_api_failures": 0}
     # Cross-run memory (scheduling only): routes that already failed for these fields in the same identity scope,
     # and the historical yield of each cluster for this manufacturer / propulsion.
     from .research_memory import reuse_level, route_applies, route_label, scope_key, spec_identity
@@ -1874,11 +1972,21 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 # shown to the model with the next request: logged (never again a reason for a local-only pass) only
                 # once that call returns
                 announced_keys = [candidate_key(c) for v in announced.values() for c in v]
-        except GLMError as exc:  # stop spending on recovery; finalize with what we have
+        except GLMError as exc:
+            # ends THIS attempt only: the next cluster still runs. Candidates this failed call carried were never
+            # logged as presented, so they stay fresh. Only RECOVERY_API_FAILURE_STOP consecutive failed attempts
+            # (a provider outage) stop all recovery.
             error = _error_text(exc)
-            state["stopped"] = "api_failure"
-            run_log.event("field_recovery_failed", field=label, attempt=attempt, error=error,
-                          api_error=exc.as_dict())
+            state["failed_attempts"] += 1
+            state["consecutive_api_failures"] += 1
+            run_log.event("field_recovery_failed", field=label, cluster=name, attempt=attempt, error=error,
+                          api_error=exc.as_dict(), consecutive_api_failures=state["consecutive_api_failures"])
+            if state["consecutive_api_failures"] >= RECOVERY_API_FAILURE_STOP:
+                state["stopped"] = "api_failure"
+                run_log.event("field_recovery_api_failure_stop", cluster=name, attempt=attempt,
+                              consecutive_api_failures=state["consecutive_api_failures"])
+        else:
+            state["consecutive_api_failures"] = 0
         finally:
             session.search_budget = None
             state["negative_route_blocks"] += session.route_blocks
@@ -1897,7 +2005,7 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         state["searches"] += searched
         if budget is not None:
             state["search_refusals"] += budget.refused
-        if not any(turn_novelty) and mode == "web":
+        if not any(turn_novelty) and mode == "web" and error is None:    # an API failure says nothing about yield
             low_yield.update(f for f in open_fields if current[f]["retry_eligible"])
         record = {"field": label, "cluster": name, "fields": open_fields, "attempt": attempt, "round": round_no,
                   "mode": mode, "states_before": states_before,
@@ -1912,7 +2020,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                   "search_budget": budget.limit if budget else 0, "search_refused": budget.refused if budget else 0,
                   "fields_resolved": [f for f in open_fields if not current[f]["retry_eligible"]],
                   "reply": reply, "reply_text": None if reply else reply_text, "error": error,
-                  "packet_chars": packet_chars, "deterministic_candidates": sum(len(v) for v in shown.values()),
+                  "failed": error is not None, "packet_chars": packet_chars,
+                  "deterministic_candidates": sum(len(v) for v in shown.values()),
                   "ranked_documents": len(ranked), "search_hints": len(hints)}
         executed = [c for c in session.tool_calls[calls_before:] if not c.get("blocked") and not c.get("reused")]
         record["_routes"] = dead_routes
@@ -2046,6 +2155,8 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         "local_only_attempts": sum(1 for a in attempts_log if a["mode"] == "local_only"),
         **metrics,
         "stopped": state["stopped"],
+        "failed_attempts": state["failed_attempts"],
+        "api_failure_stop": state["stopped"] == "api_failure",
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
@@ -2766,6 +2877,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   target_market=config.target_market, vehicle_label=vehicle_ctx,
                   tools_unavailable=unavailable_tools(), recovery_mode=config.recovery_mode,
                   acquisition_mode=config.acquisition_mode, sweep_mode=config.sweep_mode,
+                  final_assembly=config.final_assembly,
                   acquisition_document_card=config.acquisition_document_card, run_profile=config.run_profile,
                   research_prompt_hash=research_prompt_hash, env_overrides=env_overrides)
     try:
@@ -2794,6 +2906,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     stop_reason: str | None = None
     final_text: str | None = None
     output, parse_note = None, None
+    output_from_code = False
     error, api_error = None, None
     finalization: dict | None = None
     recovery: dict | None = None
@@ -2847,6 +2960,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "sweep_mode": config.sweep_mode,
             "acquisition_document_card": config.acquisition_document_card,
             "run_profile": config.run_profile,
+            "final_assembly": config.final_assembly,
+            # where the output VALUES came from: code (deterministic assembly) or a model (finalizer / research reply)
+            "output_source": None if output is None else ("code" if output_from_code else "model"),
             "research_prompt_hash": research_prompt_hash,
             "env_overrides": env_overrides,
             "status": final_status,
@@ -3048,9 +3164,10 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             retried = bool(recovery and recovery.get("attempt_count"))
             swept = bool(sweep and sweep.get("model_calls"))
             fin = None
+            deterministic = config.final_assembly != "llm"
             # contract mode: the research reply is a {"done": ...} acquisition note, never the run output; the run is
-            # always finalized from the compact bundle
-            if stop_reason == "model_finished" and not retried and not swept and not contract:
+            # always finalized from the compact bundle. Deterministic assembly: values only ever come from code.
+            if stop_reason == "model_finished" and not retried and not swept and not contract and not deterministic:
                 output, parse_note = parse_model_output(final_text)
                 if output is not None:
                     status = "completed"
@@ -3083,10 +3200,16 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 else:
                     run_log.event("finalization_checkpoint_written", status="finalization_pending",
                                   evidence_items=len(evidence.items), bundle_chars=bundle.get("bundle_chars"))
-                    fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
-                                           documents_dir=documents_dir, stop_reason=stop_reason,
-                                           model=finalizer_model,
-                                           request_path=run_log.dir / "finalizer_request.json", bundle=bundle)
+                    if deterministic:      # values from field states + admitted evidence; a model only narrates
+                        fin = run_deterministic_finalization(caller, run_log=run_log, events=events_now,
+                                                             payload=payload, specs=specs,
+                                                             target_market=config.target_market,
+                                                             model=finalizer_model, bundle=bundle, record_id=record_id)
+                    else:
+                        fin = run_finalization(caller, run_log=run_log, payload=payload, config=config, cache=cache,
+                                               documents_dir=documents_dir, stop_reason=stop_reason,
+                                               model=finalizer_model,
+                                               request_path=run_log.dir / "finalizer_request.json", bundle=bundle)
             if output is None and fin is not None:
                 finalization, bundle = fin["info"], fin["bundle"]
                 if stop_reason != "model_finished" or contract:
@@ -3096,6 +3219,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     parse_note = fin["parse_note"]
                 else:
                     output, parse_note = fin["output"], f"finalizer:{fin['parse_note']}"
+                    output_from_code = deterministic
                     if stop_reason == "model_finished":
                         status = "completed" if output is not None else "completed_unparsed"
                     else:

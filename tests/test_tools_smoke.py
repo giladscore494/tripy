@@ -215,6 +215,7 @@ def _call(call_id, name, args):
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_agent_loop_end_to_end(make_ctx, tmp_path):
     url = "https://www.toyota.co.il/cars/corolla"
@@ -255,7 +256,9 @@ def test_agent_loop_end_to_end(make_ctx, tmp_path):
     metrics = compute_metrics(result, {"propulsion": "hybrid"}, ctx.cache,
                               pricing={"input_per_mtok": 1.0, "output_per_mtok": 2.0, "web_search_per_call": 0.01})
     assert metrics["fields_returned"] == 4 and metrics["fields_with_value"] == 3
-    assert metrics["target_filled"] == 2 and metrics["extra_field_names"] == ["boot_floor_height_mm"]
+    # coverage counts only values backed by existing evidence ids (length_mm -> e1); cargo_volume_l has no evidence
+    assert metrics["target_filled"] == 1 and metrics["filled_by_output"] == 2
+    assert metrics["extra_field_names"] == ["boot_floor_height_mm"]
     assert metrics["conflicts_reported"] == 1 and metrics["level3_topics"] == 1
     assert metrics["unique_sources"] == 1 and metrics["cost_usd"] == round((300 + 60 * 2) / 1e6, 6)
     events = (tmp_path / "runs" / "b1" / "38626" / "events.jsonl").read_text("utf-8").splitlines()
@@ -263,6 +266,7 @@ def test_agent_loop_end_to_end(make_ctx, tmp_path):
     assert kinds[0] == "run_started" and kinds[-1] == "run_finished" and "evidence" in kinds
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 def test_agent_finalizes_at_step_budget_and_keeps_unparsed_text(make_ctx, tmp_path):
     ctx = make_ctx()
     loop_call = {"role": "assistant", "content": "", "tool_calls": [_call("c", "search_web", {"query": "x"})]}

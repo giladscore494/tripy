@@ -119,6 +119,7 @@ def cadillac_script(attempt2):
     ]
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_cadillac_unresolved_conflict_reaches_finalizer_with_both_candidates(tmp_path, make_ctx):
     attempt2 = [turn(_call("r3", "search_web", {"query": "Escalade IQ torque 1066 1080 boost mode"})),
@@ -200,6 +201,7 @@ def budget_script(turns):
     return script
 
 
+@pytest.mark.final_assembly("llm")   # encodes the finalizer model's output (FINAL_ASSEMBLY=llm)
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
 def test_budget_of_24_stops_recovery_and_the_run_still_finalizes(tmp_path, make_ctx):
     result, client, events = run(tmp_path, make_ctx, budget_script(24), requested_fields=FIELDS)  # default cap 24

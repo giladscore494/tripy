@@ -114,6 +114,8 @@ def pytest_configure(config):
                                        "(legacy | contract) for this test")
     config.addinivalue_line("markers", "sweep_mode(mode): pin the AgentConfig default document sweep mode "
                                        "(adjudication | legacy) for this test")
+    config.addinivalue_line("markers", "final_assembly(mode): pin the AgentConfig default final assembly "
+                                       "(deterministic | llm) for this test")
 
 
 @pytest.fixture(autouse=True)
@@ -151,6 +153,26 @@ def _sweep_mode_default(request, monkeypatch):
 
     def init(self, *args, **kwargs):
         kwargs.setdefault("sweep_mode", mode)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _final_assembly_default(request, monkeypatch):
+    """The AgentConfig default final assembly of a test: its `final_assembly` marker (tests encoding the finalizer
+    model's output, i.e. FINAL_ASSEMBLY=llm), else FINAL_ASSEMBLY from the environment, else the code default
+    (deterministic). An explicit final_assembly=... argument always wins."""
+    marker = request.node.get_closest_marker("final_assembly")
+    mode = marker.args[0] if marker else (os.environ.get("FINAL_ASSEMBLY") or "").strip().lower()
+    if mode not in ("deterministic", "llm"):
+        return
+    from src import agent
+
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs.setdefault("final_assembly", mode)
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(agent.AgentConfig, "__init__", init)

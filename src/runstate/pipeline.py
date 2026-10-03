@@ -263,8 +263,9 @@ class VehiclePipeline:
 
     def _on_finalization_finished(self, e: dict, ts) -> None:
         self.stage_notes.pop("finalization", None)
-        # "parsed" = structured output; "unparsed" = the reply was not valid JSON even after the repair turn
-        self._finish("finalization", DONE if e.get("status") in (None, "parsed") else FAILED, ts)
+        # "parsed" = structured output; "assembled" = deterministic final assembly (code); "unparsed" = the reply was
+        # not valid JSON even after the repair turn
+        self._finish("finalization", DONE if e.get("status") in (None, "parsed", "assembled") else FAILED, ts)
         if e.get("status") == "unparsed":
             self.stage_notes["finalization"] = "the final answer could not be parsed as JSON"
 

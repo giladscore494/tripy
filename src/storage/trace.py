@@ -40,6 +40,20 @@ def add_usage(acc: dict, usage: dict | None, latency_ms: int | None = None) -> d
     return acc
 
 
+def reasoning_tokens(usage: dict | None) -> int | None:
+    """Reasoning tokens of one response when the provider reports them (usage.completion_tokens_details
+    .reasoning_tokens, or a flat usage.reasoning_tokens), else None."""
+    usage = usage if isinstance(usage, dict) else {}
+    details = usage.get("completion_tokens_details")
+    value = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    if value is None:
+        value = usage.get("reasoning_tokens")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def sum_usage(*usages: dict | None) -> dict:
     out = empty_usage()
     for usage in usages:

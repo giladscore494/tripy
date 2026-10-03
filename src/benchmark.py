@@ -80,7 +80,13 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     targets = list(requested) if requested else target_field_names(propulsion=(vehicle or {}).get("propulsion"))
     fields = iter_fields(output)
     filled_names = {name for name, entry in fields if has_value(entry)}
-    target_filled = [name for name in targets if name in filled_names]
+    stored_ids = {str(item.get("evidence_id")) for item in result.get("evidence", [])}
+    # coverage counts a value only when the output entry cites evidence ids that all exist in the run's evidence;
+    # `filled_by_output` keeps the old count (any value in the output, whoever wrote it)
+    backed_names = {name for name, entry in fields if has_value(entry) and entry.get("evidence_ids")
+                    and all(str(i) in stored_ids for i in entry["evidence_ids"])}
+    filled_by_output = [name for name in targets if name in filled_names]
+    target_filled = [name for name in targets if name in backed_names]
     extra = sorted(filled_names - set(targets) - set(target_field_names(include_electric=True)))
     recovery = result.get("field_recovery") or {}
 
@@ -122,7 +128,6 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     finalization = result.get("finalization") or {}
     tracking = result.get("research_tracking") or {}
     provenance = Counter(str(entry.get("provenance") or "not_stated") for _, entry in fields)
-    stored_ids = {str(item.get("evidence_id")) for item in result.get("evidence", [])}
     cited = [str(i) for _, entry in fields for i in (entry.get("evidence_ids") or []) if i is not None]
     evidence = result.get("evidence") or []
     admission = result.get("evidence_admission") or {}
@@ -152,6 +157,10 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "target_fields": len(targets),
         "target_filled": len(target_filled),
         "coverage_pct": round(100 * len(target_filled) / len(targets), 1) if targets else 0.0,
+        "filled_by_output": len(filled_by_output),
+        "coverage_pct_by_output": round(100 * len(filled_by_output) / len(targets), 1) if targets else 0.0,
+        "output_source": result.get("output_source"),
+        "final_assembly": result.get("final_assembly"),
         "fields_returned": len(fields),
         "fields_with_value": len(filled_names),
         "extra_fields": len(extra),
@@ -324,9 +333,10 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     }
 
 
-SUM_KEYS = ("target_filled", "fields_with_value", "extra_fields", "evidence_items", "documents_opened", "tool_calls",
-            "tool_errors", "document_cache_hits", "document_cache_misses", "search_cache_hits",
-            "search_api_calls", "api_errors", "conflicts_reported", "additional_findings", "duration_s",
+SUM_KEYS = ("target_filled", "filled_by_output", "fields_with_value", "extra_fields", "evidence_items",
+            "documents_opened", "tool_calls", "tool_errors", "document_cache_hits", "document_cache_misses",
+            "search_cache_hits", "search_api_calls", "api_errors", "conflicts_reported", "additional_findings",
+            "duration_s",
             "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
             "research_steps", "research_model_calls", "field_recovery_model_calls", "fields_failed_primary",
             "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts",
