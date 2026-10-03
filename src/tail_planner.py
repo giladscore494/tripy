@@ -66,10 +66,15 @@ def candidate_key(cand: dict) -> str:
 
 
 def presented_keys(events: Iterable[dict]) -> set[str]:
-    """Candidates already put in front of a model (document sweep or an earlier cluster pass)."""
+    """Candidates a model has really seen (document sweep or an earlier cluster pass): a model call that carried them
+    RETURNED. `candidates_presented` (logged after a sweep chunk's / cluster attempt's first successful call) and
+    `cluster_candidates_announced` (logged after the next successful call). `document_sweep_started` /
+    `cluster_recovery_started` only OFFER candidates (`offered_candidate_keys`; a call that then fails showed them to
+    no model); their `presented_candidate_keys` is read only for runs logged before that distinction existed."""
     out: set[str] = set()
     for event in events:
-        if event.get("kind") in ("document_sweep_started", "cluster_recovery_started", "cluster_candidates_announced"):
+        if event.get("kind") in ("candidates_presented", "cluster_candidates_announced", "document_sweep_started",
+                                 "cluster_recovery_started"):
             out.update(event.get("presented_candidate_keys") or [])
     return out
 
