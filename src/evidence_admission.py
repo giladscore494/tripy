@@ -835,6 +835,78 @@ def _text_arg(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+# --- the binding of one fact (shared by admit() and src/binding_replay.py) -------------------------------------------
+
+@dataclass
+class FactContext:
+    """Where in the document a quote states its value: the raw material of the fact's binding layers."""
+    fragment: str                      # the (normalized) quote fragment that states the value
+    clause: str                        # the value's own words in that fragment
+    source_lines: list[str]            # the document line(s) holding the fragment
+    headings: list[str]                # the section heading above it
+
+
+def fact_context(adm: AdmissionContext, material: DocumentMaterial, quote: str, entailment: Entailment) -> FactContext:
+    fragment = entailment.fragment or normalize_text(quote)
+    return FactContext(fragment=fragment, clause=semantic_clause(fragment, entailment.position),
+                       source_lines=_source_lines(material, fragment),
+                       headings=_section_headings(material, fragment, adm))
+
+
+def evidence_market(material: DocumentMaterial, model_market: Any) -> tuple[str, str | None]:
+    """(market, market_basis) of a fact: the source's own market. A source that does not establish one gives
+    "unknown": the model's market is a claim (kept as model_market_claim), never the evidence market, whichever market
+    it names (a claim must not manufacture foreign or IL provenance)."""
+    if material.market is not None:
+        return material.market, material.market_basis
+    return "unknown", "unverified_model_claim" if normalize_market(model_market) else "not_determinable"
+
+
+def binding_layers(material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str, ctx: FactContext,
+                   variant_text: str = "", candidates: list[dict] | None = None) -> dict:
+    """The context layers server-side binding reads for one fact, most specific first: the value's own words, the
+    table column, the stating fragment, its source line (other numbers' bracket groups removed), the section heading
+    above; the model's variant text and the quote's OTHER fragments can only veto. `matching`: the deterministic
+    candidates of the same document, field and value (`candidates`, default the document's own harvest) whose table
+    column header / identity feed the column layers. Pure."""
+    pool = material.candidates if candidates is None else candidates
+    matching = [c for c in pool if normalize_field_name(c.get("field")) == name and _same_value(spec, value,
+                                                                                                c.get("value"))]
+    hints = [h for c in matching for h in [c.get("variant_hint")] + list(c.get("variant_hints") or []) if h]
+    # the value's table column identity (header + that column's power / drivetrain / ... cells); a value found in two
+    # or more columns (or in a column that cannot be identified) names no single column, so the layer is left out
+    # (fail-closed: the document decides)
+    columns = list(dict.fromkeys(i for c in matching
+                                 for i in [c.get("column_identity")] + list(c.get("column_identities") or []) if i))
+    if any(c.get("column_identity_unknown") for c in matching):
+        columns = []
+    fragment, clause = ctx.fragment, ctx.clause
+    other_fragments = [f for f in quote_fragments(quote) if normalize_text(f) != fragment]
+    layers = [("value_clause", clause if clause != fragment else ""),
+              ("column_header", " | ".join(dict.fromkeys(hints))),
+              ("column_identity", columns[0] if len(columns) == 1 else ""), ("quote", _line_context(fragment, value)),
+              ("source_line", " ".join(_line_context(line, value) for line in ctx.source_lines)),
+              ("section_heading", " ".join(ctx.headings))]
+    veto_layers = [("model_variant", variant_text), *[("other_quote_fragment", f) for f in other_fragments]]
+    return {"layers": layers, "veto_layers": veto_layers, "matching": matching, "columns": columns}
+
+
+def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str,
+                 ctx: FactContext, *, variant_text: str = "", claim: str | None = None, market: str | None = None,
+                 candidates: list[dict] | None = None) -> tuple[dict, dict]:
+    """(binding, layer inputs) of one fact: src/document_binding.bind over binding_layers(). Pure; the one place both
+    Evidence Admission and Binding Replay compute a fact's binding, so the two cannot drift."""
+    inputs = binding_layers(material, name, spec, value, quote, ctx, variant_text, candidates)
+    profile = material.profile
+    binding = bind(adm.identity, profile["statuses"], inputs["layers"], inputs["veto_layers"], market=market,
+                   requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
+                   trim_named_in_document=profile.get("trim_named_in_document", False),
+                   source_authority=material.authority.get("source_authority"),
+                   document_names_family=profile.get("zone_statuses", {}).get("model") == "match",
+                   other_trims_named=profile.get("other_trims_named"))
+    return binding, inputs
+
+
 def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | tuple = ()) -> dict:
     """{'accepted': True, 'record': {...}} or {'accepted': False, 'reasons': [...], 'message': ...}."""
     name = normalize_field_name(args.get("field"))
@@ -885,11 +957,9 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         return reject([unit_problem])
     if not _plausible(spec, value):
         return reject(["implausible_value"])
-    fragment = entailment.fragment or normalize_text(quote)
-    clause = semantic_clause(fragment, entailment.position)
-    source_lines = _source_lines(material, fragment)
+    ctx = fact_context(adm, material, quote, entailment)
+    fragment, clause, source_lines, headings = ctx.fragment, ctx.clause, ctx.source_lines, ctx.headings
     line_clauses = [_clause_in_line(line, value) for line in source_lines]
-    headings = _section_headings(material, fragment, adm)
     violation = semantic_violation(adm, spec, [clause, *line_clauses,
                                                *[h for h in headings if not re.search(r"\d", h)]])
     if violation:
@@ -897,40 +967,11 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     checks["semantics"] = "ok"
 
     # identity: server-side binding (the model's variant text can only veto)
-    matching = _matching_candidates(material, name, value, spec)
-    hints = [h for c in matching for h in [c.get("variant_hint")] + list(c.get("variant_hints") or []) if h]
-    # the value's table column identity (header + that column's power / drivetrain / ... cells); a value found in two
-    # or more columns (or in a column that cannot be identified) names no single column, so the layer is left out
-    # (fail-closed: the document decides)
-    columns = list(dict.fromkeys(i for c in matching
-                                 for i in [c.get("column_identity")] + list(c.get("column_identities") or []) if i))
-    if any(c.get("column_identity_unknown") for c in matching):
-        columns = []
     claim = str(args.get("variant_match") or "").strip().lower() or None
     model_market = args.get("market")
-    market, market_basis = material.market, material.market_basis
-    if market is None:
-        # the source does not establish a market: the model's market is a claim (kept as model_market_claim), never
-        # the evidence market, whichever market it names (a claim must not manufacture foreign or IL provenance)
-        claimed = normalize_market(model_market)
-        market, market_basis = "unknown", "unverified_model_claim" if claimed else "not_determinable"
-    requirement = spec.get("binding_requirement")
-    # most specific first: the value's own words, the table column, the stating fragment, its source line (other
-    # numbers' bracket groups removed), the section heading above; the quote's OTHER fragments can only veto
-    other_fragments = [f for f in quote_fragments(quote) if normalize_text(f) != fragment]
-    layers = [("value_clause", clause if clause != fragment else ""),
-              ("column_header", " | ".join(dict.fromkeys(hints))),
-              ("column_identity", columns[0] if len(columns) == 1 else ""), ("quote", _line_context(fragment, value)),
-              ("source_line", " ".join(_line_context(line, value) for line in source_lines)),
-              ("section_heading", " ".join(headings))]
-    binding = bind(adm.identity, material.profile["statuses"], layers,
-                   [("model_variant", _text_arg(args.get("variant"))),
-                    *[("other_quote_fragment", f) for f in other_fragments]], market=market, requirement=requirement,
-                   model_declared_different=claim == "different",
-                   trim_named_in_document=material.profile.get("trim_named_in_document", False),
-                   source_authority=material.authority.get("source_authority"),
-                   document_names_family=material.profile.get("zone_statuses", {}).get("model") == "match",
-                   other_trims_named=material.profile.get("other_trims_named"))
+    market, market_basis = evidence_market(material, model_market)
+    binding, _ = fact_binding(adm, material, name, spec, value, quote, ctx, variant_text=_text_arg(args.get("variant")),
+                              claim=claim, market=market)
 
     # the unit: the model's, else what the source wrote (a USD price stays USD), else the field's unit
     record_unit = unit or stated_unit or spec.get("normalized_unit")
