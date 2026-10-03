@@ -2536,7 +2536,7 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         open_fields = [f for f in plan["fields"] if current[f]["retry_eligible"]]
         if not open_fields:
             continue
-        # a field open only on binding (admitted official target-market evidence) is not a search problem
+        # a trim-only binding gap with admitted official target-market evidence is usually not a broad-search problem
         events = trace_events(run_log)
         evidence_by_field: dict[str, list[dict]] = {}
         for e in events:
@@ -2549,8 +2549,8 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         if gate["skipped"]:
             skipped_binding_gap += [f for f in gate["skipped"] if f not in skipped_binding_gap]
             run_log.event("reacquire_skipped_binding_gap", cluster=name, fields=gate["skipped"], gaps=gate["gaps"],
-                          note="variant_not_exact with admitted official target-market evidence: a new search "
-                               "cannot fix the binding")
+                          note="trim-only variant_not_exact with admitted official target-market evidence: "
+                               "broad reacquisition skipped")
         if gate["trim_exception"]:
             run_log.event("reacquire_trim_exception", cluster=name, fields=sorted(gate["gaps"]), gaps=gate["gaps"],
                           search_cap=gate["search_cap"])
