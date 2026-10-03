@@ -52,7 +52,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v2"
+BINDING_VERSION = "binding-v3"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -83,8 +83,25 @@ MAX_METRIC_FOLLOWERS = ("power", "output", "speed", "range", "torque", "charge",
                         "capacity", "הספק", "מהירות", "טווח", "מומנט", "טעינה", "זרם", "מתח", "קיבולת")
 NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout\b|(?<![א-ת])לא(?![א-ת])|ללא|למעט|"
                           r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
-YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
-                  r"l\b|ליטר|kw|hp|כ\"ס|ש\"ח|₪|€|\$|lb|wh))")
+# --- model-year statements (binding-v3) ---
+# A 4-digit year counts for the year dimension only as a MODEL-YEAR STATEMENT (see year_context): next to the target's
+# manufacturer / family name, after an explicit label, inside an identity-zone segment that names the family, or in an
+# explicit family-year URL slug. Copyright, publication / update dates, price-list validity, URLs and free-standing
+# years in prose are recorded as ignored contexts (telemetry) and never feed the dimension.
+ANY_YEAR = re.compile(r"(?<!\d)(20[0-3]\d)(?!\d)")
+YEAR_LABEL = re.compile(r"(?:שנת[\s\-]*(?:ה)?דגם|שנתון|model[\s\-]*year)\s*[:\-–]?\s*$|(?<![\w])my-?$")
+SHORT_MY = re.compile(r"(?<![\w])my-?(\d{2})(?![\w])")
+COPYRIGHT = re.compile(r"©|\(c\)|copyright|כל הזכויות|all rights reserved")
+PUBLISHED = re.compile(r"פורסם|עודכן|תאריך|published|updated|posted")
+PRICE_VALIDITY = re.compile(r"בתוקף|valid\s+(?:from|until|as\s+of)|החל\s*מ")
+MONTHS = re.compile(r"(?<![\wא-ת])(?:[בלמ]-?)?(?:ינואר|פברואר|מרץ|מרס|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|"
+                    r"דצמבר|january|february|march|april|may|june|july|august|september|october|november|december|"
+                    r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?![\wא-ת])")
+DATE_BEFORE = re.compile(r"(?<![\w.])\d{1,2}\s*[./-]\s*(?:\d{1,2}\s*[./-]\s*)?$")
+DATE_AFTER = re.compile(r"\s*[./-]\s*\d{1,2}(?!\d)")
+URL_TOKEN = re.compile(r"://|www\.|@|[a-z]/|/[a-z]|\.(?:com|co|org|net|il|de|uk)\b")
+YEAR_UNIT = re.compile(r"\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|l\b|ליטר|kw|hp|כ\"ס|ש\"ח|₪|€|\$|lb|wh)")
+SEGMENT_BREAK = re.compile(r"[\n;|•·!?]|\.(?:\s|$)")
 
 
 def vocabulary(path: Path | str | None = None) -> dict:
@@ -389,6 +406,147 @@ def other_trims_named(text: str, identity: TargetIdentity) -> list[str]:
     return sorted({w for w in named if w not in identity.trim_words and w not in noise})
 
 
+def _masked(pattern, text: str) -> str:
+    """The text with every match of `pattern` blanked out, positions kept."""
+    return pattern.sub(lambda m: " " * len(m.group(0)), text) if pattern else text
+
+
+def _year_anchors(norm: str, identity: TargetIdentity, vocab: dict) -> list[tuple[int, int]]:
+    """Spans of the target's model family (a longer family such as "corolla cross" masked first) and of its
+    manufacturer when no other model family follows it ("XPeng G9" anchors nothing for the G6)."""
+    families = vocab.get("model_families") or {}
+    anchors: list[tuple[int, int]] = []
+    if identity.family:
+        work = norm
+        for other in families:
+            if other != identity.family and _compact(other).startswith(_compact(identity.family)):
+                work = _masked(_terms(("family", other), families[other]), work)
+        pattern = _terms(("family", identity.family), families.get(identity.family) or [identity.family])
+        anchors += [m.span() for m in pattern.finditer(work)] if pattern else []
+    terms = (vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])
+    man = _terms(("manufacturer", identity.manufacturer), terms) if terms else None
+    other = _other_family_pattern(identity)
+    for m in man.finditer(norm) if man else ():
+        after = re.compile(r"[\s\-]*").match(norm, m.end()).end()
+        if other is None or other.match(norm, after) is None:
+            anchors.append(m.span())
+    return anchors
+
+
+def _short_gap(gap: str, max_tokens: int, other) -> bool:
+    """A gap between a name and a year that keeps them one statement: no line / sentence / list break, at most
+    `max_tokens` words, and no other model family named in it."""
+    if SEGMENT_BREAK.search(gap) or (other is not None and other.search(gap)):
+        return False
+    return len(re.findall(r"[^\s\-–—(),:]+", gap)) <= max_tokens
+
+
+def _ignored_kind(norm: str, start: int, end: int) -> str | None:
+    """Why a year at norm[start:end] is not a model-year statement whatever its neighbours (B2), else None."""
+    line_start = norm.rfind("\n", 0, start) + 1
+    line_end = norm.find("\n", end)
+    line_end = len(norm) if line_end < 0 else line_end
+    before, after = norm[line_start:start], norm[end:line_end]
+    token_start = max(norm.rfind(" ", 0, start), norm.rfind("\n", 0, start)) + 1
+    token_end = min([i for i in (norm.find(" ", end), norm.find("\n", end)) if i >= 0] or [len(norm)])
+    if URL_TOKEN.search(norm[token_start:token_end]):
+        return "url"
+    if DATE_BEFORE.search(before) or DATE_AFTER.match(after):
+        return "date"
+    marks = list(COPYRIGHT.finditer(norm, line_start, line_end))
+    if any(m.group(0) == "all rights reserved" or abs(m.start() - start) <= 40 for m in marks):
+        return "copyright"
+    if PUBLISHED.search(before[-40:]):
+        return "publication_date"
+    if MONTHS.search(before[-15:]) or MONTHS.search(after[:15]):
+        return "date"
+    if PRICE_VALIDITY.search(before[-40:]):
+        return "price_validity"
+    return None
+
+
+def year_context(text: str, identity: TargetIdentity, *, segment: bool = False) -> dict:
+    """The model-year statements of a text (normalized or not) and the years it ignores:
+    {years: {int}, statements: [{year, kind}], ignored: [{year, kind}]}.
+
+    A statement (kind): `label` (שנת דגם / שנתון / model year / MY2026 / MY26 before the year), `family_adjacent`
+    (the target's family or manufacturer name next to the year: "G6 2026", "2026 XPeng G6", "XPeng G6 (2026)", "Corolla
+    Touring Sports 2024"), or with `segment=True` (a title / H1 / H2 / first-PDF-line segment that names the target
+    family) `identity_segment`. Ignored (kind): `date` (day-month-year forms, a month name within 15 characters),
+    `publication_date`, `copyright`, `price_validity`, `url` (a year inside a URL or e-mail), `range`, `prose` (any
+    other free-standing year). Deterministic; fail-closed rules for the dimension live in dimension_status."""
+    vocab = vocabulary()
+    norm = normalize_text(text or "")
+    statements: list[tuple[int, str]] = []
+    ignored: list[tuple[int, str]] = []
+    anchors = _year_anchors(norm, identity, vocab)
+    other = _other_family_pattern(identity)
+    named = segment and "target" in _family_status(norm, identity, vocab)
+    for m in ANY_YEAR.finditer(norm):
+        year, start, end = int(m.group(1)), m.start(1), m.end(1)
+        if re.search(r"\d[.,]$", norm[max(0, start - 2):start]) or YEAR_UNIT.match(norm, end):
+            continue                                  # a figure (12,025 / 2000 rpm / 2010 mm), not a year at all
+        kind = _ignored_kind(norm, start, end)
+        if kind is None and (re.match(r"\s*[-–]\s*\d", norm[end:end + 4])
+                             or re.search(r"\d\s*[-–]\s*$", norm[max(0, start - 4):start])):
+            kind = "range"                            # "2019-2024": a production span, not one model year
+        if kind:
+            ignored.append((year, kind))
+            continue
+        line_start = norm.rfind("\n", 0, start) + 1
+        if YEAR_LABEL.search(norm[max(line_start, start - 24):start]):
+            statements.append((year, "label"))
+        elif named:
+            statements.append((year, "identity_segment"))
+        elif any((a_end <= start and _short_gap(norm[a_end:start], 3, other))
+                 or (end <= a_start and _short_gap(norm[end:a_start], 1, other)) for a_start, a_end in anchors):
+            statements.append((year, "family_adjacent"))
+        else:
+            ignored.append((year, "prose"))
+    for m in SHORT_MY.finditer(norm):
+        year = 2000 + int(m.group(1))
+        if year <= 2039:
+            statements.append((year, "label"))
+
+    def rows(items: list[tuple[int, str]]) -> list[dict]:
+        return [{"year": y, "kind": k} for y, k in dict.fromkeys(items)]
+    return {"years": {y for y, _ in statements}, "statements": rows(statements), "ignored": rows(ignored)}
+
+
+def url_year_context(url: str | None, identity: TargetIdentity) -> dict:
+    """Model-year statements of a document's own URL: only an explicit family-year slug ("/g6-2026/",
+    "/2026-xpeng-g6/", "g6_2026"). Every other year in it (a date directory "/2025/03/...") is ignored (`url`)."""
+    vocab = vocabulary()
+    path = re.sub(r"^[a-z]+://[^/]+", "", str(url or "").lower().split("#")[0])
+    statements: list[tuple[int, str]] = []
+    families = [a for a in (vocab.get("model_families") or {}).get(identity.family or "", [identity.family or ""])
+                if a and re.fullmatch(r"[a-z0-9 \-+]+", a)]
+    makers = [t for t in (vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])
+              if re.fullmatch(r"[a-z0-9 \-]+", t)]
+
+    def slug(term: str) -> str:
+        return r"[-_]?".join(re.escape(p) for p in re.split(r"[\s\-]+", term) if p)
+    if families:
+        fam = "(?:" + "|".join(slug(f) for f in sorted(families, key=len, reverse=True)) + ")"
+        man = "(?:(?:" + "|".join(slug(t) for t in makers) + ")[-_])?" if makers else ""
+        edge, end = r"(?:^|[/_\-.])", r"(?=$|[/_\-.?&=])"
+        for pattern in (rf"{edge}{man}{fam}[-_](20[0-3]\d){end}", rf"{edge}(20[0-3]\d)[-_]{man}{fam}{end}"):
+            statements += [(int(m.group(1)), "url_slug") for m in re.finditer(pattern, path)]
+    found = {y for y, _ in statements}
+    ignored = [(int(y), "url") for y in ANY_YEAR.findall(path) if int(y) not in found]
+    return {"years": found, "statements": [{"year": y, "kind": k} for y, k in dict.fromkeys(statements)],
+            "ignored": [{"year": y, "kind": k} for y, k in dict.fromkeys(ignored)]}
+
+
+def merge_year_contexts(*contexts: dict) -> dict:
+    out = {"years": set(), "statements": [], "ignored": []}
+    for ctx in contexts:
+        out["years"] |= set(ctx.get("years") or ())
+        for key in ("statements", "ignored"):
+            out[key] += [r for r in ctx.get(key) or [] if r not in out[key]]
+    return out
+
+
 def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     """Every identity value a text names (normalized, case-insensitive)."""
     vocab = vocabulary()
@@ -402,6 +560,7 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     trim = ""
     named = [w for w in NAMED_TRIM.findall(norm) for w in w if w]
     named_noise = _named_trim_noise(identity)
+    year_ctx = year_context(norm, identity)
     if identity.trim_words and any(w not in identity.trim_words and w not in named_noise for w in named):
         trim = "negated"        # "the Premium version", "גרסת ה-Premium": a fact about ANOTHER named trim
     for m in trims.finditer(norm) if trims else ():
@@ -412,7 +571,8 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
     return {
         "manufacturer": bool(man and man.search(norm)),
         "model": _family_status(norm, identity, vocab),
-        "year": {int(y) for y in YEAR.findall(norm)},
+        "year": year_ctx["years"],
+        "year_context": {"statements": year_ctx["statements"], "ignored": year_ctx["ignored"]},
         "body": _keys_found(norm, "body_terms", vocab),
         "propulsion": _keys_found(norm, "propulsion_terms", vocab,
                                   ["plug_in", "battery_electric", "hybrid", "conventional"])
@@ -444,10 +604,15 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
     if not found:
         return "absent"
     if dim == "year":
+        # found = the recognized model-year statements (year_context). Fail-closed: any statement >= 2 years away
+        # without the target is a mismatch; statements only one year off are `adjacent` (an importer markets the same
+        # car as the neighbouring model year), which never satisfies anything: the level treats it as absent
         target = identity.year
         if target is None:
             return "absent"
-        return ("match" if found == {target} else "mixed") if target in found else "mismatch"
+        if target in found:
+            return "match" if found == {target} else "mixed"
+        return "adjacent" if all(abs(int(y) - target) <= 1 for y in found) else "mismatch"
     if dim == "displacement":
         # marketed litres vs exact cc: 1950 cc is a "2.0", 1798 cc a "1.8"
         target = identity.displacement_cc / 1000 if identity.displacement_cc else identity.displacement_l
@@ -502,23 +667,50 @@ FULL_TEXT_MISMATCH = {"body": "absent", "propulsion": "absent", "model": "absent
                       "displacement": "mixed", "power": "mixed", "drivetrain": "mixed"}
 
 
+def _zone_segments(*, title: str | None, url: str | None, headings: list[str] | None = None,
+                   text: str | None = None, identity: "TargetIdentity | None" = None,
+                   lines: int = 3) -> list[tuple[str, str]]:
+    """(channel, segment) of identity_zone: channel "url" for the URL words, "heading" for the title, the main headings
+    and (text / PDF) the first lines."""
+    url_words = re.sub(r"[/_\-.?=&]+", " ", str(url or ""))
+    head = [h for h in headings or [] if h and h.strip()]
+    if headings is None:
+        head = [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:lines]
+    parts = [("heading", title or ""), ("url", url_words), *[("heading", h) for h in head]]
+    segments = [(channel, seg.strip()) for channel, part in parts for seg in re.split(r"\s[|•·]\s|\|", part)
+                if seg.strip()]
+    if identity is not None:
+        named = [(c, seg) for c, seg in segments
+                 if "target" in _family_status(normalize_text(seg), identity, vocabulary())]
+        if named:
+            segments = named
+    return segments
+
+
 def identity_zone(*, title: str | None, url: str | None, headings: list[str] | None = None,
                   text: str | None = None, identity: "TargetIdentity | None" = None, lines: int = 3) -> str:
     """The part of a document that says WHAT it is about: title, URL words and main headings (HTML; `headings` is
     a list, possibly empty) or the first lines (text / PDF; `headings` is None). Split into list segments ("|", "•")
     and, when any segment names the target model family, only those segments: a navigation menu ("Yaris Hybrid |
     Corolla | RAV4 Plug-in Hybrid | Hilux") never speaks for the page."""
-    url_words = re.sub(r"[/_\-.?=&]+", " ", str(url or ""))
-    head = [h for h in headings or [] if h and h.strip()]
-    if headings is None:
-        head = [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:lines]
-    segments = [seg.strip() for part in [title or "", url_words, *head] for seg in re.split(r"\s[|•·]\s|\|", part)
-                if seg.strip()]
-    if identity is not None:
-        named = [seg for seg in segments if "target" in _family_status(normalize_text(seg), identity, vocabulary())]
-        if named:
-            segments = named
-    return "\n".join(segments)
+    return "\n".join(seg for _, seg in _zone_segments(title=title, url=url, headings=headings, text=text,
+                                                       identity=identity, lines=lines))
+
+
+def zone_year_context(*, title: str | None, url: str | None, identity: TargetIdentity,
+                      headings: list[str] | None = None, subheadings: list[str] | None = None,
+                      text: str | None = None) -> dict:
+    """The identity zone's model-year statements, per channel: a title / H1 / first-line segment of the zone (an H2
+    `subheadings` segment only when it names the target family) whose segment names the family counts every year it
+    states (`identity_segment`, B2 contexts aside); other zone segments only through the prose rules; the URL only
+    through an explicit family-year slug (url_year_context: "/g6-2026/", never "/2025/03/...")."""
+    vocab = vocabulary()
+    segments = _zone_segments(title=title, url=url, headings=headings, text=text, identity=identity)
+    h2 = [seg.strip() for part in subheadings or [] for seg in re.split(r"\s[|•·]\s|\|", part or "") if seg.strip()]
+    texts = [seg for channel, seg in segments if channel == "heading"]
+    texts += [seg for seg in h2 if "target" in _family_status(normalize_text(seg), identity, vocab)]
+    return merge_year_contexts(url_year_context(url, identity),
+                               *[year_context(seg, identity, segment=True) for seg in texts])
 
 
 def zone_names_target(zone: str, identity: TargetIdentity) -> bool:
@@ -547,30 +739,54 @@ def about_target(text: str, identity: TargetIdentity) -> str:
 
 
 def document_profile(*, text: str, title: str | None, url: str | None, identity: TargetIdentity,
-                     headings: list[str] | None = None) -> dict:
+                     headings: list[str] | None = None, subheadings: list[str] | None = None,
+                     body_text: str | None = None) -> dict:
     """Document-level dimension statuses. The identity zone (title, URL, headings) decides first; the full text
-    only confirms (see FULL_TEXT_MISMATCH). The trim counts only when the identity zone names it."""
+    only confirms (see FULL_TEXT_MISMATCH). The trim counts only when the identity zone names it.
+
+    `body_text` (HTML: the page without its chrome, structure_harvest.page_text) is the full text's body; default
+    `text`. The year dimension reads model-year statements only (year_context): in the zone per channel
+    (zone_year_context, `subheadings` = H2s), in the full text through the prose rules and without the URL words."""
     zone = identity_zone(title=title, url=url, headings=headings, text=text, identity=identity)
     named = zone_names_target(zone, identity)
+    body = about_target(text if body_text is None else body_text, identity)
     zone_found = mentions(zone, identity)
-    full_found = mentions(f"{zone}\n{about_target(text or '', identity)}", identity)
+    zone_year = zone_year_context(title=title, url=url, identity=identity, headings=headings,
+                                  subheadings=subheadings, text=text)
+    zone_found["year"] = zone_year["years"]
+    full_found = mentions(f"{zone}\n{body}", identity)
+    zone_text = identity_zone(title=title, url=None, headings=headings, text=text, identity=identity)
+    full_year = year_context(f"{zone_text}\n{body}", identity)
+    full_found["year"] = full_year["years"]
+    full_found["year_context"] = {k: full_year[k] for k in ("statements", "ignored")}
     combined: dict[str, str] = {}
     zone_statuses = {dim: dimension_status(dim, zone_found[dim], identity) for dim in DIMENSIONS}
     full_statuses = {dim: dimension_status(dim, full_found[dim], identity) for dim in DIMENSIONS}
+    year_basis = "none"
     for dim in DIMENSIONS:
         if dim == "trim":
             combined[dim] = zone_statuses[dim] if named else "absent"
         elif zone_statuses[dim] != "absent" and (named or zone_statuses[dim] != "mismatch"):
             # a zone that never names the target family (a price list headed by another model) cannot veto
             combined[dim] = zone_statuses[dim]
+            year_basis = "identity_zone" if dim == "year" else year_basis
         elif full_statuses[dim] == "mismatch":
             combined[dim] = FULL_TEXT_MISMATCH.get(dim, "absent")
+            year_basis = "full_text_mismatch_ignored" if dim == "year" else year_basis
         else:
             combined[dim] = full_statuses[dim]
+            year_basis = "full_text" if dim == "year" and combined[dim] != "absent" else year_basis
+    decided = zone_year if year_basis == "identity_zone" else full_year
+    ignored = merge_year_contexts(zone_year, full_year)["ignored"]
     return {"statuses": combined, "zone_statuses": zone_statuses, "full_statuses": full_statuses,
             "trim_named_in_document": bool(full_found["trim"]),
             # another named trim anywhere in the document (single_trim_catalog never applies to such a document)
-            "other_trims_named": other_trims_named(f"{zone}\n{about_target(text or '', identity)}", identity),
+            "other_trims_named": other_trims_named(f"{zone}\n{body}", identity),
+            # telemetry only (never read by bind): the model-year statements that decided the year dimension and every
+            # year the rules ignored (copyright, publication date, URL, prose, ...)
+            "year_context": {"status": combined["year"], "basis": year_basis,
+                             "statements": decided["statements"] if year_basis != "none" else [],
+                             "ignored": ignored},
             "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in full_found.items()}}
 
 
@@ -702,6 +918,13 @@ def _header_extra_words(header: str, identity: TargetIdentity) -> list[str]:
     return [w for w in words if w not in known and len(w) > 1]
 
 
+def fact_layer_statuses(identity: TargetIdentity, layers: list[tuple[str, str]] | None,
+                        trim_named_in_document: bool = False) -> list[tuple[str, dict[str, str]]]:
+    """(layer name, {dimension: status}) of every non-empty fact layer, most specific first: what bind() reads."""
+    return [(name, _layer_statuses(name, text, identity, trim_named_in_document)) for name, text in layers or []
+            if text]
+
+
 def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tuple[str, str]] | None = None,
          veto_layers: list[tuple[str, str]] | None = None, *, market: str | None = None,
          requirement: str | None = None, model_declared_different: bool = False,
@@ -711,8 +934,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply."""
     effective: dict[str, dict] = {}
-    layer_statuses = [(name, _layer_statuses(name, text, identity, trim_named_in_document))
-                      for name, text in layers or [] if text]
+    layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
         chosen = None
         for name, st in layer_statuses:

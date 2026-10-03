@@ -49,6 +49,7 @@ from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify
 from .document_binding import TargetIdentity, about_target, bind, document_profile, target_identity
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
+from .structure_harvest import page_text
 from .typed_values import as_boolean, numbers_in, typed_value
 
 ADMISSION_VERSION = "admission-v2"
@@ -103,6 +104,7 @@ DATE_KEYS = (("json_ld", "dateModified"), ("meta", "article:modified_time"), ("m
              ("json_ld", "datePublished"), ("meta", "article:published_time"), ("meta", "date"),
              ("pdf", "ModDate"), ("pdf", "CreationDate"))
 H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
+H2 = re.compile(r"<h2[^>]*>(.*?)</h2>", re.S | re.I)
 
 
 HEBREW_CONJUNCTION = re.compile(r"(?<![\w])ו(?=[א-ת]{2,})")
@@ -131,6 +133,8 @@ class DocumentText:
     haystack: str                      # squashed text + tag-stripped source + structured data (+ reversed lines)
     lines: list[tuple[str, str]]       # (original line, squashed line)
     headings: list[str] | None
+    subheadings: list[str] | None      # HTML H2s (identity-zone year statements only)
+    body_text: str | None              # HTML: the page without its chrome (binding's full-text profile only)
     market: str | None
     market_basis: str | None
     source_date: str | None
@@ -201,10 +205,16 @@ def document_text(cache, meta: dict) -> DocumentText:
     url = meta.get("final_url") or meta.get("url")
     text = cache.read_text(doc_id)
     parts, structured, headings = [text], None, None     # headings: H1s of HTML (a list); None = text / PDF
+    subheadings = body_text = None
     if meta.get("doc_type") == "html" or meta.get("kind") == "rendered":
         html = cache.read_body(doc_id).decode("utf-8", errors="replace")
         parts.append(re.sub(r"<[^>]+>", " ", html))
         headings = [re.sub(r"<[^>]+>|\s+", " ", h).strip() for h in H1.findall(html)][:3]
+        subheadings = [re.sub(r"<[^>]+>|\s+", " ", h).strip() for h in H2.findall(html)][:3]
+        try:
+            body_text = page_text(html)
+        except Exception:  # an unparsable page keeps its stored text for the profile
+            body_text = None
         try:
             structured = document_structured(cache, doc_id, html)
             parts.append(json.dumps(structured, ensure_ascii=False))
@@ -218,6 +228,7 @@ def document_text(cache, meta: dict) -> DocumentText:
     material = DocumentText(document_id=doc_id, url=url, meta=meta, text=text,
                             haystack=" " + " ".join(squash(p) for p in parts) + " ",
                             lines=[(ln, " " + squash(ln) + " ") for ln in lines], headings=headings,
+                            subheadings=subheadings, body_text=body_text,
                             market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis)
     with _TEXTS_LOCK:
         _TEXTS[key] = material
@@ -309,7 +320,8 @@ class AdmissionContext:
             candidates = []
         material = DocumentMaterial(
             doc=doc, profile=document_profile(text=doc.text, title=meta.get("title"), url=doc.url,
-                                              identity=self.identity, headings=doc.headings),
+                                              identity=self.identity, headings=doc.headings,
+                                              subheadings=doc.subheadings, body_text=doc.body_text),
             authority=classify_source(doc.url, self.manufacturer), candidates=candidates)
         with self._lock:
             self._docs[doc_id] = material
@@ -904,6 +916,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    source_authority=material.authority.get("source_authority"),
                    document_names_family=profile.get("zone_statuses", {}).get("model") == "match",
                    other_trims_named=profile.get("other_trims_named"))
+    year = profile.get("year_context") or {}
+    if year.get("statements") or year.get("ignored"):
+        # telemetry only: the model-year statements behind the year dimension and the years the rules ignored
+        binding["year_context"] = year
     return binding, inputs
 
 
@@ -1012,7 +1028,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "entailment": entailment.method,
         "binding_level": binding["binding_level"], "binding_requirement": binding["binding_requirement"],
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
-        "binding_basis": binding.get("binding_basis"),
+        "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),
         "model_variant_claim": claim,
         "market_basis": market_basis,
         "model_market_claim": model_market if model_market and normalize_market(model_market) != market else None,

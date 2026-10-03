@@ -113,6 +113,46 @@ def clean_soup(html: str) -> BeautifulSoup:
     return soup
 
 
+IDENTITY_HEADINGS = ("h1", "h2")
+
+
+def page_text(html: str) -> str:
+    """The page's visible text without its chrome, for document binding's FULL-TEXT profile (the identity zone is a
+    separate channel). The chrome rules of clean_soup (nav / footer / header tags, navigation / menu / banner /
+    contentinfo roles, nav / menu / breadcrumb / footer / header / cookie / consent class or id words, hidden
+    elements), except that the H1 / H2 headings of a removed <header> or banner block are kept: they say what the page
+    is about, not where to go. Admission's quote verification never reads this (it keeps the untouched text). Raises
+    on an unparsable page (the caller falls back to the stored text)."""
+    from .tools.extract import _clean_lines
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    for tag in soup(NOISE_TAGS):
+        tag.decompose()
+    for tag in list(soup.find_all(True)):
+        if getattr(tag, "decomposed", False) or tag.attrs is None or tag.parent is None:
+            continue
+        chrome = tag.name in SKIP_TAGS or _hidden(tag) or _chrome(tag)
+        if not chrome:
+            continue
+        if not _hidden(tag) and _header_block(tag):
+            for heading in tag.find_all(IDENTITY_HEADINGS):
+                tag.insert_before(heading.extract())
+        tag.decompose()
+    return _clean_lines(soup.get_text("\n"))
+
+
+def _header_block(tag: Tag) -> bool:
+    """A <header> / banner block, and not navigation, menu, breadcrumb, footer, cookie or consent chrome."""
+    attrs = tag.attrs or {}
+    roles = str(attrs.get("role") or "").lower().split()
+    words = _words(" ".join([str(attrs.get("id") or "")] + [str(c) for c in attrs.get("class") or []]))
+    header = tag.name == "header" or "banner" in roles or any("header" in w for w in words)
+    other = tag.name in ("nav", "footer") or any(r in CHROME_ROLES and r != "banner" for r in roles) or any(
+        w.startswith("nav") or w.endswith("nav") or any(x in w for x in CHROME_WORDS if x not in ("nav", "header"))
+        for w in words)
+    return header and not other
+
+
 def _element_children(tag: Tag) -> list[Tag]:
     return [c for c in tag.children if isinstance(c, Tag)]
 
