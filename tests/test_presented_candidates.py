@@ -5,7 +5,7 @@ still gives their cluster its free local-only pass. Scripted GLM / fake HTTP onl
 import json
 
 from fixtures import corolla_tail as tail
-from test_phase_contracts import EU, PhaseClient, _timeout, fetch, run, say
+from test_phase_contracts import EU, GATE_OFF, PhaseClient, _timeout, fetch, run, say
 from test_tools_smoke import _call
 
 from src.fields import resolve_requested_fields
@@ -29,7 +29,7 @@ def _two_chunk_run(tmp_path, fail_first=True):
         return say({"reviewed": []})
 
     client = PhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})], sweep=sweep)
-    return run(tmp_path, client, acquisition_mode="contract", document_sweep_max_fields=4)
+    return run(tmp_path, client, acquisition_mode="contract", document_sweep_max_fields=4, **GATE_OFF)
 
 
 def test_a_failed_sweep_chunk_presents_nothing_and_its_cluster_keeps_the_local_pass(tmp_path):
@@ -94,7 +94,7 @@ class FailingRecovery(PhaseClient):
 def test_a_cluster_attempt_whose_first_call_fails_presents_nothing(tmp_path):
     client = FailingRecovery([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})],
                              sweep=lambda n: (_ for _ in ()).throw(_timeout()))
-    result, events = run(tmp_path, client, acquisition_mode="contract")
+    result, events = run(tmp_path, client, acquisition_mode="contract", **GATE_OFF)
     started = [e for e in events if e["kind"] == "cluster_recovery_started"]
     assert started and started[0]["offered_candidate_keys"] and "presented_candidate_keys" not in started[0]
     assert _presented(events, "cluster_recovery") == []
@@ -104,7 +104,7 @@ def test_a_cluster_attempt_whose_first_call_fails_presents_nothing(tmp_path):
 def test_a_cluster_attempt_presents_its_candidates_once_its_first_call_returns(tmp_path):
     client = PhaseClient([fetch("a", EU, tail.CARTUBE), say({"done": True, "reason": "x"})],
                          sweep=lambda n: (_ for _ in ()).throw(_timeout()))
-    result, events = run(tmp_path, client, acquisition_mode="contract")
+    result, events = run(tmp_path, client, acquisition_mode="contract", **GATE_OFF)
     started = [e for e in events if e["kind"] == "cluster_recovery_started" and e["offered_candidate_keys"]]
     presented = _presented(events, "cluster_recovery")
     assert started and [(p["cluster"], p["attempt"], p["presented_candidate_keys"]) for p in presented] == [

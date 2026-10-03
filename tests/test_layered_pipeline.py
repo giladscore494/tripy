@@ -319,7 +319,7 @@ def test_documents_fetched_during_recovery_are_harvested_for_every_field(tmp_pat
         return say({"field": packet["requested_field"]["name"], "status": "unresolved"})
 
     client = PhaseGLM([say({"summary": "primary", "fields": {}})], recover=recover)
-    result, events, _ = run(tmp_path, ctx, client, requested_fields=["vehicle_warranty", "wheelbase_mm",
+    result, events, _ = run(tmp_path, ctx, client, primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0, requested_fields=["vehicle_warranty", "wheelbase_mm",
                                                                        "screen_size_in"],
                             field_recovery_max_attempts=1, field_recovery_max_total_steps=2)
     harvested = [e for e in events if e["kind"] == "candidates_harvested"]

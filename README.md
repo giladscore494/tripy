@@ -147,6 +147,7 @@ below.
 | `PRIMARY_RESEARCH_MIN_USEFUL_DOCUMENTS`, `PRIMARY_RESEARCH_CANDIDATE_FIELD_COVERAGE_THRESHOLD` | Optional acquisition-sufficiency transition (both default **0** = off; e.g. `3` and `60` or `0.6`). Scheduling only. |
 | `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD` | Adaptive document sweep: one call while the packet fits (defaults 28000 chars, 12 fields, 16 candidates), else deterministic chunks by `recovery_cluster`; candidates per field in the packet (default 3; storage keeps all). |
 | `GLM_<PHASE>_THINKING`, `GLM_<PHASE>_MAX_TOKENS`, `GLM_<PHASE>_TEMPERATURE`, `GLM_<PHASE>_TIMEOUT_S`, `GLM_<PHASE>_MAX_ATTEMPTS`, `GLM_DOCUMENT_SWEEP_MODEL`, `GLM_RECOVERY_MODEL` | Optional per-phase overrides, PHASE = `RESEARCH`, `DOCUMENT_SWEEP`, `RECOVERY`, `FINALIZER`; empty = inherit the global setting, except `GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, whose default is `1` (no identical retry of a timed-out sweep packet). See [Phase-specific model settings](#phase-specific-model-settings). |
+| `ACQUISITION_DOCUMENT_CARD` | `off` (default) / `on` (also `true`/`false`/`1`/`0`). Contract research only: successful `fetch_url` / `fetch_pdf` results carry a server-computed `document_card` (scheduling metadata, never evidence) and the research prompt gets one paragraph about it. See [Run profiles and A/B series](#run-profiles-and-ab-series). |
 | `ACQUISITION_MODE` | `contract` (default): primary research is source acquisition only (search / fetch tools only, acquisition prompt, progress = new usable / target-market documents and new candidates, an under-acquired extension beyond the normal ceiling ends after an extension turn with no search / fetch or two extension turns without a new usable document, always finalized from the bundle). `legacy`: the previous behaviour exactly. |
 | `ENRICHMENT_FIELDS` / `ENRICHMENT_SCHEMA_PATH` | Requested enrichment fields (default: `data/enrichment_fields.json`). |
 | `IDENTITY_VOCABULARY_PATH`, `SOURCE_RULES_PATH` | Alternative identity vocabulary / source-authority rule files (defaults in `data/`). |
@@ -223,6 +224,66 @@ websocket drop or Streamlit rerun never interrupts it, but a redeploy, restart o
 the run is then shown as `INTERRUPTED`, everything it acquired stays on the volume, and it can be finalized from the
 preserved research or restarted. Run one replica only.
 
+## Run profiles and A/B series
+
+Environment variables are the source of DEFAULTS; the configuration of a run is chosen in the UI per run, so an
+experiment never needs an env edit or a redeploy (and a stale env value, e.g. `DOCUMENT_SWEEP_MAX_FIELDS=30` left on a
+deployment, cannot leak into a profiled run). The **Run profile** selector sits next to *Start research*
+(`src/run_profiles.py`):
+
+| Profile | acquisition_mode | document card | sweep thinking | sweep max attempts | sweep max fields / candidates |
+|---|---|---|---|---|---|
+| Production (default) | contract | off | disabled | 1 | 12 / 16 |
+| Benchmark: Baseline | legacy | off | disabled | 1 | 12 / 16 |
+| Benchmark: Treatment | contract | off | disabled | 1 | 12 / 16 |
+| Benchmark: Treatment + card | contract | on | disabled | 1 | 12 / 16 |
+| Custom | the Advanced settings as edited (their defaults come from env) | | | | |
+
+A named profile also pins every setting listed below under *env overrides* to its code default (research turn ceiling
+6, hard ceiling 12, minimum base 3 documents / 50 %, sweep packet 28000 chars, 2 sweep turns, 3 candidates per field);
+everything else (models, timeouts, recovery, other phases' settings) still comes from Advanced settings / env. The one
+intended difference between *Production* and the previous env-only defaults is document-sweep thinking `disabled`
+(previously inherited from the global thinking setting, i.e. provider default). The research model is never part of
+a profile.
+
+**Advanced settings** has the per-run controls the Custom profile uses (acquisition mode, document card, document
+sweep thinking / max attempts 1-3 / max fields / max candidates per chunk). Its phase settings are merged per phase and
+per key over the env phase settings (another phase's env setting such as `GLM_RECOVERY_THINKING` survives;
+"provider default" removes an env sweep-thinking value). It also lists every env variable that differs from its code
+default as `VAR = env value (code default X)` for `ACQUISITION_MODE`, `ACQUISITION_DOCUMENT_CARD`,
+`DOCUMENT_SWEEP_MAX_FIELDS`, `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_MAX_PACKET_CHARS`,
+`DOCUMENT_SWEEP_MAX_TURNS`, `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD`, `GLM_DOCUMENT_SWEEP_THINKING`,
+`GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS`, `PRIMARY_RESEARCH_MAX_TURNS`, `PRIMARY_RESEARCH_HARD_MAX_TURNS`,
+`PRIMARY_RESEARCH_MIN_BASE_DOCUMENTS`, `PRIMARY_RESEARCH_MIN_BASE_SCOPED_COVERAGE` (the same list is logged as
+`env_overrides` in `run_started` and result.json).
+
+Every run records its effective configuration: `run_profile`, `acquisition_mode`, `acquisition_document_card`,
+`research_prompt_hash` (of the research system prompt actually sent) and `env_overrides` in `run_started` /
+result.json, the full AgentConfig in batch.json (so a finalization retry uses the same configuration), and
+`run_profile` / `document_card` in `diagnostics.run_configuration()` and `config_key()` (`by_config` separates
+Treatment from Treatment + card; `env_overrides` is informational and not part of the key).
+
+**Benchmark A/B** (a target mode next to One vehicle / Manufacturer / All 50): pick vehicles, *Runs per arm* (1-5,
+default 3) and the arms (Baseline and Treatment checked by default). One click creates a SERIES: for each repeat, for
+each arm, one run over the selected vehicles with that arm's profile, arms interleaved (B, T, B, T, ...) so provider
+drift hits both arms equally. The runs execute strictly one after another; a vehicle in another active run makes the
+series wait. Sequencing lives in the job layer (`RunManager.start_series`, state in
+`runs/_series/<series_id>/series.json`), so it survives a page refresh; *Cancel series* stops the running run and
+every planned one. When the series ends, `diagnostics.write_benchmark` runs over exactly the series' run_ids into
+that folder (`benchmark.json`, `per_vehicle.csv/.jsonl`, `parser_gaps.jsonl`), offered under *Benchmark diagnostics*.
+**Restart policy:** a series cannot outlive its server process. After a restart it is marked INTERRUPTED (unstarted
+runs NOT_STARTED, the interrupted run reconciled like any run) and its benchmark is written over the runs it
+finished; it is never resumed automatically, because a restart is usually a redeploy and resuming would mix code /
+prompt versions inside one comparison. Start a new series instead.
+
+**Document card** (`Benchmark: Treatment + card`, or `ACQUISITION_DOCUMENT_CARD=on` / Custom): in contract research a
+successful `fetch_url` / `fetch_pdf` result carries
+`{"note": "server-computed scheduling metadata, not evidence", variant_match, binding_level, market,
+target_market_document, source_authority, usable, clusters: {recovery_cluster: in-scope fields with a harvested
+candidate}, candidate_fields_in_scope}` (in scope = the scoped-coverage rule: any market for `market_sensitivity:
+low`, else a target-market document). It is built after the harvester ran for the document; a failure logs
+`document_card_failed` and returns the result without a card; a replay outside research drops it.
+
 ## Acquisition and document-sweep diagnostics
 
 Observational telemetry for benchmarking where performance is lost: search / source acquisition, source selection,
@@ -238,9 +299,21 @@ candidates_per_field / estimated_input_tokens`); everything else is rebuilt from
 runs/<run_id>/<record_id>/diagnostics.json    schema tripy-diagnostics/1: acquisition {summary, turns[]},
                                                document_sweep {summary, calls[]}, summary_text, configured models
 runs/<run_id>/<record_id>/diagnostics.jsonl   one line per acquisition turn and per sweep call
-runs/<run_id>/diagnostics/                    benchmark.json, per_vehicle.jsonl / .csv for the run's vehicles
+runs/<run_id>/diagnostics/                    benchmark.json, per_vehicle.jsonl / .csv, parser_gaps.jsonl for the run
+runs/_series/<series_id>/                     series.json + the same benchmark files over exactly the series' runs
 benchmarks/<UTC stamp>/                       python -m src.diagnostics [--runs-dir …] [run_id …] [--rebuild]
 ```
+
+**Parser gaps** (`src/parser_gaps.py`, every mode, observational only): right after the deterministic harvest each
+run logs one `parser_gaps` event: for every usable cached document (not bound to another variant) and every applicable
+field with a dictionary entry, a row `{field, document_id, source_url, source_authority, market, matched_alias, offset,
+snippet}` when the field's label occurs in the document (`document_inspection`) but the cached harvest has no
+candidate for it from that document (at most 200 rows per run, `truncated` counts the rest; zero model calls, zero
+network; a failure logs `parser_gaps_failed` and the run continues). Diagnostics join it with the sweep: per field
+`{label_hits_no_value, recovered_by_sweep}` (`candidate_missed_by_deterministic_harvest` on one of that field's gap
+documents), per-vehicle `parser_gap_rows / parser_gap_fields / parser_gap_recovered_by_sweep`, and the benchmark's
+`parser_gaps_by_field` backlog (rows, runs with a gap, recovered by the sweep, top-3 aliases; most widespread first)
+plus `parser_gaps.jsonl` (one row per line with `run_id`, `record_id`).
 
 They are written on every exit path of a vehicle run (also interrupted ones) and can be rebuilt from `events.jsonl`
 at any time (`--rebuild`). The compact summary is also logged to stdout. Secrets are redacted before writing.
@@ -474,8 +547,14 @@ market-sensitive dimensions. It reads documents, candidates and the schema only:
 historical yield, an expected answer or Golden Set truth, and it never changes evidence, a field state, a binding,
 N/A or a conflict. A run that acquires normally stops exactly as before (6 turns); only an under-acquired run may go
 beyond the normal ceiling, and it stops as soon as the base is met (or at the hard ceiling,
-`stop_reason=hard_max_turns_under_acquired`). `model_finished` (the model's own final answer) is not a scheduler stop
-and is never held back.
+`stop_reason=hard_max_turns_under_acquired`). `model_finished` (the model's own final answer) is not a scheduler stop:
+in `legacy` it is never held back. In `contract` an early `{"done": true}` cannot bypass the base: before or at the
+normal ceiling with the base unmet, the FIRST "done" is deferred once (`primary_research_stop_deferred`,
+`wanted_stop="model_finished"`) and the next request carries a user `[operational note]` with the base numbers and the
+missing source categories; a second consecutive "done", a "done" on an extension turn (the futility rule's signal) or
+the hard ceiling stop research at once. The deferred turn counts as a research turn and toward the ceiling, runs no
+`after_turn` (the no-artifact streak is unchanged), and is counted as `primary_research.done_deferred_count`
+(diagnostics `acquisition.summary.done_deferred_count`, per-vehicle row `acq_done_deferred`).
 
 Defaults come from the benchmark's sensitivity sweep (policy that ignores the new prompt / follows it): 3 documents
 with 40-45 % let the regression back (13 trustworthy fields); 50 % is the smallest threshold that keeps 15 with 10
@@ -1461,6 +1540,9 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
   `tests/fixtures/corolla_touring.py`): 2.0-vs-1.8 cargo contamination, server binding over model claims,
   e-CVT gear count, boolean statements, notes, typed ranges, propulsion applicability, source authority,
   valid_as_of and the consistency checks;
+- the contract-mode early-"done" guard and the document card (`tests/test_acquisition_guard.py`), parser-gap
+  telemetry (`tests/test_parser_gaps.py`), run profiles, env overrides, saved-config round trips and the A/B series
+  launcher (`tests/test_run_profiles.py`);
 - clustered tail recovery (`tests/test_tail_recovery.py`, offline benchmark in `tests/fixtures/corolla_tail.py`):
   conflict classes, market portability and its veto, triage, local-first, novelty-based turn extensions,
   search budgets in provider calls, breadth-first clusters and the legacy-vs-cluster comparison;

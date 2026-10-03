@@ -9,8 +9,8 @@ reruns and closed tabs do not affect it. Every browser session discovers runs fr
 (run_state.json) and replays the engine's own events.jsonl for progress.
 
 The research itself is exactly the engine's `research_one` / `run_batch` / `finalize_existing_run` path the old
-UI and the CLI use, with the same shared ConcurrencyController (provider limits unchanged) and the same document
-cache. Nothing in the research engine was changed for this.
+UI and the CLI use, with the same shared ConcurrencyController (provider limits unchanged). Ordinary runs share
+the document cache; A/B benchmark runs each use their own durable cold cache so one arm cannot train the next.
 
 Guards against duplicate execution:
 * `start` runs under one process lock: an idempotency key (one per form submission) returns the run it already
@@ -89,6 +89,46 @@ class ResearchRequest:
     chat_limits: dict = field(default_factory=dict)
     search_limit: int | None = None
     idempotency_key: str | None = None
+    series: dict | None = None           # {series_id, index, repeat, arm} for a run of an A/B series
+
+
+@dataclass
+class SeriesRequest:
+    """An A/B benchmark series: for each repeat, for each arm (a run profile, in order), one run over `vehicles`."""
+    template: ResearchRequest            # vehicles, settings, tool config, pricing, ... (agent_cfg replaced per arm)
+    arm_configs: dict                    # run profile -> the AgentConfig of its runs, in arm order
+    repeats: int = 3
+    label: str = ""
+    idempotency_key: str | None = None
+
+
+# A/B series lifecycle (runs/_series/<series_id>/series.json)
+SERIES_DIR = "_series"
+SERIES_RUNNING, SERIES_COMPLETED, SERIES_CANCELLED, SERIES_INTERRUPTED, SERIES_FAILED = (
+    "RUNNING", "COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED")
+PLANNED, NOT_STARTED = "PLANNED", "NOT_STARTED"
+
+
+def plan_series(arms: list[str], repeats: int) -> list[dict]:
+    """The runs of a series in execution order: arms interleaved per repeat (B, T, B, T, ...), so provider-side drift
+    over time hits every arm equally."""
+    plan = []
+    for repeat in range(1, max(1, int(repeats)) + 1):
+        for arm in arms:
+            plan.append({"index": len(plan), "repeat": repeat, "arm": arm, "run_id": None, "status": PLANNED})
+    return plan
+
+
+def series_progress(series: dict) -> dict:
+    """Planned / done / running per arm and in total (for the UI)."""
+    def count(items: list[dict]) -> dict:
+        return {"planned": len(items),
+                "done": sum(1 for i in items if i["status"] not in (PLANNED, "RUNNING") and i.get("run_id")),
+                "running": sum(1 for i in items if i["status"] == "RUNNING"),
+                "not_run": sum(1 for i in items if i["status"] in (CANCELLED, NOT_STARTED) and not i.get("run_id"))}
+    plan = series.get("planned") or []
+    return {"total": count(plan), "arms": {arm: count([i for i in plan if i["arm"] == arm])
+                                           for arm in series.get("arms") or []}}
 
 
 @dataclass
@@ -211,7 +251,12 @@ class RunManager:
         self._idempotency: dict[str, str] = {}
         self._shutting_down = False
         self._reconciled_at = time.monotonic()
+        self._series_threads: dict[str, threading.Thread] = {}
+        self._series_cancel: dict[str, threading.Event] = {}
+        self._series_lock = threading.RLock()
+        self.series_poll_s = 1.0
         self.reconcile()
+        self.reconcile_series()
         if register_atexit:
             atexit.register(self.shutdown)
 
@@ -351,7 +396,11 @@ class RunManager:
                                      for v in selection]},
                 request={"research_model": model_id, "finalizer_model": client.finalizer_model,
                          "search_backend": request.tool_cfg.search_backend, "workers": workers,
-                         "level15_source": load.source, "prompt_version": request.prompt_version},
+                         "level15_source": load.source, "prompt_version": request.prompt_version,
+                         "run_profile": getattr(request.agent_cfg, "run_profile", "") or None,
+                         "acquisition_mode": getattr(request.agent_cfg, "acquisition_mode", None),
+                         "acquisition_document_card": getattr(request.agent_cfg, "acquisition_document_card", None),
+                         **({"series": dict(request.series)} if request.series else {})},
                 owner=dict(self.owner), idempotency_key=key, notes=list(warnings),
                 vehicles={str(v["upstream_record_id"]): {"status": QUEUED, "label": _vehicle_title(v)}
                           for v in selection})
@@ -398,13 +447,17 @@ class RunManager:
         except Exception:  # noqa: BLE001 - research still runs; its own artifacts are the source of truth
             log.error("run %s: could not mark the run as starting", run_id, exc_info=True)
         tracker = _StageTracker(self, run_id)
+        # Every A/B run starts with an empty, durable cache. Sharing the normal cache (including its
+        # research memory) lets the later arm inherit the earlier arm's documents and verified facts.
+        # Keep this cache for a possible finalization retry of this run.
+        cache = self._cache_for_series_run(request.series) if request.series else self.cache
         make_client = self._client_factory(request.settings, self.controller, cancel)
         heartbeat = self._heartbeat(run_id)
         results: dict[str, dict] = {}
 
         def run_one(vehicle: dict, row: dict) -> dict:
             rid = str(vehicle["upstream_record_id"])
-            return self._research_fn(vehicle, row, client=make_client(), cache=self.cache, runs_dir=self.runs_dir,
+            return self._research_fn(vehicle, row, client=make_client(), cache=cache, runs_dir=self.runs_dir,
                                      batch_id=run_id, agent_cfg=request.agent_cfg, tool_cfg=request.tool_cfg,
                                      pricing=request.pricing, level15_source=level15_source,
                                      listener=tracker.listener_for(rid), cancel_event=cancel)
@@ -415,7 +468,7 @@ class RunManager:
 
         stats: dict = {}
         outcome, failure = None, None
-        cache_before = self.cache.stats_snapshot()
+        cache_before = cache.stats_snapshot()
         try:
             with self.controller.observe() as observation:
                 try:
@@ -424,7 +477,7 @@ class RunManager:
                 finally:
                     try:
                         update_batch(self.runs_dir, run_id, {"concurrency_observed": batch_observability(
-                            stats, observation, cache_before, self.cache.stats_snapshot())})
+                            stats, observation, cache_before, cache.stats_snapshot())})
                     except Exception:  # noqa: BLE001
                         log.warning("run %s: could not write concurrency observability", run_id, exc_info=True)
         except BaseException as exc:  # noqa: BLE001 - cancellation, shutdown, or an unexpected error
@@ -602,8 +655,11 @@ class RunManager:
         except Exception:  # noqa: BLE001
             pass
         try:
-            self._finalize_fn(self.runs_dir, run_id, record_id, client=client, cache=self.cache, config=config,
-                              tool_config=tool_config, metrics_fn=lambda r: compute_metrics(r, vehicle, self.cache))
+            record = self.get(run_id)
+            series = (record.request or {}).get("series") if record else None
+            cache = self._cache_for_series_run(series) if series else self.cache
+            self._finalize_fn(self.runs_dir, run_id, record_id, client=client, cache=cache, config=config,
+                              tool_config=tool_config, metrics_fn=lambda r: compute_metrics(r, vehicle, cache))
         except RecoveryError as exc:
             outcome, failure = FAILED, exc
             log.warning("run %s: finalization retry refused: %s", run_id, exc)
@@ -618,6 +674,224 @@ class RunManager:
         finally:
             self._complete(run_id, outcome=outcome, failure=failure,
                            cancel_requested=cancel.is_set() and not self._shutting_down)
+
+    # -- A/B benchmark series ------------------------------------------------------------------------------
+    # Sequencing lives here (not in a browser session), persisted next to the run records, so it survives a page
+    # refresh. Runs execute strictly one after another (the next starts only once the previous one completed, failed
+    # or was cancelled); a vehicle is never in two active runs (start() refuses; the series waits and retries).
+    # RESTART POLICY: a series cannot outlive its process. On the next manager start, a series whose owner process is
+    # gone is marked INTERRUPTED (its unstarted runs NOT_STARTED; the interrupted run itself is reconciled like any
+    # run) and its benchmark is written over the runs it finished. It is never resumed automatically: a restart is
+    # usually a redeploy, and resuming would mix code / prompt versions inside one A/B comparison.
+    def series_dir(self, series_id: str) -> Path:
+        if not series_id or "/" in series_id or "\\" in series_id or series_id.startswith("."):
+            raise RunRejected(f"invalid series id {series_id!r}")
+        return self.runs_dir / SERIES_DIR / series_id
+
+    def _cache_for_series_run(self, series: dict) -> DocumentCache:
+        """Private cold cache per planned run, including its own cross-run research memory."""
+        index = series.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise RunRejected("Invalid A/B run index.")
+        return DocumentCache(self.series_dir(series.get("series_id")) / "cache" / str(index))
+
+    def get_series(self, series_id: str) -> dict | None:
+        import json
+
+        try:
+            value = json.loads((self.series_dir(series_id) / "series.json").read_text("utf-8"))
+        except (OSError, ValueError, RunRejected):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def list_series(self, limit: int | None = None) -> list[dict]:
+        root = self.runs_dir / SERIES_DIR
+        if not root.is_dir():
+            return []
+        out = [s for s in (self.get_series(p.name) for p in root.iterdir() if p.is_dir()) if s]
+        out.sort(key=lambda s: (s.get("created_at") or "", s.get("series_id") or ""), reverse=True)
+        return out[:limit] if limit else out
+
+    def _update_series(self, series_id: str, mutate: Callable[[dict], None]) -> dict:
+        from ..storage.atomic import atomic_write_json
+
+        with self._series_lock:
+            series = self.get_series(series_id)
+            if series is None:
+                raise RunRejected(f"Unknown series {series_id}.")
+            mutate(series)
+            series["updated_at"] = utc_now()
+            atomic_write_json(self.series_dir(series_id) / "series.json", series, durable=True)
+        return series
+
+    def series_executing(self, series_id: str) -> bool:
+        thread = self._series_threads.get(series_id)
+        return bool(thread and thread.is_alive())
+
+    def start_series(self, request: SeriesRequest) -> StartResult:
+        """Plan and launch an A/B series (idempotent per `idempotency_key`; one series at a time per process)."""
+        from ..storage.atomic import atomic_write_json
+
+        arms = list(request.arm_configs)
+        if not request.template.vehicles:
+            raise RunRejected("Select at least one vehicle.")
+        if not arms:
+            raise RunRejected("Select at least one arm.")
+        with self._series_lock:
+            if self._shutting_down:
+                raise RunRejected("The server is shutting down; try again in a moment.")
+            key = request.idempotency_key
+            if key and key in self._idempotency:
+                return StartResult(self._idempotency[key], created=False, message="This series already started.")
+            running = [sid for sid in self._series_threads if self.series_executing(sid)]
+            if running:
+                raise RunRejected(f"An A/B series is already running ({running[0]}).")
+            series_id = time.strftime("series-%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{uuid.uuid4().hex[:6]}"
+            vehicles = [{"record_id": str(v["upstream_record_id"]), "label": _vehicle_title(v)}
+                        for v in request.template.vehicles]
+            series = {"schema": "tripy-series/1", "series_id": series_id, "status": SERIES_RUNNING,
+                      "label": request.label or f"A/B · {len(vehicles)} vehicle(s)", "created_at": utc_now(),
+                      "updated_at": utc_now(), "finished_at": None, "owner": dict(self.owner), "arms": arms,
+                      "repeats": int(request.repeats), "vehicles": vehicles, "planned": plan_series(arms, request.repeats),
+                      "current_index": 0, "run_ids": [], "error": None, "benchmark": None,
+                      "arm_configs": {arm: {"acquisition_mode": cfg.acquisition_mode,
+                                            "acquisition_document_card": cfg.acquisition_document_card,
+                                            "run_profile": cfg.run_profile}
+                                      for arm, cfg in request.arm_configs.items()}}
+            atomic_write_json(self.series_dir(series_id) / "series.json", series, durable=True)
+            cancel = threading.Event()
+            self._series_cancel[series_id] = cancel
+            thread = threading.Thread(target=self._drive_series, name=f"tripy-series-{series_id}", daemon=True,
+                                      args=(series_id, request, cancel))
+            self._series_threads[series_id] = thread
+            if key:
+                self._idempotency[key] = series_id
+            thread.start()
+        log.info("series %s started: %d run(s)", series_id, len(series["planned"]))
+        return StartResult(series_id, created=True)
+
+    def cancel_series(self, series_id: str) -> bool:
+        """Cancel the running run of a series and every planned one."""
+        with self._series_lock:
+            event = self._series_cancel.get(series_id)
+            if event is None or not self.series_executing(series_id):
+                return False
+            event.set()
+        run_id = next((i["run_id"] for i in (self.get_series(series_id) or {}).get("planned") or []
+                       if i["status"] == "RUNNING" and i.get("run_id")), None)
+        if run_id:
+            self.cancel(run_id)
+        log.info("series %s: cancellation requested", series_id)
+        return True
+
+    def _drive_series(self, series_id: str, request: SeriesRequest, cancel: threading.Event) -> None:
+        from dataclasses import replace
+
+        from ..run_profiles import profile_label
+
+        outcome, error = SERIES_COMPLETED, None
+        try:
+            for item in list((self.get_series(series_id) or {}).get("planned") or []):
+                if cancel.is_set() or self._shutting_down:
+                    break
+                index, arm = item["index"], item["arm"]
+                run_request = replace(
+                    request.template, agent_cfg=request.arm_configs[arm], scope="Benchmark A/B",
+                    label=f"{request.label or 'A/B'} · {profile_label(arm)} · {item['repeat']}/{request.repeats}",
+                    idempotency_key=f"{series_id}:{index}",
+                    series={"series_id": series_id, "index": index, "repeat": item["repeat"], "arm": arm})
+                started = None
+                while started is None and not cancel.is_set() and not self._shutting_down:
+                    try:
+                        started = self.start(run_request)
+                    except RunRejected as exc:
+                        if exc.existing_run_id is None:      # not a transient conflict: the series cannot go on
+                            raise
+                        cancel.wait(self.series_poll_s)      # another run is active (same vehicle / run limit)
+                if started is None:
+                    break
+                run_id = started.run_id
+
+                def mark_running(s: dict, run_id=run_id, index=index) -> None:
+                    s["planned"][index].update({"run_id": run_id, "status": "RUNNING", "started_at": utc_now()})
+                    s["current_index"] = index
+                    s["run_ids"] = list(s["run_ids"]) + [run_id]
+                self._update_series(series_id, mark_running)
+                thread = self._threads.get(run_id)
+                cancelled = False
+                while thread is not None and thread.is_alive():
+                    thread.join(timeout=0.2)
+                    if cancel.is_set() and not cancelled:
+                        self.cancel(run_id)
+                        cancelled = True
+                status = (self.get(run_id) or RunRecord(run_id, status=FAILED)).status
+
+                def mark_done(s: dict, index=index, status=status) -> None:
+                    s["planned"][index].update({"status": status, "finished_at": utc_now()})
+                self._update_series(series_id, mark_done)
+            if self._shutting_down:
+                outcome = SERIES_INTERRUPTED
+            elif cancel.is_set():
+                outcome = SERIES_CANCELLED
+        except Exception as exc:  # noqa: BLE001 - a series problem is recorded, never raised into the server
+            outcome, error = SERIES_FAILED, redact(f"{type(exc).__name__}: {exc}")[:500]
+            log.error("series %s failed:\n%s", series_id, traceback.format_exc())
+        self._finish_series(series_id, outcome, error)
+
+    def _finish_series(self, series_id: str, outcome: str, error: str | None = None) -> None:
+        """Final bookkeeping: unstarted runs, status, and the benchmark over EXACTLY the series' run_ids."""
+        def mutate(s: dict) -> None:
+            for item in s["planned"]:
+                if item["status"] == PLANNED:
+                    item["status"] = CANCELLED if outcome == SERIES_CANCELLED else NOT_STARTED
+            s["status"], s["finished_at"] = outcome, utc_now()
+            s["error"] = s.get("error") or error
+        try:
+            series = self._update_series(series_id, mutate)
+        except Exception:  # noqa: BLE001
+            log.error("series %s: could not write its final state", series_id, exc_info=True)
+            return
+        if series["run_ids"]:
+            try:
+                from ..diagnostics import PARSER_GAPS_FILE, write_benchmark
+
+                out = self.series_dir(series_id)
+                write_benchmark(self.runs_dir, run_ids=series["run_ids"], out_dir=out)
+                bench = {"dir": str(out), "files": ["benchmark.json", "per_vehicle.csv", "per_vehicle.jsonl",
+                                                    PARSER_GAPS_FILE], "run_ids": list(series["run_ids"]),
+                         "complete": outcome == SERIES_COMPLETED, "written_at": utc_now()}
+                self._update_series(series_id, lambda s: s.update({"benchmark": bench}))
+            except Exception:  # noqa: BLE001
+                log.warning("series %s: could not write its benchmark", series_id, exc_info=True)
+        log.info("series %s finished: %s", series_id, outcome)
+
+    def reconcile_series(self) -> list[str]:
+        """Mark series whose owner process is gone as INTERRUPTED (the restart policy above). Returns their ids."""
+        out = []
+        for series in self.list_series():
+            if series.get("status") != SERIES_RUNNING or self.series_executing(series["series_id"]):
+                continue
+            if (series.get("owner") or {}).get("boot_id") == self.boot_id:
+                continue      # being started by this process right now
+            sid = series["series_id"]
+
+            def mutate(s: dict) -> None:
+                for item in s["planned"]:
+                    if item["status"] == "RUNNING" and item.get("run_id"):
+                        item["status"] = (self.get(item["run_id"]) or RunRecord(item["run_id"],
+                                                                                status=INTERRUPTED)).status
+                s["error"] = s.get("error") or ("The server stopped while this series was running; it is not "
+                                                "resumed automatically (a restart may change the code version).")
+            try:
+                self._update_series(sid, mutate)
+            except Exception:  # noqa: BLE001
+                log.warning("could not reconcile series %s", sid, exc_info=True)
+                continue
+            self._finish_series(sid, SERIES_INTERRUPTED)
+            out.append(sid)
+        if out:
+            log.warning("marked %d orphaned series as INTERRUPTED: %s", len(out), ", ".join(out))
+        return out
 
     # -- shutdown -----------------------------------------------------------------------------------------
     def watch_server_shutdown(self, is_stopping: Callable[[], bool] | None = None, poll_s: float = 0.5) -> None:

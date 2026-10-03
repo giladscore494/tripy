@@ -249,6 +249,51 @@ def annotate_search_result(result: Any, manufacturer: str | None, target_market:
 
 # --- acquisition progress ----------------------------------------------------------------------------------------
 
+def in_market_scope(market_sensitivity: Any, target_market_document: bool) -> bool:
+    """May a candidate from a (useful) document count for a field? Any market when the field's schema
+    market_sensitivity is "low", else only a target-market document (the rule of scoped coverage)."""
+    return str(market_sensitivity or "high") == "low" or bool(target_market_document)
+
+
+# --- document card in contract research fetch results (ACQUISITION_DOCUMENT_CARD; scheduling metadata only) -------
+
+DOCUMENT_CARD_NOTE = "server-computed scheduling metadata, not evidence"
+CARD_TOOLS = ("fetch_url", "fetch_pdf")
+
+
+def document_card(*, adm, cache, specs: list[dict], result: Any, target_market: str) -> dict | None:
+    """Identity / scope metadata of a successfully fetched document (None when not applicable): its variant match,
+    binding level, market, authority, usability, and per recovery cluster how many applicable fields already have a
+    harvested candidate from it that is IN SCOPE (in_market_scope; never for an unusable or other-variant document).
+    Reads the cached harvest (the run's harvester already ran); never evidence, never a field state."""
+    from .candidate_harvest import harvest_document
+    from .field_recovery import is_target_market
+    from .fields import normalize_field_name
+
+    if not isinstance(result, dict) or result.get("error") or not result.get("document_id"):
+        return None
+    status = result.get("status")
+    if isinstance(status, int) and not 200 <= status < 300:
+        return None
+    doc = str(result["document_id"])
+    profile = document_profile_for(adm, cache, doc)
+    target = is_target_market(profile.get("market"), target_market)
+    usable = usable_document(cache, doc) and profile.get("variant_match") != "different"
+    clusters: dict[str, int] = {}
+    if usable:
+        harvested, _ = harvest_document(cache, doc, specs)
+        with_value = {normalize_field_name(c.get("field")) for c in harvested}
+        for cluster, items in recovery_clusters(specs).items():
+            count = sum(1 for spec in items if spec["name"] in with_value
+                        and in_market_scope(spec.get("market_sensitivity"), target))
+            if count:
+                clusters[cluster] = count
+    return {"note": DOCUMENT_CARD_NOTE, "variant_match": profile.get("variant_match"),
+            "binding_level": profile.get("binding_level"), "market": profile.get("market"),
+            "target_market_document": bool(target), "source_authority": profile.get("source_authority"),
+            "usable": bool(usable), "clusters": clusters, "candidate_fields_in_scope": sum(clusters.values())}
+
+
 def _url(cache, doc_id: str) -> str:
     meta = (cache.get(str(doc_id)) if cache is not None else None) or {}
     return str(meta.get("final_url") or meta.get("url") or doc_id).split("#")[0].rstrip("/")
@@ -307,9 +352,10 @@ def snapshot(*, events: list[dict], documents: Iterable[str], evaluation: list[d
         best[name] = max(best.get(name, -1), _level(item.get("binding_level")))
     # a field with a candidate from a source its schema market_sensitivity lets it use (any market when "low", else a
     # target-market source)
+    target_set = set(target_docs)
     scoped_candidates = {name for name in applicable if any(
-        str(c.get("document_id")) in (good if str((sensitivity or {}).get(name) or "high") == "low"
-                                      else set(target_docs))
+        str(c.get("document_id")) in good and in_market_scope((sensitivity or {}).get(name),
+                                                               str(c.get("document_id")) in target_set)
         for c in matrix["fields"].get(name) or [])}
     return {"mode": mode, "useful_documents": useful_docs, "useful_urls": {_url(cache, d) for d in useful_docs},
             "target_market_documents": target_docs, "target_market_urls": {_url(cache, d) for d in target_docs},
@@ -566,6 +612,8 @@ class AcquisitionTracker:
             "minimum_acquisition_met": self.base()[0],
             "minimum_acquisition": self.base()[1],
             "stop_deferred_count": len(self.deferred),
+            # contract: early {"done": true} replies held back once by the minimum base
+            "done_deferred_count": sum(1 for d in self.deferred if d.get("wanted_stop") == "model_finished"),
             "stops_deferred": self.deferred,
             "under_acquired_turns": sum(1 for t in self.turns if not t.get("minimum_acquisition_met", True)),
             "extended_turns": self.extended_turns,

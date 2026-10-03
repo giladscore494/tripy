@@ -253,7 +253,7 @@ def test_repeated_duplicate_calls_end_a_recovery_attempt(tmp_path, make_ctx, cou
               turn(same), turn(same),                                       # attempt 1 (budget 4, ends early)
               say({"field": "battery_gross_kwh", "status": "unresolved"}),  # attempt 2
               say({"summary": "final", "fields": {}})]
-    result, client, _ = run(tmp_path, ctx, script, field_recovery_enabled=True, no_new_research_turns=2,
+    result, client, _ = run(tmp_path, ctx, script, field_recovery_enabled=True, primary_research_min_base_documents=0, primary_research_min_base_scoped_coverage=0, no_new_research_turns=2,
                             field_recovery_max_steps=4, requested_fields=["battery_gross_kwh"])
     first = result["field_recovery"]["attempts"][0]
     assert first["turns"] == 2 and counted["find_in_document"] == 1  # zero hits, then a replay: two idle turns

@@ -415,6 +415,10 @@ class Scripted(PolicyGLM):
         return self.recover_fn(packet, turn_no, messages)
 
 
+# tests about recovery script an early primary {"done"}: the minimum acquisition base (which would defer it) is off
+GATE_OFF = {"primary_research_min_base_documents": 0, "primary_research_min_base_scoped_coverage": 0}
+
+
 def run_scripted(tmp_path, recover, **cfg):
     from conftest import FakeResponse, FakeSession
     from fixtures.corolla_touring import PAYLOAD, VEHICLE
@@ -443,7 +447,7 @@ def test_turns_never_exceed_the_ceiling_and_stop_without_novelty(tmp_path):
     def endless_search(packet, turn_no, messages):          # never novel: every query returns the forum page
         return _turn(_call(f"s{turn_no}", "search_web", {"query": f"corolla ground clearance {turn_no}"}))
 
-    result, events, client = run_scripted(tmp_path, endless_search, cluster_max_attempts=1)
+    result, events, client = run_scripted(tmp_path, endless_search, cluster_max_attempts=1, **GATE_OFF)
     rec = result["field_recovery"]
     assert all(a["turns"] == 2 and a["stop"] == "no_novelty" for a in rec["attempts"] if a["mode"] == "web")
     assert rec["budget_extensions"] == 0
@@ -457,7 +461,7 @@ def test_turns_never_exceed_the_ceiling_and_stop_without_novelty(tmp_path):
                                                              "quote": line}),
                      _call(f"q{turn_no}", "search_web", {"query": f"corolla {turn_no}"}))
 
-    result, events, client = run_scripted(tmp_path / "b", always_novel, cluster_max_attempts=1,
+    result, events, client = run_scripted(tmp_path / "b", always_novel, cluster_max_attempts=1, **GATE_OFF,
                                           cluster_max_turns=9)
     first = result["field_recovery"]["attempts"][0]
     assert first["turns"] == 4 and first["turn_ceiling"] == 4                  # CLUSTER_MAX_TURNS is capped at 4
@@ -472,7 +476,7 @@ def test_cluster_search_budget_is_enforced_per_attempt(tmp_path):
                            {"query": f"corolla {packet['cluster']} {turn_no}",
                             "domains": ["toyota.co.il", "toyota.co.uk", "toyota-europe.com"]}))
 
-    result, events, client = run_scripted(tmp_path, official, cluster_search_budget=4, cluster_max_attempts=1)
+    result, events, client = run_scripted(tmp_path, official, cluster_search_budget=4, cluster_max_attempts=1, **GATE_OFF)
     for attempt in result["field_recovery"]["attempts"]:
         assert attempt["search_provider_calls"] <= 4
     refused = [e for e in events if e.get("kind") == "tool_blocked" and e.get("reason") == "search_budget_exhausted"]
@@ -502,7 +506,7 @@ def test_global_turn_cap_holds_across_clusters(tmp_path):
         return _turn(_call(f"f{turn_no}", "find_in_document", {"document_id": packet["ranked_documents"][0]
                                                                ["document_id"], "query": f"x{turn_no}"}))
 
-    result, events, client = run_scripted(tmp_path, busy, field_recovery_max_total_steps=3)
+    result, events, client = run_scripted(tmp_path, busy, field_recovery_max_total_steps=3, **GATE_OFF)
     rec = result["field_recovery"]
     assert rec["turns"] == 3 and rec["stopped"] == "max_total_steps"
     summary = trace.field_recovery_summary(events)
@@ -556,7 +560,7 @@ def test_a_local_pass_shows_the_candidates_that_justified_it():
 
 def test_one_web_attempt_still_follows_a_local_pass(tmp_path):
     result, events, client = run_scripted(tmp_path, lambda packet, turn_no, messages: _say(
-        {"cluster": packet["cluster"], "fields": []}), cluster_max_attempts=1)
+        {"cluster": packet["cluster"], "fields": []}), cluster_max_attempts=1, **GATE_OFF)
     modes = [(a["cluster"], a["mode"]) for a in result["field_recovery"]["attempts"]]
     assert ("technical_spec", "local_only") in modes and ("technical_spec", "web") in modes
 
