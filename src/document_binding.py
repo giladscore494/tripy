@@ -150,6 +150,11 @@ class TargetIdentity:
                  "exact_market_trim": ("manufacturer", "family", "year", "body", "propulsion", "displacement_l",
                                        "power_hp", "drivetrain", "trim_tokens", "target_market")}[level]
         data = self.as_dict()
+        # Generic-only trims (MAX / PRO / BASE ...) intentionally have no trim_tokens. Once binding-v2 can reach
+        # exact_market_trim for them, an empty trim component would make different trims share the same fact-cache /
+        # research-memory scope. Preserve the old key for normal trims, but fall back to the full trim words here.
+        if level == "exact_market_trim" and not data.get("trim_tokens"):
+            data["trim_tokens"] = data.get("trim_words")
         return level + ":" + json.dumps([data.get(k) for k in parts], ensure_ascii=False, sort_keys=True)
 
 
