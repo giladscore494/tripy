@@ -74,6 +74,10 @@ GENERIC_NAMED = {"the", "this", "that", "each", "every", "all", "base", "entry",
 TRIM_CONNECTOR = r"(?:\s*(?:בגרסת|גרסת|ברמת גימור|רמת גימור|ב-|ה-)\s*|[\s\-]*)"
 # a generic trim word's written forms ("business edi" is the catalog's "business edition")
 TRIM_WORD_FORMS = {"edi": ("edi", "edition"), "edition": ("edition", "edi")}
+# A generic MAX immediately modifying a metric label is not a trim, even when the model family precedes it:
+# "G6 MAX power 486 hp" means maximum power. Fail closed rather than promote the fact to exact_market_trim.
+MAX_METRIC_FOLLOWERS = ("power", "output", "speed", "range", "torque", "charge", "charging", "current", "voltage",
+                        "capacity")
 NEGATED_TRIM = re.compile(r"(?:\bnot\b|\bno\b|\bexcept\b|\bexcluding\b|\bwithout\b|(?<![א-ת])לא(?![א-ת])|ללא|למעט|"
                           r"חוץ מ|פרט ל)[^.;|\n]{0,20}$")
 YEAR = re.compile(r"(?<![\d.,/-])(20[0-3]\d)(?![\d])(?!\s*[-–]\s*\d)(?!\s*(?:rpm|סל|mm|מ\"מ|ממ|cm|ס\"מ|kg|ק\"ג|nm|נ\"מ|cc|סמ|km|ק\"מ|"
@@ -217,7 +221,11 @@ def _qualified_pattern(identity: "TargetIdentity", vocab: dict):
         aliases = (vocab.get("model_families") or {}).get(identity.family or "") or [identity.family or ""]
         family = "|".join(r"[\s\-]*".join(re.escape(part) for part in normalize_text(a).split())
                           for a in sorted(aliases, key=len, reverse=True) if a)
-        options = [rf"(?:{family}){TRIM_CONNECTOR}{words}"]
+        metric_guard = ""
+        if identity.trim_words == ["max"]:
+            followers = "|".join(re.escape(w) for w in MAX_METRIC_FOLLOWERS)
+            metric_guard = rf"(?![\s:;,.\-–—]*(?:{followers})\b)"
+        options = [rf"(?:{family}){TRIM_CONNECTOR}{words}{metric_guard}"]
         if _bare_phrase_ok(identity.trim_words, vocab):
             options.append(words)
         compiled = _COMPILED[key] = re.compile(r"(?<![\wא-ת])(?:" + "|".join(options) + r")(?![\wא-ת])")
