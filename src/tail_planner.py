@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .document_binding import LEVELS, bind
+from .document_binding import LEVELS, bind, is_trim_gap
 from .field_recovery import (NON_TARGET_VARIANTS, attempted_operations, material_key,
                              max_attempts_for, related_searches, vehicle_identity)
 from .fields import normalize_field_name, public_spec, semantic_notes
@@ -169,11 +169,12 @@ def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: d
                      target_market: str, trim_named_by_official: bool) -> dict:
     """Which of a cluster's open fields a web episode can still help (RECOVERY_MODE=reacquire).
 
-    A field that is `variant_not_exact` although it already has ADMITTED evidence from an official target-market
-    source failed only on binding (its `binding_gap:*` info): a new search cannot fix that, so it is dropped
-    (`skipped`). Exception, once per cluster: when every such field's gap is the trim and no official target-market
-    document of the run names the trim, the fields stay for ONE episode of at most one billable search
-    (`trim_exception`) asking for a page that names the trim. `trim_fields`: the kept variant_not_exact fields whose
+    Only a trim-only `variant_not_exact` field with ADMITTED evidence from an official target-market source is
+    eligible for this gate. Technical gaps (power_mixed, drivetrain_absent, etc.) stay in normal reacquisition because
+    a more specific official source can still resolve them. For trim-only gaps, a new broad search is normally wasted,
+    so the field is dropped (`skipped`). Exception, once per cluster: when no official target-market document of the
+    run names the trim, the field stays for ONE episode of at most one billable search (`trim_exception`) asking for
+    a page that names the trim. `trim_fields`: the kept variant_not_exact fields whose
     gap is the trim (the episode's trim-specific instruction). Scheduling only: never a field state."""
     market = str(target_market or "").upper()
     gaps: dict[str, list[str]] = {}
@@ -184,7 +185,7 @@ def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: d
         field_gaps = [str(i).split(":", 1)[1] for i in entry.get("info") or [] if str(i).startswith("binding_gap:")]
         official = [e for e in evidence.get(name) or [] if e.get("source_authority") in OFFICIAL_AUTHORITIES
                     and str(e.get("market") or "").upper() == market]
-        if field_gaps and official:
+        if field_gaps and official and all(is_trim_gap(g) for g in field_gaps):
             gaps[name] = field_gaps
     exception = bool(gaps) and not trim_named_by_official \
         and all(g.startswith("trim_") for items in gaps.values() for g in items)
