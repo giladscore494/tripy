@@ -153,7 +153,8 @@ def test_page_where_old_harvester_found_nothing_now_yields_and_golden_candidates
 
 
 def test_harvester_version_bumped():
-    assert HARVESTER_VERSION == "harvest-v7"          # PR #40: R8 candidate hygiene invalidates cached harvests
+    # PR #40: R8 candidate hygiene invalidated cached harvests (v7); PR #42: right-to-left PDF text repair (v8)
+    assert HARVESTER_VERSION == "harvest-v8"
 
 
 # --- Part B -------------------------------------------------------------------------------------------------------

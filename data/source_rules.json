@@ -1,5 +1,5 @@
 {
- "_about": "Deterministic source rules of the evidence admission gate (src/source_authority.py). source_authority says WHO publishes a source (government, manufacturer, importer, press office, aggregator, marketplace, publisher); it never says that a source describes the exact target variant: authority and variant identity are separate dimensions (src/document_binding.py). Domains match the host or any subdomain. Brand slugs match the registrable domain label (toyota.co.uk, toyota-europe.com); an official domain of ANOTHER brand is not official for the target. market_by_tld / market_by_registrable_hint / path locales derive the market a source describes; Hebrew-language text is the IL market. Editing this file changes classification with no code change. A brand slug is official only as the whole registrable label or with a listed suffix (toyota-europe), never as a prefix of another name (toyota-forum). Registrable labels follow a generic second-level rule (co / com / org ... under a two-letter TLD). A path locale counts only as language-country (/en-gb/).",
+ "_about": "Deterministic source rules of the evidence admission gate (src/source_authority.py). source_authority says WHO publishes a source (government, manufacturer, importer, press office, aggregator, marketplace, publisher); it never says that a source describes the exact target variant: authority and variant identity are separate dimensions (src/document_binding.py). Domains match the host or any subdomain. Brand slugs match the registrable domain label (toyota.co.uk, toyota-europe.com); an official domain of ANOTHER brand is not official for the target. market_by_tld / market_by_registrable_hint / path locales derive the market a source describes; Hebrew-language text is the IL market. Editing this file changes classification with no code change. A brand slug is official only as the whole registrable label or with a listed suffix (toyota-europe), never as a prefix of another name (toyota-forum). Registrable labels follow a generic second-level rule (co / com / org ... under a two-letter TLD). A path locale counts only as language-country (/en-gb/). importer_slugs (a subset of slugs): the labels the brand's target-market importer uses; with importer_tlds they give the importer domains search_official_domains defaults to (src/tools/search.importer_domains: heyxpeng x il -> heyxpeng.co.il).",
  "version": "source-rules-v1",
  "authority_classes": [
   "government",
@@ -102,6 +102,9 @@
    "slugs": [
     "toyota"
    ],
+   "importer_slugs": [
+    "toyota"
+   ],
    "media_domains": [
     "newsroom.toyota.eu",
     "pressroom.toyota.com"
@@ -109,6 +112,9 @@
   },
   "אאודי": {
    "slugs": [
+    "audi"
+   ],
+   "importer_slugs": [
     "audi"
    ],
    "media_domains": [
@@ -123,6 +129,10 @@
     "bmwgroup",
     "bmw-group"
    ],
+   "importer_slugs": [
+    "bmw",
+    "mini"
+   ],
    "media_domains": [
     "press.bmwgroup.com"
    ]
@@ -133,6 +143,9 @@
     "mercedes",
     "mbusa"
    ],
+   "importer_slugs": [
+    "mercedes-benz"
+   ],
    "media_domains": [
     "media.mercedes-benz.com",
     "group-media.mercedes-benz.com"
@@ -140,6 +153,9 @@
   },
   "יונדאי": {
    "slugs": [
+    "hyundai"
+   ],
+   "importer_slugs": [
     "hyundai"
    ],
    "media_domains": [
@@ -152,6 +168,9 @@
     "cadillac",
     "cadillaceurope"
    ],
+   "importer_slugs": [
+    "cadillac"
+   ],
    "media_domains": [
     "news.gm.com",
     "media.gm.com",
@@ -161,6 +180,9 @@
   "אקספנג": {
    "slugs": [
     "xpeng",
+    "heyxpeng"
+   ],
+   "importer_slugs": [
     "heyxpeng"
    ],
    "media_domains": []

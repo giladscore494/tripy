@@ -46,7 +46,7 @@ from typing import Any
 from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
-                                normalize_text, parse_number, reverse_hebrew_line)
+                                logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
 from .document_binding import (OFFICIAL_AUTHORITIES, TargetIdentity, about_target, bind, document_profile,
                                identity_zone, normalize_catalog_trim, target_identity)
 from .fields import sanity_specs
@@ -227,6 +227,10 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
             structured = None
     if meta.get("doc_type") == "pdf":
         parts.append("\n".join(reverse_hebrew_line(line) for line in text.splitlines()))
+        # the harvest's logical form of visually ordered right-to-left lines (F4): line for line, so a quote of the
+        # logical text is checked against the same source line
+        words = rtl_dictionary(dictionary_for(load_schema()).hebrew_aliases)
+        parts.append("\n".join(logical_rtl_line(line, words) or "" for line in text.splitlines()))
     market, basis = source_market(url, text)
     source_date, date_basis = _document_date(meta, structured)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
@@ -991,6 +995,9 @@ def dvm_gate(adm: AdmissionContext, material: DocumentMaterial, spec: dict, mark
     if decision.get("status") == "target" and len(trims) == 1 and trims[0] == own_trim and own_trim \
             and authority in OFFICIAL_AUTHORITIES and market == target_market:
         decision["trim"] = "match"
+    if decision.get("status") == "target" and decision.get("rule") == "gov_model_code" \
+            and authority in OFFICIAL_AUTHORITIES and market == target_market:
+        decision["trim"] = "match"                 # F5: the region names the target's own government model code
     if price and decision.get("trim") != "match":
         reasons.append("price_needs_market_trim_region")
     decision["allowed"] = not reasons
@@ -1023,11 +1030,19 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
     """(binding, layer inputs) of one fact: src/document_binding.bind over binding_layers() plus the binding-v4 inputs
     (the document's propulsion mentions, the R4 brand-policy eligibility and the fact's Document Variant Map region).
     Pure; the one place both Evidence Admission and Binding Replay compute a fact's binding, so the two cannot drift."""
-    from .variant_map import fact_region
+    from .variant_map import fact_region, market_trim_offer
 
     inputs = binding_layers(material, name, spec, value, quote, ctx, variant_text, candidates)
     profile = material.profile
     region = None
+    offer = None
+    try:
+        # F5: a complete model-code table of an official target-market document says whether the target's market trim
+        # is offered there
+        if material.authority.get("source_authority") in OFFICIAL_AUTHORITIES and market == adm.identity.target_market:
+            offer = market_trim_offer(material.variant_map, adm.identity)
+    except Exception:  # noqa: BLE001 - the map is an additional layer
+        offer = None
     try:
         region = fact_region(material.variant_map, adm.identity, value=value, fragment=ctx.fragment,
                              clause=ctx.clause, source_lines=ctx.source_lines,
@@ -1045,13 +1060,14 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    other_trims_named=profile.get("other_trims_named"),
                    document_propulsions=(profile.get("mentions") or {}).get("propulsion"),
                    brand_policy=brand_policy_eligibility(adm, material, spec, name, value, market),
-                   region=region, safeguard_context=_line_above(material, ctx.fragment))
+                   region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
             "status", "region_id", "region_kind", "level", "reason", "contradicts", "identity", "identity_text",
-            "candidates_before", "candidates_after", "assignment", "trim", "allowed", "blocked_by",
-            "inventory_contains_target", "map_version", "error") if region.get(k) not in (None, [], "")}
+            "candidates_before", "candidates_after", "assignment", "trim", "allowed", "blocked_by", "rule",
+            "tab_label", "region_statuses", "inventory_contains_target", "map_version", "error")
+            if region.get(k) not in (None, [], "")}
     year = profile.get("year_context") or {}
     if year.get("statements") or year.get("ignored"):
         # telemetry only: the model-year statements behind the year dimension and the years the rules ignored
@@ -1201,6 +1217,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),
         "binding_rules": binding.get("binding_rules"), "binding_policy": binding.get("binding_policy"),
         "variant_map_region": binding.get("variant_map_region"),
+        **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,
         "model_market_claim": model_market if model_market and normalize_market(model_market) != market else None,

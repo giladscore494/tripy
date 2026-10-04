@@ -177,6 +177,9 @@ class TargetIdentity:
     # suffixes separate variants the engine figures cannot, and the transmission (Level 1.5 `automatic` flag)
     model_code: str | None = None
     transmission: str | None = None
+    # the government model code (Level 1.5 identity.government_codes.degem_cd): the number Israeli importers publish
+    # as "קוד דגם" in their mandatory safety-equipment table (verified, PR #42); identity-only, never a scope key
+    gov_model_code: int | None = None
 
     def as_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v not in (None, [], "")}
@@ -329,7 +332,17 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         model_code=" ".join(t for t in re.split(r"[^0-9a-z]+", str(ident.get("model_code") or vehicle.get("model_code")
                                                                  or "").lower()) if t) or None,
         transmission={1: "automatic", 0: "manual", "1": "automatic", "0": "manual", True: "automatic",
-                      False: "manual"}.get(engine.get("automatic")))
+                      False: "manual"}.get(engine.get("automatic")),
+        gov_model_code=_gov_code((ident.get("government_codes") or {}).get("degem_cd")
+                                 if isinstance(ident.get("government_codes"), dict) else None))
+
+
+def _gov_code(value: Any) -> int | None:
+    try:
+        code = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return code if code > 0 else None
 
 
 # --- mentions ------------------------------------------------------------------------------------------
@@ -363,8 +376,28 @@ def _displacements(text: str, vocab: dict) -> set[float]:
 KW_TO_PS = 1.35962
 
 
+# where the clause of a power statement starts: a line / cell / list break, a sentence end, a comma
+CLAUSE_START = re.compile(r"[\n|;•·]|[.,!?](?:\s|$)")
+CHARGING_CONTEXT_CHARS = 40
+
+
+def charging_context(text: str, start: int, end: int, vocab: dict | None = None) -> bool:
+    """Is the power statement text[start:end] about CHARGING (טעינה, charging, DC / AC, a charger, V2L / L2V)? The
+    statement itself and its own clause before it (at most CHARGING_CONTEXT_CHARS back, never past a line, cell, list
+    or sentence break) are read: "טעינה מהירה בהספק מרבי של 451 קילוואט" is a charging power, never a motor power."""
+    vocab = vocabulary() if vocab is None else vocab
+    blockers = _terms(("charging_words",), vocab.get("charging_words") or [])
+    if blockers is None:
+        return False
+    lead = text[max(0, start - CHARGING_CONTEXT_CHARS):start]
+    breaks = list(CLAUSE_START.finditer(lead))
+    lead = lead[breaks[-1].end():] if breaks else lead
+    return bool(blockers.search(lead + text[start:end]))
+
+
 def _powers(text: str, vocab: dict) -> set[float]:
-    """Power figures in hp (PS and, next to a power word, kW converted). Charging kW is never power."""
+    """Power figures in hp (PS and, next to a power word, kW converted). Charging kW is never power: a kW statement
+    in a charging context (charging_context: its own words or its clause before it) and battery kWh are skipped."""
     units = _alternation(vocab.get("power_units") or [])
     found: set[float] = set()
     if units:
@@ -373,11 +406,10 @@ def _powers(text: str, vocab: dict) -> set[float]:
             # PS is metric horsepower, the unit of the government's כ"ס: taken as is (never x0.986)
             found.add(value)
     words = _alternation(vocab.get("power_words") or [])
-    blockers = _terms(("charging_words",), vocab.get("charging_words") or [])
     if words:
         for m in re.finditer(rf"(?:{words})[^\d;|\n]{{0,25}}?(?<![\d.,])(\d{{2,4}})\s*(?:kw|קילוואט|קוט\"ס)(?![a-z])",
                              text):
-            if blockers and blockers.search(m.group(0)):
+            if charging_context(text, m.start(), m.end(), vocab):
                 continue
             # government power (כ"ס) is metric horsepower: 1 kW = 1.35962 PS (357 kW is the catalog's 486 כ"ס)
             found.add(round(float(m.group(1)) * KW_TO_PS, 1))
@@ -1136,15 +1168,17 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          trim_named_in_document: bool = False, source_authority: str | None = None,
          document_names_family: bool = False, other_trims_named: list[str] | None = None,
          document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
-         region: dict | None = None, safeguard_context: Iterable[str] = ()) -> dict:
+         region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
 
     binding-v4 inputs (all optional, None = the rule does not apply): `document_propulsions` (the document profile's
     propulsion mentions; R1 reads them), `brand_policy` (R4: the caller's eligibility verdict for a brand-wide warranty
-    statement), `region` (R2: the fact's Document Variant Map decision, src/variant_map.fact_region) and
-    `safeguard_context` (lines that can only STOP R1 / R1b: the row label right above the value)."""
+    statement), `region` (R2: the fact's Document Variant Map decision, src/variant_map.fact_region),
+    `safeguard_context` (lines that can only STOP R1 / R1b: the row label right above the value) and `market_trim`
+    (F5: the document's model-code table verdict, src/variant_map.market_trim_offer; `market_trim_not_offered` keeps
+    every fact of the document below exact_market_trim)."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1224,6 +1258,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             blocked = any(effective[d]["basis"] == "value_clause" and s[d] == "mixed" for d in open_dims)
             if not blocked and level_index(level) >= level_index("body_powertrain"):
                 rule = "dvm_region" if status == "target" else "dvm_shared"
+                if status == "target" and region.get("rule") == "gov_model_code":
+                    rule = "gov_model_code"          # F5: the region names the target's government model code
                 for dim in open_dims:
                     effective[dim] = {"status": "match", "basis": rule, "was": s[dim],
                                       "region": region.get("region_id")}
@@ -1241,9 +1277,14 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
                 vetoes.append(f"{dim}_mismatch@dvm_region")
                 rules.append("dvm_other_variant")
     if region_trim and level == "exact_market_trim":
-        basis = "dvm_region"
+        basis = "gov_model_code" if region.get("rule") == "gov_model_code" else "dvm_region"
+    not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
+    if not_offered and level == "exact_market_trim":
+        # F5: the document's complete model-code table sells the target's technical variant under other codes only
+        level, basis = "exact_technical_variant", None
+        rules.append("market_trim_not_offered")
     catalog = None
-    if (required == "exact_market_trim" and level == "exact_technical_variant" and not vetoes
+    if (required == "exact_market_trim" and level == "exact_technical_variant" and not vetoes and not not_offered
             and not model_declared_different and "mixed" not in s.values() and s["trim"] == "absent"
             and market and market == identity.target_market
             and (source_authority in OFFICIAL_AUTHORITIES or document_names_family)
@@ -1281,6 +1322,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         out["binding_basis"] = raised_by
     if rules:
         out["binding_rules"] = rules
+    if market_trim:
+        out["market_trim"] = dict(market_trim)
     if policy is not None:
         out["binding_policy"] = policy
     return out

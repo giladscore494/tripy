@@ -17,16 +17,41 @@ from bs4 import BeautifulSoup
 from .fetch import USER_AGENT
 
 # Convenience defaults only. The model may pass any domains, and plain
-# search_web is never restricted.
-DEFAULT_OFFICIAL_DOMAINS: dict[str, list[str]] = {
-    "טויוטה": ["toyota.co.il", "toyota-europe.com", "toyota.com", "global.toyota"],
-    "אאודי": ["audi.co.il", "audi.com", "audi.de", "audi-mediacenter.com"],
-    "ב מ וו": ["bmw.co.il", "bmw.com", "bmwgroup.com", "mini.co.il", "mini.com"],
-    "מרצדס": ["mercedes-benz.co.il", "mercedes-benz.com", "mercedes-benz.de", "group.mercedes-benz.com"],
-    "יונדאי": ["hyundai.co.il", "hyundai.com", "hyundai.news"],
-    "קאדילאק": ["cadillac.co.il", "cadillac.com", "cadillaceurope.com", "news.gm.com"],
+# search_web is never restricted. Global manufacturer / media domains only: the target-market IMPORTER domains are
+# derived from data/source_rules.json (importer_domains), so a brand's importer site is never missing from a hand list.
+GLOBAL_OFFICIAL_DOMAINS: dict[str, list[str]] = {
+    "טויוטה": ["toyota-europe.com", "toyota.com", "global.toyota"],
+    "אאודי": ["audi.com", "audi.de", "audi-mediacenter.com"],
+    "ב מ וו": ["bmw.com", "bmwgroup.com", "mini.com"],
+    "מרצדס": ["mercedes-benz.com", "mercedes-benz.de", "group.mercedes-benz.com"],
+    "יונדאי": ["hyundai.com", "hyundai.news"],
+    "קאדילאק": ["cadillac.com", "cadillaceurope.com", "news.gm.com"],
     "אקספנג": ["xpeng.com", "heyxpeng.com"],
 }
+
+
+def importer_domains(manufacturer: str | None, rule_set: dict | None = None) -> list[str]:
+    """The brand's target-market importer domains: every importer slug (data/source_rules.json brands.<brand>.
+    importer_slugs) under every importer TLD, with the TLD's commercial second level when it has one (il -> co.il):
+    heyxpeng -> heyxpeng.co.il."""
+    from ..source_authority import _brand, rules
+
+    rs = rule_set if rule_set is not None else rules()
+    two_level = set(rs.get("two_level_public_suffixes") or [])
+    out: list[str] = []
+    for slug in _brand(rs, manufacturer).get("importer_slugs") or []:
+        for tld in rs.get("importer_tlds") or []:
+            suffix = f"co.{tld}" if f"co.{tld}" in two_level else tld
+            out.append(f"{str(slug).lower()}.{suffix}")
+    return list(dict.fromkeys(out))
+
+
+def official_domain_defaults(manufacturer: str | None) -> list[str]:
+    """Importer domains first (derived), then the brand's global domains."""
+    key = str(manufacturer or "").strip()
+    return list(dict.fromkeys(importer_domains(key) + GLOBAL_OFFICIAL_DOMAINS.get(key, [])))
+
+
 MAX_DOMAINS = 6
 
 
@@ -148,7 +173,7 @@ def search_web(ctx, query: str, max_results: int = 8, domain: str | None = None)
 
 def default_domains(vehicle: dict) -> list[str]:
     manufacturer = (vehicle or {}).get("manufacturer") or (vehicle or {}).get("tozar") or ""
-    return list(DEFAULT_OFFICIAL_DOMAINS.get(manufacturer.strip(), []))
+    return official_domain_defaults(manufacturer)
 
 
 def search_official_domains(ctx, query: str, domains: list[str] | None = None) -> dict:

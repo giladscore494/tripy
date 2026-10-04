@@ -1,11 +1,40 @@
 """A minimal PDF writer for tests (no reportlab): one Helvetica text run per (x, y, text) item, no ruling lines.
-Enough for pdfplumber to read words and their positions; ASCII text only."""
+Enough for pdfplumber to read words and their positions. ASCII text, plus Hebrew letters: a document with any Hebrew
+letter gets a font whose encoding maps bytes 128.. to the Hebrew glyph names (uni05D0 ..), with explicit widths, so
+pdfplumber reads the letters in the order they are drawn (left to right, i.e. the VISUAL order of a Hebrew PDF)."""
 
 from __future__ import annotations
 
+HEBREW_FIRST, HEBREW_LAST, HEBREW_BASE = 0x05D0, 0x05EA, 128
+
+
+def _hebrew(pages: list[list[tuple[float, float, str]]]) -> bool:
+    return any(HEBREW_FIRST <= ord(ch) <= HEBREW_LAST for items in pages for _, _, t in items for ch in t)
+
 
 def _escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    out = []
+    for ch in text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)"):
+        code = ord(ch)
+        if HEBREW_FIRST <= code <= HEBREW_LAST:
+            out.append(f"\\{HEBREW_BASE + code - HEBREW_FIRST:03o}")
+        elif code < 128:
+            out.append(ch)
+        else:
+            out.append("?")
+    return "".join(out)
+
+
+def _hebrew_font(font_ref: int) -> bytes:
+    from pdfminer.fontmetrics import FONT_METRICS
+
+    widths = FONT_METRICS["Helvetica"][1]
+    last = HEBREW_BASE + HEBREW_LAST - HEBREW_FIRST
+    row = [widths.get(chr(c), 556) for c in range(32, 128)] + [556] * (last - 127)
+    names = " ".join(f"/uni{c:04X}" for c in range(HEBREW_FIRST, HEBREW_LAST + 1))
+    return (f"{font_ref} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar {last} "
+            f"/Widths [{' '.join(map(str, row))}] /Encoding << /Type /Encoding /BaseEncoding /WinAnsiEncoding "
+            f"/Differences [{HEBREW_BASE} {names}] >> >> endobj\n").encode()
 
 
 def make_pdf(pages: list[list[tuple[float, float, str]]], size: int = 10) -> bytes:
@@ -23,7 +52,8 @@ def make_pdf(pages: list[list[tuple[float, float, str]]], size: int = 10) -> byt
         kids.append(f"{page_no} 0 R")
     head = [b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
             f"2 0 obj << /Type /Pages /Kids [{' '.join(kids)}] /Count {len(pages)} >> endobj\n".encode()]
-    tail = [f"{font_ref} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode()]
+    tail = [_hebrew_font(font_ref) if _hebrew(pages) else
+            f"{font_ref} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode()]
     body = b"%PDF-1.4\n"
     offsets = []
     for obj in head + objects + tail:
