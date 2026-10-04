@@ -276,19 +276,26 @@ class GLMClient:
         raise last
 
     def _rate_limit_wait(self, resp, count: int) -> float:
-        """Seconds to wait after the `count`-th 429 of a request: Retry-After when the provider sends one (seconds or
-        an HTTP date, clamped), else an exponential backoff with up to 25 % jitter."""
+        """Seconds to wait after the `count`-th 429 of a request: a positive Retry-After when the provider sends one
+        (seconds or an HTTP date, clamped), else an exponential backoff with up to 25 % jitter.
+
+        Retry-After: 0 and past dates deliberately fall back to backoff. A zero wait would never consume the
+        per-request rate-limit budget, so repeated 429s could otherwise retry forever.
+        """
         raw = str((resp.headers or {}).get("Retry-After") or "").strip()
         if raw:
             try:
-                return max(0.0, min(float(raw), RATE_LIMIT_RETRY_AFTER_MAX_S))
+                delay = float(raw)
+                if delay > 0:
+                    return min(delay, RATE_LIMIT_RETRY_AFTER_MAX_S)
             except ValueError:
                 try:
                     from email.utils import parsedate_to_datetime
                     from datetime import datetime, timezone
 
                     delta = (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds()
-                    return max(0.0, min(delta, RATE_LIMIT_RETRY_AFTER_MAX_S))
+                    if delta > 0:
+                        return min(delta, RATE_LIMIT_RETRY_AFTER_MAX_S)
                 except (TypeError, ValueError, OverflowError):
                     pass
         base = min(RATE_LIMIT_BACKOFF_BASE_S * (2 ** (count - 1)), RATE_LIMIT_BACKOFF_MAX_S)
