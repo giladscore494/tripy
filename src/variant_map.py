@@ -118,7 +118,7 @@ def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool) 
     """(end, whole) of each way a catalog trim token can match from doc word p: the word itself (whole), a word it is
     a prefix of (not whole; never a number; tokens shorter than 3 letters require an exact match or an explicit
     alias), the join of 2-3 words ("BLACKEDITION" = "Black Edition", whole) or a listed alias
-    (catalog_trim_aliases: "LR" = "Long Range", "PR" = "Pro", whole)."""
+    (catalog_trim_aliases: token "LR" = "Long Range" or full trim "LR PR" = "Long Range Pro", whole)."""
     if p >= len(doc):
         return []
     word = doc[p]
@@ -183,6 +183,13 @@ def catalog_trim_matches(text: str, trims: list[str], identity: TargetIdentity,
                     found.append({"trim": trim, "start": inside[-len(tokens)], "end": inside[-1] + 1,
                                   "form": "qualified_phrase"})
             continue
+        # A full-trim alias is exact and scoped to this complete catalog trim. This is safer than teaching a short
+        # token such as PR to prefix-match every word beginning with "pr" across every model family.
+        for alias in aliases.get(normalize_text(trim)) or ():
+            alias_words = alias.split()
+            for p in range(len(doc) - len(alias_words) + 1):
+                if alias_words and doc[p:p + len(alias_words)] == alias_words:
+                    found.append({"trim": trim, "start": p, "end": p + len(alias_words), "form": "phrase_alias"})
         for p in range(len(doc)):
             end = _match_from(tokens, doc, p, aliases)
             if end is not None:
