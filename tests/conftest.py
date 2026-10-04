@@ -12,16 +12,41 @@ from src.tools import ToolConfig, ToolContext  # noqa: E402
 from src.tools.evidence import EvidenceStore  # noqa: E402
 
 
+def _no_browser(*_args, **_kwargs):
+    from src.tools import render as render_module
+
+    raise RuntimeError(f"{render_module.BROWSER_MISSING}: tests never launch a browser")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_guards():
+    """Session-wide guards, in place before ANY fixture runs (a module-scoped fixture is built before the
+    function-scoped autouse fixtures, so those alone never covered it): no real browser (a host with Chromium, CI
+    included, would otherwise render real URLs), and the PR #44 Israeli version-page resolver off (scripted runs encode
+    their exact search / fetch sequence)."""
+    from src import agent
+    from src.tools import render as render_module
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(render_module, "_render", _no_browser)
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs.setdefault("il_version_pages", False)
+        original(self, *args, **kwargs)
+
+    patch.setattr(agent.AgentConfig, "__init__", init)
+    yield
+    patch.undo()
+
+
 @pytest.fixture(autouse=True)
 def _no_real_browser(monkeypatch):
     """Tests never launch a browser: render_page behaves as on a host without Chromium unless a test replaces
     src.tools.render._render itself (PR #43 render fallback); the process-wide "no browser" memo starts clean."""
     from src.tools import fetch as fetch_module, render as render_module
 
-    def no_browser(*_args, **_kwargs):
-        raise RuntimeError(f"{render_module.BROWSER_MISSING}: tests never launch a browser")
-
-    monkeypatch.setattr(render_module, "_render", no_browser)
+    monkeypatch.setattr(render_module, "_render", _no_browser)
     monkeypatch.setattr(fetch_module, "_RENDER_UNAVAILABLE", False)
 
 
@@ -134,8 +159,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "grounded_candidates(on): pin the AgentConfig default of GROUNDED_CANDIDATES "
                                        "(True | False) for this test (scripts encoding the pre-#31 model call order)")
     config.addinivalue_line("markers", "site_map(on): pin the AgentConfig default of SITE_MAP (True | False)")
-    config.addinivalue_line("markers", "il_version_pages(on): run the PR #44 Israeli version-page resolver (default off "
-                                       "in tests)")
 
 
 PINNED_DEFAULTS = (("recovery_mode", "RECOVERY_MODE", ("reacquire", "cluster", "legacy")),
@@ -164,23 +187,6 @@ def _candidate_yield_defaults(request, monkeypatch):
     def init(self, *args, **kwargs):
         for key, value in pinned.items():
             kwargs.setdefault(key, value)
-        original(self, *args, **kwargs)
-
-    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
-
-
-@pytest.fixture(autouse=True)
-def _il_version_pages_default(request, monkeypatch):
-    """PR #44: the Israeli version-page resolver (a deterministic first acquisition wave) is off in tests unless a test
-    asks for it with the `il_version_pages(True)` marker: scripted runs encode their exact search / fetch sequence."""
-    marker = request.node.get_closest_marker("il_version_pages")
-    value = bool(marker.args[0]) if marker else False
-    from src import agent
-
-    original = agent.AgentConfig.__init__
-
-    def init(self, *args, **kwargs):
-        kwargs.setdefault("il_version_pages", value)
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(agent.AgentConfig, "__init__", init)
