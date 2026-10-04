@@ -189,7 +189,7 @@ CHALLENGE_MAX_TEXT = 3000
 CHALLENGE_MARKERS = ("just a moment", "checking your browser", "cf-browser-verification", "cf-challenge",
                      "challenge-platform", "attention required", "access denied", "request unsuccessful",
                      "_incapsula_resource", "px-captcha", "are you a robot", "verify you are human",
-                     "enable javascript and cookies", "bot detection", "captcha")
+                     "please enable javascript", "bot detection", "captcha")
 
 
 def _domain(url: str) -> str:
