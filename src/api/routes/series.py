@@ -19,7 +19,7 @@ from ...db import Level15Error
 from ...diagnostics import PARSER_GAPS_FILE
 from ...glm_client import GLMError
 from ...jobs.manager import RunManager, RunRejected, SeriesRequest, series_progress
-from ...run_profiles import ARMS, PRODUCTION, PROFILE_LABELS
+from ...run_profiles import ARMS, BASELINE, PRODUCTION, PROFILE_LABELS, TREATMENT
 from ...run_settings import build_research_request, settings_checks, settings_from_env
 from ..deps import ApiContext, get_context
 from ..errors import ApiError, not_found
@@ -74,6 +74,8 @@ def list_series(limit: int | None = Query(None, ge=1, le=200), ctx: ApiContext =
     """Series history, newest first (runs/_series), and the one this process is driving now."""
     series = ctx.manager.list_series()
     return service.redacted({"total": len(series), "executing": _executing(ctx.manager, series),
+                             "arms": [{"id": arm, "label": PROFILE_LABELS[arm]} for arm in ARMS],
+                             "default_arms": [BASELINE, TREATMENT], "max_repeats": 5,
                              "series": [series_state(ctx.manager, s) for s in series[:limit]]})
 
 

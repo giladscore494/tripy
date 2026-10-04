@@ -1,0 +1,661 @@
+{
+ "settings": [
+  {
+   "name": "model_id",
+   "kind": "model",
+   "label": "Research model id",
+   "group": "Model",
+   "help": "GLM_MODEL. Used for every research/tool turn.",
+   "default": "glm-5.3-flash",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "finalizer_model_id",
+   "kind": "model",
+   "label": "Finalizer model id",
+   "group": "Model",
+   "help": "GLM_FINALIZER_MODEL; empty = the research model.",
+   "default": "",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": true,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "search_backend",
+   "kind": "choice",
+   "label": "Search backend",
+   "group": "Model",
+   "help": "glm = GLM web_search API; duckduckgo = keyless HTML search.",
+   "default": "glm",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "glm",
+    "duckduckgo"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "search_engine",
+   "kind": "text",
+   "label": "GLM search engine",
+   "group": "Model",
+   "help": "GLM_SEARCH_ENGINE (glm backend only).",
+   "default": "search-prime",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "chat_attempts",
+   "kind": "int",
+   "label": "Chat max attempts (total, 1 = no retry)",
+   "group": "Model",
+   "help": "",
+   "default": 2,
+   "min": 1.0,
+   "max": 6.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "search_attempts",
+   "kind": "int",
+   "label": "Search max attempts (total)",
+   "group": "Model",
+   "help": "",
+   "default": 3,
+   "min": 1.0,
+   "max": 6.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "chat_timeout",
+   "kind": "int",
+   "label": "Chat read timeout per attempt (s)",
+   "group": "Model",
+   "help": "",
+   "default": 240,
+   "min": 30.0,
+   "max": 1800.0,
+   "step": 30.0,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "workers",
+   "kind": "int",
+   "label": "Vehicle workers (vehicles researched at once)",
+   "group": "Concurrency",
+   "help": "BATCH_MAX_WORKERS. Not a request limit: the shared provider pools guard every request.",
+   "default": 50,
+   "min": 1.0,
+   "max": 50.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "max_steps",
+   "kind": "int",
+   "label": "Primary research turns (source acquisition)",
+   "group": "Research budget",
+   "help": "PRIMARY_RESEARCH_MAX_TURNS / AGENT_MAX_STEPS",
+   "default": 6,
+   "min": 3.0,
+   "max": 80.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "no_artifact",
+   "kind": "int",
+   "label": "Stop research after N turns that acquire nothing new (0 = off)",
+   "group": "Research budget",
+   "help": "",
+   "default": 2,
+   "min": 0.0,
+   "max": 20.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "idle_turns",
+   "kind": "int",
+   "label": "Finalize after N turns with no new research artifact (0 = off)",
+   "group": "Research budget",
+   "help": "",
+   "default": 2,
+   "min": 0.0,
+   "max": 20.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "tool_chars",
+   "kind": "int",
+   "label": "Max chars per tool result sent to model",
+   "group": "Research budget",
+   "help": "",
+   "default": 6000,
+   "min": 1000.0,
+   "max": 60000.0,
+   "step": 500.0,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "recovery_on",
+   "kind": "bool",
+   "label": "Tail recovery of unresolved requested fields",
+   "group": "Research budget",
+   "help": "FIELD_RECOVERY_ENABLED",
+   "default": true,
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "recovery_attempts",
+   "kind": "int",
+   "label": "Retry attempts per failed field",
+   "group": "Research budget",
+   "help": "",
+   "default": 2,
+   "min": 0.0,
+   "max": 5.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "recovery_steps",
+   "kind": "int",
+   "label": "Model turns per retry attempt",
+   "group": "Research budget",
+   "help": "",
+   "default": 4,
+   "min": 1.0,
+   "max": 20.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "recovery_total",
+   "kind": "int",
+   "label": "Total recovery turns per vehicle (0 = no cap)",
+   "group": "Research budget",
+   "help": "",
+   "default": 24,
+   "min": 0.0,
+   "max": 400.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "include_level3",
+   "kind": "bool",
+   "label": "Include Level 3 open research",
+   "group": "Research budget",
+   "help": "",
+   "default": false,
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "temperature",
+   "kind": "float",
+   "label": "Temperature",
+   "group": "Research budget",
+   "help": "null = not sent (provider default).",
+   "default": null,
+   "min": 0.0,
+   "max": 1.5,
+   "step": 0.05,
+   "options": [],
+   "nullable": true,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "max_tokens",
+   "kind": "int",
+   "label": "max_tokens per model turn (0 = provider default)",
+   "group": "Research budget",
+   "help": "",
+   "default": 0,
+   "min": 0.0,
+   "max": 131072.0,
+   "step": 1024.0,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "effort_research",
+   "kind": "choice",
+   "label": "Research reasoning effort",
+   "group": "Reasoning effort",
+   "help": "GLM_RESEARCH_REASONING_EFFORT / GLM_REASONING_EFFORT",
+   "default": "high",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "provider default",
+    "low",
+    "medium",
+    "high",
+    "max"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "effort_document_sweep",
+   "kind": "choice",
+   "label": "Document sweep reasoning effort",
+   "group": "Reasoning effort",
+   "help": "GLM_DOCUMENT_SWEEP_REASONING_EFFORT / GLM_REASONING_EFFORT",
+   "default": "low",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "provider default",
+    "low",
+    "medium",
+    "high",
+    "max"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "effort_recovery",
+   "kind": "choice",
+   "label": "Recovery reasoning effort",
+   "group": "Reasoning effort",
+   "help": "GLM_RECOVERY_REASONING_EFFORT / GLM_REASONING_EFFORT",
+   "default": "low",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "provider default",
+    "low",
+    "medium",
+    "high",
+    "max"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "effort_finalizer",
+   "kind": "choice",
+   "label": "Finalizer reasoning effort",
+   "group": "Reasoning effort",
+   "help": "GLM_FINALIZER_REASONING_EFFORT / GLM_REASONING_EFFORT",
+   "default": "low",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "provider default",
+    "low",
+    "medium",
+    "high",
+    "max"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "acquisition_mode",
+   "kind": "choice",
+   "label": "Acquisition mode",
+   "group": "Experiment",
+   "help": "ACQUISITION_MODE. contract = primary research is source acquisition only; legacy = the previous behaviour (benchmark baseline).",
+   "default": "contract",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "contract",
+    "legacy"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "card_choice",
+   "kind": "choice",
+   "label": "Document card",
+   "group": "Experiment",
+   "help": "ACQUISITION_DOCUMENT_CARD (contract research only).",
+   "default": "off",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "off",
+    "on"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "site_map_choice",
+   "kind": "choice",
+   "label": "Importer site map",
+   "group": "Experiment",
+   "help": "SITE_MAP: ranked real URLs from the official sites' sitemaps (discovery only).",
+   "default": "on",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "on",
+    "off"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "grounded_choice",
+   "kind": "choice",
+   "label": "Grounded candidates",
+   "group": "Experiment",
+   "help": "GROUNDED_CANDIDATES: candidates only (adjudication + admission decide).",
+   "default": "on",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "on",
+    "off"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "recovery_mode",
+   "kind": "choice",
+   "label": "Recovery mode",
+   "group": "Experiment",
+   "help": "RECOVERY_MODE. reacquire / cluster / legacy.",
+   "default": "reacquire",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "reacquire",
+    "cluster",
+    "legacy"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "sweep_attempts",
+   "kind": "int",
+   "label": "Document sweep max attempts",
+   "group": "Experiment",
+   "help": "GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS",
+   "default": 1,
+   "min": 1.0,
+   "max": 3.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "sweep_fields",
+   "kind": "int",
+   "label": "Document sweep max fields per chunk",
+   "group": "Experiment",
+   "help": "DOCUMENT_SWEEP_MAX_FIELDS",
+   "default": 12,
+   "min": 1.0,
+   "max": 200.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "sweep_candidates",
+   "kind": "int",
+   "label": "Document sweep max candidates per chunk",
+   "group": "Experiment",
+   "help": "DOCUMENT_SWEEP_MAX_CANDIDATES",
+   "default": 16,
+   "min": 1.0,
+   "max": 500.0,
+   "step": null,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": true
+  },
+  {
+   "name": "price_in",
+   "kind": "float",
+   "label": "USD per 1M input tokens",
+   "group": "Cost reporting",
+   "help": "Used only to report the run's cost.",
+   "default": 0.15,
+   "min": 0.0,
+   "max": 100.0,
+   "step": 0.05,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "price_out",
+   "kind": "float",
+   "label": "USD per 1M output tokens",
+   "group": "Cost reporting",
+   "help": "Used only to report the run's cost.",
+   "default": 0.5,
+   "min": 0.0,
+   "max": 100.0,
+   "step": 0.05,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "price_search",
+   "kind": "float",
+   "label": "USD per GLM web_search call",
+   "group": "Cost reporting",
+   "help": "Used only to report the run's cost.",
+   "default": 0.01,
+   "min": 0.0,
+   "max": 10.0,
+   "step": 0.005,
+   "options": [],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  },
+  {
+   "name": "data_source",
+   "kind": "choice",
+   "label": "Level 1.5 source",
+   "group": "Level 1.5 data",
+   "help": "auto = the database when DATABASE_URL is set, else the frozen snapshot.",
+   "default": "auto",
+   "min": null,
+   "max": null,
+   "step": null,
+   "options": [
+    "auto",
+    "database",
+    "snapshot"
+   ],
+   "nullable": false,
+   "allow_empty": false,
+   "pinned_by_named_profile": false
+  }
+ ],
+ "groups": [
+  "Model",
+  "Concurrency",
+  "Research budget",
+  "Reasoning effort",
+  "Experiment",
+  "Cost reporting",
+  "Level 1.5 data"
+ ],
+ "server_controlled": [
+  {
+   "name": "base_url",
+   "label": "API base URL",
+   "reason": "Provider endpoint: server configuration (GLM_BASE_URL)."
+  },
+  {
+   "name": "chat_path",
+   "label": "Chat endpoint",
+   "reason": "Provider endpoint: server configuration (GLM_CHAT_PATH)."
+  },
+  {
+   "name": "search_path",
+   "label": "GLM search endpoint",
+   "reason": "Provider endpoint: server configuration (GLM_SEARCH_PATH)."
+  },
+  {
+   "name": "api_key",
+   "label": "API key",
+   "reason": "Credential: GLM_API_KEY is read from the server environment only."
+  },
+  {
+   "name": "dsn",
+   "label": "Level 1.5 database",
+   "reason": "Credential: DATABASE_URL is read from the server environment only."
+  },
+  {
+   "name": "extra_raw",
+   "label": "Extra request JSON",
+   "reason": "Arbitrary payload merged into every chat request: server configuration (GLM_EXTRA_BODY)."
+  },
+  {
+   "name": "chat_limits",
+   "label": "Model in-flight requests",
+   "reason": "Process-wide: RunManager.start applies it to the shared ConcurrencyController, so it is not a per-run setting."
+  },
+  {
+   "name": "search_limit",
+   "label": "Search-Prime in-flight requests",
+   "reason": "Process-wide: RunManager.start applies it to the shared ConcurrencyController, so it is not a per-run setting."
+  }
+ ],
+ "concurrency": {
+  "research_model": {
+   "model": "glm-5.3-flash",
+   "current": 48,
+   "maximum": 50,
+   "provider_limit": 50
+  },
+  "finalizer_model": null,
+  "search": {
+   "current": 5,
+   "provider_limit": 5
+  },
+  "note": "Shared by every run in this server process; not a per-run setting."
+ },
+ "named_profiles": [
+  {
+   "id": "production",
+   "label": "Production"
+  },
+  {
+   "id": "benchmark_baseline",
+   "label": "Benchmark: Baseline"
+  },
+  {
+   "id": "benchmark_treatment",
+   "label": "Benchmark: Treatment"
+  },
+  {
+   "id": "benchmark_treatment_card",
+   "label": "Benchmark: Treatment + card"
+  }
+ ],
+ "profile_note": "With a named run profile the settings marked pinned come from the profile (code defaults), not from these values; the Custom profile uses them.",
+ "env_overrides": []
+}

@@ -241,6 +241,7 @@ def test_a_series_runs_the_arms_interleaved_one_after_another(client, ctx, gate)
     assert client.get(f"/api/series/{sid}/export/series.json").status_code == 404
     listing = client.get("/api/series").json()
     assert listing["total"] == 1 and listing["executing"] is None and listing["series"][0]["series_id"] == sid
+    assert [a["id"] for a in listing["arms"]] == list(ARMS) and listing["default_arms"] == [BASELINE, TREATMENT]
 
 
 def test_series_idempotency_one_at_a_time_and_cancellation(client, ctx, gate):

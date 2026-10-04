@@ -145,8 +145,9 @@ repository, the pipeline state behind the live dashboard (`src/runstate/pipeline
 (`src/runstate/failures.py`), the result loaders (`src/storage/run_loader.py`), the MCP's event reader and redaction
 (`src/mcp_server`), and the dashboard's settings, target selection and export serializers, which now live in
 framework-neutral modules (`src/run_settings.py`, `src/research_targets.py`, `src/exports.py`). It never imports
-Streamlit. A run started through the API uses exactly the settings an untouched dashboard would (the server's
-environment; a client cannot pass a model, key or provider setting) and is gated by the same configuration checks.
+Streamlit. A run started through the API uses the settings an untouched dashboard would (the server's environment),
+optionally with typed **per-run overrides** of the dashboard's non-secret Advanced settings (see below), and is gated
+by the same configuration checks.
 
 **One process per data directory.** Each process reconciles runs it does not own as `INTERRUPTED` (a redeploy
 leaves orphans; see *Runs, persistence and reconnects*). Do not run the API and the dashboard against the **same**
@@ -179,11 +180,34 @@ production the API is open, like the dashboard.
 | `POST /api/runs/{run_id}/vehicles/{record_id}/restart` | a new One-vehicle run with the run's profile (only for a vehicle that did not complete) |
 | `GET /api/config/status` | configuration checks, models, search backend, storage, access control (presence only, never secrets) |
 | `GET /api/vehicles` | the benchmark vehicles and manufacturers a run can target |
+| `GET /api/run-settings` | the per-run settings contract: defaults, ranges, options, which settings a named profile pins, what stays server-controlled |
+| `GET /api/series`, `GET /api/series/{id}` | A/B series history / state with `series_progress` (runs/_series/&lt;id&gt;/series.json) |
+| `POST /api/series` | start an A/B series: `{"record_ids": [...], "repeats": 1-5, "arms": [ARMS...], "idempotency_key"}` (409 while one runs) |
+| `POST /api/series/{id}/cancel` | cancel the running run of the series and every planned one (202) |
+| `GET /api/series/{id}/export/{file}` | benchmark.json, per_vehicle.csv, parser_gaps.jsonl, binding_replay_items.jsonl of a finished series |
+| `GET /api/runs/{run_id}/documents?record_id=` | fetched documents: title, URL, authority, market, type, HTTP status, size, fields they supplied |
+| `GET /api/documents/{doc_id}/text?offset=&limit=` | a cached document's text, in character pages |
+| `GET /api/documents/{doc_id}/structure?run_id=&record_id=` | tables, DOM pairs, Document Variant Map (computed in memory for a run's target) |
+| `GET /api/runs/{run_id}/binding-replay?record_id=&field=` | Binding Replay (recorded vs today's binding), never persisted |
+| `GET /api/runs/{run_id}/diagnostics` | the benchmark export's diagnostics for the run (aggregate + per-vehicle rows), read-only |
 
 Errors are `{"error": {"code", "message", ...}}`: 401 unauthorized, 404 unknown run / vehicle, 409 conflicting run
 (`existing_run_id`) or unavailable action, 422 invalid input, 503 configuration / provider / Level 1.5 unavailable,
 500 unexpected (logged server-side; no traceback in the response). Every response is redacted. Interactive docs:
-`/docs`. Not exposed yet: A/B series and per-run setting overrides (the dashboard's Advanced settings).
+`/docs`.
+
+**Per-run settings.** `POST /api/runs` takes an optional `settings` object: a strict allowlist generated from
+`src/run_settings.py` (`RUN_OVERRIDES`, the one source of truth) of the dashboard's non-secret Advanced settings
+(models, search backend / engine, attempts, timeout, vehicle workers, research budget, recovery, Level 3,
+temperature, max_tokens, per-phase reasoning effort, experiment switches, document sweep limits, cost-reporting
+prices, Level 1.5 source). They go through the same `assemble_settings` / `build_research_request` /
+`settings_checks` path as the sidebar, for that one run only. Never accepted: credentials (`GLM_API_KEY`,
+`DATABASE_URL`, tokens), provider endpoints, the extra request JSON, and the in-flight request limits
+(`RunManager.start` applies those to the process-wide `ConcurrencyController`, so they are not per-run). A/B series
+and restarts use the server's settings, as before.
+
+Documents, Binding Replay and run diagnostics reuse the read-only MCP implementations (`mcp_server.tools.Observer`)
+with their id validation, path containment, paging and redaction; nothing they compute is written to disk.
 
 ```bash
 export TRIPY_URL=http://127.0.0.1:8000
@@ -202,6 +226,46 @@ curl -s -H "Authorization: Bearer $TOKEN" -o candidates.csv "$TRIPY_URL/api/runs
 
 With `TRIPY_MCP_TOKEN` set, the API also serves the read-only MCP at `/mcp/<TRIPY_MCP_TOKEN>` with the same route and
 lifespan as the Streamlit launcher (`tripy_server.py`); production keeps serving it from Streamlit for now.
+
+## React research workspace (frontend/) — migration step 2
+
+A Streamlit-independent UI (React + TypeScript + Vite + Tailwind) over the HTTP API above. Streamlit stays available
+as the fallback and Railway still runs it; serving `frontend/dist` from FastAPI is the next step.
+
+```
+React workspace (frontend/) ──► FastAPI (src/api) ──► the process-wide RunManager ──► the research engine / run state
+```
+
+> **One process per data directory.** Run the API against a dedicated development `TRIPY_DATA_DIR`, or give the
+> dashboard and the API separate data directories. Two processes on one `TRIPY_DATA_DIR` reconcile each other's
+> active runs as `INTERRUPTED`.
+
+```bash
+# backend (a dedicated dev data directory)
+TRIPY_DATA_DIR=.tripy-data-api uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+# frontend (http://localhost:5173; /api and /health are proxied to :8000, so no CORS is needed)
+cd frontend && npm install && npm run dev
+# offline end-to-end: the fake provider drives the real engine (no key, no internet)
+python scripts/fake_glm_server.py --port 8765 --delay 1
+GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash NO_PROXY=127.0.0.1,localhost \
+  TRIPY_DATA_DIR=.tripy-data-api uvicorn src.api.app:app --port 8000
+```
+
+| Command (in `frontend/`) | |
+| --- | --- |
+| `npm run dev` | Vite dev server with the API proxy (`TRIPY_API_URL` overrides the backend URL) |
+| `npm test` | Vitest + React Testing Library (HTTP mocked; no GLM / search calls) |
+| `npm run typecheck` | TypeScript, strict |
+| `npm run build` | production bundle in `frontend/dist` (client-side routes; the server must answer every non-API path with `index.html`) |
+
+Pages: Dashboard, New Research (one / manufacturer / whole benchmark, run profile, per-run settings), Runs, run
+detail (pipeline, live timeline, results, candidates, evidence, documents, Binding Replay, diagnostics, technical,
+exports, failure recovery, cancel; a vehicle list for multi-vehicle runs), A/B Series (create, progress, cancel,
+benchmark downloads), Diagnostics and Settings. Access in production: the unlock screen takes
+`TRIPY_ACCESS_TOKEN`, keeps it in this tab's `sessionStorage` only and sends it as a Bearer header; a 401 clears it
+and returns to the unlock screen. Exports are fetched through the authenticated client and handed to the browser
+as downloads (the token never appears in a URL). Live data is HTTP polling: progress every 2 s and events every
+~1.75 s with the backend's line cursor while a run is active, nothing once it is terminal. See `frontend/README.md`.
 
 ## Configuration
 

@@ -1,0 +1,48 @@
+{
+ "vehicles": [
+  {
+   "record_id": "38626",
+   "label": "#1 טויוטה COROLLA 2024 BUSINESS EDI (38626)",
+   "title": "טויוטה COROLLA · 2024 · BUSINESS EDI",
+   "manufacturer": "טויוטה",
+   "model": "COROLLA",
+   "year": 2024,
+   "trim": "BUSINESS EDI",
+   "ordinal": 1
+  },
+  {
+   "record_id": "36593",
+   "label": "#2 טויוטה RAV 4 2025 PHEV PREMIUM (36593)",
+   "title": "טויוטה RAV 4 · 2025 · PHEV PREMIUM",
+   "manufacturer": "טויוטה",
+   "model": "RAV 4",
+   "year": 2025,
+   "trim": "PHEV PREMIUM",
+   "ordinal": 2
+  },
+  {
+   "record_id": "101122",
+   "label": "#44 אקספנג G6 2026 MAX (101122)",
+   "title": "אקספנג G6 · 2026 · MAX",
+   "manufacturer": "אקספנג",
+   "model": "G6",
+   "year": 2026,
+   "trim": "MAX",
+   "ordinal": 44
+  },
+  {
+   "record_id": "101136",
+   "label": "#45 אקספנג G6 2026 CORE (101136)",
+   "title": "אקספנג G6 · 2026 · CORE",
+   "manufacturer": "אקספנג",
+   "model": "G6",
+   "year": 2026,
+   "trim": "CORE",
+   "ordinal": 45
+  }
+ ],
+ "manufacturers": [
+  "אקספנג",
+  "טויוטה"
+ ]
+}

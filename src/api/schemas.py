@@ -466,6 +466,9 @@ class SeriesState(BaseModel):
 class SeriesList(BaseModel):
     total: int
     executing: str | None = Field(None, description="the series this process is driving now (one at a time)")
+    arms: list[ProfileRef] = Field(description="the arms a series may run (run_profiles.ARMS, in run order)")
+    default_arms: list[str] = Field(description="the dashboard's default selection")
+    max_repeats: int = 5
     series: list[SeriesState]
 
 

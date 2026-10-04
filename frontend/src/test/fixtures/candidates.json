@@ -1,0 +1,334 @@
+{
+ "run_id": "SYNTH-pr40",
+ "record_id": "101122",
+ "field": null,
+ "summary": {
+  "fields_with_candidates": [
+   "ac_max_charging_power_kw",
+   "acceleration_0_100_s",
+   "cargo_volume_l",
+   "curb_weight_kg",
+   "dc_max_charging_power_kw",
+   "electric_range_km",
+   "height_mm",
+   "vehicle_warranty",
+   "warranty_km",
+   "warranty_years",
+   "wheelbase_mm"
+  ],
+  "fields_without_candidates": [],
+  "candidate_count": 21,
+  "grounded_candidate_count": 0,
+  "fields_with_grounded_candidates": [],
+  "documents": 4,
+  "applicable_fields": 11,
+  "candidate_field_coverage_pct": 100.0
+ },
+ "fields": [
+  {
+   "field": "ac_max_charging_power_kw",
+   "group": null,
+   "state": "variant_not_exact",
+   "evidence_ids": [
+    "e4"
+   ],
+   "candidates": [
+    {
+     "origin": "line",
+     "block": "הספק טעינת AC מרבי 11 kW",
+     "field": "ac_max_charging_power_kw",
+     "value": 11,
+     "raw_value": "11",
+     "unit": "kW",
+     "raw_unit": "kw",
+     "quote": "הספק טעינת AC מרבי 11 kW",
+     "matched_alias": "הספק טעינת AC",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.88,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "field": "acceleration_0_100_s",
+   "group": null,
+   "state": "variant_not_exact",
+   "evidence_ids": [
+    "e8"
+   ],
+   "candidates": [
+    {
+     "origin": "table",
+     "block": "table:0:row:3",
+     "field": "acceleration_0_100_s",
+     "value": 6.6,
+     "raw_value": "6.6",
+     "unit": "s",
+     "raw_unit": "שניות",
+     "quote": "תאוצה 0-100 | 6.6 שניות",
+     "matched_alias": "תאוצה 0-100",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 3,
+     "column_identity_unknown": true,
+     "occurrences": 2,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "table",
+     "block": "table:0:row:3",
+     "field": "acceleration_0_100_s",
+     "value": 4.1,
+     "raw_value": "4.1",
+     "unit": "s",
+     "raw_unit": "שניות",
+     "quote": "תאוצה 0-100 | 4.1 שניות",
+     "matched_alias": "תאוצה 0-100",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 3,
+     "column_identity_unknown": true,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "field": "cargo_volume_l",
+   "group": null,
+   "state": "foreign_market_only",
+   "evidence_ids": [
+    "e3",
+    "e14"
+   ],
+   "candidates": [
+    {
+     "origin": "line",
+     "block": "נפח תא מטען 571 ליטר",
+     "field": "cargo_volume_l",
+     "value": 571,
+     "raw_value": "571",
+     "unit": "l",
+     "raw_unit": "ליטר",
+     "quote": "נפח תא מטען 571 ליטר",
+     "matched_alias": "נפח תא מטען",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.85,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "line",
+     "block": "בסיס הגלגלים 2,890 מ\"מ ותא המטען 571 ליטר.",
+     "field": "cargo_volume_l",
+     "value": 571,
+     "raw_value": "571",
+     "unit": "l",
+     "raw_unit": "ליטר",
+     "quote": "בסיס הגלגלים 2,890 מ\"מ ותא המטען 571 ליטר.",
+     "matched_alias": "תא המטען",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.85,
+     "occurrences": 1,
+     "document_id": "d_e72c24d9a7826fe7",
+     "source_url": "https://www.carnews.co.il/xpeng-g6-review",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "line",
+     "block": "Boot space 571 litres",
+     "field": "cargo_volume_l",
+     "value": 571,
+     "raw_value": "571",
+     "unit": "l",
+     "raw_unit": "litres",
+     "quote": "Boot space 571 litres",
+     "matched_alias": "boot space",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.85,
+     "occurrences": 1,
+     "document_id": "d_647a84be06077771",
+     "source_url": "https://www.xpeng.com/de-de/g6/specs"
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "field": "curb_weight_kg",
+   "group": null,
+   "state": "foreign_market_only",
+   "evidence_ids": [
+    "e7",
+    "e16"
+   ],
+   "candidates": [
+    {
+     "origin": "table",
+     "block": "table:0:row:2",
+     "field": "curb_weight_kg",
+     "value": 2100,
+     "raw_value": "2,100",
+     "unit": "kg",
+     "raw_unit": "ק\"ג",
+     "quote": "משקל עצמי | 2,100 ק\"ג",
+     "matched_alias": "משקל עצמי",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 2,
+     "column_identity_unknown": true,
+     "occurrences": 2,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "table",
+     "block": "table:0:row:2",
+     "field": "curb_weight_kg",
+     "value": 2190,
+     "raw_value": "2,190",
+     "unit": "kg",
+     "raw_unit": "ק\"ג",
+     "quote": "משקל עצמי | 2,190 ק\"ג",
+     "matched_alias": "משקל עצמי",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 2,
+     "column_identity_unknown": true,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "line",
+     "block": "Kerb weight 2,190 kg",
+     "field": "curb_weight_kg",
+     "value": 2190,
+     "raw_value": "2,190",
+     "unit": "kg",
+     "raw_unit": "kg",
+     "quote": "Kerb weight 2,190 kg",
+     "matched_alias": "kerb weight",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.85,
+     "occurrences": 1,
+     "document_id": "d_647a84be06077771",
+     "source_url": "https://www.xpeng.com/de-de/g6/specs"
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "field": "dc_max_charging_power_kw",
+   "group": null,
+   "state": "variant_not_exact",
+   "evidence_ids": [
+    "e5"
+   ],
+   "candidates": [
+    {
+     "origin": "line",
+     "block": "הספק טעינה מהירה עד 451 kW",
+     "field": "dc_max_charging_power_kw",
+     "value": 451,
+     "raw_value": "451",
+     "unit": "kW",
+     "raw_unit": "kw",
+     "quote": "הספק טעינה מהירה עד 451 kW",
+     "matched_alias": "הספק טעינה מהירה",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.88,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "field": "electric_range_km",
+   "group": null,
+   "state": "foreign_market_only",
+   "evidence_ids": [
+    "e6",
+    "e15"
+   ],
+   "candidates": [
+    {
+     "origin": "table",
+     "block": "table:0:row:1",
+     "field": "electric_range_km",
+     "value": 570,
+     "raw_value": "570",
+     "unit": "km",
+     "raw_unit": "ק\"מ",
+     "quote": "טווח נסיעה (WLTP) | 570 ק\"מ",
+     "matched_alias": "טווח נסיעה",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 1,
+     "column_identity_unknown": true,
+     "occurrences": 2,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "table",
+     "block": "table:0:row:1",
+     "field": "electric_range_km",
+     "value": 550,
+     "raw_value": "550",
+     "unit": "km",
+     "raw_unit": "ק\"מ",
+     "quote": "טווח נסיעה (WLTP) | 550 ק\"מ",
+     "matched_alias": "טווח נסיעה",
+     "extraction_method": "table_row",
+     "parser_confidence": 0.95,
+     "table_index": 0,
+     "row_index": 1,
+     "column_identity_unknown": true,
+     "occurrences": 1,
+     "document_id": "d_c21f8ddbe51c5f2b",
+     "source_url": "https://www.heyxpeng.co.il/g6",
+     "market_hint": "IL"
+    },
+    {
+     "origin": "line",
+     "block": "WLTP range 550 km",
+     "field": "electric_range_km",
+     "value": 550,
+     "raw_value": "550",
+     "unit": "km",
+     "raw_unit": "km",
+     "quote": "WLTP range 550 km",
+     "matched_alias": "wltp range",
+     "extraction_method": "alias_proximity",
+     "parser_confidence": 0.85,
+     "occurrences": 1,
+     "document_id": "d_647a84be06077771",
+     "source_url": "https://www.xpeng.com/de-de/g6/specs"
+    }
+   ],
+   "rejected": []
+  }
+ ]
+}

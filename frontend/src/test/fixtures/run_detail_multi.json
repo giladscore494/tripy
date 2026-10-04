@@ -1,0 +1,438 @@
+{
+ "run_id": "20261004T224549Z-glm-5.3-flash-manufacturer",
+ "label": "אאודי · 7 vehicles",
+ "scope": "Manufacturer",
+ "status": "COMPLETED",
+ "status_label": "Completed",
+ "stage": null,
+ "profile": "production",
+ "record_ids": [
+  "13628",
+  "94995",
+  "15400"
+ ],
+ "created_at": "2026-10-04T22:45:49.850+00:00",
+ "updated_at": "2026-10-04T22:46:09.717+00:00",
+ "started_at": "2026-10-04T22:45:49.852+00:00",
+ "finished_at": "2026-10-04T22:46:09.717+00:00",
+ "active": false,
+ "executing": false,
+ "cancel_requested": false,
+ "legacy": false,
+ "elapsed_s": 19.9,
+ "request": {
+  "research_model": "glm-5.3-flash",
+  "finalizer_model": "glm-5.3-flash",
+  "search_backend": "glm",
+  "workers": 7,
+  "level15_source": "snapshot",
+  "prompt_version": "5b0d58beef75",
+  "run_profile": "production",
+  "acquisition_mode": "contract",
+  "acquisition_document_card": false
+ },
+ "heartbeat_at": "2026-10-04T22:46:05.410+00:00",
+ "error": null,
+ "notes": [],
+ "jobs": [
+  {
+   "kind": "research",
+   "started_at": "2026-10-04T22:45:49.852+00:00",
+   "finished_at": "2026-10-04T22:46:09.717+00:00",
+   "status": "COMPLETED"
+  }
+ ],
+ "terminal": true,
+ "completed": true,
+ "progress": {
+  "vehicles_total": 7,
+  "vehicles_finished": 7,
+  "vehicles_completed": 7
+ },
+ "vehicles": [
+  {
+   "record_id": "13628",
+   "title": "אאודי A3 · 2024 · I E 40 ADVAN",
+   "status": "COMPLETED",
+   "engine_status": "completed",
+   "stage": "finalization",
+   "error": null,
+   "pipeline": {
+    "current_stage": null,
+    "activity": null,
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "started_at": "2026-10-04T22:45:50.783+00:00",
+    "last_event_at": "2026-10-04T22:46:07.964+00:00",
+    "finished_at": "2026-10-04T22:46:07.964+00:00",
+    "events_seen": 101,
+    "research_model": "glm-5.3-flash",
+    "finalizer_model": "glm-5.3-flash",
+    "stages": [
+     {
+      "key": "acquisition",
+      "label": "Source acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 9.0,
+      "note": null
+     },
+     {
+      "key": "harvest",
+      "label": "Deterministic harvest",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 0.0,
+      "note": null
+     },
+     {
+      "key": "sweep",
+      "label": "Document sweep",
+      "state": "skipped",
+      "state_label": "Skipped",
+      "duration_s": 0.0,
+      "note": "skipped (no_cached_documents)"
+     },
+     {
+      "key": "recovery",
+      "label": "Re-acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 4.9,
+      "note": null
+     },
+     {
+      "key": "finalization",
+      "label": "Finalization",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 3.2,
+      "note": null
+     }
+    ],
+    "counters": {
+     "sources": 0,
+     "useful_sources": 0,
+     "target_market_sources": 0,
+     "official_sources": 0,
+     "official_urls_discovered": 0,
+     "candidates": 0,
+     "candidate_fields": 0,
+     "applicable_fields": 45,
+     "resolved_fields": 0,
+     "fields_with_evidence": 0,
+     "conflicting_fields": 0,
+     "research_turns": 2,
+     "searches": 3,
+     "model_calls": 10,
+     "model_calls_by_stage": {
+      "acquisition": 2,
+      "recovery": 8
+     },
+     "evidence_admitted": 0,
+     "evidence_rejected": 0,
+     "timeouts": 0,
+     "rate_limited": 0
+    },
+    "errors": []
+   },
+   "failure": null,
+   "result_available": true,
+   "report": {
+    "record_id": "13628",
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "primary_research_stop_reason": "model_finished",
+    "total_duration_s": 18.07,
+    "durations_s": {
+     "acquisition": 9.0,
+     "harvest": 0.0,
+     "sweep": 0.0,
+     "recovery": 4.9,
+     "finalization": 3.2
+    },
+    "search_calls": 3,
+    "model_calls": 10,
+    "model_calls_by_stage": {
+     "acquisition": 2,
+     "sweep": 0,
+     "recovery": 8,
+     "finalization": 0
+    },
+    "research_turns": 2,
+    "fetched_documents": 0,
+    "useful_documents": 0,
+    "official_documents": 0,
+    "official_urls_discovered": 0,
+    "target_market_documents": 0,
+    "candidate_count": 0,
+    "candidate_fields": 0,
+    "evidence_admitted": 0,
+    "evidence_rejected": 0,
+    "applicable_fields": 45,
+    "resolved_fields": 0,
+    "fields_with_value": 0,
+    "cost_usd": 0.03255,
+    "cost_complete": true,
+    "timeouts": 0,
+    "note": "observational telemetry; resolved = evidence-backed field state, not a correctness score"
+   }
+  },
+  {
+   "record_id": "94995",
+   "title": "אאודי Q3 · 2024 · S LINE",
+   "status": "COMPLETED",
+   "engine_status": "completed",
+   "stage": "finalization",
+   "error": null,
+   "pipeline": {
+    "current_stage": null,
+    "activity": null,
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "started_at": "2026-10-04T22:45:50.777+00:00",
+    "last_event_at": "2026-10-04T22:46:04.798+00:00",
+    "finished_at": "2026-10-04T22:46:04.798+00:00",
+    "events_seen": 94,
+    "research_model": "glm-5.3-flash",
+    "finalizer_model": "glm-5.3-flash",
+    "stages": [
+     {
+      "key": "acquisition",
+      "label": "Source acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 6.5,
+      "note": null
+     },
+     {
+      "key": "harvest",
+      "label": "Deterministic harvest",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 0.0,
+      "note": null
+     },
+     {
+      "key": "sweep",
+      "label": "Document sweep",
+      "state": "skipped",
+      "state_label": "Skipped",
+      "duration_s": 0.0,
+      "note": "skipped (no_cached_documents)"
+     },
+     {
+      "key": "recovery",
+      "label": "Re-acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 4.3,
+      "note": null
+     },
+     {
+      "key": "finalization",
+      "label": "Finalization",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 3.2,
+      "note": null
+     }
+    ],
+    "counters": {
+     "sources": 0,
+     "useful_sources": 0,
+     "target_market_sources": 0,
+     "official_sources": 0,
+     "official_urls_discovered": 0,
+     "candidates": 0,
+     "candidate_fields": 0,
+     "applicable_fields": 35,
+     "resolved_fields": 0,
+     "fields_with_evidence": 0,
+     "conflicting_fields": 0,
+     "research_turns": 2,
+     "searches": 3,
+     "model_calls": 9,
+     "model_calls_by_stage": {
+      "acquisition": 2,
+      "recovery": 7
+     },
+     "evidence_admitted": 0,
+     "evidence_rejected": 0,
+     "timeouts": 0,
+     "rate_limited": 0
+    },
+    "errors": []
+   },
+   "failure": null,
+   "result_available": true,
+   "report": {
+    "record_id": "94995",
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "primary_research_stop_reason": "model_finished",
+    "total_duration_s": 14.91,
+    "durations_s": {
+     "acquisition": 6.5,
+     "harvest": 0.0,
+     "sweep": 0.0,
+     "recovery": 4.3,
+     "finalization": 3.2
+    },
+    "search_calls": 3,
+    "model_calls": 9,
+    "model_calls_by_stage": {
+     "acquisition": 2,
+     "sweep": 0,
+     "recovery": 7,
+     "finalization": 0
+    },
+    "research_turns": 2,
+    "fetched_documents": 0,
+    "useful_documents": 0,
+    "official_documents": 0,
+    "official_urls_discovered": 0,
+    "target_market_documents": 0,
+    "candidate_count": 0,
+    "candidate_fields": 0,
+    "evidence_admitted": 0,
+    "evidence_rejected": 0,
+    "applicable_fields": 35,
+    "resolved_fields": 0,
+    "fields_with_value": 0,
+    "cost_usd": 0.032295,
+    "cost_complete": true,
+    "timeouts": 0,
+    "note": "observational telemetry; resolved = evidence-backed field state, not a correctness score"
+   }
+  },
+  {
+   "record_id": "15400",
+   "title": "אאודי Q7 · 2025 · S LINE",
+   "status": "COMPLETED",
+   "engine_status": "completed",
+   "stage": "finalization",
+   "error": null,
+   "pipeline": {
+    "current_stage": null,
+    "activity": null,
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "started_at": "2026-10-04T22:45:50.797+00:00",
+    "last_event_at": "2026-10-04T22:46:09.664+00:00",
+    "finished_at": "2026-10-04T22:46:09.664+00:00",
+    "events_seen": 101,
+    "research_model": "glm-5.3-flash",
+    "finalizer_model": "glm-5.3-flash",
+    "stages": [
+     {
+      "key": "acquisition",
+      "label": "Source acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 10.7,
+      "note": null
+     },
+     {
+      "key": "harvest",
+      "label": "Deterministic harvest",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 0.0,
+      "note": null
+     },
+     {
+      "key": "sweep",
+      "label": "Document sweep",
+      "state": "skipped",
+      "state_label": "Skipped",
+      "duration_s": 0.0,
+      "note": "skipped (no_cached_documents)"
+     },
+     {
+      "key": "recovery",
+      "label": "Re-acquisition",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 4.9,
+      "note": null
+     },
+     {
+      "key": "finalization",
+      "label": "Finalization",
+      "state": "done",
+      "state_label": "Done",
+      "duration_s": 3.2,
+      "note": null
+     }
+    ],
+    "counters": {
+     "sources": 0,
+     "useful_sources": 0,
+     "target_market_sources": 0,
+     "official_sources": 0,
+     "official_urls_discovered": 0,
+     "candidates": 0,
+     "candidate_fields": 0,
+     "applicable_fields": 45,
+     "resolved_fields": 0,
+     "fields_with_evidence": 0,
+     "conflicting_fields": 0,
+     "research_turns": 2,
+     "searches": 3,
+     "model_calls": 10,
+     "model_calls_by_stage": {
+      "acquisition": 2,
+      "recovery": 8
+     },
+     "evidence_admitted": 0,
+     "evidence_rejected": 0,
+     "timeouts": 0,
+     "rate_limited": 0
+    },
+    "errors": []
+   },
+   "failure": null,
+   "result_available": true,
+   "report": {
+    "record_id": "15400",
+    "engine_status": "completed",
+    "stop_reason": "model_finished",
+    "primary_research_stop_reason": "model_finished",
+    "total_duration_s": 19.77,
+    "durations_s": {
+     "acquisition": 10.7,
+     "harvest": 0.0,
+     "sweep": 0.0,
+     "recovery": 4.9,
+     "finalization": 3.2
+    },
+    "search_calls": 3,
+    "model_calls": 10,
+    "model_calls_by_stage": {
+     "acquisition": 2,
+     "sweep": 0,
+     "recovery": 8,
+     "finalization": 0
+    },
+    "research_turns": 2,
+    "fetched_documents": 0,
+    "useful_documents": 0,
+    "official_documents": 0,
+    "official_urls_discovered": 0,
+    "target_market_documents": 0,
+    "candidate_count": 0,
+    "candidate_fields": 0,
+    "evidence_admitted": 0,
+    "evidence_rejected": 0,
+    "applicable_fields": 45,
+    "resolved_fields": 0,
+    "fields_with_value": 0,
+    "cost_usd": 0.03255,
+    "cost_complete": true,
+    "timeouts": 0,
+    "note": "observational telemetry; resolved = evidence-backed field state, not a correctness score"
+   }
+  }
+ ]
+}

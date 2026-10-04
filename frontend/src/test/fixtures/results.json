@@ -1,0 +1,157 @@
+{
+ "run_id": "20261004T224845Z-glm-5.3-flash-one",
+ "available": true,
+ "reason": null,
+ "vehicles": [
+  {
+   "record_id": "15400",
+   "title": "אאודי Q7 · 2025 · S LINE",
+   "engine_status": "completed",
+   "result_source": "result.json",
+   "synthesized": false,
+   "has_output": true,
+   "stop_reason": "model_finished",
+   "error": null,
+   "recovered": false,
+   "duration_s": 14.82,
+   "cost": {
+    "tokens_usd": 0.002805,
+    "web_search_usd": 0.0,
+    "total_usd": 0.002805
+   },
+   "research_model": "glm-5.3-flash",
+   "finalizer_model": "glm-5.3-flash",
+   "prompt_version": "5b0d58beef75",
+   "target_market": "IL",
+   "finalization": {
+    "phase": "finalization",
+    "model": "glm-5.3-flash",
+    "mode": "deterministic",
+    "version": "final-assembly-v1",
+    "started_at": "2026-10-04T22:48:59.602+00:00",
+    "evidence_items": 0,
+    "states": {
+     "missing": 45
+    },
+    "inconsistent_fields": [],
+    "status": "assembled",
+    "error": null,
+    "api_error": null,
+    "parse_note": "deterministic",
+    "narration": {
+     "status": "rejected",
+     "keys_used": [],
+     "unsupported_numbers": [
+      "6",
+      "2026 MAX"
+     ],
+     "model_calls": 1,
+     "prompt_tokens": 1200,
+     "completion_tokens": 150,
+     "total_tokens": 1350,
+     "truncated_calls": 0,
+     "truncation_retries": 0
+    },
+    "finished_at": "2026-10-04T22:49:00.607+00:00",
+    "latency_ms": 1005,
+    "model_calls": 1,
+    "prompt_tokens": 1200,
+    "completion_tokens": 150,
+    "total_tokens": 1350
+   },
+   "summary": "Assembled in code from 0 admitted evidence item(s): 0 of 45 applicable field(s) resolved. Open: 45 missing.",
+   "fields": [
+    {
+     "field": "torque_nm",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "acceleration_0_100_s",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "top_speed_kmh",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "fuel_consumption_combined_l_100km",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "energy_consumption_kwh_100km",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "battery_gross_kwh",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "battery_usable_kwh",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    },
+    {
+     "field": "electric_range_km",
+     "value": null,
+     "unit": null,
+     "market": null,
+     "provenance": "unresolved",
+     "notes": "missing",
+     "evidence_ids": [],
+     "state": "missing"
+    }
+   ],
+   "conflicts": [],
+   "additional_findings": [],
+   "evidence_admission": {
+    "admitted": 0,
+    "rejected": 0,
+    "rejected_by_reason": {},
+    "admitted_by_variant_match": {},
+    "admitted_by_binding_level": {},
+    "admitted_by_source_authority": {}
+   }
+  }
+ ]
+}
