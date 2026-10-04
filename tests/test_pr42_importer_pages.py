@@ -174,8 +174,9 @@ def test_catalog_trim_aliases_and_longest_match():
         return [m["trim"] for m in catalog_trim_matches(text, trims, IDENTITY)]
     assert named("G6 AWD Core Performance/Black Edition") == ["CORE PERF", "BLACKEDITION"]
     assert named("Performance TB") == ["PERF TB"] and named("RWD Standard Range") == ["STAND RANGE"]
-    assert named("Long Range Pro") == ["LR PR"]                                  # explicit alias + longest match
-    assert named("Long Range Price") == [] and named("Long Range Promo") == []               # no 2-letter prefix guesses
+    assert named("Long Range Pro") == ["LR PR"]                                  # scoped full-trim alias
+    assert named("Long Range Price") == ["LONG RANGE"] and named("Long Range Promo") == ["LONG RANGE"]
+    assert "LR PR" not in named("Long Range Price") and "LR PR" not in named("Long Range Promo")
     assert named("Core Performance") == ["CORE PERF"]                            # never also CORE
     assert named("G6 RWD Core/Core+‎") == ["CORE", "CORE PLUS"]             # "+" is "plus"
     assert named('Core+ 20" Wheels') == ["CORE PLUS 20"]
