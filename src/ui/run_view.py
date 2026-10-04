@@ -21,7 +21,8 @@ from ..storage.cache import DocumentCache
 from ..storage.run_loader import document_text, run_document_metas
 from ..storage.run_log import load_events, load_input
 from . import labels_he as he
-from .live_state import candidate_table_rows, feed_line
+from ..exports import candidate_rows, candidates_csv
+from .live_state import feed_line
 
 STATUS_ICON = {"completed": "✅", "max_steps_finalized": "⏱️", "no_new_research_finalized": "⏱️",
                "acquisition_sufficient_finalized": "⏱️", "under_acquired_finalized": "⏱️",
@@ -421,8 +422,6 @@ def render_vehicle(result: dict, label: str, runs_dir: Path, cache: DocumentCach
 def render_candidates(result: dict, runs_dir: Path) -> None:
     """Deterministic candidate matrix (Hebrew table) + layered-pipeline metrics + raw candidate JSON."""
     events = load_events(runs_dir, result.get("batch_id", ""), result.get("record_id", ""))
-    started = trace.first_event(events, "run_started") or {}
-    specs = started.get("requested_field_specs") or []
     summary = result.get("candidate_summary") or {}
     st.caption("מועמדים הם ערכים שהקוד איתר במסמכים. הם אינם ראיות ואינם משנים את מצב השדה; רק ראיה שנשמרה "
                "על ידי המודל נחשבת. כיסוי מועמדים אינו מדד לנכונות.")
@@ -432,10 +431,10 @@ def render_candidates(result: dict, runs_dir: Path) -> None:
         cols[1].metric("מועמדים", summary.get("candidate_count_total", 0))
         cols[2].metric("שדות עם מועמדים", summary.get("candidate_fields_total", 0))
         cols[3].metric("נפתרו בבדיקת המסמכים", summary.get("document_sweep_fields_resolved", 0))
-    rows = candidate_table_rows(events, specs, started.get("vehicle_label")) if specs else []
+    rows = candidate_rows(events)              # src/exports.py: the same rows and CSV the HTTP API serves
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        st.download_button("Download candidates.csv", pd.DataFrame(rows).to_csv(index=False),
+        st.download_button("Download candidates.csv", candidates_csv(rows),
                            file_name="tripy_candidates.csv", mime="text/csv",
                            key=_key(result, "candidate_csv"), width="stretch")
     else:

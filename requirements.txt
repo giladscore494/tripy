@@ -4,6 +4,9 @@ requests>=2.32
 beautifulsoup4>=4.12
 pdfplumber>=0.11
 psycopg[binary]>=3.2
+# HTTP API (src/api; `uvicorn src.api.app:app`), alongside the Streamlit dashboard during the migration
+fastapi>=0.115,<1
+uvicorn>=0.30
 # Read-only MCP endpoint (src/mcp_server), served only when TRIPY_MCP_TOKEN is set. Official SDK, MIT.
 mcp==1.28.1
 # render_page and the automatic render fallback (src/tools/fetch.py); the Dockerfile installs Chromium's headless shell
