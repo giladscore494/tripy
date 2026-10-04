@@ -7,6 +7,7 @@ tool says so and the model can fall back to fetch_url.
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .extract import html_title, visible_text
@@ -16,12 +17,63 @@ from .fetch import QUERY_HINT, USER_AGENT, check_url
 BROWSER_MISSING = "Executable doesn't exist"
 
 
-def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
-    from playwright.sync_api import sync_playwright
+def _log():
+    from ..server_logging import get_logger
 
+    return get_logger("render")
+
+
+def _launch_options() -> dict:
     launch = {"headless": True}
     if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
         launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
+    return launch
+
+
+def boot_check(timeout_s: float = 30.0) -> dict:
+    """PR #44 (P5): does this host actually launch Chromium? {playwright, chromium_path, launch: ok | error, error?,
+    browser_version?, js_ok?, ms}: the Playwright version, the browser executable it resolves, and a real headless launch
+    that runs a line of JavaScript in a blank page. Never raises (run once at boot by src/startup_check.py)."""
+    t0 = time.monotonic()
+    out: dict = {"playwright": None, "chromium_path": None, "launch": "error"}
+    try:
+        from importlib.metadata import version
+
+        out["playwright"] = version("playwright")
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = f"playwright not installed: {type(exc).__name__}"
+        out["ms"] = int((time.monotonic() - t0) * 1000)
+        return out
+
+    def probe() -> dict:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            path = _launch_options().get("executable_path") or p.chromium.executable_path
+            found = {"chromium_path": path, "chromium_exists": os.path.exists(path)}
+            browser = p.chromium.launch(**_launch_options())
+            try:
+                page = browser.new_page()
+                page.set_content("<body><script>document.body.textContent = 'js:' + (6 * 7)</script></body>")
+                found.update(browser_version=browser.version, js_ok=page.inner_text("body") == "js:42")
+            finally:
+                browser.close()
+            return found
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            out.update(pool.submit(probe).result(timeout=timeout_s))
+        out["launch"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = f"{type(exc).__name__}: {str(exc).splitlines()[0][:300] if str(exc) else ''}"
+    out["ms"] = int((time.monotonic() - t0) * 1000)
+    return out
+
+
+def _playwright_render(url: str, wait_ms: int, timeout_s: float) -> dict:
+    from playwright.sync_api import sync_playwright
+
+    launch = _launch_options()
     with sync_playwright() as p:
         browser = p.chromium.launch(**launch)
         try:
@@ -41,15 +93,29 @@ def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
             browser.close()
 
 
-def render_page(ctx, url: str, wait_ms: int = 2500, timeout_s: float | None = None) -> dict:
+_render = _playwright_render       # tests replace _render (tests/conftest.py); _playwright_render stays the real one
+
+
+def render_page(ctx, url: str, wait_ms: int = 2500, timeout_s: float | None = None, *,
+                challenge: bool = True) -> dict:
+    """`challenge=False`: the caller (fetch.render_fallback) judges the rendered page itself."""
     url = check_url(url)
-    from .fetch import unreadable_result
+    from .fetch import challenge_check, unreadable_result
 
     skipped = unreadable_result(ctx, url)
     if skipped is not None:
+        _log().info("render_page url=%s outcome=skipped_unreadable reason=%s", url, skipped.get("reason"))
         return skipped
+    t0 = time.monotonic()
     with ctx.cache.hold(f"doc:rendered:{url}") as waited:  # single flight per URL (see storage/cache.py)
-        return _render_page(ctx, url, wait_ms, waited, timeout_s)
+        result = _render_page(ctx, url, wait_ms, waited, timeout_s)
+    if challenge:
+        result = challenge_check(ctx, url, result)
+    # PR #44 (P5): one server-log line per render (url, status, text chars, ms, outcome)
+    _log().info("render_page url=%s status=%s text_chars=%s ms=%d cache_hit=%s outcome=%s", url,
+                result.get("status"), result.get("text_chars"), int((time.monotonic() - t0) * 1000),
+                result.get("cache_hit"), result.get("error") or result.get("unreadable") or "ok")
+    return result
 
 
 def _render_page(ctx, url: str, wait_ms: int, waited: bool, timeout_s: float | None = None) -> dict:

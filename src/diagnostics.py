@@ -928,11 +928,19 @@ def operations_summary(events: list[dict]) -> dict:
     fallbacks = [e for e in events if e.get("kind") == "rendered_fallback"]
     unreadable = sorted({str(e.get("domain")) for e in events if e.get("kind") == "domain_unreadable"})
     limited = [e for e in events if e.get("kind") == "api_error" and e.get("status") == 429]
+    # PR #44: the Israeli version-page wave (P2), challenge shells (P5) and the government registry layer (P1)
+    il_pages = next((e for e in events if e.get("kind") == "il_version_pages"), None) or {}
+    registry = next((e for e in events if e.get("kind") == "gov_registry"), None) or {}
     return {"rendered_fallbacks": len(fallbacks), "rendered_fallbacks_readable": sum(1 for e in fallbacks
                                                                                     if e.get("readable")),
             "unreadable_domains": unreadable,
+            "unreadable_reasons": {str(e.get("domain")): e.get("reason") for e in events
+                                   if e.get("kind") == "domain_unreadable"},
             "rate_limited_retries": sum(1 for e in limited if e.get("will_retry")),
-            "rate_limited_failures": sum(1 for e in limited if not e.get("will_retry"))}
+            "rate_limited_failures": sum(1 for e in limited if not e.get("will_retry")),
+            "il_version_searches": il_pages.get("searches"), "il_version_fetches": il_pages.get("fetches"),
+            "il_version_pages_found": il_pages.get("found"),
+            "gov_registry_evidence": registry.get("stored")}
 
 
 def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record_id: str | None = None,
@@ -1129,6 +1137,11 @@ def vehicle_row(diag: dict) -> dict:
             "acq_unreadable_domains": len(ops["unreadable_domains"]) if "unreadable_domains" in ops else None,
             "rate_limited_retries": ops.get("rate_limited_retries"),
             "rate_limited_failures": ops.get("rate_limited_failures"),
+            # PR #44: Israeli version pages (P2) and government registry evidence (P1)
+            "acq_il_version_searches": ops.get("il_version_searches"),
+            "acq_il_version_fetches": ops.get("il_version_fetches"),
+            "acq_il_version_pages_found": ops.get("il_version_pages_found"),
+            "gov_registry_evidence": ops.get("gov_registry_evidence"),
             "parser_gap_rows": gaps.get("gaps_total"), "parser_gap_fields": gaps.get("fields_with_gaps"),
             "parser_gap_recovered_by_sweep": gaps.get("recovered_by_sweep"),
             "rec_attempts": rec.get("attempts"), "rec_model_calls": rec.get("model_calls"),

@@ -157,7 +157,8 @@ VARIANT_MATCH_HE = {"exact": "גרסה מדויקת", "unclear": "גרסה לא 
 # Source authority (src/source_authority.py): who publishes the source, never whether it is right
 SOURCE_AUTHORITY_HE = {"government": "ממשלתי", "official_manufacturer": "יצרן רשמי", "official_importer": "יבואן רשמי",
                        "official_media": "הודעות יצרן לעיתונות", "aggregator": "אתר מפרטים", "marketplace": "לוח מודעות",
-                       "publisher": "כלי תקשורת", "unknown": "לא מסווג"}
+                       "publisher": "כלי תקשורת", "unknown": "לא מסווג",
+                       "government_registry": "מאגר הרישוי הממשלתי"}
 EVIDENCE_REJECTED_HE = "ראיות שנדחו בבדיקה"
 CANDIDATE_TABLE_COLUMNS_HE = ["שדה", "מועמדים שנמצאו", "מקורות", "ראיה מאומתת", "מצב"]
 

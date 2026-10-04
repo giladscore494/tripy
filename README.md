@@ -211,6 +211,16 @@ a fetch; event `rendered_fallback`). The code decides, never the model. If the r
 challenge page, the domain is `unreadable` for the run (event `domain_unreadable`, counter `acq_unreadable_domains`)
 and later fetches of it return `domain_unreadable` without a request. No stealth, no anti-bot evasion.
 
+**Bot / challenge shells and render diagnosis (PR #44).** A response with HTTP 247 / 403 / 429 / 503 and a body under
+1,000 bytes (audi.co.il and championmotors.co.il answer 247 with a ~584-byte Radware shell), or a short page with a
+known challenge marker (Radware / perfdrive, Cloudflare "Just a moment", captcha), marks its domain `unreadable` on the
+FIRST such response (event `domain_unreadable` with the reason `http_<status>_shell` / `challenge_marker`, counters
+`acq_unreadable_domains`, `acq_challenge_shells`); it is never rendered and no later fetch of the domain is made. At boot
+`src/startup_check.py` logs one `playwright boot:` line (Playwright version, Chromium executable, a real headless launch
+running a line of JavaScript, ms); every `render_page` call logs `render_page url=… status=… text_chars=… ms=…
+outcome=…` to the server log. `tests/test_pr44_playbook.py` renders a local JavaScript page with a real Chromium (CI
+installs the headless shell as the Dockerfile does; the test is skipped on a host without a browser).
+
 ## Runs, persistence and reconnects
 
 **Before:** the research batch ran on the Streamlit script thread; the page blocked while it rendered. A browser
@@ -835,6 +845,38 @@ bundle drops model notes (a note once misattributed a value to another source) a
 `evidence_admission` counts. Metrics: `evidence_rejected`, `evidence_variant_exact` / `_unclear` / `_different`,
 `evidence_unbound`, `evidence_official_source`, `evidence_aggregator_source`, `consistency_checks_suspicious`.
 Runs written before admission load unchanged (their evidence keeps the model's own `variant_match`).
+
+### Israeli source playbook (PR #44)
+
+- **Government registry layer (P1).** `scripts/build_gov_registry_index.py` aggregates the data.gov.il registry of
+  private and commercial vehicles (licence-plate level, paged CKAN reads with a pause between pages) into
+  `data/gov_registry_index.json`: per `tozeret_cd | degem_cd | shnat_yitzur | ramat_gimur`, the front / rear tyre size
+  distribution (majority, share, N). It verifies the resource's columns first and writes nothing when `zmig_kidmi` /
+  `zmig_ahori` (or a key column) are missing; the `build-gov-registry-index` workflow (manual) runs it and opens a pull
+  request. At the start of a run `src/gov_registry.py` admits the target's entry as government evidence
+  (`source_authority` `government_registry`, market IL, `exact_market_trim` through the government model code):
+  `tire_size_front` / `tire_size_rear` when the majority share is >= 0.8 and N >= 20, `rim_diameter_in` from that size's
+  R number; a share under 0.8 gives only `alternative_tire_sizes` (the two most common sizes); N < 20 gives nothing. No
+  network and no database at runtime; the shipped index is an empty `"complete": false` placeholder until the workflow
+  fills it.
+- **Israeli version pages (P2).** Before the agentic loop an IL-market run resolves the target's single-version page
+  on the sites of `data/source_rules.json` → `il_version_sites` (cartube.co.il, icar.co.il, auto.co.il): at most 3
+  site-restricted searches from the data file's templates, version links of the site's model / price-list pages,
+  at most 6 fetches, robots.txt respected, at most one request per second per domain, the shared cache (counters
+  `acq_il_version_searches`, `acq_il_version_fetches`, `acq_il_version_pages_found`; event `il_version_pages`). A page is
+  accepted (`src/il_version_pages.version_page_verdict`) only when it describes exactly one version and its year,
+  displacement (±0.06 l), drivetrain, propulsion, body and power (±3 %; for a hybrid, or a page without a power, the
+  catalog's only entry for manufacturer / family / year / propulsion / drivetrain) match; every value on it binds
+  `exact_technical_variant` (`binding_basis` `il_version_page`), its market trim only when the page names the trim.
+- **Torque rpm (P3).** A field with `rpm_guard` (torque_nm) never reads an engine speed: a number followed by an rpm
+  term (also through a range) or in a row whose label names rpm without a torque unit is rejected; "קג"מ" converts to
+  whole Nm.
+- **H1 relaxed (P4).** Fields with `variant_invariance: "engine"` (gearbox_type, gear_count, length / width / height /
+  wheelbase) of a hybrid target are not held by `system_power_unmapped` when the document's displacement is the
+  target's; a single-version Israeli page binds a hybrid only with the catalog's single entry, and one that states
+  another power is itself `system_power_unmapped`. Relative references (H2) and stale publications (H3) still cap.
+- Proof gate: `python scripts/pr44_proof_gate.py` (fixtures + goldens), `--runs-dir /data/runs --run <id>` (replay) and
+  `--runs-dir /data/runs --fresh <id>` (ok fields per vehicle with their source URLs).
 
 ### Durable pre-finalization checkpoint
 

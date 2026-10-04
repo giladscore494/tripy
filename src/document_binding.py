@@ -77,6 +77,22 @@ requirement), deterministic and fail-closed; nothing here loosens a veto or a bi
                                  a non-official source also by its article date line) and never states the target model
                                  year: at most generation, unless a DVM region assigned to the target by power + designation
                                  holds the value. An official page without a date is never stale
+
+binding-v6 (PR #44, Israeli source playbook), deterministic and fail-closed:
+
+    il_version_page              a single-version Israeli publisher page whose identity (title / H1 / URL slug / spec
+                                 rows: src/il_version_pages.py) matches the target's year, displacement, drivetrain,
+                                 propulsion, body and power (or, for a power the catalog cannot map, the catalog's only
+                                 entry for manufacturer / family / year / propulsion / drivetrain) binds every value at
+                                 exact_technical_variant (binding_basis il_version_page); its market trim only when the
+                                 page names the target trim. A single-version page's identity replaces the full-text
+                                 statuses of the dimensions it names
+    system_power_unmapped (P4.2) also a hybrid single-version page that states another power, unless the catalog has
+                                 exactly one entry for manufacturer / family / year / propulsion / drivetrain
+    engine_invariant (P4.1)      a field with variant_invariance "engine" (gearbox, body dimensions) of a hybrid target
+                                 is not held by system_power_unmapped when the document's displacement matches the
+                                 target's (several_powertrain_versions, relative references and stale publications
+                                 still hold it)
 """
 
 from __future__ import annotations
@@ -90,7 +106,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v5"
+BINDING_VERSION = "binding-v6"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -1261,7 +1277,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          document_names_family: bool = False, other_trims_named: list[str] | None = None,
          document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
-         powertrain_versions: dict | None = None, stale: dict | None = None) -> dict:
+         powertrain_versions: dict | None = None, stale: dict | None = None,
+         version_page: dict | None = None, engine_invariant: bool = False) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1275,7 +1292,11 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     PR #43 inputs: `powertrain_versions` (the document profile's distinct powers and version designations, H1) and
     `stale` (the caller's stale-publication verdict, H3: {publication_date, basis}); the flags they raise are recorded as
-    `binding_flags` (system_power_unmapped, several_powertrain_versions, relative_variant_reference, stale_publication)."""
+    `binding_flags` (system_power_unmapped, several_powertrain_versions, relative_variant_reference, stale_publication).
+
+    PR #44 inputs: `version_page` (src/il_version_pages.version_page_verdict of the fact's document; its page statuses
+    already replaced the document statuses of a single-version page) and `engine_invariant` (the field's
+    variant_invariance is "engine"), see binding-v6 in the module doc."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1303,20 +1324,42 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     s = {dim: effective[dim]["status"] for dim in DIMENSIONS}
     flags: list[str] = []          # PR #43 binding flags (telemetry; the caps they cause are applied below)
     version_open = False
+    rules: list[str] = []          # binding-v4 rules applied to this fact, in order
+    page = version_page or {}
+    page_accepted = page.get("status") == "accepted"
     if identity.propulsion in HYBRID_PROPULSIONS:
         # H1: the government power of a hybrid is the engine's; a document states system power. A fact whose own
         # clause / quote / column / section states another power, or a document naming several powertrain versions,
         # is never identified by its displacement alone
-        if any(name in POWER_LAYERS and st["power"] in ("mismatch", "mixed") for name, st in layer_statuses):
-            flags.append("system_power_unmapped")
-            version_open = True
+        power_unmapped = any(name in POWER_LAYERS and st["power"] in ("mismatch", "mixed") for name, st in layer_statuses)
+        # PR #44 (P4.2 tightening): a single-version page that states another power (its system power) is just as
+        # unmapped, unless the catalog has exactly ONE entry for the target's manufacturer / family / year /
+        # propulsion / drivetrain (then the page's one version can only be the target's)
+        if page.get("single_version") and (page.get("page_statuses") or {}).get("power") in ("mismatch", "mixed") \
+                and not page.get("catalog_single_entry"):
+            power_unmapped = True
+        several = False
         versions = powertrain_versions or {}
         if len(versions.get("powers") or []) >= 2 or len(versions.get("designations") or []) >= 2:
+            several = not (page.get("single_version") and page_accepted)
+        if power_unmapped:
+            flags.append("system_power_unmapped")
+            version_open = True
+        if several:
             flags.append("several_powertrain_versions")
             version_open = True
+        if page_accepted and not several:
+            # P4.2: an accepted single-version Israeli page (power match or the catalog's single entry) is the target
+            version_open = False
+        elif engine_invariant and version_open and not several and s["displacement"] == "match":
+            # P4.1: a gearbox or a body dimension is the same for every powertrain version of one engine: when every
+            # version the document names shares the target's displacement, the unmapped system power does not hold it
+            version_open = False
+            rules.append("engine_invariant")
     level, basis = _ladder(s, identity, veto_dims, market, version_open)
-    rules: list[str] = []          # binding-v4 rules applied to this fact, in order
     raised_by: str | None = None   # the rule that raised the level last
+    if "engine_invariant" in rules and level_index(level) >= level_index("exact_technical_variant"):
+        raised_by = "engine_invariant"
 
     def apply(rule: str) -> None:
         nonlocal level, basis, raised_by
@@ -1399,6 +1442,20 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
                 rules.append("dvm_other_variant")
     if region_trim and level == "exact_market_trim":
         basis = "gov_model_code" if region.get("rule") == "gov_model_code" else "dvm_region"
+    fact_mixed = any(s[d] == "mixed" and effective[d]["basis"] != "document"
+                     for d in ("body", "propulsion", *TECHNICAL_DIMS))
+    if page_accepted and not vetoes and not model_declared_different and s["model"] == "match" and not fact_mixed \
+            and level_index(level) >= level_index("generation") and s["year"] not in ("mismatch", "adjacent"):
+        # P2: every value of an accepted Israeli version page binds the technical variant; its market trim only when
+        # the page names the target trim (title / H1 / URL: the qualified phrase or a catalog trim form)
+        rules.append("il_version_page")
+        if level_index(level) < level_index("exact_technical_variant"):
+            level, basis = "exact_technical_variant", None
+        if page.get("trim_named") and s["trim"] != "mismatch" and market and market == identity.target_market:
+            effective["trim"] = {"status": "match", "basis": "il_version_page"}
+            s["trim"] = "match"
+            level = "exact_market_trim"
+        raised_by = "il_version_page"
     not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
     if not_offered and level == "exact_market_trim":
         # F5: the document's complete model-code table sells the target's technical variant under other codes only
@@ -1406,6 +1463,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         rules.append("market_trim_not_offered")
     catalog = None
     if (required == "exact_market_trim" and level == "exact_technical_variant" and not vetoes and not not_offered
+            and not page_accepted
             and not model_declared_different and "mixed" not in s.values() and s["trim"] == "absent"
             and market and market == identity.target_market
             and (source_authority in OFFICIAL_AUTHORITIES or document_names_family)
@@ -1458,7 +1516,10 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if catalog is not None or (basis and level == "exact_market_trim" and not raised_by):
+    if raised_by in ("il_version_page", "engine_invariant") and level_index(level) >= level_index(
+            "exact_technical_variant") and not vetoes and not model_declared_different:
+        out["binding_basis"] = raised_by
+    elif catalog is not None or (basis and level == "exact_market_trim" and not raised_by):
         out["binding_basis"] = basis
     elif raised_by and level_index(level) > level_index("unknown") and not vetoes and not model_declared_different:
         out["binding_basis"] = raised_by

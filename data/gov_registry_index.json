@@ -1,0 +1,10 @@
+{
+ "_about": "Government vehicle registry index (PR #44, P1): per tozeret_cd | degem_cd | shnat_yitzur | ramat_gimur, the front / rear tyre size distribution of the registered vehicles (majority, share, n, top sizes), read by src/gov_registry.py. Built offline by scripts/build_gov_registry_index.py from the data.gov.il registry of private and commercial vehicles (the workflow build-gov-registry-index verifies the CKAN columns first and writes nothing if zmig_kidmi / zmig_ahori are missing). An index whose `complete` is not true is never read: this shipped file is an empty placeholder.",
+ "version": "gov-registry-index-v1",
+ "complete": false,
+ "generated_at": null,
+ "source": "placeholder: not built yet (data.gov.il was not reachable from the PR #44 build environment; run the build-gov-registry-index workflow)",
+ "resource_id": null,
+ "rows": 0,
+ "entries": {}
+}

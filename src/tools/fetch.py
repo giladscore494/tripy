@@ -161,7 +161,10 @@ def fetch_url(ctx, url: str) -> dict:
     skipped = unreadable_result(ctx, url)
     if skipped is not None:
         return skipped
-    return render_fallback(ctx, url, _fetch(ctx, "fetch", url))
+    result = challenge_check(ctx, url, _fetch(ctx, "fetch", url))
+    if isinstance(result, dict) and result.get("unreadable"):
+        return result                     # a bot / challenge shell: never rendered (PR #44, P5)
+    return render_fallback(ctx, url, result)
 
 
 def fetch_pdf(ctx, url: str) -> dict:
@@ -169,7 +172,7 @@ def fetch_pdf(ctx, url: str) -> dict:
     skipped = unreadable_result(ctx, url)
     if skipped is not None:
         return skipped
-    return _fetch(ctx, "pdf", url)
+    return challenge_check(ctx, url, _fetch(ctx, "pdf", url))
 
 
 # --- PR #43 (H7): automatic render fallback for unreadable official / importer pages ----------------------------------
@@ -189,7 +192,12 @@ CHALLENGE_MAX_TEXT = 3000
 CHALLENGE_MARKERS = ("just a moment", "checking your browser", "cf-browser-verification", "cf-challenge",
                      "challenge-platform", "attention required", "access denied", "request unsuccessful",
                      "_incapsula_resource", "px-captcha", "are you a robot", "verify you are human",
-                     "please enable javascript", "bot detection", "captcha")
+                     "please enable javascript", "bot detection", "captcha",
+                     # PR #44 (P5): Radware Bot Manager (audi.co.il / championmotors.co.il answer HTTP 247 + ~584 bytes)
+                     "radware", "perfdrive", "shieldsquare", "validate.perfdrive.com")
+# PR #44 (P5): a response with one of these statuses and a body under SHELL_MAX_BYTES is a bot / challenge shell
+SHELL_STATUSES = (247, 403, 429, 503)
+SHELL_MAX_BYTES = 1000
 
 
 def _domain(url: str) -> str:
@@ -232,6 +240,49 @@ def challenge_page(html: str, text_chars: int) -> bool:
     return text_chars < CHALLENGE_MAX_TEXT and any(marker in low for marker in CHALLENGE_MARKERS)
 
 
+def challenge_shell(status, size: int | None, html: str, text_chars: int) -> str | None:
+    """Why a fetched response is a bot / challenge shell, else None: an HTTP 247 / 403 / 429 / 503 response with a body
+    under SHELL_MAX_BYTES (`http_<status>_shell`), or a short page carrying a known challenge marker (Radware, Cloudflare
+    "Just a moment", a captcha: `challenge_marker`)."""
+    if isinstance(status, int) and status in SHELL_STATUSES and size is not None and size < SHELL_MAX_BYTES:
+        return f"http_{status}_shell"
+    if challenge_page(html, text_chars):
+        return "challenge_marker"
+    return None
+
+
+def challenge_check(ctx, url: str, result: dict) -> dict:
+    """PR #44 (P5): the fetch result; a bot / challenge shell marks its domain `unreadable` for the run on the FIRST
+    such response (event domain_unreadable with the reason, counter acq_unreadable_domains), and the result says so:
+    nothing renders it and no later fetch of the domain is made. No evasion. Never raises."""
+    try:
+        if not isinstance(result, dict) or result.get("error") or not result.get("document_id"):
+            return result
+        size = result.get("bytes")
+        if size is None:
+            size = len(ctx.cache.read_body(result["document_id"]))
+        html = ""
+        if (result.get("text_chars") or 0) < CHALLENGE_MAX_TEXT and size <= 512 * 1024:
+            html = ctx.cache.read_body(result["document_id"]).decode("utf-8", errors="replace")
+        reason = challenge_shell(result.get("status"), size, html, result.get("text_chars") or 0)
+        if reason is None:
+            return result
+        domain = _domain(url)
+        found = _unreadable(ctx)
+        if domain not in found:
+            found[domain] = reason
+            ctx.counters["acq_unreadable_domains"] = len(found)
+            ctx.counters["acq_challenge_shells"] += 1
+            ctx.emit("domain_unreadable", domain=domain, url=url, reason=reason, status=result.get("status"),
+                     bytes=size, stage="fetch")
+        return {**result, "unreadable": reason,
+                "message": f"{domain} answered with a bot / challenge page ({reason}); it is not rendered or fetched "
+                           "again in this run. Use other sources."}
+    except Exception as exc:  # noqa: BLE001 - the check never costs the fetch
+        ctx.emit("challenge_check_failed", url=url, error=f"{type(exc).__name__}: {str(exc)[:200]}")
+        return result
+
+
 def render_fallback(ctx, url: str, result: dict) -> dict:
     """The fetch result, or, for an empty 2xx HTML page of an official / importer domain, its rendered version (see
     above). Never raises: a failure keeps the fetch result."""
@@ -256,7 +307,7 @@ def _render_fallback(ctx, url: str, result: dict) -> dict:
     if _RENDER_UNAVAILABLE:
         ctx.counters["acq_render_unavailable"] += 1
         return result
-    rendered = render_page(ctx, url, timeout_s=RENDER_FALLBACK_TIMEOUT_S)
+    rendered = render_page(ctx, url, timeout_s=RENDER_FALLBACK_TIMEOUT_S, challenge=False)
     if isinstance(rendered, dict) and rendered.get("error") == "render_unavailable":
         # no browser on this host (a host fact, not a verdict on the site): the fetch stands, nothing is marked or
         # logged as an event (a run's events never depend on what an earlier run of the process found), and no later

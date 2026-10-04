@@ -19,5 +19,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
+      - name: Install Chromium (headless shell, as the Dockerfile does) for the local JavaScript render test
+        run: python -m playwright install --with-deps --only-shell chromium
       - name: Run tests (offline; no API keys or database)
         run: python -m pytest

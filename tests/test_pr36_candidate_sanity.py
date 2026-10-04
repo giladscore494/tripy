@@ -51,7 +51,8 @@ def test_price_minimum_uses_private_segment_and_unknown_keeps_global_bounds():
 def test_bev_torque_minimum_is_scoped_and_kgfm_is_converted():
     assert values('Torque: 67.3 Nm', 'torque_nm') == []
     assert values('Torque: 67.3 Nm', 'torque_nm', propulsion='conventional') == [67.3]
-    assert values('Torque: 67.3 kgf·m', 'torque_nm') == [659.9875]
+    # PR #44: kgf·m converts to whole Nm (67.3 x 9.80665 = 659.99 -> 660), as torque is published
+    assert values('Torque: 67.3 kgf·m', 'torque_nm') == [660]
 
 
 @pytest.mark.parametrize('field,bad,good', [

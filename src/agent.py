@@ -610,6 +610,9 @@ class AgentConfig:
     # SITE_MAP (contract acquisition and reacquire recovery): official domains' sitemaps -> ranked real URLs offered to
     # the acquisition model (src/site_map.py); discovery metadata only
     site_map: bool = True
+    # PR #44 (P2): the Israeli version-page resolver runs as the first acquisition wave of an IL-market run, before
+    # the agentic loop (src/il_version_pages.resolve; sites, templates and budgets in data/source_rules.json)
+    il_version_pages: bool = True
     # GROUNDED_CANDIDATES: one no-tool call per top document for open fields without an admissible candidate; the
     # model points at a span, code cuts the quote and dry-runs admission; candidates only (src/grounded.py)
     grounded_candidates: bool = True
@@ -3863,6 +3866,14 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 "exact variant; their evidence ids are in the store): " + ", ".join(fact_reuse["fields_ok"])
                 + ". Do not research these fields again.")
 
+    # PR #44 (P1): the government registry's tyre sizes of the target's own registered vehicles (offline index,
+    # data/gov_registry_index.json), admitted as government evidence before research. Never blocks the run.
+    from .gov_registry import emit as emit_gov_registry
+
+    gov_registry = emit_gov_registry(ctx, payload)
+    if gov_registry.get("reason") != "index_not_complete":      # the shipped index is empty until the workflow runs
+        run_log.event("gov_registry", **gov_registry)
+
     # Part D: real URLs of the official sites (contract acquisition only), before research turn 1. Bounded, never
     # blocks the run: a failure logs site_map_failed and the task goes out without the section.
     site_map_state: dict = {"site": None, "offered": []}
@@ -3874,6 +3885,22 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         section = acquisition_section(site_map_state.get("offered") or [])
         if section:
             messages[1]["content"] += "\n\n" + section
+
+    # PR #44 (P2): the first acquisition wave: the target's single-version page on the Israeli publisher sites
+    # (deterministic; <= 3 searches, <= 6 fetches, robots.txt, 1 request / s per domain). The agentic acquisition then
+    # runs as before; every fetched page is harvested like any research fetch. Never blocks the run.
+    il_version_state: dict = {}
+    from .source_authority import normalize_market
+
+    if config.il_version_pages and normalize_market(config.target_market) == "IL":
+        from .il_version_pages import resolve as resolve_il_version_pages
+
+        il_version_state = resolve_il_version_pages(ctx, run_log, payload=payload)
+        accepted = [p["url"] for p in il_version_state.get("pages") or [] if p.get("status") == "accepted"]
+        if accepted:
+            messages[1]["content"] += ("\n\nAlready acquired (deterministic, before research): the target's Israeli "
+                                       "version page " + ", ".join(accepted) + ". It is harvested for every field; "
+                                       "acquire sources for what it does not state.")
 
     status: str | None = None
     stop_reason: str | None = None
@@ -4111,6 +4138,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     target_market=config.target_market)
             except Exception as exc:  # noqa: BLE001 - telemetry never costs the run
                 primary_research["site_map"] = {"error": _error_text(exc)}
+        if il_version_state:
+            primary_research["il_version_pages"] = {k: il_version_state.get(k) for k in (
+                "searches", "fetches", "found", "pages", "error") if il_version_state.get(k) not in (None, [])}
         run_log.event("primary_research_summary", **primary_research)
 
         # ---------------- deterministic harvest + model document sweep ----------------

@@ -17,7 +17,10 @@ NEW_TELEMETRY = ("binding_version", "year_context",
                  "variant_map_region", "binding_rules", "binding_policy",
                  # PR #43 binding flags (system_power_unmapped, ...): recorded whenever their condition holds; a flag
                  # that changes a level is listed in PR43_CHANGES
-                 "binding_flags", "relative_reference", "stale_publication")
+                 "binding_flags", "relative_reference", "stale_publication",
+                 # PR #44 telemetry: the Israeli version-page verdict of the fact's document (src/il_version_pages.py);
+                 # a verdict that changes a level is listed in PR44_CHANGES
+                 "version_page")
 # binding-v4 (PR #40) changes to this golden, each explained (no exact is lost; tests/test_pr40_binding.py covers the
 # rules). Key: [target, document, field, material value] -> (binding_level, variant_match) now.
 PR40_SPEC = "html:https://www.xpeng.co.il/g6/specifications"
@@ -268,7 +271,8 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
     from fixtures.corolla_touring import PAYLOAD as COROLLA, VEHICLE as COROLLA_VEHICLE
     from src.research_memory import ResearchMemory
 
-    assert BINDING_VERSION == "binding-v5"          # PR #40: catalog rules + DVM; PR #43: hybrid / relative / stale
+    # PR #40: catalog rules + DVM; PR #43: hybrid / relative / stale; PR #44: Israeli version pages, engine invariance
+    assert BINDING_VERSION == "binding-v6"
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",

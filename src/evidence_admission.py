@@ -157,6 +157,7 @@ class DocumentMaterial:
     authority: dict
     candidates: list[dict]
     variant_map: dict | None = None    # src/variant_map.py (None: the map could not be built)
+    version_page: dict | None = None   # src/il_version_pages.version_page_verdict (None: not an IL version page)
 
     def __getattr__(self, name: str) -> Any:            # document_id, url, meta, haystack, lines, market, ...
         return getattr(self.__dict__["doc"], name)
@@ -405,6 +406,12 @@ class AdmissionContext:
                                               subheadings=doc.subheadings, body_text=doc.body_text),
             authority=classify_source(doc.url, self.manufacturer), candidates=candidates,
             variant_map=self.variant_map(cache, doc))
+        try:
+            from .il_version_pages import version_page_verdict
+
+            material.version_page = version_page_verdict(material, self.identity)
+        except Exception as exc:  # noqa: BLE001 - the verdict is an additional layer; binding stands without it
+            material.version_page = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
         with self._lock:
             self._docs[doc_id] = material
         return material
@@ -1117,6 +1124,11 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
     from .variant_map import fact_region, market_trim_offer
 
     inputs = binding_layers(material, name, spec, value, quote, ctx, variant_text, candidates)
+    if material.meta.get("kind") == "registry":
+        # PR #44 (P1): a government registry aggregate binds by the government model code, never by its text
+        from .gov_registry import registry_binding
+
+        return registry_binding(material.meta, adm.identity, spec.get("binding_requirement")), inputs
     profile = material.profile
     region = None
     offer = None
@@ -1136,7 +1148,14 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         region = dvm_gate(adm, material, spec, market, region)
     except Exception as exc:  # noqa: BLE001 - the map is an additional layer; per-value binding stands without it
         region = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200], "allowed": False}
-    binding = bind(adm.identity, profile["statuses"], inputs["layers"], inputs["veto_layers"], market=market,
+    page = material.version_page if isinstance(material.version_page, dict) else None
+    doc_statuses = profile["statuses"]
+    if page and page.get("single_version"):
+        # P4 / P2: a single-version Israeli page is about the version its title, URL and identity rows name; those
+        # replace the full-text statuses (comparison widgets, related-article teasers) of the dimensions they state
+        doc_statuses = {**doc_statuses, **{d: st for d, st in (page.get("page_statuses") or {}).items()
+                                           if st != "absent"}}
+    binding = bind(adm.identity, doc_statuses, inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
                    trim_named_in_document=profile.get("trim_named_in_document", False),
                    source_authority=material.authority.get("source_authority"),
@@ -1145,7 +1164,8 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    document_propulsions=(profile.get("mentions") or {}).get("propulsion"),
                    brand_policy=brand_policy_eligibility(adm, material, spec, name, value, market),
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
-                   powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material))
+                   powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
+                   version_page=page, engine_invariant=spec.get("variant_invariance") == "engine")
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1153,6 +1173,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
             "candidates_before", "candidates_after", "assignment", "trim", "allowed", "blocked_by", "rule",
             "tab_label", "designation", "region_statuses", "inventory_contains_target", "map_version", "error")
             if region.get(k) not in (None, [], "")}
+    if page and page.get("status") in ("accepted", "rejected"):
+        binding["version_page"] = {k: page.get(k) for k in ("status", "reason", "site", "single_version",
+                                                             "page_statuses", "page_powers", "catalog_single_entry",
+                                                             "version") if page.get(k) not in (None, [], {})}
     year = profile.get("year_context") or {}
     if year.get("statements") or year.get("ignored"):
         # telemetry only: the model-year statements behind the year dimension and the years the rules ignored
@@ -1304,6 +1328,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "binding_flags": binding.get("binding_flags"), "relative_reference": binding.get("relative_reference"),
         "stale_publication": binding.get("stale_publication"),
         "variant_map_region": binding.get("variant_map_region"),
+        "version_page": binding.get("version_page"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,

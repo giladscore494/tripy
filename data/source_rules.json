@@ -402,5 +402,60 @@
   ]
  },
  "hebrew_text_market": "IL",
- "hebrew_text_min_share": 0.3
+ "hebrew_text_min_share": 0.3,
+ "il_version_sites": {
+  "_about": "PR #44 (P2): Israeli publisher / aggregator sites that publish ONE page per technical version (title / H1 / URL slug name the version, spec rows state its engine). src/il_version_pages.py resolves the target's version page on these sites before the agentic acquisition: at most `max_searches` site-restricted searches in total (built from `search_templates`, placeholders {domain} {make_he} {make_en} {model} {year} {engine_l} {hp}; an empty placeholder is dropped), version links followed from a fetched model / price-list page of the same site (acquisition.rank_links), at most `max_fetches` candidate URLs, robots.txt respected, at most one request per `min_interval_s` per domain. A fetched page counts only through the deterministic verdict il_version_pages.version_page_verdict (one version; year, displacement, drivetrain, propulsion, body and power match). `version_path_hints`: URL words of a version page (a candidate link must name the model and either a hint or the model year). Data only: adding a site is a JSON edit. `identity_row_terms`: the spec-row labels a version page's identity is read from (with the title, H1 and URL slug).",
+  "sites": [
+   {
+    "domain": "cartube.co.il",
+    "version_path_hints": [
+     "מחירון-רכב-חדש"
+    ]
+   },
+   {
+    "domain": "icar.co.il",
+    "version_path_hints": []
+   },
+   {
+    "domain": "auto.co.il",
+    "version_path_hints": [
+     "cars"
+    ]
+   }
+  ],
+  "search_templates": [
+   "site:{domain} {make_he} {model} {year} {engine_l} {hp}",
+   "site:{domain} {make_he} {model} {year} מפרט טכני",
+   "site:{domain} {make_en} {model} {year} {engine_l}"
+  ],
+  "max_searches": 3,
+  "max_fetches": 6,
+  "min_interval_s": 1.0,
+  "identity_row_terms": [
+   "סוג מנוע",
+   "נפח מנוע",
+   "מנוע",
+   "מרכב",
+   "סוג מרכב",
+   "הנעה",
+   "מערכת הנעה",
+   "שנת דגם",
+   "שנתון",
+   "הספק",
+   "הספק מרבי",
+   "הספק מירבי",
+   "סוג דלק",
+   "engine",
+   "engine type",
+   "displacement",
+   "power",
+   "max power",
+   "body",
+   "body type",
+   "drive",
+   "drivetrain",
+   "model year",
+   "fuel"
+  ]
+ }
 }
