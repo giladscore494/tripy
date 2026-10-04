@@ -254,16 +254,17 @@ def _render_fallback(ctx, url: str, result: dict) -> dict:
 
     global _RENDER_UNAVAILABLE
     if _RENDER_UNAVAILABLE:
+        ctx.counters["acq_render_unavailable"] += 1
         return result
-    ctx.counters["acq_render_fallbacks"] += 1
     rendered = render_page(ctx, url, timeout_s=RENDER_FALLBACK_TIMEOUT_S)
     if isinstance(rendered, dict) and rendered.get("error") == "render_unavailable":
-        # no browser on this host (a host fact, not a verdict on the site): the fetch stands, nothing is marked, and
-        # no later fetch of this process tries again
+        # no browser on this host (a host fact, not a verdict on the site): the fetch stands, nothing is marked or
+        # logged as an event (a run's events never depend on what an earlier run of the process found), and no later
+        # fetch of this process tries again
         _RENDER_UNAVAILABLE = True
-        ctx.emit("rendered_fallback", url=url, fetch_document_id=result.get("document_id"), readable=False,
-                 render_error="render_unavailable", message=rendered.get("message"))
+        ctx.counters["acq_render_unavailable"] += 1
         return result
+    ctx.counters["acq_render_fallbacks"] += 1
     text_chars = rendered.get("text_chars") or 0 if isinstance(rendered, dict) else 0
     html = ""
     if isinstance(rendered, dict) and rendered.get("document_id"):
