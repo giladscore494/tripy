@@ -60,6 +60,23 @@ binding-v4 (PR #40) adds deterministic, catalog-driven rules, each recorded on t
                                inventory contains the target; a region whose identity contradicts the target vetoes
                                (`<dim>_mismatch@dvm_region`). Only absent / mixed dimensions not decided by the value's
                                own clause are completed; a veto of the fact itself always wins
+
+binding-v5 (PR #43), each recorded as a `binding_flags` entry (and as the fact's binding gap while it holds it below its
+requirement), deterministic and fail-closed; nothing here loosens a veto or a binding-v4 rule:
+
+    system_power_unmapped        hybrid / plug-in target (government power = engine power): the value's clause, quote,
+                                 column or section states another power. Not a veto, but displacement alone never makes
+                                 the technical variant
+    several_powertrain_versions  hybrid / plug-in target, the document states >= 2 distinct powers or >= 2 version
+                                 designations (identity vocabulary `variant_designations`): the same; only the model code
+                                 or a target DVM region that names the version (designation / model code / catalog trim)
+                                 proves it (binding_dimensions.version)
+    relative_variant_reference   the value's own clause refers to another version ("הבכיר יותר", "the more powerful";
+                                 vocabulary `relative_variant_terms`): at most body_powertrain
+    stale_publication            the document was published >= 2 years before the target model year (metadata / URL date;
+                                 a non-official source also by its article date line) and never states the target model
+                                 year: at most generation, unless a DVM region assigned to the target by power + designation
+                                 holds the value. An official page without a date is never stale
 """
 
 from __future__ import annotations
@@ -73,7 +90,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v4"
+BINDING_VERSION = "binding-v5"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -365,12 +382,51 @@ def _displacements(text: str, vocab: dict) -> set[float]:
     if engine:
         for m in re.finditer(rf"(?:{engine})\s*:?\s*([1-9]\.\d)(?![\d]){not_engine}", text):
             found.add(float(m.group(1)))
+    for _, start, _ in designation_spans(text, vocab):
+        # "2.0 40TFSI", "3.0 55 TFSI e": the litres right before a version designation
+        m = re.search(r"(?<![\d.,])([1-9]\.\d)\s*$", text[max(0, start - 6):start])
+        if m:
+            found.add(float(m.group(1)))
     if cc:
         for m in re.finditer(rf"(?<![\d.,])(\d,\d{{3}}|\d{{3,4}})\s*(?:{cc})(?![\w])", text):
             value = parse_number(m.group(1))
             if value and 600 <= value <= 8500:
                 found.add(round(value / 1000, 1))
     return {v for v in found if 0.6 <= v <= 8.5}
+
+
+_DESIGNATIONS: dict[str, Any] = {}
+
+
+def _designation_pattern(vocab: dict):
+    patterns = (vocab.get("variant_designations") or {}).get("patterns") or []
+    key = json.dumps(patterns)
+    if key not in _DESIGNATIONS:
+        _DESIGNATIONS.clear()
+        _DESIGNATIONS[key] = re.compile("|".join(f"(?:{p})" for p in patterns)) if patterns else None
+    return _DESIGNATIONS[key]
+
+
+def designation_spans(text: str, vocab: dict | None = None) -> list[tuple[str, int, int]]:
+    """(compact designation, start, end) of every engine / powertrain version designation of a normalized text
+    ("55 TFSI e" -> "55tfsie", "40TFSI" -> "40tfsi"; identity vocabulary `variant_designations`, PR #43)."""
+    pattern = _designation_pattern(vocabulary() if vocab is None else vocab)
+    if pattern is None:
+        return []
+    return [(re.sub(r"[\s\-]+", "", m.group(0)), m.start(), m.end()) for m in pattern.finditer(text)]
+
+
+def designations(text: str, vocab: dict | None = None) -> set[str]:
+    return {d for d, _, _ in designation_spans(text, vocab)}
+
+
+def distinct_powers(powers: Iterable[float], rel: float = 0.03) -> list[float]:
+    """Powers grouped within `rel` of each other ("250 kW (340 hp)" states one power, not two)."""
+    out: list[float] = []
+    for p in sorted(float(x) for x in powers or []):
+        if not out or abs(p - out[-1]) > rel * out[-1]:
+            out.append(p)
+    return out
 
 
 KW_TO_PS = 1.35962
@@ -639,6 +695,10 @@ def mentions(text: str, identity: TargetIdentity) -> dict[str, Any]:
         "drivetrain": _keys_found(norm, "drivetrain_terms", vocab),
         "model_code": bool(codes),
         "trim": trim,
+        # PR #43 identity parts (never a binding dimension by themselves): version designations ("55tfsie") and a
+        # gearbox named with the version
+        "designation": designations(norm, vocab),
+        "gearbox": _keys_found(norm, "gearbox_terms", vocab, ["automatic", "manual"]),
     }
 
 
@@ -844,7 +904,13 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
             "year_context": {"status": combined["year"], "basis": year_basis,
                              "statements": decided["statements"] if year_basis != "none" else [],
                              "ignored": ignored},
-            "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in full_found.items()}}
+            "mentions": {k: sorted(v) if isinstance(v, set) else v for k, v in full_found.items()},
+            # PR #43 (H1): how many powertrain versions the document names (distinct powers, version designations)
+            "powertrain_versions": {"powers": distinct_powers(full_found["power"]),
+                                    "designations": sorted(full_found["designation"])},
+            # PR #43 (H3): does the document state the target's model year anywhere (zone or full text)?
+            "states_target_year": identity.year is not None
+            and identity.year in (set(zone_year["years"]) | set(full_year["years"]))}
 
 
 # --- government catalog trim index (single_trim_catalog) -------------------------------------------------
@@ -1066,6 +1132,28 @@ def power_tolerance(identity: TargetIdentity, index: dict | None = None) -> dict
 
 # --- binding --------------------------------------------------------------------------------------------
 
+HYBRID_PROPULSIONS = ("plug_in", "hybrid")
+# H1: the fact layers whose stated power (other than the target's engine power) leaves a hybrid's variant unresolved
+POWER_LAYERS = ("value_clause", "column_header", "column_identity", "quote", "section_heading")
+STALE_PUBLICATION_YEARS = 2
+
+
+def relative_reference(text: str, vocab: dict | None = None) -> str | None:
+    """H2: the comparative reference to another version a text makes ("הבכיר יותר", "the more powerful"), else None."""
+    vocab = vocabulary() if vocab is None else vocab
+    pattern = _terms(("relative_variant_terms",), (vocab.get("relative_variant_terms") or {}).get("terms") or [])
+    m = pattern.search(normalize_text(text or "")) if pattern else None
+    return m.group(0).strip() if m else None
+
+
+def names_version(region: dict | None) -> bool:
+    """Does a Document Variant Map region's identity name a version: a designation, the model code, the government
+    model code or a catalog trim? (H1: only such a region proves a hybrid's variant in a multi-version document.)"""
+    vec = (region or {}).get("identity") or {}
+    return bool(vec.get("designation") or vec.get("model_code") or vec.get("gov_model_code") or vec.get("trim")
+                or region.get("rule") == "gov_model_code")
+
+
 def _veto_dims(identity: TargetIdentity) -> tuple[str, ...]:
     dims = ["model", "body", "propulsion", "displacement", "drivetrain"]
     # Government power is the system power for conventional cars and BEVs; for hybrids it may be engine-only.
@@ -1126,8 +1214,10 @@ TECHNICAL_DIMS = ("displacement", "power", "drivetrain")
 
 
 def _ladder(s: dict[str, str], identity: TargetIdentity, veto_dims: tuple[str, ...],
-            market: str | None) -> tuple[str, str | None]:
-    """(binding level, trim basis) of effective dimension statuses (vetoes are applied by the caller)."""
+            market: str | None, version_open: bool = False) -> tuple[str, str | None]:
+    """(binding level, trim basis) of effective dimension statuses (vetoes are applied by the caller). `version_open`
+    (H1, hybrids): the fact or its document names another powertrain version, so displacement alone never reaches the
+    technical variant (the model code, or a version-naming region the caller proved, still does)."""
     level, basis = "unknown", None
     if s["model"] in ("match", "mixed"):
         level = "model_family"
@@ -1139,6 +1229,8 @@ def _ladder(s: dict[str, str], identity: TargetIdentity, veto_dims: tuple[str, .
                 level = "body_powertrain"
                 technical = (s["displacement"] == "match" or s["model_code"] == "match"
                              or (identity.displacement_l is None and s["power"] == "match"))
+                if version_open:
+                    technical = s["model_code"] == "match"
                 unresolved = (s["displacement"] == "mixed" or s["drivetrain"] == "mixed"
                               or ("power" in veto_dims and s["power"] == "mixed"))
                 if technical and not unresolved:
@@ -1168,7 +1260,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          trim_named_in_document: bool = False, source_authority: str | None = None,
          document_names_family: bool = False, other_trims_named: list[str] | None = None,
          document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
-         region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None) -> dict:
+         region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
+         powertrain_versions: dict | None = None, stale: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1178,7 +1271,11 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     statement), `region` (R2: the fact's Document Variant Map decision, src/variant_map.fact_region),
     `safeguard_context` (lines that can only STOP R1 / R1b: the row label right above the value) and `market_trim`
     (F5: the document's model-code table verdict, src/variant_map.market_trim_offer; `market_trim_not_offered` keeps
-    every fact of the document below exact_market_trim)."""
+    every fact of the document below exact_market_trim).
+
+    PR #43 inputs: `powertrain_versions` (the document profile's distinct powers and version designations, H1) and
+    `stale` (the caller's stale-publication verdict, H3: {publication_date, basis}); the flags they raise are recorded as
+    `binding_flags` (system_power_unmapped, several_powertrain_versions, relative_variant_reference, stale_publication)."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1204,14 +1301,27 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             if st[dim] == "mismatch" and f"{dim}_mismatch@{name}" not in vetoes:
                 vetoes.append(f"{dim}_mismatch@{name}")
     s = {dim: effective[dim]["status"] for dim in DIMENSIONS}
-    level, basis = _ladder(s, identity, veto_dims, market)
+    flags: list[str] = []          # PR #43 binding flags (telemetry; the caps they cause are applied below)
+    version_open = False
+    if identity.propulsion in HYBRID_PROPULSIONS:
+        # H1: the government power of a hybrid is the engine's; a document states system power. A fact whose own
+        # clause / quote / column / section states another power, or a document naming several powertrain versions,
+        # is never identified by its displacement alone
+        if any(name in POWER_LAYERS and st["power"] in ("mismatch", "mixed") for name, st in layer_statuses):
+            flags.append("system_power_unmapped")
+            version_open = True
+        versions = powertrain_versions or {}
+        if len(versions.get("powers") or []) >= 2 or len(versions.get("designations") or []) >= 2:
+            flags.append("several_powertrain_versions")
+            version_open = True
+    level, basis = _ladder(s, identity, veto_dims, market, version_open)
     rules: list[str] = []          # binding-v4 rules applied to this fact, in order
     raised_by: str | None = None   # the rule that raised the level last
 
     def apply(rule: str) -> None:
         nonlocal level, basis, raised_by
         rules.append(rule)
-        new_level, new_basis = _ladder(s, identity, veto_dims, market)
+        new_level, new_basis = _ladder(s, identity, veto_dims, market, version_open)
         if level_index(new_level) > level_index(level):
             raised_by = rule
         level, basis = new_level, new_basis
@@ -1256,10 +1366,21 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             exact = level_index(level) >= level_index("exact_technical_variant")
             open_dims = [] if exact else [d for d in TECHNICAL_DIMS if s[d] in ("absent", "mixed")]
             blocked = any(effective[d]["basis"] == "value_clause" and s[d] == "mixed" for d in open_dims)
+            # H1: in a multi-version hybrid document only a target region that names the version (designation, model
+            # code, catalog trim) proves the technical variant; a shared row or an unnamed region never does
+            proves_version = version_open and status == "target" and names_version(region)
+            if version_open and not proves_version:
+                open_dims = []
             if not blocked and level_index(level) >= level_index("body_powertrain"):
                 rule = "dvm_region" if status == "target" else "dvm_shared"
                 if status == "target" and region.get("rule") == "gov_model_code":
                     rule = "gov_model_code"          # F5: the region names the target's government model code
+                if region.get("reason") == "designation_region":
+                    rule = "designation_region"      # PR #43: the region's designation is the target region's
+                if proves_version:
+                    version_open = False
+                    effective["version"] = {"status": "match", "basis": rule, "region": region.get("region_id"),
+                                            "designation": (region.get("identity") or {}).get("designation")}
                 for dim in open_dims:
                     effective[dim] = {"status": "match", "basis": rule, "was": s[dim],
                                       "region": region.get("region_id")}
@@ -1268,7 +1389,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
                     effective["trim"] = {"status": "match", "basis": rule, "region": region.get("region_id")}
                     s["trim"] = "match"
                     region_trim = True
-                if open_dims or region_trim:
+                if open_dims or region_trim or proves_version:
                     apply(rule)
         elif status == "other_variant":
             dim = region.get("contradicts")
@@ -1296,6 +1417,25 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         cap = VETO_CAP[veto.split("_mismatch")[0]]
         if level_index(level) > level_index(cap):
             level = cap
+    # H2: a value whose own clause refers to another version ("הבכיר יותר מוסיף ... חישוקי 22") is that version's:
+    # heading-level evidence never binds it to a trim or technical variant
+    own = next((text for name, text in layers or [] if name == "value_clause" and text), None)
+    own = own if own is not None else next((text for name, text in layers or [] if name == "quote" and text), None)
+    reference = relative_reference(own) if own else None
+    if reference:
+        flags.append("relative_variant_reference")
+        if level_index(level) > level_index("body_powertrain"):
+            level, basis, catalog, raised_by = "body_powertrain", None, None, None
+    # H3: a document published >= 2 years before the target model year that never states that year speaks of an
+    # earlier car: at most the generation, unless a DVM region assigned to the target by power + designation holds it
+    if stale:
+        proven = bool(region and region.get("allowed") and region.get("status") == "target"
+                      and region.get("reason") in ("catalog_assignment", "designation_region")
+                      and (region.get("identity") or {}).get("designation"))
+        if not proven:
+            flags.append("stale_publication")
+            if level_index(level) > level_index("generation"):
+                level, basis, catalog, raised_by = "generation", None, None, None
     if vetoes or model_declared_different:
         variant_match = "different"
     elif level == "unknown":
@@ -1307,6 +1447,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     if model_declared_different and "model_declared_different" not in vetoes:
         vetoes.append("model_declared_different")
     dimensions = {d: effective[d] for d in DIMENSIONS if effective[d]["status"] != "absent"}
+    if "version" in effective:
+        dimensions["version"] = effective["version"]
     if basis == "qualified_trim_phrase" and "trim" in dimensions:
         dimensions["trim"] = {**dimensions["trim"], "rule": "qualified_trim_phrase"}
     if catalog is not None:
@@ -1322,6 +1464,12 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         out["binding_basis"] = raised_by
     if rules:
         out["binding_rules"] = rules
+    if flags:
+        out["binding_flags"] = flags
+        if reference:
+            out["relative_reference"] = reference
+        if stale and "stale_publication" in flags:
+            out["stale_publication"] = dict(stale)
     if market_trim:
         out["market_trim"] = dict(market_trim)
     if policy is not None:
@@ -1349,6 +1497,11 @@ def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | N
     dims = {d: str((item.get("binding_dimensions") or {}).get(d, {}).get("status") or "absent") for d in DIMENSIONS}
     if level_index(level) >= level_index(required):
         return [] if str(item.get("variant_match") or "") == "exact" else ["market"]
+    # PR #43: the flag that capped / held the fact (system_power_unmapped, several_powertrain_versions,
+    # relative_variant_reference, stale_publication) is its gap
+    flagged = [f for f in item.get("binding_flags") or [] if f in BINDING_FLAG_GAPS]
+    if flagged:
+        return sorted(set(flagged))
     gaps: list[str] = []
     if level == "unknown":
         gaps.append(f"model_{dims['model']}")
@@ -1373,6 +1526,10 @@ def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | N
         gaps.append("trim_absent" if dims["trim"] == "absent" else "market" if dims["trim"] == "match"
                     else f"trim_{dims['trim']}")
     return sorted(set(gaps)) or ["unresolved"]
+
+
+BINDING_FLAG_GAPS = ("system_power_unmapped", "several_powertrain_versions", "relative_variant_reference",
+                     "stale_publication")
 
 
 def is_trim_gap(gap: str) -> bool:

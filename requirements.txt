@@ -6,5 +6,5 @@ pdfplumber>=0.11
 psycopg[binary]>=3.2
 # Read-only MCP endpoint (src/mcp_server), served only when TRIPY_MCP_TOKEN is set. Official SDK, MIT.
 mcp==1.28.1
-# Optional, enables render_page (also run `playwright install chromium` where allowed):
-# playwright>=1.47
+# render_page and the automatic render fallback (src/tools/fetch.py); the Dockerfile installs Chromium's headless shell
+playwright==1.55.0

@@ -14,6 +14,12 @@ can be lowered or raised at run time but never above the known provider limit.
 Unknown model ids get a conservative fallback (GLM_UNKNOWN_MODEL_MAX_INFLIGHT, default 1); nothing
 assumes an unknown model shares Flash's 50 slots.
 
+Adaptive rate limiting (PR #43, H8; process-wide, defaults in code): an HTTP 429 halves the pool's operational limit
+(at most once per RATE_LIMIT_DECREASE_INTERVAL_S, never below 1) and the request waits out Retry-After (else an
+exponential backoff with jitter) without spending one of its attempts, while RATE_LIMIT_BUDGET_S remains. The limit
+recovers slowly: one slot per RATE_LIMIT_RECOVER_STEP_S of successes once RATE_LIMIT_RECOVER_AFTER_S passed without a
+429, up to the operational limit. Counters: rate_limited_retries, rate_limited_failures (`rate_limit_stats`).
+
 Configuration (environment):
 
     BATCH_MAX_WORKERS=50                 vehicle workers of a batch (not a request limit)
@@ -51,6 +57,15 @@ DEFAULT_SEARCH_MAX_INFLIGHT = 5
 DEFAULT_UNKNOWN_MODEL_MAX_INFLIGHT = 1
 DEFAULT_BATCH_MAX_WORKERS = 50
 WAIT_POLL_S = 0.25
+# H8: adaptive rate limiting on HTTP 429 (see the module docstring)
+RATE_LIMIT_BUDGET_S = 300.0              # per request: total time it may spend waiting out 429s
+RATE_LIMIT_BACKOFF_BASE_S = 2.0          # without Retry-After: 2, 4, 8, ... seconds (+ up to 25 % jitter)
+RATE_LIMIT_BACKOFF_MAX_S = 60.0
+RATE_LIMIT_RETRY_AFTER_MAX_S = 120.0     # a larger Retry-After is clamped (the budget still bounds the total)
+RATE_LIMIT_DECREASE_FACTOR = 0.5
+RATE_LIMIT_DECREASE_INTERVAL_S = 10.0    # a burst of simultaneous 429s lowers the limit once
+RATE_LIMIT_RECOVER_AFTER_S = 30.0
+RATE_LIMIT_RECOVER_STEP_S = 15.0
 
 
 class BatchCancelled(BaseException):
@@ -87,9 +102,13 @@ class SlotPool:
         self.hard_limit = hard_limit
         self._cond = threading.Condition()
         self.limit = self._clamp(limit)
+        self.base_limit = self.limit          # the operational limit the adaptive limiter recovers to
         self.active = 0
         self.waiting = 0
         self.peak = 0
+        self.last_rate_limited: float | None = None
+        self.last_decrease: float | None = None
+        self.last_recover: float | None = None
 
     def _clamp(self, value: int) -> int:
         value = max(1, int(value))
@@ -97,8 +116,28 @@ class SlotPool:
 
     def set_limit(self, value: int) -> int:
         with self._cond:
-            self.limit = self._clamp(value)
+            self.limit = self.base_limit = self._clamp(value)
             self._cond.notify_all()
+            return self.limit
+
+    def rate_limited(self, now: float) -> int:
+        """H8: a 429 was seen: halve the operational limit (once per RATE_LIMIT_DECREASE_INTERVAL_S, never below 1)."""
+        with self._cond:
+            self.last_rate_limited = now
+            if self.last_decrease is None or now - self.last_decrease >= RATE_LIMIT_DECREASE_INTERVAL_S:
+                self.limit = max(1, int(self.limit * RATE_LIMIT_DECREASE_FACTOR))
+                self.last_decrease = now
+            return self.limit
+
+    def succeeded(self, now: float) -> int:
+        """H8: slow recovery: +1 slot per RATE_LIMIT_RECOVER_STEP_S once RATE_LIMIT_RECOVER_AFTER_S passed without a 429."""
+        with self._cond:
+            if self.limit < self.base_limit and self.last_rate_limited is not None \
+                    and now - self.last_rate_limited >= RATE_LIMIT_RECOVER_AFTER_S \
+                    and (self.last_recover is None or now - self.last_recover >= RATE_LIMIT_RECOVER_STEP_S):
+                self.limit += 1
+                self.last_recover = now
+                self._cond.notify()
             return self.limit
 
     def try_acquire(self) -> bool:
@@ -132,7 +171,7 @@ class SlotPool:
     def snapshot(self) -> dict:
         with self._cond:
             return {"active": self.active, "waiting": self.waiting, "limit": self.limit,
-                    "provider_limit": self.hard_limit, "peak": self.peak}
+                    "provider_limit": self.hard_limit, "peak": self.peak, "operational_limit": self.base_limit}
 
 
 class Observation:
@@ -171,6 +210,8 @@ class ConcurrencyController:
         self._chat: dict[str, SlotPool] = {}
         self.search = SlotPool("search-prime", search_limit or DEFAULT_SEARCH_MAX_INFLIGHT, search_provider_limit)
         self._observers: list[Observation] = []
+        self.clock: Callable[[], float] = time.monotonic
+        self.rate_limit_counts = {"rate_limited_retries": 0, "rate_limited_failures": 0}
 
     @classmethod
     def from_env(cls, env: Callable[[str], str | None] = os.environ.get) -> "ConcurrencyController":
@@ -230,6 +271,24 @@ class ConcurrencyController:
             "search_provider_limit": self.search_provider_limit,
             "slot_scope": "per HTTP attempt (acquired before the request, released when it returns or fails)",
         }
+
+    # -- adaptive rate limiting (H8) ------------------------------------------------------------
+
+    def _pool(self, kind: str, model: str | None) -> SlotPool:
+        return self.chat_pool(model or "") if kind == "chat" else self.search
+
+    def note_rate_limited(self, kind: str, model: str | None, *, retried: bool) -> int:
+        """A 429 of one request: lowers the pool's limit; counts a retry or a failure. Returns the new limit."""
+        with self._lock:
+            self.rate_limit_counts["rate_limited_retries" if retried else "rate_limited_failures"] += 1
+        return self._pool(kind, model).rate_limited(self.clock())
+
+    def note_success(self, kind: str, model: str | None) -> int:
+        return self._pool(kind, model).succeeded(self.clock())
+
+    def rate_limit_stats(self) -> dict:
+        with self._lock:
+            return dict(self.rate_limit_counts)
 
     # -- observation ---------------------------------------------------------------------------
 

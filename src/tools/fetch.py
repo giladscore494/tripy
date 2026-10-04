@@ -157,8 +157,135 @@ def _fetch(ctx, kind: str, url: str) -> dict:
 
 
 def fetch_url(ctx, url: str) -> dict:
-    return _fetch(ctx, "fetch", url)
+    url = check_url(url)
+    skipped = unreadable_result(ctx, url)
+    if skipped is not None:
+        return skipped
+    return render_fallback(ctx, url, _fetch(ctx, "fetch", url))
 
 
 def fetch_pdf(ctx, url: str) -> dict:
+    url = check_url(url)
+    skipped = unreadable_result(ctx, url)
+    if skipped is not None:
+        return skipped
     return _fetch(ctx, "pdf", url)
+
+
+# --- PR #43 (H7): automatic render fallback for unreadable official / importer pages ----------------------------------
+#
+# An HTML fetch of an official or importer domain that returns a 2xx status with fewer than RENDER_FALLBACK_MIN_TEXT
+# visible characters (a JavaScript shell or a bot challenge: audi.co.il returned ~584 bytes, 0 text chars for every URL)
+# is re-fetched ONCE with render_page (headless Chromium, RENDER_FALLBACK_TIMEOUT_S budget, cached like a fetch:
+# a later fetch reuses the rendered document). The decision is the code's, never the model's. If the rendered page is
+# still empty or a challenge page, the domain is `unreadable` for the run: no further fetch / render is spent on it
+# (counter acq_unreadable_domains). No stealth and no evasion: a challenge page stays unreadable.
+
+_RENDER_UNAVAILABLE = False      # set once render_page reported that this host has no browser
+RENDER_FALLBACK_MIN_TEXT = 500
+RENDER_FALLBACK_TIMEOUT_S = 25.0
+# a rendered page this short that carries one of these markers is a bot challenge / block page, not content
+CHALLENGE_MAX_TEXT = 3000
+CHALLENGE_MARKERS = ("just a moment", "checking your browser", "cf-browser-verification", "cf-challenge",
+                     "challenge-platform", "attention required", "access denied", "request unsuccessful",
+                     "_incapsula_resource", "px-captcha", "are you a robot", "verify you are human",
+                     "please enable javascript", "bot detection", "captcha")
+
+
+def _domain(url: str) -> str:
+    host = (urlparse(str(url)).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _unreadable(ctx) -> dict:
+    found = getattr(ctx, "unreadable_domains", None)
+    if found is None:
+        found = {}
+        try:
+            ctx.unreadable_domains = found
+        except AttributeError:
+            pass
+    return found
+
+
+def unreadable_result(ctx, url: str) -> dict | None:
+    """The refusal for a URL of a domain this run already found unreadable (None otherwise): no network is spent."""
+    domain = _domain(url)
+    reason = _unreadable(ctx).get(domain)
+    if reason is None:
+        return None
+    ctx.counters["acq_unreadable_skips"] += 1
+    return {"error": "domain_unreadable", "url": url, "domain": domain, "reason": reason,
+            "message": f"{domain} returned no readable content in this run (even rendered); use other sources."}
+
+
+def _official_domain(ctx, url: str) -> bool:
+    from ..source_authority import OFFICIAL_CLASSES, classify_source
+
+    manufacturer = getattr(getattr(ctx, "admission", None), "manufacturer", None) \
+        or (getattr(ctx, "vehicle", None) or {}).get("manufacturer")
+    return classify_source(url, manufacturer).get("source_authority") in OFFICIAL_CLASSES
+
+
+def challenge_page(html: str, text_chars: int) -> bool:
+    low = (html or "").lower()
+    return text_chars < CHALLENGE_MAX_TEXT and any(marker in low for marker in CHALLENGE_MARKERS)
+
+
+def render_fallback(ctx, url: str, result: dict) -> dict:
+    """The fetch result, or, for an empty 2xx HTML page of an official / importer domain, its rendered version (see
+    above). Never raises: a failure keeps the fetch result."""
+    try:
+        return _render_fallback(ctx, url, result)
+    except Exception as exc:  # noqa: BLE001 - the fallback must never cost the fetch
+        ctx.emit("rendered_fallback_failed", url=url, error=f"{type(exc).__name__}: {str(exc)[:200]}")
+        return result
+
+
+def _render_fallback(ctx, url: str, result: dict) -> dict:
+    if not isinstance(result, dict) or result.get("error") or result.get("extraction_path") != "html.visible_text":
+        return result
+    status = result.get("status")
+    if not (isinstance(status, int) and 200 <= status < 300) or (result.get("text_chars") or 0) >= RENDER_FALLBACK_MIN_TEXT:
+        return result
+    if not _official_domain(ctx, url):
+        return result
+    from .render import render_page
+
+    global _RENDER_UNAVAILABLE
+    if _RENDER_UNAVAILABLE:
+        ctx.counters["acq_render_unavailable"] += 1
+        return result
+    rendered = render_page(ctx, url, timeout_s=RENDER_FALLBACK_TIMEOUT_S)
+    if isinstance(rendered, dict) and rendered.get("error") == "render_unavailable":
+        # no browser on this host (a host fact, not a verdict on the site): the fetch stands, nothing is marked or
+        # logged as an event (a run's events never depend on what an earlier run of the process found), and no later
+        # fetch of this process tries again
+        _RENDER_UNAVAILABLE = True
+        ctx.counters["acq_render_unavailable"] += 1
+        return result
+    ctx.counters["acq_render_fallbacks"] += 1
+    text_chars = rendered.get("text_chars") or 0 if isinstance(rendered, dict) else 0
+    html = ""
+    if isinstance(rendered, dict) and rendered.get("document_id"):
+        html = ctx.cache.read_body(rendered["document_id"]).decode("utf-8", errors="replace")
+    challenge = challenge_page(html, text_chars)
+    readable = isinstance(rendered, dict) and not rendered.get("error") and text_chars >= RENDER_FALLBACK_MIN_TEXT \
+        and not challenge
+    event = {"url": url, "fetch_document_id": result.get("document_id"), "fetch_text_chars": result.get("text_chars"),
+             "rendered_document_id": rendered.get("document_id") if isinstance(rendered, dict) else None,
+             "rendered_text_chars": text_chars, "readable": readable,
+             "render_error": rendered.get("error") if isinstance(rendered, dict) else "no_result"}
+    ctx.emit("rendered_fallback", **event)
+    if readable:
+        return {**rendered, "rendered_fallback": True, "fetch_document_id": result.get("document_id")}
+    domain = _domain(url)
+    reason = "challenge_page" if challenge else (rendered.get("error") if isinstance(rendered, dict)
+                                                  and rendered.get("error") else "empty_after_render")
+    found = _unreadable(ctx)
+    if domain not in found:
+        found[domain] = reason
+        ctx.counters["acq_unreadable_domains"] = len(found)
+        ctx.emit("domain_unreadable", domain=domain, url=url, reason=reason)
+    return {**result, "rendered_fallback": True, "unreadable": reason,
+            "message": f"{domain} returned no readable content even rendered ({reason}); use other sources."}

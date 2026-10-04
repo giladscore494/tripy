@@ -29,7 +29,7 @@
   }
  },
  "harvest_vocabulary": {
-  "_about": "Shared vocabularies of the generic matchers in src/candidate_harvest.py. Field-specific wording lives on each field; these lists are reused across fields of the same kind. number_words: written numbers the evidence admission gate reads as numbers (entailment only; the harvester does not use them). negation_prefixes: a negation written right before a feature label (ללא חלון גג, without sunroof) states the feature is absent. availability_statement_terms: words that explicitly state a feature is present; the admission gate accepts a model-promoted boolean only when its quote states availability (these terms or an affirmative / negative value) and the field's own parse does not contradict it.",
+  "_about": "Shared vocabularies of the generic matchers in src/candidate_harvest.py. Field-specific wording lives on each field; these lists are reused across fields of the same kind. number_words: written numbers the evidence admission gate reads as numbers (entailment only; the harvester does not use them). negation_prefixes: a negation written right before a feature label (ללא חלון גג, without sunroof) states the feature is absent. availability_statement_terms: words that explicitly state a feature is present; the admission gate accepts a model-promoted boolean only when its quote states availability (these terms or an affirmative / negative value) and the field's own parse does not contradict it. wheel_context_terms (PR #43): a number written as a wheel size (\"20 / ״20 / 20 אינץ' / 20 inch / R20) within WHEEL_CONTEXT_CHARS of one of these terms is a wheel size: it is never a candidate (nor admitted) for a numeric field that does not take inches (range, consumption, ...).",
   "affirmative_values": [
    "✓",
    "✔",
@@ -412,6 +412,22 @@
    "בסטנדרט",
    "סטנדרטי",
    "סטנדרט"
+  ],
+  "wheel_context_terms": [
+   "חישוק",
+   "חישוקי",
+   "חישוקים",
+   "חישוקי סגסוגת",
+   "גלגל",
+   "גלגלי",
+   "גלגלים",
+   "wheel",
+   "wheels",
+   "rim",
+   "rims",
+   "alloy",
+   "alloys",
+   "alloy wheels"
   ]
  },
  "fields": [

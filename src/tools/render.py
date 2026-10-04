@@ -13,6 +13,9 @@ from .extract import html_title, visible_text
 from .fetch import QUERY_HINT, USER_AGENT, check_url
 
 
+BROWSER_MISSING = "Executable doesn't exist"
+
+
 def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
     from playwright.sync_api import sync_playwright
 
@@ -38,13 +41,18 @@ def _render(url: str, wait_ms: int, timeout_s: float) -> dict:
             browser.close()
 
 
-def render_page(ctx, url: str, wait_ms: int = 2500) -> dict:
+def render_page(ctx, url: str, wait_ms: int = 2500, timeout_s: float | None = None) -> dict:
     url = check_url(url)
+    from .fetch import unreadable_result
+
+    skipped = unreadable_result(ctx, url)
+    if skipped is not None:
+        return skipped
     with ctx.cache.hold(f"doc:rendered:{url}") as waited:  # single flight per URL (see storage/cache.py)
-        return _render_page(ctx, url, wait_ms, waited)
+        return _render_page(ctx, url, wait_ms, waited, timeout_s)
 
 
-def _render_page(ctx, url: str, wait_ms: int, waited: bool) -> dict:
+def _render_page(ctx, url: str, wait_ms: int, waited: bool, timeout_s: float | None = None) -> dict:
     cached = ctx.cache.lookup("rendered", url)
     if cached and waited:
         ctx.cache.count("cross_vehicle_document_singleflight_reuses")
@@ -64,13 +72,17 @@ def _render_page(ctx, url: str, wait_ms: int, waited: bool) -> dict:
     except ImportError:
         return {"error": "render_unavailable", "url": url,
                 "message": "Playwright is not installed on this host. Use fetch_url instead."}
+    budget = float(timeout_s or ctx.config.render_timeout_s)
     try:
         # Run in a fresh thread: Playwright's sync API refuses threads with a running event loop.
         with ThreadPoolExecutor(max_workers=1) as pool:
-            rendered = pool.submit(_render, url, wait_ms, ctx.config.render_timeout_s).result(
-                timeout=ctx.config.render_timeout_s + 30)
+            rendered = pool.submit(_render, url, wait_ms, budget).result(timeout=budget + 30)
     except Exception as exc:
-        return {"error": "render_failed", "url": url, "message": f"{type(exc).__name__}: {str(exc)[:300]}"}
+        message = f"{type(exc).__name__}: {str(exc)[:300]}"
+        if BROWSER_MISSING in str(exc):
+            # Playwright is installed but its browser is not (`playwright install chromium` never ran on this host)
+            return {"error": "render_unavailable", "url": url, "message": message}
+        return {"error": "render_failed", "url": url, "message": message}
     html = rendered["html"]
     body = html.encode("utf-8")[: ctx.config.max_response_bytes]
     text = visible_text(html)

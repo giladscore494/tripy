@@ -1,0 +1,14 @@
+{
+ "document_id": "d_e3793309656aca2a",
+ "kind": "fetch",
+ "url": "https://www.audi.co.il/il/web/he/models/q8/q8-55-tfsi-e.html",
+ "fetched_at": "2026-10-04T18:13:40+00:00",
+ "bytes": 640,
+ "sha256": "c157e1fc4d16b3d41dfda4065b881c3ae1ed66017af32e3a422e97c8653d9d9f",
+ "text_chars": 319,
+ "status": 200,
+ "final_url": "https://www.audi.co.il/il/web/he/models/q8/q8-55-tfsi-e.html",
+ "doc_type": "html",
+ "content_type": "text/html",
+ "title": "אאודי Q8 55 TFSI e quattro פלאג-אין 2025 | Audi Israel"
+}

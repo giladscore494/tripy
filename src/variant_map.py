@@ -44,6 +44,18 @@ variant-map-v2 (PR #42, importer pages), each recorded on the region / fact:
                         document `market_trim_not_offered` (market_trim_offer)
     groups              a label / value stated in several repeated groups is the target's when a target group states
                         it and no target group states another value (`region_statuses`)
+
+variant-map-v3 (PR #43, combustion / hybrid identity):
+
+    designation         version designations ("55 TFSI e", "40TFSI", "4xe", "P400"; identity vocabulary
+                        `variant_designations`) are part of a region's identity; regions with different designations are
+                        never the same variant; the litres written before one ("2.0 40TFSI") are a displacement, and a
+                        designation's digits are part of a line's label / heading, never a value
+    gearbox             a gearbox named with the version (DSG, S tronic, ידני) that contradicts the target's government
+                        transmission leaves the region unresolved
+    designation link    a fact no region decides whose clause / quote / section heading names exactly one designation
+                        takes the verdict of that designation's regions: target (`designation_region`) when one is assigned
+                        to the target by the catalog with its own power and none is another variant
 """
 
 from __future__ import annotations
@@ -55,9 +67,10 @@ from typing import Any
 
 from .candidate_harvest import NUMBER, normalize_text, parse_number
 from .document_binding import (TargetIdentity, _close, _family_status, _other_family_pattern, _veto_dims,
-                               catalog_family_entries, catalog_key, mentions, power_bucket, vocabulary)
+                               catalog_family_entries, catalog_key, designation_spans, designations, mentions,
+                               power_bucket, vocabulary)
 
-VARIANT_MAP_VERSION = "variant-map-v2"
+VARIANT_MAP_VERSION = "variant-map-v3"
 SECTION_MAX_LINES = 40
 HEADING_MAX_CHARS = 60
 BATTERY = re.compile(r"(?<![\d.,])(\d{2,3}(?:[.,]\d)?)\s*(?:kwh|קוט\"ש|קוט\"שׁ)(?![a-z])")
@@ -65,7 +78,7 @@ BATTERY = re.compile(r"(?<![\d.,])(\d{2,3}(?:[.,]\d)?)\s*(?:kwh|קוט\"ש|קו�
 HEDGE_BEFORE = re.compile(r"(?:(?<![\wא-ת])(?:עד|החל\s*מ-?|מ-|up\s+to|from|starting(?:\s+at|\s+from)?|approx\.?|"
                           r"approximately|about|ca\.|כ-|כ־|~)\s*)$")
 HEDGE_AFTER = re.compile(r"^\s*(?:[a-zא-ת\"'/%°.\d]{0,8}\s*)?(?:\*|[¹²³⁴⁵⁶⁷⁸⁹⁰]|\(\d\)|\[\d\])")
-DISCRIMINATING = ("drivetrain", "power", "displacement", "trim", "model_code", "gov_model_code")
+DISCRIMINATING = ("drivetrain", "power", "displacement", "trim", "model_code", "gov_model_code", "designation")
 # F2: a tab label of a repeated spec group is short and states no value
 TAB_LABEL_MAX_TOKENS = 6
 # F3: document words for catalog trim matching ("+" is the word "plus": "Core+" is CORE PLUS)
@@ -79,7 +92,7 @@ IDENTITY_NUMBERS = re.compile(r"(?<![\d.,])\d{2,4}(?:[.,]\d)?\s*(?:kwh|kw|hp|ps|
 
 def _empty() -> dict:
     return {"drivetrain": [], "power": [], "battery": [], "displacement": [], "trim": [], "body": [], "propulsion": [],
-            "model_code": False, "gov_model_code": []}
+            "model_code": False, "gov_model_code": [], "designation": [], "gearbox": []}
 
 
 def _catalog_trims(entries: list[dict]) -> list[str]:
@@ -233,6 +246,8 @@ def identity_vector(text: str, identity: TargetIdentity, trims: list[str], entri
     vec["body"] = sorted(found["body"])
     vec["propulsion"] = sorted(k for k in found["propulsion"] if not str(k).startswith("weak:"))
     vec["model_code"] = bool(found["model_code"])
+    vec["designation"] = sorted(found["designation"])          # PR #43 (H4): "55tfsie", "40tfsi"
+    vec["gearbox"] = sorted(found["gearbox"])
     vec["battery"] = sorted({parse_number(m.group(1)) or 0.0 for m in BATTERY.finditer(norm)} - {0.0})
     vocab = vocabulary()
     named = sorted({m["trim"] for m in catalog_trim_matches(norm, trims, identity, vocab)})
@@ -303,8 +318,8 @@ def _compatible(entry: dict, vec: dict, entries: list[dict]) -> bool:
 
 def _vectors_compatible(a: dict, b: dict) -> bool:
     """Two identity vectors can describe the same variant (no stated dimension contradicts)."""
-    for key in ("drivetrain", "trim"):
-        if a[key] and b[key] and not set(a[key]) & set(b[key]):
+    for key in ("drivetrain", "trim", "designation", "gearbox"):
+        if a.get(key) and b.get(key) and not set(a[key]) & set(b[key]):
             return False
     if a["displacement"] and b["displacement"] and not any(abs(x - y) <= 0.06 for x in a["displacement"]
                                                            for y in b["displacement"]):
@@ -492,14 +507,14 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
         if norm in cell_lines:
             continue
         vec = vec_of(line)
-        label = re.split(r"(?<![\w.])\d", norm, maxsplit=1)[0]
+        label = _label_part(norm)
         if not discriminating(vec):
             if vec["battery"]:
                 inventory.append({"source": f"line:{i}", **vec})
             continue
         inventory.append({"source": f"line:{i}", **vec})     # every variant mention about the target family
         has_alias = any_alias is not None and bool(any_alias.search(norm))
-        if len(line) <= HEADING_MAX_CHARS and not has_alias and not NUMBER.search(IDENTITY_NUMBERS.sub(" ", norm)) \
+        if len(line) <= HEADING_MAX_CHARS and not has_alias and not NUMBER.search(_without_identity_numbers(norm)) \
                 and (dom_headings is None or norm.strip() in dom_headings):
             heads.append((i, vec))
         label_vec = vec_of(label)
@@ -532,7 +547,7 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
     for region in regions:
         vec = region["identity"]
         if region["kind"] == "document" and (len(vec["drivetrain"]) > 1 or len(vec["power"]) > 1
-                                             or len(vec["displacement"]) > 1):
+                                             or len(vec["displacement"]) > 1 or len(vec["designation"]) > 1):
             region.update({"candidates_before": [], "candidates_after": [], "incomplete_candidates": [],
                            "unexplained_powers": [], "status": "mixed", "assignment": None})
             continue
@@ -548,6 +563,33 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
             "catalog": {"entries": len(entries), "incomplete": [e["key"] for e in entries if not e["complete"]]},
             "inventory": inventory, "regions": regions, "tables": out_tables, "pairs": pairs,
             "line_regions": line_regions, "sections": sections, "model_codes": model_codes}
+
+
+# litres written with a version name: "2.0 40TFSI", "3.0 TFSI", "1.5 ליטר"
+VERSION_LITRES = re.compile(r"(?<![\d.,])[1-9]\.\d(?=\s*(?:\d{2}\s?-?(?:tfsi|tsi|tdi)|tfsi|tsi|tdi|ליטר|l\b))")
+
+
+def _identity_spans(norm: str) -> list[tuple[int, int]]:
+    """Spans of a normalized text that are part of a version name, not a value: designations ("55 tfsi e") and the
+    litres written with them ("2.0 40tfsi")."""
+    return [(a, b) for _, a, b in designation_spans(norm)] + [m.span() for m in VERSION_LITRES.finditer(norm)]
+
+
+def _without_identity_numbers(norm: str) -> str:
+    out = IDENTITY_NUMBERS.sub(" ", norm)
+    for a, b in _identity_spans(out):
+        out = out[:a] + " " * (b - a) + out[b:]
+    return out
+
+
+def _label_part(norm: str) -> str:
+    """The label of a line: the text before its first value number (a number inside a version name such as "Q7 55
+    TFSIe" or "2.0 40TFSI" is part of the label, never a value)."""
+    spans = _identity_spans(norm)
+    for m in re.finditer(r"(?<![\w.])\d", norm):
+        if not any(a <= m.start() < b for a, b in spans):
+            return norm[:m.start()]
+    return norm
 
 
 def _code_table(rows: list[list[str]], vocab: dict) -> tuple[int, int] | None:
@@ -729,6 +771,8 @@ def region_verdict(region: dict, identity: TargetIdentity, doc_statuses: dict | 
         target = identity.displacement_cc / 1000 if identity.displacement_cc else identity.displacement_l
         if not any(abs(d - target) <= 0.06 for d in vec["displacement"]):
             return {"status": "other_variant", "contradicts": "displacement", "reason": "displacement"}
+    if vec.get("gearbox") and identity.transmission and identity.transmission not in vec["gearbox"]:
+        return {"status": "unresolved", "reason": "gearbox"}           # PR #43: a version sold with another gearbox
     codes = vec.get("gov_model_code") or []
     if codes and identity.gov_model_code is not None and codes == [identity.gov_model_code]:
         # F5: the region names the target's own government model (degem_cd): the target's market trim, provided the
@@ -803,10 +847,15 @@ def hedged(text: str, value: Any) -> bool:
 
 def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, fragment: str, clause: str,
                 source_lines: list[str], line_index: int | None, matching: list[dict],
-                field_values: int, doc_statuses: dict | None = None) -> dict | None:
+                field_values: int, doc_statuses: dict | None = None, headings: list[str] | None = None) -> dict | None:
     """The DVM decision of one fact: {status, region_id, region_kind, identity, candidates_before, candidates_after,
     reason, ...} (status target | other_variant | shared | unresolved | none), or None without a map.
-    `field_values`: how many materially different values the document's own harvest has for this field."""
+    `field_values`: how many materially different values the document's own harvest has for this field.
+
+    PR #43 designation link: a fact no region decides whose own clause / quote / section heading names exactly ONE
+    version designation ("Q7 S-line 55 TFSIe") takes the verdict of the regions of the document that name it: target
+    (reason `designation_region`) when one is assigned to the target by the catalog with its own power and none is
+    another variant."""
     from .evidence_admission import squash
 
     if not vmap:
@@ -922,6 +971,10 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
         break
     if disagree and decision.get("status") == "target":
         decision.update({"status": "unresolved", "reason": "target_regions_disagree"})
+    if decision.get("status") in ("none", "unresolved") and not disagree:
+        linked = _designation_link(regions, verdict, " ".join([clause or "", fragment or "", *(headings or [])]))
+        if linked is not None:
+            decision = linked
     inventory_target = any(verdict(rid)["status"] == "target" for rid in regions)
     in_region = any(verdict(r)["status"] != "none" for level, rids in levels if level != "document" for r in rids)
     if decision.get("status") in ("none", "unresolved") or shared_row:
@@ -939,6 +992,28 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             decision.update({"status": "unresolved", "reason": "inventory_without_target"})
     decision["map_version"] = vmap.get("version")
     return decision
+
+
+def _designation_link(regions: dict, verdict, context: str) -> dict | None:
+    named = designations(normalize_text(context))
+    if len(named) != 1:
+        return None
+    (name,) = named
+    judged = [(rid, verdict(rid)) for rid, r in regions.items()
+              if r["kind"] != "document" and name in (r["identity"].get("designation") or [])]
+    if any(v["status"] == "other_variant" for _, v in judged):
+        return None
+    proven = [(rid, v) for rid, v in judged if v["status"] == "target" and v.get("reason") == "catalog_assignment"
+              and regions[rid]["identity"].get("power")]
+    if not proven:
+        return None
+    rid, v = proven[0]
+    region = regions[rid]
+    return {"status": "target", "region_id": rid, "region_kind": region["kind"], "level": "designation",
+            "reason": "designation_region", "designation": name, "identity": region["identity"],
+            "identity_text": region.get("text"), "candidates_before": region.get("candidates_before"),
+            "candidates_after": region.get("candidates_after"), "assignment": region.get("assignment"),
+            "regions": [r for r, _ in judged]}
 
 
 # --- F5: the target-market trim offer of a document (regulatory model-code tables) ------------------------------------

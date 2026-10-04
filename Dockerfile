@@ -15,6 +15,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# render_page and the automatic render fallback of unreadable importer pages (src/tools/fetch.py): Playwright's official
+# installer, Chromium's headless shell only, with the system libraries it needs. No other browser, no stealth plugin.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+
 COPY . .
 
 # Durable state lives under TRIPY_DATA_DIR. On Railway, mount a Volume at /data; without one this folder is the

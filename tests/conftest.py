@@ -12,6 +12,19 @@ from src.tools import ToolConfig, ToolContext  # noqa: E402
 from src.tools.evidence import EvidenceStore  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_real_browser(monkeypatch):
+    """Tests never launch a browser: render_page behaves as on a host without Chromium unless a test replaces
+    src.tools.render._render itself (PR #43 render fallback); the process-wide "no browser" memo starts clean."""
+    from src.tools import fetch as fetch_module, render as render_module
+
+    def no_browser(*_args, **_kwargs):
+        raise RuntimeError(f"{render_module.BROWSER_MISSING}: tests never launch a browser")
+
+    monkeypatch.setattr(render_module, "_render", no_browser)
+    monkeypatch.setattr(fetch_module, "_RENDER_UNAVAILABLE", False)
+
+
 class FakeResponse:
     def __init__(self, body: bytes = b"", status: int = 200, content_type: str = "text/html; charset=utf-8",
                  url: str = "https://example.com/", text: str | None = None, json_data=None):

@@ -48,6 +48,7 @@ class ToolContext:
     counters: Counter = field(default_factory=Counter)
     admission: Any = None                # evidence_admission.AdmissionContext of the run (built lazily otherwise)
     url_provenance: Any = None           # acquisition.UrlProvenance: offered vs guessed URLs (created on first use)
+    unreadable_domains: dict = field(default_factory=dict)   # PR #43: domain -> why it stays unreadable this run
 
     def note_document(self, document_id: str, cache_hit: bool | None = None) -> None:
         """Track documents touched by this run; cache_hit counts only download requests."""

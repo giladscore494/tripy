@@ -114,7 +114,9 @@ def api_stats(events: Iterable[dict], chat_path: str = "chat/completions") -> di
     stats = {"api_attempts": 0, "chat_attempts": 0, "search_attempts": 0, "api_successes": 0,
              "api_errors": 0, "chat_errors": 0, "search_errors": 0, "timeout_count": 0,
              "chat_timeouts": 0, "search_timeouts": 0, "unknown_usage_attempts": 0,
-             "unknown_usage_chat_attempts": 0, "unknown_usage_search_attempts": 0}
+             "unknown_usage_chat_attempts": 0, "unknown_usage_search_attempts": 0,
+             # PR #43 (H8): HTTP 429s waited out and retried / given up after the rate-limit budget
+             "rate_limited_retries": 0, "rate_limited_failures": 0}
     for event in events:
         kind = event.get("kind")
         if kind not in ("api_call", "api_error"):
@@ -127,6 +129,8 @@ def api_stats(events: Iterable[dict], chat_path: str = "chat/completions") -> di
             continue
         stats["api_errors"] += 1
         stats[f"{rk}_errors"] += 1
+        if event.get("status") == 429:
+            stats["rate_limited_retries" if event.get("will_retry") else "rate_limited_failures"] += 1
         if is_timeout(event):
             stats["timeout_count"] += 1
             stats[f"{rk}_timeouts"] += 1

@@ -312,7 +312,11 @@
    "פלאג-אין",
    "פלאג אין",
    "היברידי נטען",
-   "היברידית נטענת"
+   "היברידית נטענת",
+   "tfsi e",
+   "tfsie",
+   "tsi e",
+   "e-hybrid"
   ],
   "battery_electric": [
    "bev",
@@ -560,5 +564,58 @@
   "no",
   "כן",
   "לא"
- ]
+ ],
+ "variant_designations": {
+  "_about": "PR #43: regular expressions (over normalized, lower-case text) of engine / powertrain VERSION designations a document uses to tell versions of one model apart ('55 TFSI e', '40TFSI', 'TFSIe', '4xe', 'P400'). A designation is written into a region's identity (src/variant_map.identity_vector, key `designation`, compact form '55tfsie'); two regions with different designations are never the same variant; a hybrid / plug-in document that names two or more designations (or states two or more distinct powers) never identifies the variant by displacement alone (document_binding.bind, H1). Generic patterns only, never a model name.",
+  "patterns": [
+   "(?<![\\w.,])\\d{2}\\s?-?(?:tfsi|tsi|tdi|tfsie)(?:\\s?e(?![a-z]))?(?![a-z0-9])",
+   "(?<![\\w.,])\\dxe(?![a-z0-9])",
+   "(?<![\\w.,])p\\d{3}e?(?![a-z0-9])"
+  ]
+ },
+ "relative_variant_terms": {
+  "_about": "PR #43 (H2): comparative references to ANOTHER version of the model. A value whose own clause uses one ('the more senior one adds 22\" wheels') is about that other version: heading-level evidence (a section heading, the document's trim) never binds it to a trim or technical variant; it binds at most body_powertrain (binding flag relative_variant_reference).",
+  "terms": [
+   "הבכיר",
+   "הבכירה",
+   "הבכיר יותר",
+   "הבכירה יותר",
+   "הגרסה הבכירה",
+   "הדגם הבכיר",
+   "הגרסה החזקה",
+   "הגרסה החזקה יותר",
+   "בגרסה העליונה",
+   "הגרסה העליונה",
+   "הגרסה הבכירה יותר",
+   "the top version",
+   "the top-of-the-range",
+   "the more powerful",
+   "the more expensive version",
+   "flagship",
+   "senior"
+  ]
+ },
+ "gearbox_terms": {
+  "_about": "PR #43 (H4): a gearbox named as part of a version name ('1.5 TSI DSG', '40 TFSI S tronic') is part of the region identity (key `gearbox`); a region whose gearbox contradicts the target's government transmission (Level 1.5 `automatic`) stays unresolved.",
+  "automatic": [
+   "dsg",
+   "s tronic",
+   "s-tronic",
+   "stronic",
+   "tiptronic",
+   "steptronic",
+   "e-cvt",
+   "cvt",
+   "dct",
+   "edc",
+   "automatic",
+   "אוטומטית",
+   "אוטומטי"
+  ],
+  "manual": [
+   "manual",
+   "ידנית",
+   "ידני"
+  ]
+ }
 }
