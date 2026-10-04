@@ -228,6 +228,16 @@ def test_r2_a_row_identical_in_every_variant_column_is_shared(tmp_path):
     assert record["binding_basis"] == "dvm_shared" and record["variant_map_region"]["region_kind"] == "table_shared_row"
 
 
+def test_r2_shared_row_fails_closed_when_an_unmapped_data_column_disagrees(tmp_path):
+    rows = [["", 'RWD 286 כ"ס', 'AWD 486 כ"ס', "Mystery"],
+            ["בסיס גלגלים", '2,890 מ"מ', '2,890 מ"מ', '3,000 מ"מ']]
+    out, _, _ = admitted_all(tmp_path, IL_SPEC, page(rows), ["wheelbase_mm"])
+    record = out[("wheelbase_mm", 2890)]
+    assert record["variant_match"] == "unclear"
+    assert record["variant_map_region"]["status"] == "unresolved"
+    assert "dvm_shared" not in (record.get("binding_rules") or [])
+
+
 def test_r2_a_hedged_value_never_rises(tmp_path):
     html = page([COLUMNS, ["טווח", '570 ק"מ', '550 ק"מ']], "<p>הספק טעינה מהירה עד 451 kW</p>")
     out, _, _ = admitted_all(tmp_path, IL_SPEC, html, ["dc_max_charging_power_kw"])
