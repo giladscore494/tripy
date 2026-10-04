@@ -54,6 +54,28 @@ describe("active run", () => {
     expect(api.callsTo("GET", `/api/runs/${F.ACTIVE_ID}/progress`).length).toBe(after);
   });
 
+  it("refreshes stale active detail when the first progress response is already terminal", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const active = F.activeRun();
+    const done = { ...F.completedRun, run_id: F.ACTIVE_ID };
+    let detailReads = 0;
+    const api = mockApi({
+      ...runRoutes(active),
+      [`GET /api/runs/${F.ACTIVE_ID}`]: () => json(detailReads++ === 0 ? active : done),
+      [`GET /api/runs/${F.ACTIVE_ID}/progress`]: () => json(F.progressOf(done)),
+      [`GET /api/runs/${F.ACTIVE_ID}/events`]: () => json(F.eventsPage(0, [])),
+    });
+
+    renderApp(`/runs/${F.ACTIVE_ID}`);
+
+    await waitFor(() => expect(api.callsTo("GET", `/api/runs/${F.ACTIVE_ID}`).length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Cancel run/ })).not.toBeInTheDocument());
+
+    const progressCalls = api.callsTo("GET", `/api/runs/${F.ACTIVE_ID}/progress`).length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(PROGRESS_MS * 4); });
+    expect(api.callsTo("GET", `/api/runs/${F.ACTIVE_ID}/progress`).length).toBe(progressCalls);
+  });
+
   it("cancels through the API", async () => {
     const api = mockApi({ ...runRoutes(F.activeRun()),
                           [`POST /api/runs/${F.ACTIVE_ID}/cancel`]: () => json({ run_id: F.ACTIVE_ID, status: "RESEARCHING",
