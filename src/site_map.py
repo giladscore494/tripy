@@ -428,6 +428,12 @@ def run_site_map(ctx, run_log, *, payload: dict | None, vehicle: dict | None, ta
             site = build_site_map(ctx, official_domains(ctx, target_market), deadline_s=deadline_s)
         names, others, year = target_names(getattr(ctx, "admission", None), payload, vehicle)
         offered = offer(site, model_names=names, other_families=others, year=year, cluster=cluster, exclude=exclude)
+        try:      # F6: a URL the site map offered is never a guessed URL
+            from .acquisition import url_provenance
+
+            url_provenance(ctx).offer(o.get("url") for o in offered)
+        except Exception:  # noqa: BLE001 - telemetry
+            pass
     except Exception as exc:  # noqa: BLE001 - discovery never costs the run
         error = f"{type(exc).__name__}: {str(exc)[:300]}"
         try:

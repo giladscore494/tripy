@@ -82,7 +82,8 @@ from .tools import ToolConfig, ToolContext, dispatch, tool_specs, unavailable_to
 from .tools.evidence import EvidenceStore
 from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, CARD_TOOLS, DISCOVERY_TOOLS, AcquisitionTracker,
                           acquisition_tool_specs, annotate_search_result, cluster_source_type, document_card,
-                          missing_categories_note, model_tokens, navigation_links, recovery_clusters)
+                          missing_categories_note, model_tokens, navigation_links, recovery_clusters,
+                          url_provenance)
 from .candidate_harvest import RunHarvester
 from .final_assembly import run_deterministic_finalization
 from .parser_gaps import log_parser_gaps
@@ -1375,6 +1376,7 @@ class ToolSession:
                 annotate_search_result(result, maker, getattr(adm, "target_market", None) or self.config.target_market)
             if phase == "research" and name == "fetch_url" and self.config.acquisition_mode == "contract":
                 self._attach_navigation_links(result)
+            guessed = self._observe_provenance(name, raw_args, result, phase)
             if budget is not None:
                 budget.used += self.ctx.counters["search_cache_misses"] - misses_before
             elapsed = int((time.monotonic() - t_tool) * 1000)
@@ -1397,6 +1399,7 @@ class ToolSession:
                 "error": result.get("error") if isinstance(result, dict) else None,
                 "document_id": result.get("document_id") if isinstance(result, dict) else None,
                 "duplicate": duplicate,
+                **({"guessed_url": True} if guessed else {}),
                 "route_failed": _route_failed(result),
                 **({"routes": _call_routes(self.ctx, name, raw_args, result)}
                    if name in trace.SEARCH_TOOLS + trace.FETCH_TOOLS else {}),
@@ -1407,6 +1410,32 @@ class ToolSession:
                 "_compact": compact_stub(name, raw_args, result, self.config.compact_tool_output_chars),
             })
         return self.tracker.end_turn()
+
+    def _observe_provenance(self, name: str, raw_args: Any, result: Any, phase: str) -> bool:
+        """PR #42 F6: offered URLs (search results, fetched pages' links) and guessed fetches on official domains
+        (acquisition.UrlProvenance; counters acq_guessed_urls / acq_404). Returns whether this fetch was guessed.
+        Telemetry only; never raises."""
+        try:
+            provenance = url_provenance(self.ctx)
+            if name in trace.SEARCH_TOOLS:
+                provenance.observe_search(result)
+                return False
+            if name not in trace.FETCH_TOOLS:
+                return False
+            row = provenance.observe_fetch(self.ctx, trace.parse_args(raw_args).get("url"), result)
+            if row and row["guessed_url"]:
+                self.run_log.event("guessed_url", phase=phase, **row)
+            return bool(row and row["guessed_url"])
+        except Exception as exc:  # noqa: BLE001 - telemetry must never cost the run
+            self.run_log.event("url_provenance_failed", error=_error_text(exc))
+            return False
+
+    def guess_note(self) -> str:
+        """The operational note once guessed URLs keep returning 404 on one official domain ("" otherwise)."""
+        try:
+            return url_provenance(self.ctx).note()
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _attach_navigation_links(self, result: Any) -> None:
         """Contract-mode research: a fetched HTML page carries its ranked outbound links (src/acquisition.py
@@ -2146,6 +2175,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 announced = {f: v for f, v in announced.items() if v}
                 fresh = {f: [compact_candidate(c) for c in v] for f, v in announced.items()}
                 note = [f"Fields still open: {', '.join(still_open)}."]
+                guess = session.guess_note()
+                if guess:
+                    note.append(guess)
                 if resolved_now:
                     note.append(f"Resolved now (do not research again): {', '.join(resolved_now)}.")
                 if fresh:
@@ -2663,10 +2695,11 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                     stop = "budget"
                     break
                 if turn_index < REACQUIRE_TURNS:
+                    guess = session.guess_note()
                     messages[-1]["content"] += (
                         f"\n[operational note] New usable document(s) this turn: {len(fresh)}. Billable searches left: "
                         f"{budget.remaining}; fetches left: {fetch_budget.remaining}. One more turn is allowed; reply "
-                        '{"done": true, ...} when the right document is fetched.')
+                        '{"done": true, ...} when the right document is fetched.' + (f" {guess}" if guess else ""))
             else:
                 stop = stop or "turn_budget"
         except GLMError as exc:
@@ -4051,6 +4084,9 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                     missing = missing_categories_note(acq.missing_categories())
                     if missing:
                         notes.append(missing)
+                guess = tools.guess_note()            # F6: guessed URLs keep returning 404 on an official domain
+                if guess:
+                    notes.append(guess)
                 if notes:
                     messages[-1]["content"] += "\n[operational note] " + " ".join(notes)
             else:

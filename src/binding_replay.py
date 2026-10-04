@@ -66,7 +66,7 @@ VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", R
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
                 "binding_requirement", "binding_version", "year_context", "binding_rules", "binding_policy",
-                "variant_map_region")
+                "variant_map_region", "market_trim")
 
 
 def code_version() -> str:
@@ -205,6 +205,7 @@ def replay_fact(adm: AdmissionContext, cache, *, field: str, value: Any, quote: 
            "binding_gap_now": binding_gaps(binding, binding["binding_requirement"], adm.identity.propulsion),
            "binding_dimensions_now": binding["binding_dimensions"],
            "binding_rules_now": binding.get("binding_rules"), "binding_policy_now": binding.get("binding_policy"),
+           "market_trim_now": binding.get("market_trim"),
            "variant_map_region_now": binding.get("variant_map_region"),
            # today's admission sanity rules (semantic exclusions, plausibility): a stored value they reject now
            "rejected_now": sanity_rejection(adm, material, spec, value, quote, ctx),

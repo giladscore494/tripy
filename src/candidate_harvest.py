@@ -43,7 +43,8 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
 # v7 (PR #40): imperial volume / Wh units are known other units, x-joined dimension groups share their qualifiers,
 # Hebrew construct forms of exclusion terms, model years and unit-less values of unit-required fields are rejected
-HARVESTER_VERSION = "harvest-v7"
+# v8 (PR #42): visually ordered right-to-left PDF lines / cells are detected by dictionary hit rate and reordered
+HARVESTER_VERSION = "harvest-v8"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -90,6 +91,106 @@ def reverse_hebrew_line(line: str) -> str:
     tokens reversed character-wise, digit runs kept left-to-right."""
     tokens = line.split()
     return " ".join(_reverse_token(t) if HEBREW.search(t) else t for t in reversed(tokens))
+
+
+# --- visually ordered (reversed) right-to-left text (PR #42 F4) ------------------------------------------------------
+# PDF text arrives in VISUAL order: pdfplumber reads glyphs left to right, so a Hebrew run "הספק מרבי (כ"ס)" comes out
+# as ')ס"כ( יברמ קפסה'. Detection reads the line's Hebrew words against a dictionary (field aliases, the identity
+# vocabulary, the harvest vocabulary): a line is visual when its words reversed hit the dictionary more often than as
+# read (a word starting with a final letter form counts against its reading). Normalization is the bidi reordering of
+# a right-to-left line: its runs in reverse order; a Hebrew run (Hebrew tokens and the numbers between them) word order
+# reversed and each word read backwards (digit groups kept); a Latin run ("Long Range", "kWh/100 km") kept as is; a
+# free-standing number its own run ("476 286 258 <label>" -> "<label> 258 286 476").
+
+HEBREW_WORD = re.compile(r"[א-ת]+(?:[\"'][א-ת]+)*")
+LATIN = re.compile(r"[a-zA-Z]")
+WORD_PREFIXES = "ובהלמשכ"
+_RTL_WORDS: dict[tuple, frozenset] = {}
+
+
+def rtl_dictionary(hebrew_terms: Iterable[str] = ()) -> frozenset:
+    """The Hebrew words reversal detection reads: of `hebrew_terms` (field aliases), the identity vocabulary
+    (data/identity_vocabulary.json) and the harvest vocabulary. Cached per term set."""
+    terms = tuple(sorted(set(hebrew_terms)))
+    cached = _RTL_WORDS.get(terms)
+    if cached is not None:
+        return cached
+    from .document_binding import vocabulary
+
+    found: set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str):
+            found.update(w for w in HEBREW_WORD.findall(normalize_text(value)) if len(w) >= 2)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if not str(key).startswith("_"):
+                    walk(key)
+                    walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+    walk(list(terms))
+    walk(vocabulary())
+    walk(harvest_vocabulary())
+    if len(_RTL_WORDS) > 64:
+        _RTL_WORDS.clear()
+    _RTL_WORDS[terms] = frozenset(found)
+    return _RTL_WORDS[terms]
+
+
+def _known(word: str, words: frozenset) -> bool:
+    return word in words or (len(word) > 2 and word[0] in WORD_PREFIXES and word[1:] in words)
+
+
+def rtl_reversal_score(line: str, words: frozenset) -> dict:
+    """{as_read, reversed}: dictionary hits of the line's Hebrew words as read and read backwards, each minus the
+    words that would start with a final letter form (impossible in Hebrew)."""
+    hebrew = HEBREW_WORD.findall(normalize_text(line))
+    backwards = [w[::-1] for w in hebrew]
+
+    def score(items: list[str]) -> int:
+        return sum(1 for w in items if _known(w, words)) - sum(1 for w in items if w[0] in FINAL_LETTERS)
+    return {"as_read": score(hebrew), "reversed": score(backwards), "words": len(hebrew)}
+
+
+def _backwards(token: str) -> str:
+    """A token read backwards, digit groups kept left to right ("100-0" stays a range, "(כ"ס)" is not mirrored: the
+    PDF stores the code points in visual positions)."""
+    return re.sub(r"\d+(?:[.,:/]\d+)*", lambda m: m.group()[::-1], token[::-1])
+
+
+def visual_to_logical(line: str) -> str:
+    """The logical order of a visually ordered right-to-left line (see above). Pure; no detection."""
+    tokens = line.split()
+    kinds = ["H" if HEBREW.search(t) else "L" if LATIN.search(t) else "N" for t in tokens]
+    for i, kind in enumerate(kinds):
+        if kind == "N":
+            left = next((k for k in reversed(kinds[:i]) if k != "N"), None)
+            right = next((k for k in kinds[i + 1:] if k != "N"), None)
+            if left == right and left is not None:
+                kinds[i] = left.lower()                  # a number inside a Hebrew / Latin run belongs to it
+    runs: list[tuple[str, list[str]]] = []
+    for token, kind in zip(tokens, kinds):
+        base = kind.upper()
+        if runs and base in ("H", "L") and runs[-1][0] == base:
+            runs[-1][1].append(token)
+        else:
+            runs.append((base, [token]))
+    out = []
+    for base, items in reversed(runs):
+        out.append(" ".join(_backwards(t) for t in reversed(items)) if base == "H" else " ".join(items))
+    return " ".join(out)
+
+
+def logical_rtl_line(line: str, words: frozenset) -> str | None:
+    """The logical form of a line detected as visually ordered right-to-left text, else None."""
+    if not HEBREW.search(line or ""):
+        return None
+    score = rtl_reversal_score(line, words)
+    if score["reversed"] <= score["as_read"]:
+        return None
+    return visual_to_logical(line)
 
 
 def looks_reversed(line: str, hebrew_aliases: Iterable[str] = ()) -> bool:
@@ -415,10 +516,13 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
     lines = [ln.strip() for ln in (text or "").splitlines()]
     lines = [ln for ln in lines if ln]
     norms: list[tuple[str, str, bool]] = []
+    words = rtl_dictionary(dictionary.hebrew_aliases) if is_pdf else frozenset()
     for line in lines:
-        reversed_ = bool(is_pdf and HEBREW.search(line) and looks_reversed(line, dictionary.hebrew_aliases))
-        logical = reverse_hebrew_line(line) if reversed_ else line
-        norms.append((normalize_text(logical), logical if reversed_ else line, reversed_))
+        logical = logical_rtl_line(line, words) if is_pdf else None
+        if logical is None and is_pdf and HEBREW.search(line) and looks_reversed(line, dictionary.hebrew_aliases):
+            logical = reverse_hebrew_line(line)
+        reversed_ = logical is not None
+        norms.append((normalize_text(logical if reversed_ else line), logical if reversed_ else line, reversed_))
     for i, (norm, quote, reversed_) in enumerate(norms):
         nxt = norms[i + 1] if i + 1 < len(norms) else ("", "", False)
         segments.append(Segment("line", norm, quote, reversed=reversed_, next_text=nxt[0], next_quote=nxt[1]))

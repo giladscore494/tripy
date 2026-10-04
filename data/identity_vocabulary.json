@@ -467,7 +467,14 @@
   "טעינה",
   "טעינת",
   "ac",
-  "dc"
+  "dc",
+  "v2l",
+  "l2v",
+  "v2g",
+  "v2v",
+  "wallbox",
+  "supercharger",
+  "טוען"
  ],
  "generic_trim_words": [
   "edi",
@@ -482,6 +489,44 @@
   "base",
   "pro"
  ],
+ "catalog_trim_aliases": {
+  "_about": "Non-prefix written forms of government catalog trim tokens (src/variant_map.catalog_trim_matches): a catalog token matches the document words listed here, in order, besides the prefix rule (CORE PERF ~ 'Core Performance', STAND RANGE ~ 'Standard Range') and the token join (BLACKEDITION ~ 'Black Edition'). Generic abbreviations only, never a brand name.",
+  "lr": [
+   "long range"
+  ],
+  "sr": [
+   "standard range",
+   "short range"
+  ],
+  "lr pr": [
+   "long range pro"
+  ],
+  "prf": [
+   "performance"
+  ],
+  "comfrt": [
+   "comfort"
+  ],
+  "prm": [
+   "premium"
+  ],
+  "lux": [
+   "luxury"
+  ]
+ },
+ "model_code_table": {
+  "_about": "The regulatory safety-equipment table Israeli importer pages must publish: a code column and a model description column. Its code is the government degem_cd (verified against the Level 1.5 catalog for PR #42); src/variant_map reads such a table as gov_model_code identities.",
+  "code_headers": [
+   "קוד דגם",
+   "קוד הדגם",
+   "model code"
+  ],
+  "description_headers": [
+   "תיאור דגם",
+   "תיאור הדגם",
+   "model description"
+  ]
+ },
  "header_noise_words": [
   "spec",
   "specs",

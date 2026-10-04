@@ -24,6 +24,26 @@ technical variant), `other_variant` (its identity contradicts the target: the fa
 row identical in every variant column, or a value stated once at document level, without a variant qualifier or a
 hedge, that the document never states with another value) or `unresolved`. Pure and deterministic, no model calls; the
 binding consequences live in document_binding.bind and the safety gates in evidence_admission.fact_binding.
+
+variant-map-v2 (PR #42, importer pages), each recorded on the region / fact:
+
+    F1 charging power   a kW stated in a charging context (טעינה, DC / AC, a charger, V2L) is never a power identity
+                        (document_binding.charging_context); a power a region states that no catalog entry explains
+                        blocks that region only (`unexplained_powers`); in another region's elimination it is left
+                        out (`ignored_powers`)
+    F2 tab labels       a heading, then exactly N short variant labels (<= TAB_LABEL_MAX_TOKENS words, no digit),
+                        then the N repeated groups under it with one label set: label i is group i's identity
+                        (`tab_label`, rule `tab_labels`); the heading stays in the text, never an identity key
+    F3 trim aliases     catalog trims match abbreviated (catalog_trim_matches: prefix / join / the vocabulary's
+                        catalog_trim_aliases, at least one token whole, the longest match wins); a trim no catalog
+                        entry has at the text's drivetrain is dropped (`trim_inconsistent`); a trim at several
+                        technical variants narrows to their union (never a pick)
+    F5 model codes      the regulatory "קוד דגם | תיאור דגם" table: a row region per code (`gov_model_code`); a
+                        region with the target's degem_cd is the target's market trim (rule `gov_model_code`); a
+                        complete table that lists the target's technical variant under other codes only gives the
+                        document `market_trim_not_offered` (market_trim_offer)
+    groups              a label / value stated in several repeated groups is the target's when a target group states
+                        it and no target group states another value (`region_statuses`)
 """
 
 from __future__ import annotations
@@ -35,9 +55,9 @@ from typing import Any
 
 from .candidate_harvest import NUMBER, normalize_text, parse_number
 from .document_binding import (TargetIdentity, _close, _family_status, _other_family_pattern, _veto_dims,
-                               catalog_family_entries, mentions, power_bucket, vocabulary)
+                               catalog_family_entries, catalog_key, mentions, power_bucket, vocabulary)
 
-VARIANT_MAP_VERSION = "variant-map-v1"
+VARIANT_MAP_VERSION = "variant-map-v2"
 SECTION_MAX_LINES = 40
 HEADING_MAX_CHARS = 60
 BATTERY = re.compile(r"(?<![\d.,])(\d{2,3}(?:[.,]\d)?)\s*(?:kwh|קוט\"ש|קוט\"שׁ)(?![a-z])")
@@ -45,7 +65,11 @@ BATTERY = re.compile(r"(?<![\d.,])(\d{2,3}(?:[.,]\d)?)\s*(?:kwh|קוט\"ש|קו�
 HEDGE_BEFORE = re.compile(r"(?:(?<![\wא-ת])(?:עד|החל\s*מ-?|מ-|up\s+to|from|starting(?:\s+at|\s+from)?|approx\.?|"
                           r"approximately|about|ca\.|כ-|כ־|~)\s*)$")
 HEDGE_AFTER = re.compile(r"^\s*(?:[a-zא-ת\"'/%°.\d]{0,8}\s*)?(?:\*|[¹²³⁴⁵⁶⁷⁸⁹⁰]|\(\d\)|\[\d\])")
-DISCRIMINATING = ("drivetrain", "power", "displacement", "trim", "model_code")
+DISCRIMINATING = ("drivetrain", "power", "displacement", "trim", "model_code", "gov_model_code")
+# F2: a tab label of a repeated spec group is short and states no value
+TAB_LABEL_MAX_TOKENS = 6
+# F3: document words for catalog trim matching ("+" is the word "plus": "Core+" is CORE PLUS)
+TRIM_TOKEN = re.compile(r"[a-z0-9א-ת]+|\+")
 # numbers a variant heading may hold: power, battery, model year ("AWD 486 כ"ס", "87.5 kWh", "G6 2026")
 IDENTITY_NUMBERS = re.compile(r"(?<![\d.,])\d{2,4}(?:[.,]\d)?\s*(?:kwh|kw|hp|ps|bhp|כ\"ס|קוט\"ש)(?![a-z])"
                               r"|(?<!\d)20[0-3]\d(?!\d)")
@@ -55,7 +79,7 @@ IDENTITY_NUMBERS = re.compile(r"(?<![\d.,])\d{2,4}(?:[.,]\d)?\s*(?:kwh|kw|hp|ps|
 
 def _empty() -> dict:
     return {"drivetrain": [], "power": [], "battery": [], "displacement": [], "trim": [], "body": [], "propulsion": [],
-            "model_code": False}
+            "model_code": False, "gov_model_code": []}
 
 
 def _catalog_trims(entries: list[dict]) -> list[str]:
@@ -63,8 +87,8 @@ def _catalog_trims(entries: list[dict]) -> list[str]:
 
 
 def _trim_pattern(trim: str, identity: TargetIdentity, vocab: dict):
-    """A catalog trim as a phrase. A trim made only of generic words (MAX, PRO, BASE EDITION) only qualified by the
-    family ("G6 MAX"), as the #34 qualified-phrase rule; any other trim as its whole phrase."""
+    """A catalog trim made only of generic words (MAX, PRO, BASE EDITION) as a phrase qualified by the family ("G6
+    MAX"), as the #34 qualified-phrase rule. None for any other trim (catalog_trim_matches reads those)."""
     words = [w for w in re.split(r"[^\wא-ת]+", normalize_text(trim)) if w]
     if not words:
         return None
@@ -76,12 +100,128 @@ def _trim_pattern(trim: str, identity: TargetIdentity, vocab: dict):
         if not family:
             return None
         body = rf"(?:{family})[\s\-]+{body}"
-    return re.compile(rf"(?<![\wא-ת]){body}(?![\wא-ת])")
+        return re.compile(rf"(?<![\wא-ת]){body}(?![\wא-ת])")
+    return None
 
 
-def identity_vector(text: str, identity: TargetIdentity, trims: list[str]) -> dict:
-    """What variant a text names: drivetrain keys, powers (hp), battery kWh, displacements, catalog trims (generic-only
-    trims only qualified by the family), body / strong propulsion keys and whether it names the target's model code."""
+def _words(text: str) -> list[tuple[str, int, int]]:
+    """(word, start, end) of a normalized text for trim matching: letters / digits runs, "+" as "plus"."""
+    return [("plus" if m.group(0) == "+" else m.group(0), m.start(), m.end())
+            for m in TRIM_TOKEN.finditer(normalize_text(text or ""))]
+
+
+def _catalog_tokens(trim: str) -> list[str]:
+    return [w for w, _, _ in _words(trim)]
+
+
+def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool,
+                catalog_words: set[str]) -> list[tuple[int, bool]]:
+    """(end, whole) of each way a catalog trim token can match from doc word p: the word itself (whole), a word it is
+    a prefix of (not whole; never a number; a 2-letter non-first token may prefix only another token that
+    exists in this model family's catalog, so BUSINESS ED ~ BUSINESS EDI but PR !~ Price), the join of 2-3 words
+    ("BLACKEDITION" = "Black Edition", whole) or a listed alias
+    (catalog_trim_aliases: token "LR" = "Long Range" or full trim "LR PR" = "Long Range Pro", whole)."""
+    if p >= len(doc):
+        return []
+    word = doc[p]
+    ends: set[tuple[int, bool]] = set()
+    if token == word:
+        ends.add((p + 1, True))
+    elif not token.isdigit() and not word.isdigit() and word.startswith(token) \
+            and (len(token) >= 3 or (len(token) == 2 and not first and word in catalog_words)):
+        ends.add((p + 1, False))
+    joined = word
+    for m in (2, 3):
+        if p + m > len(doc) or not joined.isalpha():
+            break
+        joined += doc[p + m - 1]
+        if joined == token:
+            ends.add((p + m, True))
+    for alias in aliases.get(token) or ():
+        words = alias.split()
+        if words and doc[p:p + len(words)] == words:
+            ends.add((p + len(words), True))
+    return sorted(ends)
+
+
+def _match_from(tokens: list[str], doc: list[str], p: int, aliases: dict,
+                catalog_words: set[str]) -> int | None:
+    """The longest end of the catalog tokens matched, in order, from doc word p, with at least one token matched
+    whole (a word, a join or an alias): a prefix alone never names a trim ("SUN" is not "sunroof"). None: no match."""
+    states = {(p, False)}
+    for i, token in enumerate(tokens):
+        states = {(end, whole or seen) for start, seen in states
+                  for end, whole in _token_ends(token, doc, start, aliases, first=i == 0,
+                                                      catalog_words=catalog_words)}
+        if not states:
+            return None
+    ends = [end for end, seen in states if seen]
+    return max(ends) if ends else None
+
+
+def catalog_trim_matches(text: str, trims: list[str], identity: TargetIdentity,
+                         vocab: dict | None = None) -> list[dict]:
+    """F3: the catalog trims a text names: [{trim, start, end, form}] (word positions). A trim of generic words only
+    (MAX, PRO) needs the family before it ("G6 MAX", unchanged); any other trim matches when every catalog token
+    is, in order, a prefix of the next document words ("CORE PERF" = "Core Performance", "STAND RANGE" = "Standard
+    Range", "PERF TB" = "Performance TB"), a join of them ("BLACKEDITION" = "Black Edition") or an alias of
+    catalog_trim_aliases ("LR PR" = "Long Range Pro"), and at least one token matches whole (never by prefixes
+    alone: "SUN" is not "sunroof"). The LONGEST match wins: a trim whose words lie inside a longer
+    trim's match is dropped ("Core Performance" is CORE PERF, never also CORE). Deterministic; no value is read."""
+    vocab = vocabulary() if vocab is None else vocab
+    norm = normalize_text(text or "")
+    words = _words(norm)
+    doc = [w for w, _, _ in words]
+    generic = {w.lower() for w in vocab.get("generic_trim_words") or []}
+    aliases = {k.lower(): [normalize_text(a) for a in v] for k, v in (vocab.get("catalog_trim_aliases") or {}).items()
+               if not k.startswith("_") and isinstance(v, list)}
+    catalog_words = {token for trim in trims for token in _catalog_tokens(trim)}
+    found: list[dict] = []
+    for trim in trims:
+        tokens = _catalog_tokens(trim)
+        if not tokens:
+            continue
+        if all(t in generic for t in tokens):
+            pattern = _trim_pattern(trim, identity, vocab)
+            for m in pattern.finditer(norm) if pattern is not None else ():
+                inside = [i for i, (_, a, b) in enumerate(words) if a >= m.start() and b <= m.end()]
+                if len(inside) >= len(tokens):
+                    found.append({"trim": trim, "start": inside[-len(tokens)], "end": inside[-1] + 1,
+                                  "form": "qualified_phrase"})
+            continue
+        # A full-trim alias is exact and scoped to this complete catalog trim. This is safer than teaching a short
+        # token such as PR to prefix-match every word beginning with "pr" across every model family.
+        for alias in aliases.get(normalize_text(trim)) or ():
+            alias_words = alias.split()
+            for p in range(len(doc) - len(alias_words) + 1):
+                if alias_words and doc[p:p + len(alias_words)] == alias_words:
+                    found.append({"trim": trim, "start": p, "end": p + len(alias_words), "form": "phrase_alias"})
+        for p in range(len(doc)):
+            end = _match_from(tokens, doc, p, aliases, catalog_words)
+            if end is not None:
+                exact = doc[p:end] == tokens
+                found.append({"trim": trim, "start": p, "end": end, "form": "exact" if exact else "alias_prefix"})
+    kept = [m for m in found if not any(o["start"] <= m["start"] and o["end"] >= m["end"]
+                                        and o["end"] - o["start"] > m["end"] - m["start"] for o in found)]
+    return sorted({(m["start"], m["end"], m["trim"]): m for m in kept}.values(),
+                  key=lambda m: (m["start"], m["end"], m["trim"]))
+
+
+def _gov_codes(norm: str, vocab: dict) -> list[int]:
+    """Government model codes a text states with their label ("קוד דגם 35", "קוד דגם: 31")."""
+    heads = (vocab.get("model_code_table") or {}).get("code_headers") or []
+    alternation = "|".join(re.escape(normalize_text(h)) for h in sorted(heads, key=len, reverse=True) if h)
+    if not alternation:
+        return []
+    return sorted({int(m.group(1)) for m in re.finditer(rf"(?:{alternation})\s*[:|\-–]?\s*(\d{{1,4}})(?![\d.,])",
+                                                         norm)})
+
+
+def identity_vector(text: str, identity: TargetIdentity, trims: list[str], entries: list[dict] | None = None) -> dict:
+    """What variant a text names: drivetrain keys, powers (hp; never a charging power), battery kWh, displacements,
+    catalog trims (catalog_trim_matches; with `entries`, a trim no catalog entry of the text's drivetrain has is
+    dropped: "Core" with AWD names no trim when CORE exists only as two-wheel drive), body / strong propulsion keys,
+    whether it names the target's model code, and the government model codes it states ("קוד דגם 35")."""
     vec = _empty()
     norm = normalize_text(text or "")
     if not norm.strip():
@@ -95,7 +235,16 @@ def identity_vector(text: str, identity: TargetIdentity, trims: list[str]) -> di
     vec["model_code"] = bool(found["model_code"])
     vec["battery"] = sorted({parse_number(m.group(1)) or 0.0 for m in BATTERY.finditer(norm)} - {0.0})
     vocab = vocabulary()
-    vec["trim"] = sorted(t for t in trims if (p := _trim_pattern(t, identity, vocab)) is not None and p.search(norm))
+    named = sorted({m["trim"] for m in catalog_trim_matches(norm, trims, identity, vocab)})
+    if entries and vec["drivetrain"]:
+        consistent = {t for e in entries for t in e["trims"]
+                      if not e["parts"]["drivetrain"] or e["parts"]["drivetrain"] in vec["drivetrain"]}
+        dropped = [t for t in named if t not in consistent]
+        named = [t for t in named if t in consistent]
+        if dropped:
+            vec["trim_inconsistent"] = dropped        # telemetry: named, but not at the text's drivetrain
+    vec["trim"] = named
+    vec["gov_model_code"] = _gov_codes(norm, vocab)
     return vec
 
 
@@ -109,7 +258,7 @@ def _union(vectors: list[dict]) -> dict:
         for key, value in vec.items():
             if key == "model_code":
                 out[key] = out[key] or bool(value)
-            else:
+            elif key in out:
                 out[key] = sorted(set(out[key]) | set(value))
     return out
 
@@ -163,35 +312,60 @@ def _vectors_compatible(a: dict, b: dict) -> bool:
     return True
 
 
+def _explained(power: float, vec: dict, entries: list[dict], complete: list[dict]) -> bool:
+    """Does a complete catalog entry compatible with the region (at this power) explain the power?"""
+    return any(e["parts"]["power"] and _close(power, e["parts"]["power"], _entry_tolerance(e, entries))
+               for e in complete if _compatible(e, {**vec, "power": [power]}, entries))
+
+
 def assign(vec: dict, entries: list[dict], inventory: list[dict]) -> dict:
-    """Catalog candidates of a region before / after elimination with the document inventory, and its assignment."""
+    """Catalog candidates of a region before / after elimination with the document inventory, and its assignment.
+
+    A power the region ITSELF states that no compatible catalog entry explains blocks the region
+    (`unexplained_powers`). A power another region states that no candidate explains only stays out of this region's
+    elimination (`ignored_powers`, telemetry): an unexplained power blocks the region it occurs in, never the page."""
     complete = [e for e in entries if e["complete"]]
     before = [e for e in complete if _compatible(e, vec, entries)]
     blocking = [e["key"] for e in entries if not e["complete"] and _compatible(e, vec, entries)]
-    after, unexplained = list(before), []
+    after = list(before)
+    unexplained = [p for p in vec["power"] if not _explained(p, vec, entries, complete)]
+    ignored: list[float] = []
     if not vec["power"] and len({e["parts"]["power"] for e in before}) > 1:
         # elimination: the powers the document states for regions that may be this one
         powers = sorted({p for item in inventory if _vectors_compatible(item, vec) for p in item["power"]})
-        if powers:
+        explained = [p for p in powers if _explained(p, vec, entries, complete)]
+        ignored = [p for p in powers if p not in explained]
+        if explained:
             after = [e for e in before if e["parts"]["power"]
-                     and any(_close(p, e["parts"]["power"], _entry_tolerance(e, entries)) for p in powers)]
-            unexplained = [p for p in powers if not any(
-                e["parts"]["power"] and _close(p, e["parts"]["power"], _entry_tolerance(e, entries))
-                for e in complete if _compatible(e, {**vec, "power": [p]}, entries))]
+                     and any(_close(p, e["parts"]["power"], _entry_tolerance(e, entries)) for p in explained)]
     status = "unresolved"
     if not entries:
         status = "no_catalog"
     elif len(after) == 1 and not blocking and not unexplained:
         status = "assigned"
-    return {"candidates_before": [e["key"] for e in before], "candidates_after": [e["key"] for e in after],
-            "incomplete_candidates": blocking, "unexplained_powers": unexplained, "status": status,
-            "assignment": after[0]["key"] if status == "assigned" else None}
+    out = {"candidates_before": [e["key"] for e in before], "candidates_after": [e["key"] for e in after],
+           "incomplete_candidates": blocking, "unexplained_powers": unexplained, "status": status,
+           "assignment": after[0]["key"] if status == "assigned" else None}
+    if ignored:
+        out["ignored_powers"] = ignored
+    return out
 
 
 # --- building the map -------------------------------------------------------------------------------------------------
 
 def _cells(rows: list[list]) -> list[list[str]]:
     return [[str(c or "").strip() for c in row] for row in rows]
+
+
+LABEL_UNIT = re.compile(r"[(\[)\]]\s*([^()\[\]\d]{1,12}?)\s*[)\](\[]\s*$")
+BARE_NUMBER = re.compile(r"\s*\d{1,3}(?:,\d{3})*(?:[.,]\d+)?\s*")
+
+
+def _with_label_unit(label: str, cell: str) -> str:
+    """A bare number cell of a row whose label carries the unit ('הספק מרבי (כ"ס)' | 476) with that unit ("476 כ"ס"),
+    so the identity reads it as the label states it; any other cell as is."""
+    m = LABEL_UNIT.search(label or "")
+    return f"{cell} {m.group(1).strip()}" if m and BARE_NUMBER.fullmatch(cell or "") else cell
 
 
 def _identity_row(label: str, row_terms) -> bool:
@@ -222,7 +396,7 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
                     and "target" not in _family_status(norm, identity, vocab))
 
     def vec_of(chunk: str) -> dict:
-        return _empty() if about_other(chunk) else identity_vector(chunk, identity, trims)
+        return _empty() if about_other(chunk) else identity_vector(chunk, identity, trims, entries)
 
     regions: list[dict] = []
     inventory: list[dict] = []
@@ -232,10 +406,35 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
         inventory.append({"source": "identity_zone", **zone_vec})
     # tables: variant columns and variant rows
     out_tables: list[dict] = []
+    model_codes: list[dict] = []
     for t, table in enumerate(tables or []):
         rows = _cells(table.get("rows") or [])
         width = max((len(r) for r in rows), default=0)
         entry = {"index": t, "rows": rows, "columns": {}, "row_regions": {}}
+        codes = _code_table(rows, vocab)
+        if codes is not None:
+            # F5: the regulatory "קוד דגם | תיאור דגם" table: one region per row, its identity = the description and
+            # the government model code
+            code_col, desc_col = codes
+            listed = {"table_index": t, "complete": True, "rows": []}
+            for r, row in enumerate(rows[1:], start=1):
+                code = row[code_col] if code_col < len(row) else ""
+                desc = row[desc_col] if desc_col < len(row) else ""
+                if not re.fullmatch(r"\d{1,4}", code) or not desc:
+                    listed["complete"] = False
+                    continue
+                vec = vec_of(desc)
+                vec["gov_model_code"] = [int(code)]
+                rid = f"table:{t}:row:{r}"
+                regions.append(_region(rid, "model_code_row", f"{code} | {desc}", vec, entries, table_index=t,
+                                       row_index=r, gov_model_code=int(code)))
+                entry["row_regions"][str(r)] = rid
+                inventory.append({"source": rid, **{k: v for k, v in vec.items() if k != "trim_inconsistent"}})
+                listed["rows"].append({"code": int(code), "region": rid})
+            listed["complete"] = listed["complete"] and len(listed["rows"]) >= 2
+            model_codes.append(listed)
+            out_tables.append(entry)
+            continue
         if width >= 3:
             for j in range(1, width):
                 parts = []
@@ -244,7 +443,7 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
                         continue
                     label = row[0]
                     if (r == 0 and (not label or _contains(trim_header, label))) or _identity_row(label, row_terms):
-                        parts.append(f"{label} {row[j]}".strip())
+                        parts.append(f"{label} {_with_label_unit(label, row[j])}".strip())
                 chunk = " | ".join(parts)
                 vec = vec_of(chunk)
                 if discriminating(vec):
@@ -340,11 +539,30 @@ def build_variant_map(*, text: str, identity: TargetIdentity, tables: list[dict]
         region.update(assign(vec, entries, clean_inventory) if discriminating(vec) else
                       {"candidates_before": [], "candidates_after": [], "incomplete_candidates": [],
                        "unexplained_powers": [], "status": "no_identity", "assignment": None})
+    by_id = {r["id"]: r for r in regions}
+    for listed in model_codes:
+        for row in listed["rows"]:
+            row["assignment"] = by_id[row["region"]].get("assignment")
     return {"version": VARIANT_MAP_VERSION,
             "family_key": "|".join(str(x) for x in (identity.manufacturer, identity.family, identity.year)),
             "catalog": {"entries": len(entries), "incomplete": [e["key"] for e in entries if not e["complete"]]},
             "inventory": inventory, "regions": regions, "tables": out_tables, "pairs": pairs,
-            "line_regions": line_regions, "sections": sections}
+            "line_regions": line_regions, "sections": sections, "model_codes": model_codes}
+
+
+def _code_table(rows: list[list[str]], vocab: dict) -> tuple[int, int] | None:
+    """(code column, description column) of a regulatory model-code table: a header row naming a model-code column
+    and a model-description column (identity vocabulary `model_code_table`); None otherwise."""
+    terms = vocab.get("model_code_table") or {}
+    if not rows:
+        return None
+
+    def column(key: str) -> int | None:
+        wanted = {normalize_text(t).strip() for t in terms.get(key) or []}
+        hits = [j for j, cell in enumerate(rows[0]) if normalize_text(cell).strip() in wanted]
+        return hits[0] if len(hits) == 1 else None
+    code, desc = column("code_headers"), column("description_headers")
+    return (code, desc) if code is not None and desc is not None and code != desc else None
 
 
 def _dom_headings(html: str) -> set[str]:
@@ -363,33 +581,84 @@ def _contains(pattern, text: str) -> bool:
 
 def _dom_groups(html: str, vec_of, row_terms, regions: list[dict], inventory: list[dict],
                 entries: list[dict]) -> list[dict]:
-    """DOM pair groups (src/structure_harvest): a repeated group / definition list whose heading or identity pairs name
-    a variant becomes a region; every pair of the group points to it."""
+    """DOM pair groups (src/structure_harvest): a repeated group / definition list whose heading, tab label or identity
+    pairs name a variant becomes a region; every pair of the group points to it.
+
+    F2 (tabbed / repeated spec groups): a heading followed by exactly N short variant labels ("Core RWD", "Core
+    Performance AWD": <= TAB_LABEL_MAX_TOKENS words, no digit) and then by the N repeated groups under it, all with the
+    same label set: label i is part of group i's identity, in document order. Otherwise nothing is inferred. The heading
+    text stays in the region text but is no identity key of a labelled group."""
     from .structure_harvest import REPEAT_MIN, _heading_before, clean_soup, raw_pairs
 
     try:
-        found = raw_pairs(clean_soup(html))
+        soup = clean_soup(html)
+        found = raw_pairs(soup)
     except Exception:  # noqa: BLE001 - a broken page has no DOM regions
         return []
     groups: dict[tuple, list[dict]] = {}
     for p in found:
         groups.setdefault((p["parent"], p["signature"]), []).append(p)
+    qualifying = [members for members in groups.values()
+                  if members[0]["kind"] == "definition_list" or len(members) >= REPEAT_MIN]
+    tabs = _tab_labels(qualifying)
     out: list[dict] = []
     n = 0
-    for members in groups.values():
-        if not (members[0]["kind"] == "definition_list" or len(members) >= REPEAT_MIN):
-            continue
+    for index, members in enumerate(qualifying):
         heading = _heading_before(members[0]["node"]) or ""
         idents = [f"{p['label']} {p['value']}" for p in members if _identity_row(p["label"], row_terms)]
-        chunk = " | ".join([heading, *idents]) if heading else " | ".join(idents)
+        label = tabs.get(index)
+        if label is not None:
+            chunk = " | ".join([label, *idents])
+            text = " | ".join([t for t in (heading, label) if t] + idents)
+        else:
+            chunk = text = " | ".join([heading, *idents]) if heading else " | ".join(idents)
         vec = vec_of(chunk)
         if not discriminating(vec):
             continue
         rid = f"group:{n}"
         n += 1
-        regions.append(_region(rid, "dom_group", chunk, vec, entries))
+        extra = {"tab_label": label, "tab_heading": heading, "rule": "tab_labels"} if label is not None else {}
+        regions.append(_region(rid, "dom_group", text, vec, entries, **extra))
         inventory.append({"source": rid, **vec})
         out += [{"label": p["label"], "value": p["value"], "group": rid} for p in members]
+    return out
+
+
+def _tab_labels(qualifying: list[list[dict]]) -> dict[int, str]:
+    """{group index: its tab label} for the groups F2 applies to (see _dom_groups)."""
+    from bs4 import NavigableString, Tag
+
+    from .structure_harvest import HEADINGS
+
+    by_heading: dict[int, tuple[Any, list[int]]] = {}
+    for index, members in enumerate(qualifying):
+        heading = members[0]["node"].find_previous(HEADINGS)
+        if heading is not None:
+            by_heading.setdefault(id(heading), (heading, []))[1].append(index)
+    out: dict[int, str] = {}
+    for heading, indexes in by_heading.values():
+        if len(indexes) < 2:
+            continue
+        label_sets = [{normalize_text(p["label"]).strip() for p in qualifying[i]} for i in indexes]
+        if any(ls != label_sets[0] for ls in label_sets[1:]):
+            continue                                    # not repeated groups of one spec section
+        stop = qualifying[indexes[0]][0]["node"]
+        labels: list[str] = []
+        for element in heading.next_elements:
+            if element is stop:
+                break
+            if isinstance(element, Tag) and element.name in HEADINGS:
+                labels = []
+                break                                   # another heading before the groups: no tab row
+            if isinstance(element, NavigableString) and heading not in element.parents:
+                text = re.sub(r"\s+", " ", str(element)).strip()
+                if text:
+                    labels.append(text)
+        if len(labels) != len(indexes):
+            continue
+        if any(len(label.split()) > TAB_LABEL_MAX_TOKENS or re.search(r"\d", label) for label in labels):
+            continue
+        out.update(dict(zip(indexes, labels)))
     return out
 
 
@@ -460,6 +729,19 @@ def region_verdict(region: dict, identity: TargetIdentity, doc_statuses: dict | 
         target = identity.displacement_cc / 1000 if identity.displacement_cc else identity.displacement_l
         if not any(abs(d - target) <= 0.06 for d in vec["displacement"]):
             return {"status": "other_variant", "contradicts": "displacement", "reason": "displacement"}
+    codes = vec.get("gov_model_code") or []
+    if codes and identity.gov_model_code is not None and codes == [identity.gov_model_code]:
+        # F5: the region names the target's own government model (degem_cd): the target's market trim, provided the
+        # catalog does not contradict its technical identity
+        if region.get("status") == "assigned":
+            from .document_binding import parse_catalog_key
+
+            parts = parse_catalog_key(region["assignment"]) or {}
+            target = _target_parts(identity)
+            if any(target[k] not in (None, "") and parts.get(k) not in (None, "") and parts[k] != target[k]
+                   for k in ("drivetrain", "power", "displacement_l", "body", "propulsion")):
+                return {"status": "unresolved", "reason": "gov_model_code_catalog_conflict"}
+        return {"status": "target", "reason": "gov_model_code", "rule": "gov_model_code"}
     if vec["model_code"]:
         return {"status": "target", "reason": "model_code"}
     if region.get("status") == "no_catalog":
@@ -579,9 +861,12 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             if str(j) in targets and any(int(k) < len(row) and not _cell_has(row[int(k)], value) for k in targets):
                 disagree = True
     levels.append(("cell", list(dict.fromkeys(cell_regions))))
-    # 2. DOM groups
-    groups = [p["group"] for p in vmap.get("pairs") or []
-              if f" {squash(p['label'])} " in frag and _cell_has(p["value"], value)]
+    # 2. DOM groups: a pair whose label the quote names (or whose whole value the quote is) and which states the value
+    whole = squash(fragment)
+    held = [p for p in vmap.get("pairs") or []
+            if (f" {squash(p['label'])} " in frag or (whole and whole == squash(p["value"])))
+            and _cell_has(p["value"], value)]
+    groups = [p["group"] for p in held]
     levels.append(("group", list(dict.fromkeys(groups))))
     # 3. the line, 4. its section
     line_regions = vmap.get("line_regions") or {}
@@ -598,8 +883,16 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             continue
         kinds = {v["status"] for _, v in judged}
         rid, v = judged[0]
+        group_target = None
+        if level == "group" and "target" in kinds and kinds != {"target"}:
+            # the same label / value stated in several repeated groups (a spec section per variant): a group of the
+            # target states it, so it is the target's value, unless a target group states another value for the label
+            group_target = next((r2, v2) for r2, v2 in judged if v2["status"] == "target")
         if kinds == {"target"}:
             status = "target"
+        elif group_target is not None:
+            status = "target"
+            rid, v = group_target
         elif kinds == {"other_variant"} and len({v2.get("contradicts") for _, v2 in judged}) >= 1:
             status = "other_variant"
         else:
@@ -607,6 +900,12 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             rid, v = next(((r2, v2) for r2, v2 in judged if v2["status"] == "unresolved"), judged[0])
         if level == "document" and status != "target":
             break                                   # the document's own verdict is only a positive proof
+        if level == "group" and status == "target":
+            # another group of the target that states a different value under the same label: no silent pick
+            labels = {squash(p["label"]) for p in held}
+            if any(squash(p["label"]) in labels and not _cell_has(p["value"], value) and p["group"] in regions
+                   and verdict(p["group"])["status"] == "target" for p in vmap.get("pairs") or []):
+                disagree = True
         region = regions[rid]
         decision = {"status": status, "region_id": rid, "region_kind": region["kind"], "level": level,
                     "reason": v.get("reason"), "contradicts": v.get("contradicts"),
@@ -614,6 +913,12 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
                     "candidates_before": region.get("candidates_before"),
                     "candidates_after": region.get("candidates_after"),
                     "assignment": region.get("assignment"), "regions": [r for r, _ in judged]}
+        if v.get("rule"):
+            decision["rule"] = v["rule"]
+        if region.get("rule") == "tab_labels":
+            decision["tab_label"] = region.get("tab_label")
+        if group_target is not None:
+            decision["region_statuses"] = {r2: v2["status"] for r2, v2 in judged}
         break
     if disagree and decision.get("status") == "target":
         decision.update({"status": "unresolved", "reason": "target_regions_disagree"})
@@ -634,3 +939,31 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             decision.update({"status": "unresolved", "reason": "inventory_without_target"})
     decision["map_version"] = vmap.get("version")
     return decision
+
+
+# --- F5: the target-market trim offer of a document (regulatory model-code tables) ------------------------------------
+
+def market_trim_offer(vmap: dict | None, identity: TargetIdentity) -> dict | None:
+    """What a document's complete model-code table(s) say about the target's market trim: {status: "offered", code,
+    region} when a row has the target's government model code (degem_cd); {status: "market_trim_not_offered", codes,
+    technical_variant, table_index} when no complete table has it but one lists the target's technical variant under
+    other codes only (the importer sells that technical variant as other trims); None otherwise (no code table, an
+    incomplete one, a target without a code, or a table that never lists the target's technical variant).
+    Target-market / authority eligibility is the caller's (evidence_admission.fact_binding)."""
+    if not vmap or identity.gov_model_code is None:
+        return None
+    tables = [t for t in vmap.get("model_codes") or [] if t.get("complete")]
+    for table in tables:
+        for row in table["rows"]:
+            if row["code"] == identity.gov_model_code:
+                return {"status": "offered", "code": row["code"], "region": row["region"],
+                        "table_index": table["table_index"]}
+    key = catalog_key(manufacturer=identity.manufacturer, family=identity.family, year=identity.year,
+                      body=identity.body, propulsion=identity.propulsion, drivetrain=identity.drivetrain,
+                      power=power_bucket(identity.power_hp), displacement_l=identity.displacement_l)
+    for table in tables:
+        codes = sorted({row["code"] for row in table["rows"] if row.get("assignment") == key})
+        if codes:
+            return {"status": "market_trim_not_offered", "codes": codes, "target_code": identity.gov_model_code,
+                    "technical_variant": key, "table_index": table["table_index"]}
+    return None

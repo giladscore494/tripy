@@ -178,10 +178,16 @@ class TableVocabulary:
 
 
 def _logical_cell(cell: str, vocabulary: TableVocabulary) -> str:
-    """A cell in logical order: visually ordered (reversed) Hebrew is repaired as document_segments repairs lines."""
-    from ..candidate_harvest import HEBREW, looks_reversed, reverse_hebrew_line
+    """A cell in logical order: visually ordered (reversed) Hebrew is repaired as document_segments repairs lines
+    (dictionary hit rate, candidate_harvest.logical_rtl_line; the older final-letter / alias rule as a fallback)."""
+    from ..candidate_harvest import HEBREW, logical_rtl_line, looks_reversed, reverse_hebrew_line, rtl_dictionary
 
-    if cell and HEBREW.search(cell) and looks_reversed(cell, vocabulary.hebrew_aliases):
+    if not cell or not HEBREW.search(cell):
+        return cell
+    logical = logical_rtl_line(cell, rtl_dictionary(vocabulary.hebrew_aliases))
+    if logical is not None:
+        return logical
+    if looks_reversed(cell, vocabulary.hebrew_aliases):
         return reverse_hebrew_line(cell)
     return cell
 
@@ -315,7 +321,8 @@ def with_column_identities(tables: list[dict], vocabulary: "TableVocabulary | No
 
 def document_tables(cache, document_id: str, meta: dict, html: str | None) -> list[dict]:
     """All tables of a cached document, extracted once (derived cache, single flight). PDF tables are cached as
-    "tables_v2" (default + text-strategy pass), so documents cached before the second pass get it too."""
+    "tables_v3" (default + text-strategy pass + the PR #42 right-to-left cell repair), so documents cached before
+    either get it too."""
     def compute() -> list[dict]:
         if html is not None:
             return with_column_identities(_html_tables(html))
@@ -328,7 +335,7 @@ def document_tables(cache, document_id: str, meta: dict, html: str | None) -> li
                 return _pdf_tables(body)
         return []
 
-    name = "tables_v2" if html is None and meta.get("doc_type") == "pdf" else "tables"
+    name = "tables_v3" if html is None and meta.get("doc_type") == "pdf" else "tables"
     return cache.derived(document_id, name, compute)[0]
 
 

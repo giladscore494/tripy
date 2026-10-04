@@ -47,6 +47,7 @@ class ToolContext:
     documents_opened: list[str] = field(default_factory=list)
     counters: Counter = field(default_factory=Counter)
     admission: Any = None                # evidence_admission.AdmissionContext of the run (built lazily otherwise)
+    url_provenance: Any = None           # acquisition.UrlProvenance: offered vs guessed URLs (created on first use)
 
     def note_document(self, document_id: str, cache_hit: bool | None = None) -> None:
         """Track documents touched by this run; cache_hit counts only download requests."""

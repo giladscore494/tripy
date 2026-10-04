@@ -120,8 +120,8 @@ def missing_categories_note(missing: list[dict]) -> str:
 
 # --- navigation links in research fetch results (contract mode; scheduling metadata only) ----------------------------
 
-LINK_KEYWORDS = ("spec", "specification", "technical", "brochure", "price", "pricelist", "warranty", "מפרט",
-                 "מפרט טכני", "חוברת", "קטלוג", "מחירון", "מחיר", "אחריות")
+LINK_KEYWORDS = ("spec", "specification", "technical", "brochure", "price", "pricelist", "pricing", "configurator",
+                 "warranty", "מפרט", "מפרט טכני", "להורדת המפרט", "חוברת", "קטלוג", "מחירון", "מחיר", "אחריות")
 MAX_NAVIGATION_LINKS = 15
 
 
@@ -201,6 +201,121 @@ def navigation_links(ctx, result: Any, tokens: Iterable[str] = ()) -> list[dict]
 
     links, _ = ctx.cache.derived(doc, "links", compute)
     return rank_links(links or [], base, tokens)
+
+# --- guessed URLs (PR #42 F6; scheduling telemetry + one operational note) --------------------------------------------
+
+GUESSED_404_NOTE_AT = 2          # guessed 404s on one official domain before the model is told to use offered links
+
+
+def url_key(url: Any) -> str:
+    """A URL as provenance compares it: no scheme, no "www.", no fragment, no trailing slash, host lower-cased."""
+    raw = str(url or "").strip().split("#")[0]
+    raw = re.sub(r"^[a-z][a-z0-9+.-]*://", "", raw, flags=re.I)
+    host, _, path = raw.partition("/")
+    host = host.lower()
+    host = host[4:] if host.startswith("www.") else host
+    return (host + ("/" + path if path else "")).rstrip("/")
+
+
+class UrlProvenance:
+    """Where the URLs a run fetches come from. Offered URLs are those of search results, of fetched pages' links and
+    of the site map. A fetch on an OFFICIAL domain (source_authority) of a URL never offered is a `guessed_url`; the
+    run counts them (`acq_guessed_urls`) and every 404 fetch (`acq_404`) in ctx.counters. After GUESSED_404_NOTE_AT
+    guessed 404s on one domain, note() returns an operational note telling the model to use only offered links on
+    that domain. Scheduling telemetry only: nothing is refused, no field state changes. Never raises."""
+
+    def __init__(self, manufacturer: str | None = None):
+        self.manufacturer = manufacturer
+        self.offered: set[str] = set()
+        self.guessed_404: dict[str, int] = {}
+        self.guessed: list[dict] = []
+        self._noted: dict[str, int] = {}
+
+    def offer(self, urls: Iterable[Any]) -> None:
+        for url in urls or []:
+            if url:
+                self.offered.add(url_key(url))
+
+    def observe_search(self, result: Any) -> None:
+        if isinstance(result, dict):
+            self.offer(item.get("url") for item in result.get("results") or [] if isinstance(item, dict))
+
+    def observe_fetch(self, ctx, url: Any, result: Any) -> dict | None:
+        """Classify one executed fetch (counters on ctx) and offer the fetched page's own links."""
+        try:
+            return self._observe_fetch(ctx, url, result)
+        except Exception:  # noqa: BLE001 - telemetry must never cost the run
+            return None
+
+    def _observe_fetch(self, ctx, url: Any, result: Any) -> dict | None:
+        if not url:
+            return None
+        official = classify_source(str(url), self.manufacturer).get("source_authority") in OFFICIAL_CLASSES
+        guessed = official and url_key(url) not in self.offered
+        status = result.get("status") if isinstance(result, dict) else None
+        not_found = status == 404
+        if guessed:
+            ctx.counters["acq_guessed_urls"] += 1
+        if not_found:
+            ctx.counters["acq_404"] += 1
+        domain = _registrable(str(url))
+        if guessed and not_found:
+            ctx.counters["acq_guessed_404"] += 1
+            self.guessed_404[domain] = self.guessed_404.get(domain, 0) + 1
+        row = {"url": str(url), "domain": domain, "guessed_url": guessed, "status": status}
+        if guessed:
+            self.guessed.append(row)
+        self.offer([url, result.get("final_url") if isinstance(result, dict) else None])
+        if isinstance(result, dict) and not result.get("error") and result.get("document_id") \
+                and isinstance(status, int) and 200 <= status < 300:
+            self.offer(link.get("url") for link in self._links(ctx, str(result["document_id"])))
+        return row
+
+    @staticmethod
+    def _links(ctx, doc: str) -> list[dict]:
+        from .tools.extract import html_links
+
+        meta = ctx.cache.get(doc) or {}
+        if meta.get("doc_type") != "html":
+            return []
+        base = meta.get("final_url") or meta.get("url") or ""
+        links, _ = ctx.cache.derived(doc, "links", lambda: html_links(
+            ctx.cache.read_body(doc).decode("utf-8", errors="replace"), base))
+        return [link for link in links or [] if isinstance(link, dict)]
+
+    def blocked_domains(self) -> list[str]:
+        return sorted(d for d, n in self.guessed_404.items() if n >= GUESSED_404_NOTE_AT)
+
+    def note(self) -> str:
+        """The operational note when a domain reached (or added to) GUESSED_404_NOTE_AT guessed 404s since the last
+        note; "" otherwise."""
+        fresh = [d for d in self.blocked_domains() if self.guessed_404[d] != self._noted.get(d)]
+        if not fresh:
+            return ""
+        for d in fresh:
+            self._noted[d] = self.guessed_404[d]
+        listed = ", ".join(f"{d} ({self.guessed_404[d]} guessed URLs returned 404)" for d in fresh)
+        return (f"Stop guessing URLs on {listed}: on that domain fetch only links offered to you (search results, "
+                "links of pages you fetched, the site map).")
+
+    def summary(self) -> dict:
+        return {"guessed_urls": len(self.guessed), "guessed_404_by_domain": dict(sorted(self.guessed_404.items())),
+                "blocked_domains": self.blocked_domains(), "offered_urls": len(self.offered)}
+
+
+def url_provenance(ctx) -> UrlProvenance:
+    """The run's UrlProvenance (one per tool context, created on first use)."""
+    existing = getattr(ctx, "url_provenance", None)
+    if existing is None:
+        adm = getattr(ctx, "admission", None)
+        existing = UrlProvenance(getattr(adm, "manufacturer", None) or (getattr(ctx, "vehicle", None) or {})
+                                 .get("manufacturer"))
+        try:
+            ctx.url_provenance = existing
+        except AttributeError:
+            pass
+    return existing
+
 
 # --- source priority (scheduling only) ---------------------------------------------------------------------------
 
