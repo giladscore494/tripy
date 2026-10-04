@@ -450,11 +450,13 @@ def load_replay(run_dir: Path | str) -> dict | None:
     return {"summary": summary, "items": items}
 
 
-def load_or_replay(run_dir: Path | str, cache_dir: Path | str | None = None, *, timeout_s: float = 30) -> dict:
+def load_or_replay(run_dir: Path | str, cache_dir: Path | str | None = None, *, timeout_s: float = 30,
+                   persist: bool = True) -> dict:
     """Reuse a current replay; compute old runs in a killable process with a hard per-run deadline.
 
     The child never writes. Only a complete response is persisted, so a timeout cannot publish a partial replay
-    or leave a background task writing after diagnostics returned.
+    or leave a background task writing after diagnostics returned. `persist=False` (the read-only MCP) returns the
+    computed replay without writing it.
     """
     cached = load_replay(run_dir)
     if cached is not None:
@@ -469,6 +471,8 @@ def load_or_replay(run_dir: Path | str, cache_dir: Path | str | None = None, *, 
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip()[-2000:] or str(exc)) from exc
     replay = json.loads(proc.stdout)
+    if not persist:
+        return replay
     atomic_write_text(Path(run_dir) / REPLAY_FILE, "".join(json.dumps(r, ensure_ascii=False) + "\n"
                                                           for r in replay["items"]))
     atomic_write_json(Path(run_dir) / SUMMARY_FILE, replay["summary"])
