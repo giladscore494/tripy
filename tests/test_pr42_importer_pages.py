@@ -183,6 +183,10 @@ def test_catalog_trim_aliases_and_longest_match():
     assert named("AWD Performance") == [] and named("sunroof") == [] and named("seats") == []
     assert named("G6 MAX") == ["MAX"] and named("MAX") == []                     # generic trims need the family
 
+    # A legacy 2-letter catalog abbreviation remains ambiguous only when its expansion is itself a catalog token.
+    corolla = {m["trim"] for m in catalog_trim_matches("BUSINESS EDI", ["BUSINESS EDI", "BUSINESS ED"], IDENTITY)}
+    assert corolla == {"BUSINESS EDI", "BUSINESS ED"}
+
 
 def test_core_alone_with_awd_names_no_trim():
     entries = catalog_family_entries(IDENTITY)
