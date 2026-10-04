@@ -41,10 +41,18 @@ export function useRunMonitor(runId: string): RunMonitor {
   const last = useRef<string>("");
   const sig = signature(progress.data);
   useEffect(() => {
-    if (!sig) return;
-    if (last.current && last.current !== sig) void detail.refresh();
+    if (!sig || !progress.data) return;
+    const progressActive = progress.data.active || progress.data.executing;
+    // Race guard: detail can still say active when the very first progress response already says terminal
+    // (the run finished between the two requests). Refresh immediately so failure/results/actions become current
+    // and the progress resource can stop polling once detail catches up.
+    if (live && !progressActive) {
+      void detail.refresh();
+    } else if (last.current && last.current !== sig) {
+      void detail.refresh();
+    }
     last.current = sig;
-  }, [sig, detail.refresh]);         // detail.refresh is stable (useResource's useCallback)
+  }, [sig, live, progress.data, detail.refresh]);         // detail.refresh is stable (useResource's useCallback)
 
   return useMemo(() => ({ detail, progress, active }), [detail, progress, active]);
 }
