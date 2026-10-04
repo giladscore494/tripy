@@ -1,0 +1,251 @@
+{
+ "doc_id": "d_c21f8ddbe51c5f2b",
+ "url": "https://www.heyxpeng.co.il/g6",
+ "title": "XPENG G6 | אקספנג ישראל",
+ "doc_type": "html",
+ "tables": [
+  {
+   "index": 0,
+   "header": null,
+   "column_identity": null,
+   "caption": "",
+   "rows": [
+    [
+     "",
+     "RWD 286 כ\"ס",
+     "AWD 486 כ\"ס"
+    ],
+    [
+     "טווח נסיעה (WLTP)",
+     "570 ק\"מ",
+     "550 ק\"מ"
+    ],
+    [
+     "משקל עצמי",
+     "2,100 ק\"ג",
+     "2,190 ק\"ג"
+    ],
+    [
+     "תאוצה 0-100",
+     "6.6 שניות",
+     "4.1 שניות"
+    ]
+   ]
+  }
+ ],
+ "dom_groups": [],
+ "variant_map": {
+  "computed_for": {
+   "run_id": "SYNTH-pr40",
+   "record_id": "101122",
+   "identity": {
+    "manufacturer": "אקספנג",
+    "family": "g6",
+    "year": 2026,
+    "body": "suv",
+    "propulsion": "battery_electric",
+    "power_hp": 486.0,
+    "drivetrain": "awd",
+    "trim_words": [
+     "max"
+    ],
+    "qualified_trim_phrases": [
+     "g6 max"
+    ],
+    "target_market": "IL",
+    "model_code": "nsgha"
+   }
+  },
+  "map": {
+   "version": "variant-map-v3",
+   "family_key": "אקספנג|g6|2026",
+   "catalog": {
+    "entries": 5,
+    "incomplete": []
+   },
+   "inventory": [
+    {
+     "source": "table:0:col:1",
+     "drivetrain": [
+      "two_wheel_drive"
+     ],
+     "power": [
+      286.0
+     ],
+     "battery": [],
+     "displacement": [],
+     "trim": [],
+     "body": [],
+     "propulsion": [],
+     "model_code": false,
+     "gov_model_code": [],
+     "designation": [],
+     "gearbox": []
+    },
+    {
+     "source": "table:0:col:2",
+     "drivetrain": [
+      "awd"
+     ],
+     "power": [
+      486.0
+     ],
+     "battery": [],
+     "displacement": [],
+     "trim": [],
+     "body": [],
+     "propulsion": [],
+     "model_code": false,
+     "gov_model_code": [],
+     "designation": [],
+     "gearbox": []
+    }
+   ],
+   "regions": [
+    {
+     "id": "table:0:col:1",
+     "kind": "table_column",
+     "text": "RWD 286 כ\"ס",
+     "identity": {
+      "drivetrain": [
+       "two_wheel_drive"
+      ],
+      "power": [
+       286.0
+      ],
+      "battery": [],
+      "displacement": [],
+      "trim": [],
+      "body": [],
+      "propulsion": [],
+      "model_code": false,
+      "gov_model_code": [],
+      "designation": [],
+      "gearbox": []
+     },
+     "table_index": 0,
+     "column_index": 1,
+     "candidates_before": [
+      "אקספנג|g6|2026|suv|battery_electric|two_wheel_drive|285|"
+     ],
+     "candidates_after": [
+      "אקספנג|g6|2026|suv|battery_electric|two_wheel_drive|285|"
+     ],
+     "incomplete_candidates": [],
+     "unexplained_powers": [],
+     "status": "assigned",
+     "assignment": "אקספנג|g6|2026|suv|battery_electric|two_wheel_drive|285|"
+    },
+    {
+     "id": "table:0:col:2",
+     "kind": "table_column",
+     "text": "AWD 486 כ\"ס",
+     "identity": {
+      "drivetrain": [
+       "awd"
+      ],
+      "power": [
+       486.0
+      ],
+      "battery": [],
+      "displacement": [],
+      "trim": [],
+      "body": [],
+      "propulsion": [],
+      "model_code": false,
+      "gov_model_code": [],
+      "designation": [],
+      "gearbox": []
+     },
+     "table_index": 0,
+     "column_index": 2,
+     "candidates_before": [
+      "אקספנג|g6|2026|suv|battery_electric|awd|485|"
+     ],
+     "candidates_after": [
+      "אקספנג|g6|2026|suv|battery_electric|awd|485|"
+     ],
+     "incomplete_candidates": [],
+     "unexplained_powers": [],
+     "status": "assigned",
+     "assignment": "אקספנג|g6|2026|suv|battery_electric|awd|485|"
+    },
+    {
+     "id": "document",
+     "kind": "document",
+     "text": "XPENG G6 https: www heyxpeng co il g6 XPENG G6",
+     "identity": {
+      "drivetrain": [
+       "awd",
+       "two_wheel_drive"
+      ],
+      "power": [
+       286.0,
+       486.0
+      ],
+      "battery": [],
+      "displacement": [],
+      "trim": [],
+      "body": [],
+      "propulsion": [],
+      "model_code": false,
+      "gov_model_code": [],
+      "designation": [],
+      "gearbox": []
+     },
+     "candidates_before": [],
+     "candidates_after": [],
+     "incomplete_candidates": [],
+     "unexplained_powers": [],
+     "status": "mixed",
+     "assignment": null
+    }
+   ],
+   "tables": [
+    {
+     "index": 0,
+     "rows": [
+      [
+       "",
+       "RWD 286 כ\"ס",
+       "AWD 486 כ\"ס"
+      ],
+      [
+       "טווח נסיעה (WLTP)",
+       "570 ק\"מ",
+       "550 ק\"מ"
+      ],
+      [
+       "משקל עצמי",
+       "2,100 ק\"ג",
+       "2,190 ק\"ג"
+      ],
+      [
+       "תאוצה 0-100",
+       "6.6 שניות",
+       "4.1 שניות"
+      ]
+     ],
+     "columns": {
+      "1": "table:0:col:1",
+      "2": "table:0:col:2"
+     },
+     "row_regions": {}
+    }
+   ],
+   "pairs": [],
+   "line_regions": {},
+   "sections": [],
+   "model_codes": []
+  }
+ },
+ "paging_applies_to": "tables",
+ "paging": {
+  "offset": 0,
+  "limit": 20,
+  "returned": 1,
+  "total": 1,
+  "remaining": 0,
+  "next_offset": null
+ }
+}

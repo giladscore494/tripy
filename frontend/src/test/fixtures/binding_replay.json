@@ -1,0 +1,1136 @@
+{
+ "run_id": "SYNTH-pr40",
+ "record_id": "101122",
+ "field": null,
+ "summary": {
+  "schema": "binding-replay-v3",
+  "code_version": "binding-v6:4b8cab6a8b47",
+  "binding_version": "binding-v6",
+  "run_id": "SYNTH-pr40",
+  "record_id": "101122",
+  "target_market": "IL",
+  "vehicle": {
+   "fields": 11,
+   "fields_ok_recorded": 1,
+   "fields_ok_now": 10,
+   "fields_newly_ok": [
+    "ac_max_charging_power_kw",
+    "acceleration_0_100_s",
+    "cargo_volume_l",
+    "curb_weight_kg",
+    "electric_range_km",
+    "height_mm",
+    "vehicle_warranty",
+    "warranty_km",
+    "warranty_years"
+   ],
+   "fields_no_longer_ok": [],
+   "states_recorded": {
+    "variant_not_exact": 6,
+    "foreign_market_only": 4,
+    "ok": 1
+   },
+   "states_now": {
+    "ok": 10,
+    "variant_not_exact": 1
+   },
+   "evidence": 17,
+   "candidates": 18,
+   "evidence_exact_recorded": 5,
+   "evidence_exact_now": 15,
+   "evidence_level_rose": 12,
+   "evidence_level_fell": 0,
+   "evidence_rose_by_year_rules": 0,
+   "evidence_year_mismatch_recorded": 0,
+   "year_status_counts_now": {
+    "absent": 17
+   },
+   "gap_counts": {
+    "drivetrain_mixed": 1,
+    "power_mixed": 1,
+    "model_code_absent": 1,
+    "power_absent": 1
+   },
+   "gap_counts_recorded": {
+    "propulsion_absent": 9,
+    "model_absent": 3
+   },
+   "non_target_now": 0,
+   "missing_documents": 0,
+   "rejected_now": 0,
+   "rejected_now_reasons": {},
+   "evidence_rose_by_rule": {
+    "dvm_shared": 4,
+    "single_propulsion_catalog": 2,
+    "dvm_region": 3,
+    "brand_policy": 3
+   },
+   "fields_newly_ok_by_rule": {
+    "ac_max_charging_power_kw": [
+     "dvm_shared"
+    ],
+    "acceleration_0_100_s": [
+     "dvm_region"
+    ],
+    "cargo_volume_l": [
+     "dvm_shared"
+    ],
+    "curb_weight_kg": [
+     "dvm_region"
+    ],
+    "electric_range_km": [
+     "dvm_region"
+    ],
+    "height_mm": [
+     "dvm_shared"
+    ],
+    "vehicle_warranty": [
+     "brand_policy"
+    ],
+    "warranty_km": [
+     "brand_policy"
+    ],
+    "warranty_years": [
+     "brand_policy"
+    ]
+   },
+   "variant_map_regions": {
+    "shared": 4,
+    "target": 8,
+    "unresolved": 4
+   }
+  },
+  "fields": {
+   "ac_max_charging_power_kw": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "unclear",
+    "best_variant_match_now": "exact",
+    "evidence": 1,
+    "candidates": 1,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 1
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_shared"
+    ]
+   },
+   "acceleration_0_100_s": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "unclear",
+    "best_variant_match_now": "exact",
+    "evidence": 1,
+    "candidates": 2,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 1
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_region"
+    ]
+   },
+   "cargo_volume_l": {
+    "state_recorded": "foreign_market_only",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "exact",
+    "best_variant_match_now": "exact",
+    "evidence": 2,
+    "candidates": 3,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 2
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_shared"
+    ]
+   },
+   "curb_weight_kg": {
+    "state_recorded": "foreign_market_only",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "exact",
+    "best_variant_match_now": "exact",
+    "evidence": 2,
+    "candidates": 3,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 2
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_region"
+    ]
+   },
+   "dc_max_charging_power_kw": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "variant_not_exact",
+    "would_be_ok": false,
+    "best_variant_match_recorded": "unclear",
+    "best_variant_match_now": "unclear",
+    "evidence": 1,
+    "candidates": 1,
+    "blocking_dimensions": {
+     "drivetrain_mixed": 1,
+     "power_mixed": 1
+    },
+    "best_binding_level_now": "body_powertrain",
+    "binding_level_histogram": {
+     "body_powertrain": 1
+    },
+    "most_common_blocking_dimension": "drivetrain_mixed",
+    "rejected_now": 0,
+    "raised_by": []
+   },
+   "electric_range_km": {
+    "state_recorded": "foreign_market_only",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "exact",
+    "best_variant_match_now": "exact",
+    "evidence": 2,
+    "candidates": 3,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 2
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_region"
+    ]
+   },
+   "height_mm": {
+    "state_recorded": "foreign_market_only",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "exact",
+    "best_variant_match_now": "exact",
+    "evidence": 2,
+    "candidates": 2,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 2
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_shared"
+    ]
+   },
+   "vehicle_warranty": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "unbound",
+    "best_variant_match_now": "exact",
+    "evidence": 1,
+    "candidates": 1,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "body_powertrain",
+    "binding_level_histogram": {
+     "body_powertrain": 1
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "brand_policy"
+    ]
+   },
+   "warranty_km": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "unbound",
+    "best_variant_match_now": "exact",
+    "evidence": 1,
+    "candidates": 1,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "body_powertrain",
+    "binding_level_histogram": {
+     "body_powertrain": 1
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "brand_policy"
+    ]
+   },
+   "warranty_years": {
+    "state_recorded": "variant_not_exact",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "unbound",
+    "best_variant_match_now": "exact",
+    "evidence": 1,
+    "candidates": 1,
+    "blocking_dimensions": {},
+    "best_binding_level_now": "body_powertrain",
+    "binding_level_histogram": {
+     "body_powertrain": 1
+    },
+    "most_common_blocking_dimension": null,
+    "rejected_now": 0,
+    "raised_by": [
+     "brand_policy"
+    ]
+   },
+   "wheelbase_mm": {
+    "state_recorded": "ok",
+    "would_be_state": "ok",
+    "would_be_ok": true,
+    "best_variant_match_recorded": "exact",
+    "best_variant_match_now": "exact",
+    "evidence": 3,
+    "candidates": 0,
+    "blocking_dimensions": {
+     "model_code_absent": 1,
+     "power_absent": 1
+    },
+    "best_binding_level_now": "exact_technical_variant",
+    "binding_level_histogram": {
+     "exact_technical_variant": 2,
+     "body_powertrain": 1
+    },
+    "most_common_blocking_dimension": "model_code_absent",
+    "rejected_now": 0,
+    "raised_by": [
+     "dvm_shared"
+    ]
+   }
+  },
+  "missing_documents": [],
+  "note": "read-only replay with the current binding code; nothing in the run was changed"
+ },
+ "items": [
+  {
+   "kind": "evidence",
+   "evidence_id": "e1",
+   "field": "wheelbase_mm",
+   "value": 2890,
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "market": "IL",
+   "quote": "בסיס גלגלים 2,890 מ\"מ",
+   "binding_rules_recorded": null,
+   "binding_level_recorded": "generation",
+   "variant_match_recorded": "unclear",
+   "binding_basis_recorded": null,
+   "binding_veto_recorded": null,
+   "binding_version_recorded": null,
+   "year_status_recorded": "absent",
+   "binding_gap_recorded": [
+    "propulsion_absent"
+   ],
+   "level_change": 2,
+   "rose_by_year_rules": false,
+   "market_now": "IL",
+   "source_authority": "official_importer",
+   "document_source": "shared_cache",
+   "entailment_now": "deterministic_parse:alias_proximity",
+   "requirement": "exact_technical_variant",
+   "binding_level_now": "exact_technical_variant",
+   "variant_match_now": "exact",
+   "binding_basis_now": "dvm_shared",
+   "binding_veto_now": [],
+   "binding_gap_now": [],
+   "binding_dimensions_now": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "propulsion": {
+     "status": "match",
+     "basis": "single_propulsion_catalog",
+     "was": "absent",
+     "catalog_entries": 5
+    },
+    "displacement": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "absent",
+     "region": "document"
+    },
+    "power": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document",
+     "tolerance": 0.01132
+    },
+    "drivetrain": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "binding_rules_now": [
+    "single_propulsion_catalog",
+    "dvm_shared"
+   ],
+   "binding_policy_now": null,
+   "market_trim_now": null,
+   "binding_flags_now": null,
+   "stale_publication_now": null,
+   "variant_map_region_now": {
+    "status": "shared",
+    "region_id": "document",
+    "region_kind": "document_shared",
+    "reason": "stated_once_without_variant_qualifier",
+    "allowed": true,
+    "inventory_contains_target": true,
+    "map_version": "variant-map-v3"
+   },
+   "rejected_now": null,
+   "document_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "mixed",
+    "drivetrain": "mixed",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "zone_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "absent",
+    "drivetrain": "absent",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "layer_statuses": {
+    "quote": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    },
+    "source_line": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    }
+   },
+   "year_context": {
+    "status": "absent",
+    "basis": "none",
+    "statements": [],
+    "ignored": []
+   },
+   "candidates_source": "run_events",
+   "matching_candidates": [
+    {
+     "extraction_method": "alias_proximity",
+     "table_index": null,
+     "row_index": null,
+     "column_index": null,
+     "header": null,
+     "column_identity": null,
+     "column_identity_unknown": null,
+     "quote": "בסיס גלגלים 2,890 מ\"מ"
+    }
+   ],
+   "effective_column_identity": null,
+   "candidate_match_count": 1,
+   "candidate_match_ambiguous": false,
+   "table_index": null,
+   "row_index": null,
+   "column_index": null,
+   "column_header": null,
+   "column_identity": null,
+   "would_be_state": "ok",
+   "would_be_ok": true
+  },
+  {
+   "kind": "evidence",
+   "evidence_id": "e2",
+   "field": "height_mm",
+   "value": 1650,
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "market": "IL",
+   "quote": "גובה 1,650 מ\"מ",
+   "binding_rules_recorded": null,
+   "binding_level_recorded": "generation",
+   "variant_match_recorded": "unclear",
+   "binding_basis_recorded": null,
+   "binding_veto_recorded": null,
+   "binding_version_recorded": null,
+   "year_status_recorded": "absent",
+   "binding_gap_recorded": [
+    "propulsion_absent"
+   ],
+   "level_change": 2,
+   "rose_by_year_rules": false,
+   "market_now": "IL",
+   "source_authority": "official_importer",
+   "document_source": "shared_cache",
+   "entailment_now": "deterministic_parse:alias_proximity",
+   "requirement": "exact_technical_variant",
+   "binding_level_now": "exact_technical_variant",
+   "variant_match_now": "exact",
+   "binding_basis_now": "dvm_shared",
+   "binding_veto_now": [],
+   "binding_gap_now": [],
+   "binding_dimensions_now": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "propulsion": {
+     "status": "match",
+     "basis": "single_propulsion_catalog",
+     "was": "absent",
+     "catalog_entries": 5
+    },
+    "displacement": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "absent",
+     "region": "document"
+    },
+    "power": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document",
+     "tolerance": 0.01132
+    },
+    "drivetrain": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "binding_rules_now": [
+    "single_propulsion_catalog",
+    "dvm_shared"
+   ],
+   "binding_policy_now": null,
+   "market_trim_now": null,
+   "binding_flags_now": null,
+   "stale_publication_now": null,
+   "variant_map_region_now": {
+    "status": "shared",
+    "region_id": "document",
+    "region_kind": "document_shared",
+    "reason": "stated_once_without_variant_qualifier",
+    "allowed": true,
+    "inventory_contains_target": true,
+    "map_version": "variant-map-v3"
+   },
+   "rejected_now": null,
+   "document_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "mixed",
+    "drivetrain": "mixed",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "zone_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "absent",
+    "drivetrain": "absent",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "layer_statuses": {
+    "quote": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    },
+    "source_line": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    }
+   },
+   "year_context": {
+    "status": "absent",
+    "basis": "none",
+    "statements": [],
+    "ignored": []
+   },
+   "candidates_source": "run_events",
+   "matching_candidates": [
+    {
+     "extraction_method": "alias_proximity",
+     "table_index": null,
+     "row_index": null,
+     "column_index": null,
+     "header": null,
+     "column_identity": null,
+     "column_identity_unknown": null,
+     "quote": "גובה 1,650 מ\"מ"
+    }
+   ],
+   "effective_column_identity": null,
+   "candidate_match_count": 1,
+   "candidate_match_ambiguous": false,
+   "table_index": null,
+   "row_index": null,
+   "column_index": null,
+   "column_header": null,
+   "column_identity": null,
+   "would_be_state": "ok",
+   "would_be_ok": true
+  },
+  {
+   "kind": "evidence",
+   "evidence_id": "e3",
+   "field": "cargo_volume_l",
+   "value": 571,
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "market": "IL",
+   "quote": "נפח תא מטען 571 ליטר",
+   "binding_rules_recorded": null,
+   "binding_level_recorded": "generation",
+   "variant_match_recorded": "unclear",
+   "binding_basis_recorded": null,
+   "binding_veto_recorded": null,
+   "binding_version_recorded": null,
+   "year_status_recorded": "absent",
+   "binding_gap_recorded": [
+    "propulsion_absent"
+   ],
+   "level_change": 2,
+   "rose_by_year_rules": false,
+   "market_now": "IL",
+   "source_authority": "official_importer",
+   "document_source": "shared_cache",
+   "entailment_now": "deterministic_parse:alias_proximity",
+   "requirement": "exact_technical_variant",
+   "binding_level_now": "exact_technical_variant",
+   "variant_match_now": "exact",
+   "binding_basis_now": "dvm_shared",
+   "binding_veto_now": [],
+   "binding_gap_now": [],
+   "binding_dimensions_now": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "propulsion": {
+     "status": "match",
+     "basis": "single_propulsion_catalog",
+     "was": "absent",
+     "catalog_entries": 5
+    },
+    "displacement": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "absent",
+     "region": "document"
+    },
+    "power": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document",
+     "tolerance": 0.01132
+    },
+    "drivetrain": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "binding_rules_now": [
+    "single_propulsion_catalog",
+    "dvm_shared"
+   ],
+   "binding_policy_now": null,
+   "market_trim_now": null,
+   "binding_flags_now": null,
+   "stale_publication_now": null,
+   "variant_map_region_now": {
+    "status": "shared",
+    "region_id": "document",
+    "region_kind": "document_shared",
+    "reason": "stated_once_without_variant_qualifier",
+    "allowed": true,
+    "inventory_contains_target": true,
+    "map_version": "variant-map-v3"
+   },
+   "rejected_now": null,
+   "document_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "mixed",
+    "drivetrain": "mixed",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "zone_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "absent",
+    "drivetrain": "absent",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "layer_statuses": {
+    "quote": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    },
+    "source_line": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    }
+   },
+   "year_context": {
+    "status": "absent",
+    "basis": "none",
+    "statements": [],
+    "ignored": []
+   },
+   "candidates_source": "run_events",
+   "matching_candidates": [
+    {
+     "extraction_method": "alias_proximity",
+     "table_index": null,
+     "row_index": null,
+     "column_index": null,
+     "header": null,
+     "column_identity": null,
+     "column_identity_unknown": null,
+     "quote": "נפח תא מטען 571 ליטר"
+    }
+   ],
+   "effective_column_identity": null,
+   "candidate_match_count": 1,
+   "candidate_match_ambiguous": false,
+   "table_index": null,
+   "row_index": null,
+   "column_index": null,
+   "column_header": null,
+   "column_identity": null,
+   "would_be_state": "ok",
+   "would_be_ok": true
+  },
+  {
+   "kind": "evidence",
+   "evidence_id": "e4",
+   "field": "ac_max_charging_power_kw",
+   "value": 11,
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "market": "IL",
+   "quote": "הספק טעינת AC מרבי 11 kW",
+   "binding_rules_recorded": null,
+   "binding_level_recorded": "generation",
+   "variant_match_recorded": "unclear",
+   "binding_basis_recorded": null,
+   "binding_veto_recorded": null,
+   "binding_version_recorded": null,
+   "year_status_recorded": "absent",
+   "binding_gap_recorded": [
+    "propulsion_absent"
+   ],
+   "level_change": 2,
+   "rose_by_year_rules": false,
+   "market_now": "IL",
+   "source_authority": "official_importer",
+   "document_source": "shared_cache",
+   "entailment_now": "deterministic_parse:alias_proximity",
+   "requirement": "exact_technical_variant",
+   "binding_level_now": "exact_technical_variant",
+   "variant_match_now": "exact",
+   "binding_basis_now": "dvm_shared",
+   "binding_veto_now": [],
+   "binding_gap_now": [],
+   "binding_dimensions_now": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "propulsion": {
+     "status": "match",
+     "basis": "single_propulsion_catalog",
+     "was": "absent",
+     "catalog_entries": 5
+    },
+    "displacement": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "absent",
+     "region": "document"
+    },
+    "power": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document",
+     "tolerance": 0.01132
+    },
+    "drivetrain": {
+     "status": "match",
+     "basis": "dvm_shared",
+     "was": "mixed",
+     "region": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "binding_rules_now": [
+    "single_propulsion_catalog",
+    "dvm_shared"
+   ],
+   "binding_policy_now": null,
+   "market_trim_now": null,
+   "binding_flags_now": null,
+   "stale_publication_now": null,
+   "variant_map_region_now": {
+    "status": "shared",
+    "region_id": "document",
+    "region_kind": "document_shared",
+    "reason": "stated_once_without_variant_qualifier",
+    "allowed": true,
+    "inventory_contains_target": true,
+    "map_version": "variant-map-v3"
+   },
+   "rejected_now": null,
+   "document_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "mixed",
+    "drivetrain": "mixed",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "zone_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "absent",
+    "drivetrain": "absent",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "layer_statuses": {
+    "quote": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    },
+    "source_line": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    }
+   },
+   "year_context": {
+    "status": "absent",
+    "basis": "none",
+    "statements": [],
+    "ignored": []
+   },
+   "candidates_source": "run_events",
+   "matching_candidates": [
+    {
+     "extraction_method": "alias_proximity",
+     "table_index": null,
+     "row_index": null,
+     "column_index": null,
+     "header": null,
+     "column_identity": null,
+     "column_identity_unknown": null,
+     "quote": "הספק טעינת AC מרבי 11 kW"
+    }
+   ],
+   "effective_column_identity": null,
+   "candidate_match_count": 1,
+   "candidate_match_ambiguous": false,
+   "table_index": null,
+   "row_index": null,
+   "column_index": null,
+   "column_header": null,
+   "column_identity": null,
+   "would_be_state": "ok",
+   "would_be_ok": true
+  },
+  {
+   "kind": "evidence",
+   "evidence_id": "e5",
+   "field": "dc_max_charging_power_kw",
+   "value": 451,
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "market": "IL",
+   "quote": "הספק טעינה מהירה עד 451 kW",
+   "binding_rules_recorded": null,
+   "binding_level_recorded": "generation",
+   "variant_match_recorded": "unclear",
+   "binding_basis_recorded": null,
+   "binding_veto_recorded": null,
+   "binding_version_recorded": null,
+   "year_status_recorded": "absent",
+   "binding_gap_recorded": [
+    "propulsion_absent"
+   ],
+   "level_change": 1,
+   "rose_by_year_rules": false,
+   "market_now": "IL",
+   "source_authority": "official_importer",
+   "document_source": "shared_cache",
+   "entailment_now": "deterministic_parse:alias_proximity",
+   "requirement": "exact_technical_variant",
+   "binding_level_now": "body_powertrain",
+   "variant_match_now": "unclear",
+   "binding_basis_now": "single_propulsion_catalog",
+   "binding_veto_now": [],
+   "binding_gap_now": [
+    "drivetrain_mixed",
+    "power_mixed"
+   ],
+   "binding_dimensions_now": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "propulsion": {
+     "status": "match",
+     "basis": "single_propulsion_catalog",
+     "was": "absent",
+     "catalog_entries": 5
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document",
+     "tolerance": 0.01132
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "binding_rules_now": [
+    "single_propulsion_catalog"
+   ],
+   "binding_policy_now": null,
+   "market_trim_now": null,
+   "binding_flags_now": null,
+   "stale_publication_now": null,
+   "variant_map_region_now": null,
+   "rejected_now": null,
+   "document_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "mixed",
+    "drivetrain": "mixed",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "zone_statuses": {
+    "model": "match",
+    "year": "absent",
+    "body": "absent",
+    "propulsion": "absent",
+    "displacement": "absent",
+    "power": "absent",
+    "drivetrain": "absent",
+    "model_code": "absent",
+    "trim": "absent",
+    "manufacturer": "match"
+   },
+   "layer_statuses": {
+    "quote": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    },
+    "source_line": {
+     "model": "absent",
+     "year": "absent",
+     "body": "absent",
+     "propulsion": "absent",
+     "displacement": "absent",
+     "power": "absent",
+     "drivetrain": "absent",
+     "model_code": "absent",
+     "trim": "absent",
+     "manufacturer": "absent"
+    }
+   },
+   "year_context": {
+    "status": "absent",
+    "basis": "none",
+    "statements": [],
+    "ignored": []
+   },
+   "candidates_source": "run_events",
+   "matching_candidates": [
+    {
+     "extraction_method": "alias_proximity",
+     "table_index": null,
+     "row_index": null,
+     "column_index": null,
+     "header": null,
+     "column_identity": null,
+     "column_identity_unknown": null,
+     "quote": "הספק טעינה מהירה עד 451 kW"
+    }
+   ],
+   "effective_column_identity": null,
+   "candidate_match_count": 1,
+   "candidate_match_ambiguous": false,
+   "table_index": null,
+   "row_index": null,
+   "column_index": null,
+   "column_header": null,
+   "column_identity": null,
+   "would_be_state": "variant_not_exact",
+   "would_be_ok": false
+  }
+ ],
+ "paging": {
+  "offset": 0,
+  "limit": 12,
+  "returned": 5,
+  "total": 35,
+  "remaining": 23,
+  "next_offset": 12
+ }
+}

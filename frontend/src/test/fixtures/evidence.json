@@ -1,0 +1,334 @@
+{
+ "run_id": "SYNTH-pr40",
+ "record_id": "101122",
+ "field": null,
+ "summary": {
+  "admitted": 17,
+  "rejected": 0,
+  "rejected_by_reason": {},
+  "admitted_by_variant_match": {
+   "exact": 5,
+   "unbound": 3,
+   "unclear": 9
+  },
+  "admitted_by_binding_level": {
+   "exact_technical_variant": 5,
+   "generation": 9,
+   "unknown": 3
+  },
+  "admitted_by_source_authority": {
+   "official_importer": 11,
+   "official_manufacturer": 5,
+   "publisher": 1
+  }
+ },
+ "admitted": [
+  {
+   "field": "wheelbase_mm",
+   "value": 2890,
+   "unit": "mm",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "בסיס גלגלים 2,890 מ\"מ",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 2890,
+    "unit": "mm",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:alias_proximity",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:alias_proximity",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e1"
+  },
+  {
+   "field": "height_mm",
+   "value": 1650,
+   "unit": "mm",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "גובה 1,650 מ\"מ",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 1650,
+    "unit": "mm",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:alias_proximity",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:alias_proximity",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e2"
+  },
+  {
+   "field": "cargo_volume_l",
+   "value": 571,
+   "unit": "l",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "נפח תא מטען 571 ליטר",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 571,
+    "unit": "l",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:alias_proximity",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:alias_proximity",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e3"
+  },
+  {
+   "field": "ac_max_charging_power_kw",
+   "value": 11,
+   "unit": "kW",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "הספק טעינת AC מרבי 11 kW",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 11,
+    "unit": "kW",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:alias_proximity",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:alias_proximity",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e4"
+  },
+  {
+   "field": "dc_max_charging_power_kw",
+   "value": 451,
+   "unit": "kW",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "הספק טעינה מהירה עד 451 kW",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 451,
+    "unit": "kW",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:alias_proximity",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:alias_proximity",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "document"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "document"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e5"
+  },
+  {
+   "field": "electric_range_km",
+   "value": 550,
+   "unit": "km",
+   "source_url": "https://www.heyxpeng.co.il/g6",
+   "document_id": "d_c21f8ddbe51c5f2b",
+   "quote": "טווח נסיעה (WLTP) | 550 ק\"מ",
+   "market": "IL",
+   "variant_match": "unclear",
+   "typed_value": {
+    "type": "scalar",
+    "value": 550,
+    "unit": "km",
+    "condition": null
+   },
+   "admission_status": "accepted",
+   "admission_version": "admission-v2",
+   "admission_checks": {
+    "provenance": "document_in_store",
+    "quote": "verbatim_in_source",
+    "entailment": "deterministic_parse:unit_anchor",
+    "semantics": "ok"
+   },
+   "entailment": "deterministic_parse:unit_anchor",
+   "binding_level": "generation",
+   "binding_requirement": "exact_technical_variant",
+   "binding_dimensions": {
+    "model": {
+     "status": "match",
+     "basis": "section_heading"
+    },
+    "power": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "drivetrain": {
+     "status": "mixed",
+     "basis": "document"
+    },
+    "manufacturer": {
+     "status": "match",
+     "basis": "section_heading"
+    }
+   },
+   "market_basis": "domain_tld:.il",
+   "source_authority": "official_importer",
+   "authority_basis": "brand_domain_importer_tld:heyxpeng.co.il",
+   "source_domain": "heyxpeng.co.il",
+   "observed_at": "2026-10-03T23:49:35+00:00",
+   "evidence_id": "e6"
+  }
+ ],
+ "rejected": []
+}

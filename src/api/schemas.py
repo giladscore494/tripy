@@ -7,11 +7,12 @@ being re-modelled here.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, create_model
 
-from ..run_profiles import PRODUCTION, PROFILES
+from ..run_profiles import ARMS, PRODUCTION, PROFILES
+from ..run_settings import RUN_OVERRIDES, RunOverride
 
 Json = dict[str, Any]
 
@@ -230,11 +231,93 @@ class RunEvidence(BaseModel):
     rejected: list[Json]
 
 
+# --- per-run settings ------------------------------------------------------------------------------------------------
+
+def _override_type(spec: RunOverride) -> Any:
+    """The typed field of one per-run setting, generated from run_settings.RUN_OVERRIDES (the one source of truth:
+    ranges and options are not restated here; run_settings.validate_overrides checks them again)."""
+    if spec.kind == "int":
+        kind = Annotated[StrictInt, Field(ge=spec.low, le=spec.high)]
+    elif spec.kind == "float":
+        kind = Annotated[float, Field(ge=spec.low, le=spec.high, strict=True)]
+    elif spec.kind == "bool":
+        kind = StrictBool
+    elif spec.kind == "choice":
+        kind = Literal[spec.options]  # type: ignore[valid-type]
+    else:
+        kind = Annotated[str, Field(max_length=128)]
+    return (Optional[kind], Field(None, description=spec.label + (f". {spec.help}" if spec.help else "")))
+
+
+RunSettingsOverrides = create_model(
+    "RunSettingsOverrides", __config__=ConfigDict(extra="forbid"),
+    __doc__="Per-run overrides of the dashboard's non-secret Advanced settings (all optional: an absent or null "
+            "setting keeps the server default). Endpoints, credentials, the extra request JSON and the process-wide "
+            "in-flight limits are server-controlled and cannot be set.",
+    **{spec.name: _override_type(spec) for spec in RUN_OVERRIDES})
+
+
+class RunSettingSpec(BaseModel):
+    name: str
+    kind: Literal["int", "float", "bool", "choice", "model", "text"]
+    label: str
+    group: str
+    help: str = ""
+    default: Any = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: list[str]
+    nullable: bool
+    allow_empty: bool
+    pinned_by_named_profile: bool
+
+
+class ServerControlled(BaseModel):
+    name: str
+    label: str
+    reason: str
+
+
+class ModelLimit(BaseModel):
+    model: str
+    current: int
+    maximum: int
+    provider_limit: int | None = None
+
+
+class SearchLimit(BaseModel):
+    current: int
+    provider_limit: int
+
+
+class ConcurrencyInfo(BaseModel):
+    research_model: ModelLimit | None = None
+    finalizer_model: ModelLimit | None = None
+    search: SearchLimit
+    note: str
+
+
+class ProfileRef(BaseModel):
+    id: str
+    label: str
+
+
+class RunSettingsContract(BaseModel):
+    settings: list[RunSettingSpec]
+    groups: list[str]
+    server_controlled: list[ServerControlled]
+    concurrency: ConcurrencyInfo
+    named_profiles: list[ProfileRef]
+    profile_note: str
+    env_overrides: list[Json]
+
+
 # --- actions ---------------------------------------------------------------------------------------------------------
 
 class StartRun(BaseModel):
-    """A research target as the dashboard offers it. Model, search and provider settings are the server's
-    configuration (the dashboard's untouched Advanced settings); a client cannot pass any of them."""
+    """A research target as the dashboard offers it, with optional per-run settings (the dashboard's non-secret
+    Advanced settings, validated by run_settings). Endpoints, credentials and process-wide limits stay the server's."""
     model_config = ConfigDict(extra="forbid")
 
     scope: Literal["one", "manufacturer", "all"]
@@ -243,6 +326,7 @@ class StartRun(BaseModel):
     profile: Literal[PROFILES] = PRODUCTION  # type: ignore[valid-type]
     idempotency_key: str | None = Field(None, min_length=1, max_length=200,
                                         description="repeat a request with the same key to get the same run back")
+    settings: RunSettingsOverrides | None = Field(None, description="per-run overrides; absent = server defaults")  # type: ignore[valid-type]
 
 
 class RestartVehicle(BaseModel):
@@ -257,6 +341,7 @@ class Started(BaseModel):
     message: str = ""
     warnings: list[str] = []
     run: RunSummary | None = None
+    settings_overridden: list[str] = Field([], description="the per-run settings this request overrode")
 
 
 class ActionAccepted(BaseModel):
@@ -313,3 +398,161 @@ class Vehicle(BaseModel):
 class VehicleList(BaseModel):
     vehicles: list[Vehicle]
     manufacturers: list[str]
+
+
+# --- A/B series ------------------------------------------------------------------------------------------------------
+
+class StartSeries(BaseModel):
+    """An A/B benchmark series as the dashboard's "Benchmark A/B" scope offers it: chosen benchmark vehicles, runs per
+    arm (1-5) and arms from run_profiles.ARMS. Everything else is the server's configuration."""
+    model_config = ConfigDict(extra="forbid")
+
+    record_ids: list[str] = Field(min_length=1, max_length=200)
+    repeats: int = Field(3, ge=1, le=5, strict=True)
+    arms: list[Literal[ARMS]] = Field(min_length=1, max_length=len(ARMS))  # type: ignore[valid-type]
+    idempotency_key: str | None = Field(None, min_length=1, max_length=200)
+
+
+class SeriesItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    index: int
+    repeat: int
+    arm: str
+    arm_label: str
+    run_id: str | None = None
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class SeriesCounts(BaseModel):
+    planned: int
+    done: int
+    running: int
+    not_run: int
+
+
+class SeriesProgress(BaseModel):
+    total: SeriesCounts
+    arms: dict[str, SeriesCounts]
+
+
+class SeriesVehicle(BaseModel):
+    record_id: str
+    label: str
+
+
+class SeriesState(BaseModel):
+    series_id: str
+    status: str
+    label: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    finished_at: str | None = None
+    arms: list[str]
+    arm_labels: dict[str, str]
+    repeats: int
+    vehicles: list[SeriesVehicle]
+    planned: list[SeriesItem]
+    current_index: int | None = None
+    run_ids: list[str]
+    error: str | None = None
+    benchmark: Json | None = Field(None, description="files / run ids of the series benchmark (no server paths)")
+    arm_configs: Json | None = Field(None, description="acquisition mode / document card / profile of each arm")
+    executing: bool = Field(description="this server process is driving the series now")
+    series_progress: SeriesProgress
+
+
+class SeriesList(BaseModel):
+    total: int
+    executing: str | None = Field(None, description="the series this process is driving now (one at a time)")
+    arms: list[ProfileRef] = Field(description="the arms a series may run (run_profiles.ARMS, in run order)")
+    default_arms: list[str] = Field(description="the dashboard's default selection")
+    max_repeats: int = 5
+    series: list[SeriesState]
+
+
+class SeriesStarted(BaseModel):
+    series_id: str
+    created: bool
+    message: str = ""
+    series: SeriesState | None = None
+
+
+# --- documents, binding replay, diagnostics --------------------------------------------------------------------------
+
+class Paging(BaseModel):
+    offset: int
+    limit: int
+    returned: int
+    total: int
+    remaining: int
+    next_offset: int | None = None
+
+
+class DocumentRow(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    doc_id: str
+    url: str | None = None
+    title: str | None = None
+    source_domain: str | None = None
+    source_authority: str | None = None
+    authority_basis: str | None = None
+    market: str | None = None
+    market_basis: str | None = None
+    kind: str | None = None
+    doc_type: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    text_chars: int | None = None
+    fetched_at: Any = None
+    status: Any = None
+    used_for_fields: list[str]
+
+
+class RunDocuments(BaseModel):
+    run_id: str
+    record_id: str
+    documents: list[DocumentRow]
+    paging: Paging
+
+
+class DocumentText(BaseModel):
+    doc_id: str
+    url: str | None = None
+    title: str | None = None
+    offset: int
+    returned_chars: int
+    total_chars: int
+    remaining_chars: int
+    next_offset: int | None = None
+    text: str
+
+
+class DocumentStructure(BaseModel):
+    doc_id: str
+    url: str | None = None
+    title: str | None = None
+    doc_type: str | None = None
+    tables: list[Json]
+    dom_groups: list[Json]
+    variant_map: Json
+    paging_applies_to: str
+    paging: Paging
+
+
+class BindingReplay(BaseModel):
+    run_id: str
+    record_id: str
+    field: str | None = None
+    summary: Json = Field(description="binding_replay summary: vehicle totals and per-field recorded -> now")
+    items: list[Json] = Field(description="one row per replayed admitted evidence item / open-field candidate")
+    paging: Paging
+
+
+class RunDiagnostics(BaseModel):
+    run_id: str
+    vehicles: int
+    aggregate: Json = Field(description="diagnostics.aggregate over the run's vehicles (the benchmark.json content, "
+                                        "without per_vehicle)")
+    per_vehicle: list[Json] = Field(description="the per_vehicle rows of the benchmark export")

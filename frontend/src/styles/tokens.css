@@ -1,0 +1,42 @@
+/* TRIPY design tokens: the ONE place colors, glass, radii and typography are defined.
+   Components use them through Tailwind (tailwind.config.ts) or var(--...); no raw colors elsewhere. */
+:root {
+  /* base: very dark emerald + deep navy */
+  --c-bg: 7 28 26;             /* #071c1a */
+  --c-bg-secondary: 17 24 42;  /* #11182a */
+  --c-bg-deep: 4 14 14;
+  /* typography */
+  --c-text: 243 245 244;       /* #f3f5f4 */
+  --c-muted: 170 180 178;      /* #aab4b2 */
+  --c-faint: 120 134 132;
+  /* accents */
+  --c-accent: 54 184 159;      /* #36b89f */
+  --c-accent-soft: 114 214 194;/* #72d6c2 */
+  --c-purple: 101 85 143;      /* #65558f */
+  /* status */
+  --c-ok: 92 206 160;
+  --c-warn: 226 184 102;
+  --c-danger: 232 118 128;
+  --c-info: 128 166 230;
+
+  /* glass */
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-hover: rgba(255, 255, 255, 0.1);
+  --glass-strong: rgba(255, 255, 255, 0.085);
+  --line: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.2);
+  --blur: 18px;
+
+  --radius-panel: 22px;
+  --radius-card: 16px;
+
+  /* atmosphere */
+  --bloom-teal: rgba(54, 184, 159, 0.2);
+  --bloom-purple: rgba(101, 85, 143, 0.26);
+  --bloom-navy: rgba(17, 24, 42, 0.9);
+  --grid-line: rgba(255, 255, 255, 0.028);
+  --grid-size: 56px;
+
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Noto Sans Hebrew", "Arial Hebrew", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}

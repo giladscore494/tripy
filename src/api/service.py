@@ -6,7 +6,7 @@
     results             storage.run_loader.load_run / load_runs                      (result.json or the trace)
     report              run_state.json report, else runstate.report.vehicle_report   (the dashboard's Run report)
     events              mcp_server.tools.Observer.run_events                          (line cursor, torn-line safe)
-    candidates          candidate_harvest.candidate_matrix + ui.live_state.rejected_candidates_by_field
+    candidates          candidate_harvest.candidate_matrix + runstate.live_state.rejected_candidates_by_field
     evidence            storage.trace.evidence_items + evidence_rejected events + bundle.admission_summary
 
 Everything returned is redacted with the MCP's Redactor (configured secrets, secret-looking env values, credentialed
@@ -241,7 +241,7 @@ def run_candidates(ctx: ApiContext, record: RunRecord, record_id: str, field: st
     """The candidate matrix of one vehicle (the data behind candidates.csv), structured: per applicable field the
     harvested candidates (value, unit, origin / extraction method, document, quote, hints), the rejected ones with
     their reasons, and the field's current state as the candidate table computes it."""
-    from ..ui.live_state import rejected_candidates_by_field     # Streamlit-free (the engine imports live_state)
+    from ..runstate.live_state import rejected_candidates_by_field
 
     events = _events(ctx, record, record_id)
     started = trace.first_event(events, "run_started") or {}

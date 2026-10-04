@@ -3,7 +3,7 @@
 Workers never call Streamlit. Their RunLog listeners only enqueue events (BatchLiveState.listener_for);
 this module, on the script thread, drains the queue every ~200 ms while the vehicle futures run,
 updates the in-memory state and re-renders only what changed. Polling makes no API request: every
-number comes from events the runs already emit (src/ui/live_state.py).
+number comes from events the runs already emit (src/runstate/live_state.py).
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import pandas as pd
 import streamlit as st
 
 from ..benchmark import run_batch
-from . import labels_he as he
-from .live_state import BatchLiveState, VehicleLive
+from ..presentation import labels_he as he
+from ..runstate.live_state import BatchLiveState, VehicleLive
 
 CARD_MIN_INTERVAL_S = 0.75
 HEADER_MIN_INTERVAL_S = 0.25

@@ -276,3 +276,14 @@ def test_a_finished_tool_action_is_not_shown_during_the_next_turn_or_phase():
     v.apply("tool_call", {"name": "search_web", "arguments": json.dumps({"query": "lyriq torque"})})
     v.apply("finalization_started", {"phase": "finalization", "model": "glm-5.3"})
     assert v.card()["action"] is None
+
+
+def test_moved_modules_keep_their_old_import_paths():
+    """src/ui/live_state.py and src/ui/labels_he.py are aliases of the framework-neutral modules (same objects)."""
+    import src.presentation.labels_he as moved_labels
+    import src.runstate.live_state as moved_state
+    import src.ui.labels_he as old_labels
+    import src.ui.live_state as old_state
+
+    assert old_state is moved_state and old_labels is moved_labels
+    assert old_state.VehicleLive is moved_state.VehicleLive

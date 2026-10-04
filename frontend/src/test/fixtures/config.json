@@ -1,0 +1,76 @@
+{
+ "environment": "development",
+ "configured": true,
+ "blocking": [],
+ "checks": [
+  {
+   "name": "GLM",
+   "level": "ok",
+   "status": "Configured",
+   "detail": "research model glm-5.3-flash"
+  },
+  {
+   "name": "Search",
+   "level": "ok",
+   "status": "Configured",
+   "detail": "GLM web_search (search-prime)"
+  },
+  {
+   "name": "Persistent storage",
+   "level": "ok",
+   "status": "Connected",
+   "detail": "Local disk"
+  },
+  {
+   "name": "Level 1.5 data",
+   "level": "ok",
+   "status": "Bundled snapshot",
+   "detail": "DATABASE_URL not set: the frozen snapshot in data/ is used"
+  }
+ ],
+ "research_model": "glm-5.3-flash",
+ "finalizer_model": null,
+ "search_backend": "glm",
+ "level15_source": "snapshot",
+ "storage": {
+  "level": "ok",
+  "message": "Local disk",
+  "writable": true,
+  "on_railway": false,
+  "volume_mount": null,
+  "on_volume": null,
+  "data_dir": "/data",
+  "source": "TRIPY_DATA_DIR"
+ },
+ "access_control": {
+  "required": false,
+  "configured": false
+ },
+ "mcp_enabled": false,
+ "max_active_runs": 2,
+ "prompt_version": "5b0d58beef75",
+ "profiles": [
+  {
+   "id": "production",
+   "label": "Production"
+  },
+  {
+   "id": "benchmark_baseline",
+   "label": "Benchmark: Baseline"
+  },
+  {
+   "id": "benchmark_treatment",
+   "label": "Benchmark: Treatment"
+  },
+  {
+   "id": "benchmark_treatment_card",
+   "label": "Benchmark: Treatment + card"
+  },
+  {
+   "id": "custom",
+   "label": "Custom"
+  }
+ ],
+ "default_profile": "production",
+ "env_overrides": []
+}

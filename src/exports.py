@@ -1,7 +1,7 @@
 """Downloadable exports, framework-neutral (no Streamlit, no pandas): the dashboard's download buttons and the HTTP
 API serve the same bytes from the same functions.
 
-    candidates.csv     one vehicle run's candidate table (ui.live_state.candidate_table_rows, Hebrew headers)
+    candidates.csv     one vehicle run's candidate table (runstate.live_state.candidate_table_rows, Hebrew headers)
     per_vehicle.csv    diagnostics.per_vehicle_csv over the runs' vehicle diagnostics (the benchmark export)
     benchmark.json     diagnostics.aggregate over the same diagnostics
 
@@ -37,7 +37,7 @@ def rows_to_csv(rows: list[dict]) -> str:
 
 def candidate_rows(events: list[dict]) -> list[dict]:
     """The candidate table of one vehicle run, from its events (empty when the run recorded no field specs)."""
-    from .ui.live_state import candidate_table_rows      # Streamlit-free (the engine's pipeline imports it too)
+    from .runstate.live_state import candidate_table_rows
 
     started = trace.first_event(events, "run_started") or {}
     specs = started.get("requested_field_specs") or []

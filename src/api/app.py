@@ -25,7 +25,7 @@ from ..server_logging import get_logger
 from .auth import require_access
 from .deps import ApiContext, build_context, env_secret
 from .errors import ApiError
-from .routes import config, exports, health, runs
+from .routes import config, documents, exports, health, runs, series
 
 log = get_logger("api")
 
@@ -90,7 +90,7 @@ def create_app(*, context: ApiContext | None = None, secret: Callable[[str], str
 
     app.include_router(health.router)
     protected = [Depends(require_access)]
-    for module in (runs, exports, config):
+    for module in (runs, exports, config, series, documents):
         app.include_router(module.router, dependencies=protected)
     app.router.routes.extend(mcp_routes)
     return app

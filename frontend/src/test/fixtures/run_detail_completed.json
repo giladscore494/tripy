@@ -1,0 +1,175 @@
+{
+ "run_id": "SYNTH-pr40",
+ "label": "אקספנג G6 · 2026 · MAX",
+ "scope": "One vehicle",
+ "status": "COMPLETED",
+ "status_label": "Completed",
+ "stage": null,
+ "profile": "production",
+ "record_ids": [
+  "101122"
+ ],
+ "created_at": "2026-10-04T22:41:00.934+00:00",
+ "updated_at": "2026-10-04T22:41:00.934+00:00",
+ "started_at": "2026-10-03T23:49:00+00:00",
+ "finished_at": "2026-10-03T23:59:00+00:00",
+ "active": false,
+ "executing": false,
+ "cancel_requested": false,
+ "legacy": false,
+ "elapsed_s": 600.0,
+ "request": {
+  "run_profile": "production",
+  "research_model": "glm-5.3-flash"
+ },
+ "heartbeat_at": null,
+ "error": null,
+ "notes": [],
+ "jobs": [
+  {
+   "started_at": "2026-10-03T23:49:00+00:00",
+   "finished_at": "2026-10-03T23:59:00+00:00"
+  }
+ ],
+ "terminal": true,
+ "completed": true,
+ "progress": {
+  "vehicles_total": 1,
+  "vehicles_finished": 1,
+  "vehicles_completed": 1
+ },
+ "vehicles": [
+  {
+   "record_id": "101122",
+   "title": "101122",
+   "status": "COMPLETED",
+   "engine_status": "completed",
+   "stage": null,
+   "error": null,
+   "pipeline": {
+    "current_stage": "acquisition",
+    "activity": "Evaluating fields",
+    "engine_status": null,
+    "stop_reason": null,
+    "started_at": null,
+    "last_event_at": null,
+    "finished_at": null,
+    "events_seen": 22,
+    "research_model": null,
+    "finalizer_model": null,
+    "stages": [
+     {
+      "key": "acquisition",
+      "label": "Source acquisition",
+      "state": "running",
+      "state_label": "Running",
+      "duration_s": null,
+      "note": null
+     },
+     {
+      "key": "harvest",
+      "label": "Deterministic harvest",
+      "state": "waiting",
+      "state_label": "Waiting",
+      "duration_s": null,
+      "note": null
+     },
+     {
+      "key": "sweep",
+      "label": "Document sweep",
+      "state": "waiting",
+      "state_label": "Waiting",
+      "duration_s": null,
+      "note": null
+     },
+     {
+      "key": "recovery",
+      "label": "Tail recovery",
+      "state": "waiting",
+      "state_label": "Waiting",
+      "duration_s": null,
+      "note": null
+     },
+     {
+      "key": "finalization",
+      "label": "Finalization",
+      "state": "waiting",
+      "state_label": "Waiting",
+      "duration_s": null,
+      "note": null
+     }
+    ],
+    "counters": {
+     "sources": 0,
+     "useful_sources": null,
+     "target_market_sources": null,
+     "official_sources": null,
+     "official_urls_discovered": null,
+     "candidates": null,
+     "candidate_fields": null,
+     "applicable_fields": 11,
+     "resolved_fields": 0,
+     "fields_with_evidence": 11,
+     "conflicting_fields": 0,
+     "research_turns": 0,
+     "searches": 0,
+     "model_calls": 0,
+     "model_calls_by_stage": {},
+     "evidence_admitted": 17,
+     "evidence_rejected": 0,
+     "timeouts": 0,
+     "rate_limited": 0
+    },
+    "errors": []
+   },
+   "failure": {
+    "code": "unexpected",
+    "title": "Research stopped during Source acquisition.",
+    "stage": "acquisition",
+    "stage_label": "Source acquisition",
+    "reason": "An unexpected error stopped the run.",
+    "preserved": "Everything acquired before the stop (sources, evidence, events) was preserved.",
+    "actions": [
+     "finalize",
+     "restart"
+    ],
+    "technical": "{\n \"engine_status\": \"incomplete\"\n}"
+   },
+   "result_available": false,
+   "report": {
+    "record_id": "101122",
+    "engine_status": "incomplete",
+    "stop_reason": null,
+    "primary_research_stop_reason": null,
+    "total_duration_s": null,
+    "durations_s": {
+     "acquisition": null,
+     "harvest": null,
+     "sweep": null,
+     "recovery": null,
+     "finalization": null
+    },
+    "search_calls": 0,
+    "model_calls": 0,
+    "model_calls_by_stage": {},
+    "research_turns": 0,
+    "fetched_documents": 0,
+    "useful_documents": null,
+    "official_documents": null,
+    "official_urls_discovered": null,
+    "target_market_documents": null,
+    "candidate_count": null,
+    "candidate_fields": null,
+    "evidence_admitted": 17,
+    "evidence_rejected": 0,
+    "applicable_fields": 11,
+    "resolved_fields": 0,
+    "fields_with_value": null,
+    "cost_usd": null,
+    "cost_complete": true,
+    "timeouts": 0,
+    "note": "observational telemetry; resolved = evidence-backed field state, not a correctness score"
+   }
+  }
+ ]
+}

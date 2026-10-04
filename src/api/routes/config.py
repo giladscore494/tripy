@@ -9,10 +9,10 @@ from ...agent import PROMPT_VERSION
 from ...app_config import blocking_errors, is_production, max_active_runs
 from ...mcp_server import configured_token
 from ...run_profiles import PRODUCTION, PROFILE_LABELS, PROFILES
-from ...run_settings import settings_checks, settings_from_env
+from ...run_settings import run_settings_contract, settings_checks, settings_from_env
 from ...storage.paths import storage_status
 from ..deps import ApiContext, get_context
-from ..schemas import ConfigStatus, VehicleList
+from ..schemas import ConfigStatus, RunSettingsContract, VehicleList
 from ..service import redacted
 
 router = APIRouter(prefix="/api", tags=["config"])
@@ -50,3 +50,11 @@ def vehicles(ctx: ApiContext = Depends(get_context)) -> dict:
                           "model": v["model"], "year": v.get("year"), "trim": v.get("trim"),
                           "ordinal": v.get("ordinal")} for v in catalog.vehicles],
             "manufacturers": catalog.manufacturers()}
+
+
+@router.get("/run-settings", response_model=RunSettingsContract)
+def run_settings(ctx: ApiContext = Depends(get_context)) -> dict:
+    """The per-run settings a client may pass with POST /api/runs (run_settings.RUN_OVERRIDES): defaults (what an
+    untouched dashboard sidebar starts with), ranges, options, which settings a named profile pins; the
+    server-controlled settings and the process-wide in-flight limits (read-only). Nothing here changes server state."""
+    return redacted(run_settings_contract(ctx.secret, ctx.manager.controller))
