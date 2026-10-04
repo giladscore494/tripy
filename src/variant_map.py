@@ -566,9 +566,13 @@ def fact_region(vmap: dict | None, identity: TargetIdentity, *, value: Any, frag
             cell_regions.append(table["row_regions"][str(r)])
         if columns:
             row = table["rows"][r]
-            variant_cells = [row[int(k)] for k in columns if int(k) < len(row)]
-            if len(variant_cells) == len(columns) and len(columns) > 1 \
-                    and all(c and _cell_has(c, value) for c in variant_cells):
+            # Fail closed: a row is shared only when every non-empty data column is a DVM-recognised variant
+            # column and every one states this value. An unrecognised extra column may be another variant, so it
+            # must block "shared" rather than being silently ignored.
+            data_columns = [j2 for j2 in range(1, len(row)) if row[j2]]
+            mapped_columns = [int(k) for k in columns if int(k) < len(row) and row[int(k)]]
+            if len(mapped_columns) == len(data_columns) and len(mapped_columns) > 1 \
+                    and all(_cell_has(row[j2], value) for j2 in data_columns):
                 shared_row = f"{table['index']}:{r}"
             # another column of the target with a different value in the same row: no silent pick
             targets = [k for k in columns if verdict(columns[k])["status"] == "target"]
