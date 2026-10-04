@@ -167,7 +167,9 @@ OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importe
 
 def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: dict[str, list[dict]],
                      target_market: str, trim_named_by_official: bool) -> dict:
-    """Which of a cluster's open fields a web episode can still help (RECOVERY_MODE=reacquire).
+    """Which of a cluster's open fields a web episode can still help (RECOVERY_MODE=reacquire). Superseded in the
+    reacquire stage by search_eligibility (R7, PR #40), which gives a binding-blocked field no search at all; kept as a
+    pure helper for runs before PR #40.
 
     Only a trim-only `variant_not_exact` field with ADMITTED evidence from an official target-market source is
     eligible for this gate. Technical gaps (power_mixed, drivetrain_absent, etc.) stay in normal reacquisition because
@@ -194,6 +196,38 @@ def binding_gap_gate(fields: list[str], evaluation: dict[str, dict], evidence: d
                    and any(str(i).startswith("binding_gap:trim_") for i in (evaluation.get(f) or {}).get("info") or [])]
     return {"fields": kept, "skipped": [] if exception else list(gaps), "gaps": gaps, "trim_exception": exception,
             "search_cap": 1 if exception and set(kept) <= set(gaps) else None, "trim_fields": trim_fields}
+
+
+SEARCH_REASON_MISSING = "missing"
+SKIPPED_BINDING_BLOCKED = "skipped_binding_blocked"
+SKIPPED_NOT_MISSING = "skipped_not_missing"
+
+
+def search_eligibility(fields: list[str], evaluation: dict[str, dict], evidence: dict[str, list[dict]]) -> dict:
+    """R7 (PR #40): which of a cluster's open fields re-acquisition may spend billable searches on. Only a field with NO
+    admitted evidence at all (`missing`; also an `unresolved` / `weak_provenance` field without evidence) gets a web
+    episode. A `variant_not_exact` field, or a `conflicting` one whose conflict involves evidence bound below its
+    requirement, is open because of binding: a new search does not fix binding, so it is `skipped_binding_blocked`.
+    Any other field with admitted evidence (a foreign-market-only field, a value conflict between exact items) is
+    `skipped_not_missing`. Replaces binding_gap_gate / binding_budget in the reacquire stage. Scheduling only."""
+    eligible, blocked, other = [], [], []
+    for name in fields:
+        entry = evaluation.get(name) or {}
+        admitted = [e for e in evidence.get(name) or [] if e.get("admission_status", "accepted") == "accepted"]
+        state = entry.get("state")
+        if not admitted:
+            eligible.append(name)
+        elif state == "variant_not_exact":
+            blocked.append(name)
+        elif state == "conflicting":
+            ids = {str(i) for i in entry.get("conflict_evidence_ids") or []}
+            items = [e for e in admitted if str(e.get("evidence_id")) in ids] or admitted
+            below = any(str(e.get("variant_match") or "") != "exact" or [g for g in binding_gaps(e) if g != "market"]
+                        for e in items)
+            (blocked if below else other).append(name)
+        else:
+            other.append(name)
+    return {"fields": eligible, SKIPPED_BINDING_BLOCKED: blocked, SKIPPED_NOT_MISSING: other}
 
 
 TECHNICAL_GAP_SEARCHES = 2     # billable searches of an episode whose fields are open only on a technical binding gap
@@ -225,6 +259,7 @@ def field_binding_gaps(entry: dict, evidence: list[dict], target_market: str) ->
 def binding_budget(fields: list[str], evaluation: dict[str, dict], evidence: dict[str, list[dict]],
                    target_market: str) -> dict:
     """Billable-search budget of ONE re-acquisition episode while binding is the blocker (RECOVERY_MODE=reacquire).
+    Not used by the reacquire stage since PR #40 (R7: search_eligibility); kept as a pure helper.
 
     Per field, field_binding_gaps(): a TECHNICAL gap (power / drivetrain / year / body / displacement / propulsion /
     model: any gap that is not the trim) or a TRIM-only gap. When EVERY field of the episode is open on a binding gap,

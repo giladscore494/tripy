@@ -39,6 +39,27 @@ A multi-variant document (1.8 AND 2.0 Hybrid) is never exact by itself: the fact
 target's technical variant. A powertrain mismatch vetoes exact binding even when manufacturer, model,
 body and year all match. DocumentBinding is not Evidence and never a truth score: it only says which
 variant a source talks about. Vocabulary lives in data/identity_vocabulary.json.
+
+binding-v4 (PR #40) adds deterministic, catalog-driven rules, each recorded on the fact (`binding_rules`, and
+`binding_basis` = the rule that raised the level last) and fail-closed:
+
+    single_body_catalog        body `mixed` (the target body plus other models' bodies on the page) counts as a match
+                               when every catalog entry of the target's manufacturer / family / model year is complete
+                               and has the target body (a body mismatch stays a veto)
+    single_propulsion_catalog  propulsion `absent` counts as a match when every catalog entry of the target's
+                               manufacturer / family / model year is complete and has the target propulsion, and no
+                               fact layer or the document names another propulsion
+    discriminating power       the power tolerance is min(3 %, half the relative gap to the nearest other catalog
+                               power of the same manufacturer / family / year / body / propulsion / drivetrain); it
+                               only tightens and is recorded as binding_dimensions.power.tolerance
+    brand_policy               a brand-wide warranty statement (fields with `brand_policy_scope`) of an official
+                               source of the target manufacturer in the target market that names no model binds at
+                               body_powertrain (eligibility is decided by the caller, evidence_admission.fact_binding)
+    dvm_region / dvm_shared    the fact's region in the Document Variant Map (src/variant_map.py) is assigned to the
+                               target's technical variant, or the fact is a shared row of a document whose variant
+                               inventory contains the target; a region whose identity contradicts the target vetoes
+                               (`<dim>_mismatch@dvm_region`). Only absent / mixed dimensions not decided by the value's
+                               own clause are completed; a veto of the fact itself always wins
 """
 
 from __future__ import annotations
@@ -52,7 +73,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v3"
+BINDING_VERSION = "binding-v4"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -339,6 +360,9 @@ def _displacements(text: str, vocab: dict) -> set[float]:
     return {v for v in found if 0.6 <= v <= 8.5}
 
 
+KW_TO_PS = 1.35962
+
+
 def _powers(text: str, vocab: dict) -> set[float]:
     """Power figures in hp (PS and, next to a power word, kW converted). Charging kW is never power."""
     units = _alternation(vocab.get("power_units") or [])
@@ -346,8 +370,8 @@ def _powers(text: str, vocab: dict) -> set[float]:
     if units:
         for m in re.finditer(rf"(?<![\d.,])(\d{{2,4}})\s*(?:{units})(?![a-z])", text):
             value = float(m.group(1))
-            unit = text[m.end(1):m.end()].strip()
-            found.add(round(value * 0.986, 1) if unit.startswith("ps") else value)
+            # PS is metric horsepower, the unit of the government's כ"ס: taken as is (never x0.986)
+            found.add(value)
     words = _alternation(vocab.get("power_words") or [])
     blockers = _terms(("charging_words",), vocab.get("charging_words") or [])
     if words:
@@ -355,7 +379,8 @@ def _powers(text: str, vocab: dict) -> set[float]:
                              text):
             if blockers and blockers.search(m.group(0)):
                 continue
-            found.add(round(float(m.group(1)) * 1.341, 1))
+            # government power (כ"ס) is metric horsepower: 1 kW = 1.35962 PS (357 kW is the catalog's 486 כ"ס)
+            found.add(round(float(m.group(1)) * KW_TO_PS, 1))
     return {v for v in found if 40 <= v <= 2000}
 
 
@@ -623,7 +648,7 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
             return "mismatch"
         return "match" if hits == found else "mixed"
     elif dim == "power":
-        target, rel = identity.power_hp, 0.03
+        target, rel = identity.power_hp, power_tolerance(identity)["tolerance"]
     elif dim == "propulsion":
         target = identity.propulsion
         if target is None:
@@ -867,6 +892,146 @@ def single_catalog_trim(identity: TargetIdentity, index: dict | None = None) -> 
     return {"key": key, "trim": trim, "records": records[:20]}
 
 
+# --- catalog family entries (R1 / R1b / R3 / Document Variant Map) ----------------------------------------------------
+
+CATALOG_PARTS = ("manufacturer", "family", "year", "body", "propulsion", "drivetrain", "power", "displacement_l")
+DEFAULT_POWER_TOLERANCE = 0.03
+_FAMILY_ENTRIES: dict[tuple, list[dict]] = {}
+
+
+def parse_catalog_key(key: str) -> dict | None:
+    """The parts of a catalog index key (catalog_key); power as an int (None when empty)."""
+    parts = str(key).split("|")
+    if len(parts) != len(CATALOG_PARTS):
+        return None
+    out = dict(zip(CATALOG_PARTS, parts))
+    try:
+        out["power"] = int(out["power"]) if out["power"] else None
+    except ValueError:
+        out["power"] = None
+    return out
+
+
+def catalog_family_entries(identity: TargetIdentity, index: dict | None = None) -> list[dict]:
+    """Every catalog index entry of the target's manufacturer / model family / model year: [{key, parts, trims,
+    records, complete}] (an entry without "complete" takes the index's own default). [] when an identity part is
+    unknown or the index has no entry for it. data/catalog_trim_index.json only (no runtime database)."""
+    index = trim_index() if index is None else index
+    entries = index.get("entries") or {}
+    if not entries or identity.manufacturer in (None, "") or not identity.family or identity.year is None:
+        return []
+    key = (id(entries), str(identity.manufacturer), str(identity.family), str(identity.year))
+    cached = _FAMILY_ENTRIES.get(key)
+    if cached is not None:
+        return cached
+    prefix = f"{identity.manufacturer}|{identity.family}|{identity.year}|"
+    default_complete = index.get("complete", False) is True
+    out = []
+    for name in sorted(k for k in entries if k.startswith(prefix)):
+        entry = entries[name] or {}
+        parts = parse_catalog_key(name)
+        if parts is None:
+            continue
+        out.append({"key": name, "parts": parts, "trims": [normalize_catalog_trim(t) for t in entry.get("trims") or []],
+                    "records": [str(r) for r in entry.get("records") or []],
+                    "complete": entry.get("complete", default_complete) is True})
+    if len(_FAMILY_ENTRIES) > 4096:
+        _FAMILY_ENTRIES.clear()
+    _FAMILY_ENTRIES[key] = out
+    return out
+
+
+def _single_catalog_value(identity: TargetIdentity, part: str, target: Any, index: dict | None) -> dict | None:
+    """{entries, records} when the target's manufacturer / family / model year has catalog entries, ALL of them
+    complete, and every one has `target` as its `part`; None otherwise (fail-closed: no entry, an incomplete entry, an
+    unknown target value, or another value)."""
+    if target in (None, ""):
+        return None
+    entries = catalog_family_entries(identity, index)
+    if not entries or any(not e["complete"] for e in entries):
+        return None
+    if any(e["parts"][part] != str(target) for e in entries):
+        return None
+    return {"entries": len(entries), "records": [r for e in entries for r in e["records"]][:20]}
+
+
+def single_propulsion_catalog(identity: TargetIdentity, index: dict | None = None) -> dict | None:
+    """R1: every (complete) catalog entry of the target's manufacturer / family / model year has its propulsion."""
+    return _single_catalog_value(identity, "propulsion", identity.propulsion, index)
+
+
+def single_body_catalog(identity: TargetIdentity, index: dict | None = None) -> dict | None:
+    """R1b: every (complete) catalog entry of the target's manufacturer / family / model year has its body."""
+    return _single_catalog_value(identity, "body", identity.body, index)
+
+
+_SIBLINGS: dict[tuple, Any] = {}
+
+
+def catalog_sibling_families(identity: TargetIdentity, index: dict | None = None):
+    """A pattern of the OTHER model families the catalog lists for the target's manufacturer (any year), or None. The
+    identity vocabulary knows only some families; the catalog knows the whole range ("g9", "x9", "p7 plus" for the
+    G6). Used only as a fail-closed safeguard of R1 / R1b: a noisy family name can only stop a rule."""
+    index = trim_index() if index is None else index
+    entries = index.get("entries") or {}
+    if not entries or not identity.manufacturer or not identity.family:
+        return None
+    key = (id(entries), identity.manufacturer, identity.family)
+    if key not in _SIBLINGS:
+        prefix = f"{identity.manufacturer}|"
+        own = {_compact(identity.family)} | {_compact(t) for t in (vocabulary().get("manufacturers") or {})
+                                              .get(str(identity.manufacturer), [])}
+        names = {k.split("|")[1] for k in entries if k.startswith(prefix)}
+        names = {n for n in names if n and re.search(r"[a-zא-ת]", n) and len(_compact(n)) >= 2
+                 and _compact(n) not in own and not _compact(identity.family).startswith(_compact(n))}
+        _SIBLINGS[key] = compile_terms(sorted(names)) if names else None
+    return _SIBLINGS[key]
+
+
+SIBLING_LAYERS = ("value_clause", "column_header", "column_identity", "quote", "section_heading")
+
+
+def _names_sibling_family(identity: TargetIdentity, layers: list[tuple[str, str]] | None,
+                          context: Iterable[str] = ()) -> bool:
+    """Does the value's own clause, its column, its quote, the heading above it or a safeguard-only `context` line (the
+    row label above it) name another model family of the manufacturer (catalog or identity vocabulary)?"""
+    texts = [text for name, text in layers or [] if name in SIBLING_LAYERS and text] + [t for t in context if t]
+    patterns = [p for p in (catalog_sibling_families(identity), _other_family_pattern(identity)) if p is not None]
+    return any(p.search(normalize_text(text)) for p in patterns for text in texts)
+
+
+_TOLERANCES: dict[tuple, dict] = {}
+
+
+def power_tolerance(identity: TargetIdentity, index: dict | None = None) -> dict:
+    """R3: {tolerance, neighbour_hp} of the power dimension: min(3 %, 0.5 x the relative gap between the target's power
+    and the nearest OTHER catalog power (bucket) of the same manufacturer / family / year / body / propulsion /
+    drivetrain). No catalog neighbour (or an unknown identity part): 3 %. It only ever tightens."""
+    if identity.power_hp is None:
+        return {"tolerance": DEFAULT_POWER_TOLERANCE, "neighbour_hp": None}
+    index = trim_index() if index is None else index
+    key = (id(index.get("entries") or {}), identity.manufacturer, identity.family, identity.year, identity.body,
+           identity.propulsion, identity.drivetrain, identity.power_hp)
+    cached = _TOLERANCES.get(key)
+    if cached is not None:
+        return cached
+    own = power_bucket(identity.power_hp)
+    same = [e for e in catalog_family_entries(identity, index)
+            if identity.body and identity.propulsion and identity.drivetrain
+            and (e["parts"]["body"], e["parts"]["propulsion"], e["parts"]["drivetrain"])
+            == (identity.body, identity.propulsion, identity.drivetrain)]
+    others = sorted({e["parts"]["power"] for e in same if e["parts"]["power"] and e["parts"]["power"] != own})
+    out = {"tolerance": DEFAULT_POWER_TOLERANCE, "neighbour_hp": None}
+    if others and identity.power_hp:
+        nearest = min(others, key=lambda p: (abs(p - identity.power_hp), p))
+        gap = abs(nearest - identity.power_hp) / abs(identity.power_hp)
+        out = {"tolerance": round(min(DEFAULT_POWER_TOLERANCE, 0.5 * gap), 5), "neighbour_hp": nearest}
+    if len(_TOLERANCES) > 4096:
+        _TOLERANCES.clear()
+    _TOLERANCES[key] = out
+    return out
+
+
 # --- binding --------------------------------------------------------------------------------------------
 
 def _veto_dims(identity: TargetIdentity) -> tuple[str, ...]:
@@ -925,14 +1090,61 @@ def fact_layer_statuses(identity: TargetIdentity, layers: list[tuple[str, str]] 
             if text]
 
 
+TECHNICAL_DIMS = ("displacement", "power", "drivetrain")
+
+
+def _ladder(s: dict[str, str], identity: TargetIdentity, veto_dims: tuple[str, ...],
+            market: str | None) -> tuple[str, str | None]:
+    """(binding level, trim basis) of effective dimension statuses (vetoes are applied by the caller)."""
+    level, basis = "unknown", None
+    if s["model"] in ("match", "mixed"):
+        level = "model_family"
+        if s["year"] != "mismatch":
+            level = "generation"
+            propulsion_ok = s["propulsion"] == "match" or (s["propulsion"] == "absent"
+                                                          and identity.propulsion in (None, "conventional"))
+            if s["body"] in ("match", "absent") and propulsion_ok and s["model"] == "match":
+                level = "body_powertrain"
+                technical = (s["displacement"] == "match" or s["model_code"] == "match"
+                             or (identity.displacement_l is None and s["power"] == "match"))
+                unresolved = (s["displacement"] == "mixed" or s["drivetrain"] == "mixed"
+                              or ("power" in veto_dims and s["power"] == "mixed"))
+                if technical and not unresolved:
+                    level = "exact_technical_variant"
+                    if s["trim"] == "match" and market and market == identity.target_market:
+                        level = "exact_market_trim"
+                        # a generic government trim (MAX) can only match as its qualified phrase ("g6 max")
+                        basis = "qualified_trim_phrase" if identity.qualified_trim_phrases else None
+    return level, basis
+
+
+def _names_other_propulsion(identity: TargetIdentity, layers: list[tuple[str, str]] | None,
+                            veto_layers: list[tuple[str, str]] | None, document_propulsions: Iterable[str]) -> bool:
+    """Does a fact layer, a veto layer or the document (its full-text mentions) name a propulsion other than the
+    target's, strong or weak? (R1's third safeguard.)"""
+    target = identity.propulsion
+    named = {str(k).removeprefix("weak:") for k in document_propulsions or []}
+    for _, text in [*(layers or []), *(veto_layers or [])]:
+        if text:
+            named |= {str(k).removeprefix("weak:") for k in mentions(text, identity)["propulsion"]}
+    return bool(named - {target})
+
+
 def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tuple[str, str]] | None = None,
          veto_layers: list[tuple[str, str]] | None = None, *, market: str | None = None,
          requirement: str | None = None, model_declared_different: bool = False,
          trim_named_in_document: bool = False, source_authority: str | None = None,
-         document_names_family: bool = False, other_trims_named: list[str] | None = None) -> dict:
+         document_names_family: bool = False, other_trims_named: list[str] | None = None,
+         document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
+         region: dict | None = None, safeguard_context: Iterable[str] = ()) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
-    `other_trims_named=None` (unknown) never lets it apply."""
+    `other_trims_named=None` (unknown) never lets it apply.
+
+    binding-v4 inputs (all optional, None = the rule does not apply): `document_propulsions` (the document profile's
+    propulsion mentions; R1 reads them), `brand_policy` (R4: the caller's eligibility verdict for a brand-wide warranty
+    statement), `region` (R2: the fact's Document Variant Map decision, src/variant_map.fact_region) and
+    `safeguard_context` (lines that can only STOP R1 / R1b: the row label right above the value)."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -958,25 +1170,78 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             if st[dim] == "mismatch" and f"{dim}_mismatch@{name}" not in vetoes:
                 vetoes.append(f"{dim}_mismatch@{name}")
     s = {dim: effective[dim]["status"] for dim in DIMENSIONS}
-    level, basis = "unknown", None
-    if s["model"] in ("match", "mixed"):
-        level = "model_family"
-        if s["year"] != "mismatch":
-            level = "generation"
-            propulsion_ok = s["propulsion"] == "match" or (s["propulsion"] == "absent"
-                                                          and identity.propulsion in (None, "conventional"))
-            if s["body"] in ("match", "absent") and propulsion_ok and s["model"] == "match":
-                level = "body_powertrain"
-                technical = (s["displacement"] == "match" or s["model_code"] == "match"
-                             or (identity.displacement_l is None and s["power"] == "match"))
-                unresolved = (s["displacement"] == "mixed" or s["drivetrain"] == "mixed"
-                              or ("power" in veto_dims and s["power"] == "mixed"))
-                if technical and not unresolved:
-                    level = "exact_technical_variant"
-                    if s["trim"] == "match" and market and market == identity.target_market:
-                        level = "exact_market_trim"
-                        # a generic government trim (MAX) can only match as its qualified phrase ("g6 max")
-                        basis = "qualified_trim_phrase" if identity.qualified_trim_phrases else None
+    level, basis = _ladder(s, identity, veto_dims, market)
+    rules: list[str] = []          # binding-v4 rules applied to this fact, in order
+    raised_by: str | None = None   # the rule that raised the level last
+
+    def apply(rule: str) -> None:
+        nonlocal level, basis, raised_by
+        rules.append(rule)
+        new_level, new_basis = _ladder(s, identity, veto_dims, market)
+        if level_index(new_level) > level_index(level):
+            raised_by = rule
+        level, basis = new_level, new_basis
+
+    # R1b / R1: the government catalog of the target's model year knows only one body / one propulsion
+    # (only for a fact about the target family: body_powertrain needs the model to match, and its own words name no
+    # other catalog family of the manufacturer)
+    catalog_rules = s["model"] == "match" and not _names_sibling_family(identity, layers, safeguard_context)
+    if s["body"] == "mixed" and catalog_rules:
+        catalog_body = single_body_catalog(identity)
+        if catalog_body is not None:
+            s["body"] = "match"
+            effective["body"] = {"status": "match", "basis": effective["body"]["basis"], "was": "mixed",
+                                 "rule": "single_body_catalog", "catalog_entries": catalog_body["entries"]}
+            apply("single_body_catalog")
+    if s["propulsion"] == "absent" and identity.propulsion not in (None, "conventional") \
+            and document_propulsions is not None and catalog_rules:
+        catalog_propulsion = single_propulsion_catalog(identity)
+        if catalog_propulsion is not None and not _names_other_propulsion(identity, layers, veto_layers,
+                                                                          document_propulsions):
+            s["propulsion"] = "match"
+            effective["propulsion"] = {"status": "match", "basis": "single_propulsion_catalog", "was": "absent",
+                                       "catalog_entries": catalog_propulsion["entries"]}
+            apply("single_propulsion_catalog")
+    # R4: a brand-wide warranty statement of the target manufacturer's official target-market source (eligibility:
+    # evidence_admission.fact_binding) that names no model binds at body_powertrain
+    policy = None
+    if brand_policy and not vetoes and not model_declared_different and effective["model"]["basis"] == "document" \
+            and s["model"] != "mismatch" and s["year"] != "mismatch" \
+            and level_index(level) < level_index("body_powertrain"):
+        policy = dict(brand_policy)
+        level, raised_by = "body_powertrain", "brand_policy"
+        rules.append("brand_policy")
+    # R2: the fact's Document Variant Map region (positive proof completes absent / mixed technical dimensions that the
+    # value's own clause did not decide; a contradicting region vetoes a dimension no fact layer decided)
+    region_trim = False
+    if region and region.get("allowed") and not vetoes and not model_declared_different and policy is None \
+            and s["model"] == "match":
+        status = region.get("status")
+        if status in ("target", "shared"):
+            # a fact already bound at the technical variant only gains a region's trim (never other dimensions)
+            exact = level_index(level) >= level_index("exact_technical_variant")
+            open_dims = [] if exact else [d for d in TECHNICAL_DIMS if s[d] in ("absent", "mixed")]
+            blocked = any(effective[d]["basis"] == "value_clause" and s[d] == "mixed" for d in open_dims)
+            if not blocked and level_index(level) >= level_index("body_powertrain"):
+                rule = "dvm_region" if status == "target" else "dvm_shared"
+                for dim in open_dims:
+                    effective[dim] = {"status": "match", "basis": rule, "was": s[dim],
+                                      "region": region.get("region_id")}
+                    s[dim] = "match"
+                if status == "target" and region.get("trim") == "match" and s["trim"] == "absent":
+                    effective["trim"] = {"status": "match", "basis": rule, "region": region.get("region_id")}
+                    s["trim"] = "match"
+                    region_trim = True
+                if open_dims or region_trim:
+                    apply(rule)
+        elif status == "other_variant":
+            dim = region.get("contradicts")
+            if dim in veto_dims and s.get(dim) in ("absent", "mixed") \
+                    and effective.get(dim, {}).get("basis") != "value_clause":
+                vetoes.append(f"{dim}_mismatch@dvm_region")
+                rules.append("dvm_other_variant")
+    if region_trim and level == "exact_market_trim":
+        basis = "dvm_region"
     catalog = None
     if (required == "exact_market_trim" and level == "exact_technical_variant" and not vetoes
             and not model_declared_different and "mixed" not in s.values() and s["trim"] == "absent"
@@ -1006,19 +1271,29 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     if catalog is not None:
         dimensions["trim"] = {"status": "match", "basis": "single_trim_catalog", "catalog_key": catalog["key"],
                               "catalog_trim": catalog["trim"], "catalog_records": catalog["records"]}
+    if "power" in dimensions and identity.power_hp is not None:
+        dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if basis and level == "exact_market_trim":
+    if catalog is not None or (basis and level == "exact_market_trim" and not raised_by):
         out["binding_basis"] = basis
+    elif raised_by and level_index(level) > level_index("unknown") and not vetoes and not model_declared_different:
+        out["binding_basis"] = raised_by
+    if rules:
+        out["binding_rules"] = rules
+    if policy is not None:
+        out["binding_policy"] = policy
     return out
 
 
 # --- binding gap diagnosis (observational) ----------------------------------------------------------------
 
-def binding_gaps(item: dict, requirement: str | None = None) -> list[str]:
+def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | None = None) -> list[str]:
     """Why an evidence item's binding stopped below its requirement, from its own binding_veto / binding_dimensions:
     `veto:<dim>`, or the dimension(s) that kept it from the next level (`trim_absent`, `power_absent`, `power_mixed`,
-    `model_mixed`, ...), or `market` (bound at the trim but outside the target market). Never changes anything."""
+    `model_mixed`, ...), or `market` (bound at the trim but outside the target market). Never changes anything.
+    `propulsion` (the target's, when the caller knows it): a battery_electric target has no displacement, so its
+    technical gap is `power_*` / `model_code_*` only (never `displacement_*`)."""
     vetoes = item.get("binding_veto") or []
     if vetoes:
         return sorted({"veto:" + str(v).split("_mismatch")[0].split("@")[0].replace("model_declared_different",
@@ -1040,9 +1315,13 @@ def binding_gaps(item: dict, requirement: str | None = None) -> list[str]:
         gaps += [f"{d}_{dims[d]}" for d, ok in (("model", ("match",)), ("body", ("match", "absent")),
                                                 ("propulsion", ("match",))) if dims[d] not in ok]
     elif level == "body_powertrain":
-        mixed = [f"{d}_mixed" for d in ("displacement", "drivetrain", "power") if dims[d] == "mixed"]
+        bev = propulsion == "battery_electric"
+        mixed = [f"{d}_mixed" for d in ("displacement", "drivetrain", "power") if dims[d] == "mixed"
+                 and not (bev and d == "displacement")]
         if mixed:
             gaps += mixed
+        elif bev:
+            gaps += [f"{d}_{dims[d]}" for d in ("power", "model_code") if dims[d] != "match"]
         elif dims["power"] == "match":
             gaps.append(f"displacement_{dims['displacement']}")
         else:

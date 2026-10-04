@@ -41,7 +41,9 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v2: booleans need a stated value (label-only is never true); v3: structural DOM pairs (src/structure_harvest.py),
 # PDF tables without ruling lines (tools/extract), unit-anchored candidates
 # v4: invalidate candidates cached before navigation exclusions and structural extraction limits.
-HARVESTER_VERSION = "harvest-v6"
+# v7 (PR #40): imperial volume / Wh units are known other units, x-joined dimension groups share their qualifiers,
+# Hebrew construct forms of exclusion terms, model years and unit-less values of unit-required fields are rejected
+HARVESTER_VERSION = "harvest-v7"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -135,14 +137,32 @@ OPERATIONS: dict[str, Callable[[float], float]] = {
     "reciprocal_times_100": lambda v: round(100 / v, 2) if v else v,
 }
 GENERIC_UNITS = ["hp", "ps", "bhp", 'כ"ס', "כוח סוס", "rpm", "סל\"ד", "mph", "lb-ft", "cc", 'סמ"ק', "volt", "v",
-                 "mpg", "mpge", "miles", "mi", "seats", "מושבים", "doors", "דלתות", "cylinders", "צילינדרים"]
+                 "mpg", "mpge", "miles", "mi", "seats", "מושבים", "doors", "דלתות", "cylinders", "צילינדרים",
+                 # other quantities a number may carry (never a litre / km / kWh value): imperial volume, energy per km
+                 "cu ft", "cu-ft", "cu. ft", "cu.ft", "cu.ft.", "cuft", "ft3", "ft³", "cubic feet", "cubic ft", "wh/km",
+                 "wh/mi", "wh"]
 
 
-def _term_regex(term: str) -> str:
+def _construct(word: str) -> str:
+    """A Hebrew noun with its construct / plural-construct form (אגרה/אגרת, דרגה/דרגת, מחיר/מחירי)."""
+    if len(word) < 3 or not HEBREW.fullmatch(word[-1]):
+        return re.escape(word)
+    if word.endswith("ה"):
+        return re.escape(word[:-1]) + "[הת]"
+    if word[-1] in FINAL_LETTERS or word.endswith(("ת", "י")):
+        return re.escape(word)
+    return re.escape(word) + "י?"
+
+
+def _term_regex(term: str, construct: bool = False) -> str:
     """Regex for one alias/term: spaces and hyphens interchangeable; word boundaries that also work for
-    Hebrew (with up to two attached prefix letters: ו ה ב ל מ ש כ)."""
+    Hebrew (with up to two attached prefix letters: ו ה ב ל מ ש כ). `construct`: a Hebrew last word also matches its
+    construct form (exclusion terms: "אגרה" covers "אגרת רישוי")."""
     norm = normalize_term(term)
-    parts = [re.escape(p) for p in re.split(r"[\s\-]+", norm) if p]
+    words = [p for p in re.split(r"[\s\-]+", norm) if p]
+    parts = [re.escape(p) for p in words]
+    if construct and words and HEBREW.match(words[-1]):
+        parts[-1] = _construct(words[-1])
     if not parts:
         return r"(?!x)x"
     body = r"[\s\-]*".join(parts)
@@ -155,11 +175,11 @@ def _term_regex(term: str) -> str:
     return lead + body + trail
 
 
-def compile_terms(terms: Iterable[str]) -> re.Pattern | None:
+def compile_terms(terms: Iterable[str], construct: bool = False) -> re.Pattern | None:
     terms = sorted({t for t in terms if t and t.strip()}, key=lambda t: -len(t))
     if not terms:
         return None
-    return re.compile("|".join(f"(?:{_term_regex(t)})" for t in terms))
+    return re.compile("|".join(f"(?:{_term_regex(t, construct)})" for t in terms))
 
 
 def _contains(pattern: re.Pattern | None, text: str) -> bool:
@@ -473,17 +493,37 @@ def semantic_reason(spec: dict, text: str, value: Any = None) -> str | None:
     nums = list(NUMBER.finditer(text))
     wanted = parse_number(str(value)) if isinstance(value, (int, float, str)) else None
     own = [n for n in nums if wanted is not None and parse_number(n.group()) == wanted]
+    # numbers joined by "x" / "/" ("1100 x 1200 x 800") are ONE statement: a qualifier of one is a qualifier of all
+    group, gid = {}, 0
+    for i, n in enumerate(nums):
+        if i and not re.fullmatch(r"\s*(?:[a-zא-ת\"']{0,4}\s*)?[x/]\s*", text[nums[i - 1].end():n.start()]):
+            gid += 1
+        group[n.start()] = gid
+    own_groups = {group[n.start()] for n in own}
     for exclusion in spec.get("semantic_exclusions") or []:
         applies = exclusion.get("applies_to")
         if applies and spec.get("_sanity_propulsion") not in applies:
             continue
-        pattern = compile_terms(exclusion.get("terms") or [])
+        pattern = compile_terms(exclusion.get("terms") or [], construct=True)
         for hit in pattern.finditer(text) if pattern else []:
             if own and len(nums) > 1 and not re.search(r"\d", hit.group()):
                 nearest = min(nums, key=lambda n: max(0, hit.start()-n.end(), n.start()-hit.end()))
-                if nearest not in own:
+                if nearest not in own and group[nearest.start()] not in own_groups:
                     continue
             return exclusion.get("reason") or "semantic exclusion"
+    if own and wanted is not None and float(wanted).is_integer() and 1990 <= wanted <= 2039 \
+            and spec.get("expected_units") and spec.get("matcher") in ("numeric", None):
+        # a bare 4-digit year ("XPeng G6 2026") in a statement that states no unit of the field anywhere
+        units = [normalize_term(u) for u in (spec.get("accepted_unit_variants") or [])
+                 + (spec.get("expected_units") or []) if u]
+        if all(re.fullmatch(r"\d{4}", n.group()) for n in own) and not compile_terms(units).search(text):
+            return "a model year, not a value of this field"
+    if own and spec.get("unit_required") == "always":
+        # the field's unit must be stated: after the value, or in its label / column header within this text
+        units = sorted({normalize_term(u) for u in (spec.get("accepted_unit_variants") or [])
+                        + (spec.get("expected_units") or []) if u}, key=len, reverse=True)
+        if units and not compile_terms(units).search(text):
+            return "no unit of this field stated with the value"
     for exclusion in spec.get("value_exclusion_patterns") or []:
         if re.search(exclusion["regex"], normalize_text(str(value if value is not None else text))):
             return exclusion.get("reason") or "invalid text value"
@@ -1074,6 +1114,11 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
                 if hit is None and len(text) <= 60 and seg.next_text and len(seg.next_text) <= 80:
                     joined = f"{text} : {seg.next_text}"
                     hit = _numeric(rule, d, joined, (s, e), structured=True, value_from=len(text))
+                    if hit and hit.raw_unit is None and rule.spec.get("unit_required"):
+                        # a bare number on the line below a label is not this field's value without its unit
+                        reject_candidate(rule, f"{seg.quote} {seg.next_quote}", hit.value, "label_next_line",
+                                         "unit_required")
+                        hit = None
                     if hit:
                         hit.confidence -= 0.1
                         accept(hit, "label_next_line", alias, abbr)

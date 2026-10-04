@@ -1,0 +1,14 @@
+{
+ "document_id": "d_e72c24d9a7826fe7",
+ "kind": "fetch",
+ "url": "https://www.carnews.co.il/xpeng-g6-review",
+ "fetched_at": "2026-10-03T23:49:35+00:00",
+ "bytes": 175,
+ "sha256": "5a584883f26628eb3e1fe6d3c03718c3a2a91279d495e487f8151bcbc80b46e3",
+ "text_chars": 73,
+ "status": 200,
+ "final_url": "https://www.carnews.co.il/xpeng-g6-review",
+ "doc_type": "html",
+ "content_type": "text/html",
+ "title": "מבחן דרכים: XPeng G6"
+}

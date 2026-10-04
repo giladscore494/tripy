@@ -205,7 +205,7 @@ def _domain(url) -> str:
 
 def binding_rows(items: list[dict]) -> list[dict]:
     """One row per replayed item: field · value · source · column header / identity · level recorded -> now ·
-    gap / veto · would be ok."""
+    gap / veto · basis now (binding-v4 rules) · variant map region · rejected now · would be ok."""
     rows = []
     for r in items:
         column = " · ".join(str(x) for x in dict.fromkeys(
@@ -219,8 +219,34 @@ def binding_rows(items: list[dict]) -> list[dict]:
                      "column header / identity": column, "level recorded → now": f"{recorded} → {now}",
                      "match now": r.get("variant_match_now"),
                      "gap / veto": ", ".join(r.get("binding_veto_now") or r.get("binding_gap_now") or []),
+                     # binding-v4: the rule that raised the level and the Document Variant Map region that proves it
+                     "basis now": " · ".join(dict.fromkeys(x for x in [r.get("binding_basis_now"),
+                                                                        *(r.get("binding_rules_now") or [])] if x)),
+                     "variant map region": _region_label(r.get("variant_map_region_now")),
+                     "rejected now": _rejected_label(r.get("rejected_now")),
                      "year": (r.get("year_context") or {}).get("status"), "would be ok": r.get("would_be_ok")})
     return rows
+
+
+def _region_label(region: dict | None) -> str:
+    """"table:0:col:2 target (AWD 486 כ"ס) catalog 2 -> 1"."""
+    if not region:
+        return ""
+    before, after = region.get("candidates_before") or [], region.get("candidates_after") or []
+    parts = [str(region.get("region_id") or ""), str(region.get("status") or "")]
+    if region.get("identity_text"):
+        parts.append(f"({str(region['identity_text'])[:60]})")
+    if before or after:
+        parts.append(f"catalog {len(before)} → {len(after)}")
+    if region.get("blocked_by"):
+        parts.append("blocked: " + ",".join(region["blocked_by"]))
+    return " ".join(p for p in parts if p)
+
+
+def _rejected_label(rejected: dict | None) -> str:
+    if not rejected:
+        return ""
+    return f"{rejected.get('reason')}: {rejected.get('note')}" if rejected.get("note") else str(rejected.get("reason"))
 
 
 def _render_binding_replay(run_dir: Path, cache_root: Path | None, *, key: str) -> None:

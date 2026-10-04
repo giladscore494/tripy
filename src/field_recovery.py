@@ -361,7 +361,8 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     if state == "variant_not_exact":
         # observational: the binding dimensions that stopped the target-market items (else all items)
         scoped = [e for e in with_value if market_in_scope(e, target_market)] or with_value
-        info += [f"binding_gap:{g}" for g in sorted({g for e in scoped for g in binding_gaps(e, requirement)})]
+        gaps = {g for e in scoped for g in binding_gaps(e, requirement, spec.get("_sanity_propulsion"))}
+        info += [f"binding_gap:{g}" for g in sorted(gaps)]
     return {
         "field": name,
         "state": state,

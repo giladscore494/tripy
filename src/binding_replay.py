@@ -13,7 +13,12 @@ Evidence Admission uses (evidence_admission.fact_binding), so the two cannot dri
     open-field candidates      the same binding fields for every harvested candidate of a field still open (no
                                admission re-run: the candidate is not evidence)
     per field                  the best variant_match now and `would_be_ok`: current_evaluation() over an IN-MEMORY
-                               copy of the events whose evidence items carry the replayed binding
+                               copy of the events whose evidence items carry the replayed binding; an item today's
+                               admission sanity rules reject (`rejected_now`, evidence_admission.sanity_rejection) is
+                               removed from that copy
+    binding-v4 proof           per item the rules applied (`binding_rules_now`, `binding_basis_now`) and the Document
+                               Variant Map decision recomputed from the cached document (`variant_map_region_now`);
+                               per vehicle the rule that raised each newly ok field (`fields_newly_ok_by_rule`)
     per vehicle                ok fields recorded vs now, counts by binding_gap_now, items that rose because a recorded
                                year mismatch is gone (the model-year rules of binding-v3)
 
@@ -40,7 +45,8 @@ from typing import Any, Iterable
 from .document_binding import (BINDING_VERSION, LEVELS, NON_TARGET_MATCHES, binding_gaps, fact_layer_statuses,
                                level_index)
 from .evidence_admission import (ADMISSION_VERSION, AdmissionContext, Entailment, entail, evidence_market,
-                                 fact_binding, fact_context)
+                                 fact_binding, fact_context, sanity_rejection)
+from .variant_map import VARIANT_MAP_VERSION
 from .field_recovery import current_evaluation, material_key
 from .fields import normalize_field_name, propulsion_of, resolve_requested_fields
 from .storage import trace
@@ -49,21 +55,23 @@ from .storage.run_log import read_events
 
 REPLAY_FILE = "binding_replay.jsonl"
 SUMMARY_FILE = "binding_replay_summary.json"
-REPLAY_VERSION = "binding-replay-v2"
+REPLAY_VERSION = "binding-replay-v3"
 ROOT = Path(__file__).resolve().parent
 # the code and data binding depends on: a change to any of them invalidates a cached replay
 VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", ROOT / "structure_harvest.py",
+                 ROOT / "variant_map.py",
                  ROOT / "candidate_harvest.py", ROOT / "binding_replay.py", ROOT / "source_authority.py",
                  ROOT.parent / "data" / "identity_vocabulary.json", ROOT.parent / "data" / "catalog_trim_index.json",
                  ROOT.parent / "data" / "enrichment_fields.json", ROOT / "fields.py")
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
-                "binding_requirement", "binding_version", "year_context")
+                "binding_requirement", "binding_version", "year_context", "binding_rules", "binding_policy",
+                "variant_map_region")
 
 
 def code_version() -> str:
     """The binding code version a replay was computed with (versions + content hash of VERSION_FILES)."""
-    digest = hashlib.sha256(f"{REPLAY_VERSION}|{BINDING_VERSION}|{ADMISSION_VERSION}".encode())
+    digest = hashlib.sha256(f"{REPLAY_VERSION}|{BINDING_VERSION}|{ADMISSION_VERSION}|{VARIANT_MAP_VERSION}".encode())
     for path in VERSION_FILES:
         try:
             digest.update(path.read_bytes())
@@ -156,12 +164,12 @@ def _candidate_row(cand: dict) -> dict:
             "column_identity_unknown": bool(cand.get("column_identity_unknown")) or None, "quote": cand.get("quote")}
 
 
-def _recorded(item: dict) -> dict:
+def _recorded(item: dict, propulsion: str | None = None) -> dict:
     year = ((item.get("binding_dimensions") or {}).get("year") or {}).get("status")
     return {"binding_level_recorded": item.get("binding_level"), "variant_match_recorded": item.get("variant_match"),
             "binding_basis_recorded": item.get("binding_basis"), "binding_veto_recorded": item.get("binding_veto"),
             "binding_version_recorded": item.get("binding_version"), "year_status_recorded": year or "absent",
-            "binding_gap_recorded": binding_gaps(item, item.get("binding_requirement"))
+            "binding_gap_recorded": binding_gaps(item, item.get("binding_requirement"), propulsion)
             if item.get("binding_level") in LEVELS else None}
 
 
@@ -194,8 +202,12 @@ def replay_fact(adm: AdmissionContext, cache, *, field: str, value: Any, quote: 
            "requirement": binding["binding_requirement"],
            "binding_level_now": binding["binding_level"], "variant_match_now": binding["variant_match"],
            "binding_basis_now": binding.get("binding_basis"), "binding_veto_now": binding["binding_veto"],
-           "binding_gap_now": binding_gaps(binding, binding["binding_requirement"]),
+           "binding_gap_now": binding_gaps(binding, binding["binding_requirement"], adm.identity.propulsion),
            "binding_dimensions_now": binding["binding_dimensions"],
+           "binding_rules_now": binding.get("binding_rules"), "binding_policy_now": binding.get("binding_policy"),
+           "variant_map_region_now": binding.get("variant_map_region"),
+           # today's admission sanity rules (semantic exclusions, plausibility): a stored value they reject now
+           "rejected_now": sanity_rejection(adm, material, spec, value, quote, ctx),
            "document_statuses": profile["statuses"], "zone_statuses": profile.get("zone_statuses"),
            "layer_statuses": {layer: st for layer, st in layers},
            "year_context": profile.get("year_context"),
@@ -246,9 +258,13 @@ def _best(matches: Iterable[str | None]) -> str | None:
     return min(found, key=MATCH_ORDER.index) if found else None
 
 
-def _would_be(events: list[dict], replayed: dict[str, dict], specs: list[dict], market: str) -> list[dict]:
-    """current_evaluation() over an in-memory copy of the events whose evidence carries the replayed binding."""
-    copied = copy.deepcopy(events)
+def _would_be(events: list[dict], replayed: dict[str, dict], specs: list[dict], market: str,
+              rejected: set[str] | frozenset = frozenset()) -> list[dict]:
+    """current_evaluation() over an in-memory copy of the events whose evidence carries the replayed binding; evidence
+    today's admission sanity rules reject (`rejected`, evidence ids) is removed."""
+    copied = [e for e in copy.deepcopy(events)
+              if not (e.get("kind") == "evidence" and isinstance(e.get("evidence"), dict)
+                      and str(e["evidence"].get("evidence_id")) in rejected)]
     for event in copied:
         item = event.get("evidence") if event.get("kind") == "evidence" else None
         binding = replayed.get(str((item or {}).get("evidence_id")))
@@ -278,7 +294,8 @@ def replay_run(run_dir: Path | str, cache_dir: Path | str | None = None, *, writ
         row = {"kind": "evidence", "evidence_id": item.get("evidence_id"),
                "field": normalize_field_name(item.get("field")), "value": item.get("value"),
                "document_id": item.get("document_id"), "source_url": item.get("source_url"),
-               "market": item.get("market"), "quote": item.get("quote"), **_recorded(item)}
+               "market": item.get("market"), "quote": item.get("quote"),
+               "binding_rules_recorded": item.get("binding_rules"), **_recorded(item, adm.identity.propulsion)}
         try:
             now = replay_fact(adm, cache, field=item.get("field"), value=item.get("value"),
                               quote=str(item.get("quote") or ""), document_id=item.get("document_id"),
@@ -300,7 +317,8 @@ def replay_run(run_dir: Path | str, cache_dir: Path | str | None = None, *, writ
             row["rose_by_year_rules"] = bool(row["level_change"] and row["level_change"] > 0
                                              and row["year_status_recorded"] == "mismatch" and year_now != "mismatch")
         items.append({**row, **now})
-    after = {e["field"]: e for e in _would_be(events, replayed, specs, market)}
+    rejected = {str(r["evidence_id"]) for r in items if r.get("rejected_now")}
+    after = {e["field"]: e for e in _would_be(events, replayed, specs, market, rejected)}
     open_fields = [e["field"] for e in recorded_eval if e["retry_eligible"]]
     seen_candidates: set[tuple] = set()
     for cand in trace_candidates(events):
@@ -369,7 +387,14 @@ def _summary(run_dir: Path, items: list[dict], recorded: list[dict], after: dict
                                                       key=level_index, default=None),
                         "binding_level_histogram": dict(Counter(r["binding_level_now"] for r in admitted
                                                                 if r.get("binding_level_now") in LEVELS)),
-                        "most_common_blocking_dimension": blocking.most_common(1)[0][0] if blocking else None}
+                        "most_common_blocking_dimension": blocking.most_common(1)[0][0] if blocking else None,
+                        "rejected_now": sum(1 for r in admitted if r.get("rejected_now")),
+                        # the binding-v4 rule(s) that made this field's items exact now (binding_basis_now of the
+                        # items exact now but not exact as recorded)
+                        "raised_by": sorted({str(r.get("binding_basis_now") or "per_value") for r in admitted
+                                             if r.get("variant_match_now") == "exact"
+                                             and r.get("variant_match_recorded") != "exact"
+                                             and not r.get("rejected_now")})}
     gaps = Counter(g for r in evidence if r.get("variant_match_now") not in ("exact", None)
                    for g in r.get("binding_gap_now") or [])
     year_now = Counter(str((r.get("binding_dimensions_now") or {}).get("year", {}).get("status") or "absent")
@@ -395,6 +420,17 @@ def _summary(run_dir: Path, items: list[dict], recorded: list[dict], after: dict
                                             ("exact", None) for g in r.get("binding_gap_recorded") or [])),
         "non_target_now": sum(1 for r in evidence if r.get("variant_match_now") in NON_TARGET_MATCHES),
         "missing_documents": len(missing),
+        # binding-v4 telemetry: evidence today's admission sanity rules reject (removed from would_be_state), and the
+        # rule that raised each item whose level rose
+        "rejected_now": sum(1 for r in evidence if r.get("rejected_now")),
+        "rejected_now_reasons": dict(Counter(str((r.get("rejected_now") or {}).get("reason")) for r in evidence
+                                             if r.get("rejected_now"))),
+        "evidence_rose_by_rule": dict(Counter(str(r.get("binding_basis_now") or "per_value") for r in evidence
+                                              if (r.get("level_change") or 0) > 0)),
+        "fields_newly_ok_by_rule": {n: f["raised_by"] for n, f in sorted(fields.items())
+                                    if f["would_be_ok"] and f["state_recorded"] != "ok"},
+        "variant_map_regions": dict(Counter(str((r.get("variant_map_region_now") or {}).get("status"))
+                                            for r in evidence if r.get("variant_map_region_now"))),
     }
     return {"schema": REPLAY_VERSION, "code_version": code_version(), "binding_version": BINDING_VERSION,
             "run_id": run_dir.parent.name, "record_id": run_dir.name, "target_market": market,
