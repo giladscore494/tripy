@@ -114,10 +114,12 @@ def _catalog_tokens(trim: str) -> list[str]:
     return [w for w, _, _ in _words(trim)]
 
 
-def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool) -> list[tuple[int, bool]]:
+def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool,
+                catalog_words: set[str]) -> list[tuple[int, bool]]:
     """(end, whole) of each way a catalog trim token can match from doc word p: the word itself (whole), a word it is
-    a prefix of (not whole; never a number; tokens shorter than 3 letters require an exact match or an explicit
-    alias), the join of 2-3 words ("BLACKEDITION" = "Black Edition", whole) or a listed alias
+    a prefix of (not whole; never a number; a 2-letter non-first token may prefix only another token that
+    exists in this model family's catalog, so BUSINESS ED ~ BUSINESS EDI but PR !~ Price), the join of 2-3 words
+    ("BLACKEDITION" = "Black Edition", whole) or a listed alias
     (catalog_trim_aliases: token "LR" = "Long Range" or full trim "LR PR" = "Long Range Pro", whole)."""
     if p >= len(doc):
         return []
@@ -125,7 +127,8 @@ def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool) 
     ends: set[tuple[int, bool]] = set()
     if token == word:
         ends.add((p + 1, True))
-    elif not token.isdigit() and not word.isdigit() and len(token) >= 3 and word.startswith(token):
+    elif not token.isdigit() and not word.isdigit() and word.startswith(token) \
+            and (len(token) >= 3 or (len(token) == 2 and not first and word in catalog_words)):
         ends.add((p + 1, False))
     joined = word
     for m in (2, 3):
@@ -141,13 +144,15 @@ def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool) 
     return sorted(ends)
 
 
-def _match_from(tokens: list[str], doc: list[str], p: int, aliases: dict) -> int | None:
+def _match_from(tokens: list[str], doc: list[str], p: int, aliases: dict,
+                catalog_words: set[str]) -> int | None:
     """The longest end of the catalog tokens matched, in order, from doc word p, with at least one token matched
     whole (a word, a join or an alias): a prefix alone never names a trim ("SUN" is not "sunroof"). None: no match."""
     states = {(p, False)}
     for i, token in enumerate(tokens):
         states = {(end, whole or seen) for start, seen in states
-                  for end, whole in _token_ends(token, doc, start, aliases, first=i == 0)}
+                  for end, whole in _token_ends(token, doc, start, aliases, first=i == 0,
+                                                      catalog_words=catalog_words)}
         if not states:
             return None
     ends = [end for end, seen in states if seen]
@@ -170,6 +175,7 @@ def catalog_trim_matches(text: str, trims: list[str], identity: TargetIdentity,
     generic = {w.lower() for w in vocab.get("generic_trim_words") or []}
     aliases = {k.lower(): [normalize_text(a) for a in v] for k, v in (vocab.get("catalog_trim_aliases") or {}).items()
                if not k.startswith("_") and isinstance(v, list)}
+    catalog_words = {token for trim in trims for token in _catalog_tokens(trim)}
     found: list[dict] = []
     for trim in trims:
         tokens = _catalog_tokens(trim)
@@ -191,7 +197,7 @@ def catalog_trim_matches(text: str, trims: list[str], identity: TargetIdentity,
                 if alias_words and doc[p:p + len(alias_words)] == alias_words:
                     found.append({"trim": trim, "start": p, "end": p + len(alias_words), "form": "phrase_alias"})
         for p in range(len(doc)):
-            end = _match_from(tokens, doc, p, aliases)
+            end = _match_from(tokens, doc, p, aliases, catalog_words)
             if end is not None:
                 exact = doc[p:end] == tokens
                 found.append({"trim": trim, "start": p, "end": end, "form": "exact" if exact else "alias_prefix"})
