@@ -14,7 +14,10 @@ from fixtures import admission_records
 # evaluation or Final Assembly). Every other key, the binding fields included, must be identical.
 NEW_TELEMETRY = ("binding_version", "year_context",
                  # binding-v4 (PR #40) proof telemetry: the Document Variant Map decision and the rules applied
-                 "variant_map_region", "binding_rules", "binding_policy")
+                 "variant_map_region", "binding_rules", "binding_policy",
+                 # PR #43 binding flags (system_power_unmapped, ...): recorded whenever their condition holds; a flag
+                 # that changes a level is listed in PR43_CHANGES
+                 "binding_flags", "relative_reference", "stale_publication")
 # binding-v4 (PR #40) changes to this golden, each explained (no exact is lost; tests/test_pr40_binding.py covers the
 # rules). Key: [target, document, field, material value] -> (binding_level, variant_match) now.
 PR40_SPEC = "html:https://www.xpeng.co.il/g6/specifications"
@@ -265,7 +268,7 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
     from fixtures.corolla_touring import PAYLOAD as COROLLA, VEHICLE as COROLLA_VEHICLE
     from src.research_memory import ResearchMemory
 
-    assert BINDING_VERSION == "binding-v4"          # PR #40: catalog rules + Document Variant Map
+    assert BINDING_VERSION == "binding-v5"          # PR #40: catalog rules + DVM; PR #43: hybrid / relative / stale
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",
@@ -282,7 +285,9 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
 
 # --- 2: Binding Replay on a fixture run ------------------------------------------------------------------------------
 
-LAUNCH = "https://www.xpeng.co.il/2024/03/xpeng-g6-launch"         # a date-directory URL: capped under binding-v2
+# a date-directory URL: capped under binding-v2. PR #43: 2025/03 (one year before the 2026 target); a 2024/03 publication
+# is two years older than the target model year and capped by the stale-publication rule (tests/test_pr43_binding.py)
+LAUNCH = "https://www.xpeng.co.il/2025/03/xpeng-g6-launch"
 LAUNCH_HTML = """<html><head><title>XPeng G6 | השקה בישראל</title></head><body><h1>XPeng G6</h1>
 <p>רכב חשמלי SUV, הנעה כפולה AWD</p><p>הספק מרבי: 486 כ"ס</p><p>משקל עצמי: 2,180 ק"ג</p>
 <p>אורך: 4,753 מ"מ</p></body></html>"""
@@ -357,7 +362,7 @@ def test_binding_replay_on_a_fixture_run(tmp_path):
     e1 = items["e1"]
     assert (e1["binding_level_recorded"], e1["binding_level_now"]) == ("model_family", "exact_technical_variant")
     assert e1["variant_match_now"] == "exact" and e1["rose_by_year_rules"] and e1["binding_gap_now"] == []
-    assert {"year": 2024, "kind": "url"} in e1["year_context"]["ignored"]
+    assert {"year": 2025, "kind": "url"} in e1["year_context"]["ignored"]
     assert e1["document_statuses"]["year"] == "absent" and e1["zone_statuses"]["model"] == "match"
     assert {"quote", "source_line"} <= set(e1["layer_statuses"]) and e1["layer_statuses"]["quote"]["year"] == "absent"
     assert all(set(st) >= {"model", "power", "drivetrain", "trim", "year"} for st in e1["layer_statuses"].values())

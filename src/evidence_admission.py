@@ -43,12 +43,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires
+from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires, takes_inches, wheel_size_number
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
-from .document_binding import (OFFICIAL_AUTHORITIES, TargetIdentity, about_target, bind, document_profile,
-                               identity_zone, normalize_catalog_trim, target_identity)
+from .document_binding import (OFFICIAL_AUTHORITIES, STALE_PUBLICATION_YEARS, TargetIdentity, about_target, bind,
+                               document_profile, identity_zone, normalize_catalog_trim, target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
@@ -142,6 +142,11 @@ class DocumentText:
     market_basis: str | None
     source_date: str | None
     source_date_basis: str | None
+    # PR #43 (H3): the document's PUBLICATION date (datePublished / article:published_time / a date in its URL path),
+    # and separately the article date its own text states (the first stand-alone date line), never the fetch time
+    publication_date: str | None = None
+    publication_basis: str | None = None
+    article_date: str | None = None
 
 
 @dataclass
@@ -195,6 +200,51 @@ def _document_date(meta: dict, structured: dict | None) -> tuple[str | None, str
     return None, None
 
 
+PUBLICATION_KEYS = (("json_ld", "datePublished"), ("meta", "article:published_time"), ("meta", "datepublished"),
+                    ("meta", "pubdate"), ("meta", "publish-date"))
+URL_DATE = re.compile(r"/(20[0-3]\d)[/-](0?[1-9]|1[0-2])(?:[/-](0?[1-9]|[12]\d|3[01]))?(?=/|$|[-_])")
+_MONTH_WORDS = "|".join(HEBREW_MONTHS + EN_MONTHS + [m[:3] for m in EN_MONTHS])
+# a line that is only a date: "אוקטובר 13, 2020", "13 באוקטובר 2020", "13/10/2020", "רביעי, 2026.09.16"
+DATE_LINE = re.compile(rf"^(?:[א-תa-z]+,\s*)?(?:(?:{_MONTH_WORDS})\.?\s+\d{{1,2}},?\s+(20[0-3]\d)"
+                       rf"|\d{{1,2}}\s+(?:ב)?(?:{_MONTH_WORDS}),?\s+(20[0-3]\d)"
+                       rf"|\d{{1,2}}[./]\d{{1,2}}[./](20[0-3]\d)|(20[0-3]\d)[./-]\d{{1,2}}[./-]\d{{1,2}})$")
+
+
+def _publication_date(meta: dict, structured: dict | None, url: str | None) -> tuple[str | None, str | None]:
+    """The document's own PUBLICATION date: structured data / meta first, else a date directory of its URL path
+    ("/2020/10/13/..."); never a modification date, never the fetch time."""
+    for source, key in PUBLICATION_KEYS:
+        value = None
+        if source == "meta":
+            value = {str(k).lower(): v for k, v in ((structured or {}).get("meta") or {}).items()}.get(key.lower())
+        else:
+            for item in (structured or {}).get("json_ld") or []:
+                for node in item if isinstance(item, list) else [item]:
+                    if isinstance(node, dict) and node.get(key):
+                        value = node[key]
+                        break
+                if value:
+                    break
+        iso = _iso(value) if value else None
+        if iso:
+            return iso, f"{source}:{key}"
+    path = re.sub(r"^[a-z]+://[^/]+", "", str(url or "").lower().split("?")[0])
+    m = URL_DATE.search(path)
+    if m:
+        return "-".join(f"{int(p):02d}" if i else p for i, p in enumerate(g for g in m.groups() if g)), "url"
+    return None, None
+
+
+def article_date(text: str, max_lines: int = 400) -> str | None:
+    """The year of the first stand-alone date line of a text ("אוקטובר 13, 2020" under an article title), else
+    None. Read for non-official sources only (src/evidence_admission.stale_publication)."""
+    for line in (text or "").splitlines()[:max_lines]:
+        m = DATE_LINE.match(normalize_text(line).strip())
+        if m:
+            return next(g for g in m.groups() if g)
+    return None
+
+
 def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
     """The shared, target-independent material of a cached document (built once per document version).
     `remember=False` (read-only observers such as the MCP) builds it without adding it to the shared LRU."""
@@ -233,12 +283,15 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
         parts.append("\n".join(logical_rtl_line(line, words) or "" for line in text.splitlines()))
     market, basis = source_market(url, text)
     source_date, date_basis = _document_date(meta, structured)
+    publication, publication_basis = _publication_date(meta, structured, url)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     material = DocumentText(document_id=doc_id, url=url, meta=meta, text=text,
                             haystack=" " + " ".join(squash(p) for p in parts) + " ",
                             lines=[(ln, " " + squash(ln) + " ") for ln in lines], headings=headings,
                             subheadings=subheadings, body_text=body_text,
-                            market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis)
+                            market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis,
+                            publication_date=publication, publication_basis=publication_basis,
+                            article_date=article_date(body_text if body_text is not None else text))
     if not remember:
         return material
     with _TEXTS_LOCK:
@@ -646,6 +699,8 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
     for number in claimed_numbers:
         found = None
         for q, start, end in quote_numbers:
+            if not takes_inches(rule) and wheel_size_number(d, text, start, end):
+                continue                # "עם חישוקי ״20": a wheel size, never a range / consumption / ... value
             kind, unit, operation = _number_unit_kind(d, rule, text, end, matcher)
             if kind == "none" and rule is not None and rule.units and NOUN_AFTER.match(text, end):
                 kind = "other"          # "6 speakers": a count of something else, not this field's unit
@@ -849,16 +904,25 @@ def _line_above(material: DocumentMaterial, fragment: str) -> list[str]:
     return [above] if len(above) <= 40 else []
 
 
+# a line that is only a value (its label is the line above it): "571 ליטר / 1,374 ליטר", "החל מ-204,990 ₪"
+BARE_VALUE_LINE = re.compile(r"\s*(?:(?:עד|החל\s*מ-?|מ-|up\s+to|from)\s*)?[\d₪$€]")
+
+
 def _section_headings(material: DocumentMaterial, fragment: str, adm: AdmissionContext) -> list[str]:
     """The nearest heading-like line above the fragment's line, within a few lines ("2.0 Hybrid", "Electric motor"
     above "Max. power 95 hp" / "Max. torque 185 Nm"): short, no value with a unit, not a menu."""
     index = _line_index(material, fragment)
     if not index:
         return []
-    for orig, _ in material.lines[max(0, index - 6):index][::-1]:
+    for k in range(index - 1, max(0, index - 6) - 1, -1):
+        orig = material.lines[k][0]
         norm = normalize_text(orig)
         if any(adm.dictionary.unit_after.match(norm, m.end()) for m in NUMBER.finditer(norm)):
             continue                                   # another value row of the same section
+        if k + 1 < index and BARE_VALUE_LINE.match(normalize_text(material.lines[k + 1][0])):
+            # the label of a label / value pair rendered on two lines ("נפח תא המטען" above "571 ליטר / 1,374 ליטר
+            # (עם מושב אחורי מקופל)"): a neighbouring row, never the heading of this one
+            return []
         menu = bool(re.search(r"[|•·]", norm)) or not about_target(orig, adm.identity).strip()
         return [orig] if len(norm) <= 40 and not menu else []
     return []
@@ -1024,6 +1088,26 @@ def brand_policy_eligibility(adm: AdmissionContext, material: DocumentMaterial, 
     return {"rule": "brand_policy", "source_authority": authority, "market": market}
 
 
+def stale_publication(adm: AdmissionContext, material: DocumentMaterial) -> dict | None:
+    """H3: {publication_date, basis, target_year} when the document was published >= STALE_PUBLICATION_YEARS before the
+    target model year and never states the target model year; None otherwise. The publication date is the document's
+    metadata / URL date; the article date its text states is read only for a non-official source (an official spec page
+    without a date is never stale)."""
+    target = adm.identity.year
+    if target is None or material.profile.get("states_target_year"):
+        return None
+    date, basis = material.doc.publication_date, material.doc.publication_basis
+    if date is None and material.authority.get("source_authority") not in OFFICIAL_AUTHORITIES:
+        date, basis = material.doc.article_date, "article_text"
+    try:
+        year = int(str(date)[:4]) if date else None
+    except ValueError:
+        year = None
+    if year is None or target - year < STALE_PUBLICATION_YEARS:
+        return None
+    return {"publication_date": date, "basis": basis, "target_year": target}
+
+
 def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str,
                  ctx: FactContext, *, variant_text: str = "", claim: str | None = None, market: str | None = None,
                  candidates: list[dict] | None = None) -> tuple[dict, dict]:
@@ -1045,7 +1129,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         offer = None
     try:
         region = fact_region(material.variant_map, adm.identity, value=value, fragment=ctx.fragment,
-                             clause=ctx.clause, source_lines=ctx.source_lines,
+                             clause=ctx.clause, source_lines=ctx.source_lines, headings=ctx.headings,
                              line_index=_line_index(material, ctx.fragment), matching=inputs["matching"],
                              field_values=document_field_values(material, name, value),
                              doc_statuses=profile["statuses"])
@@ -1060,13 +1144,14 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    other_trims_named=profile.get("other_trims_named"),
                    document_propulsions=(profile.get("mentions") or {}).get("propulsion"),
                    brand_policy=brand_policy_eligibility(adm, material, spec, name, value, market),
-                   region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer)
+                   region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
+                   powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material))
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
             "status", "region_id", "region_kind", "level", "reason", "contradicts", "identity", "identity_text",
             "candidates_before", "candidates_after", "assignment", "trim", "allowed", "blocked_by", "rule",
-            "tab_label", "region_statuses", "inventory_contains_target", "map_version", "error")
+            "tab_label", "designation", "region_statuses", "inventory_contains_target", "map_version", "error")
             if region.get(k) not in (None, [], "")}
     year = profile.get("year_context") or {}
     if year.get("statements") or year.get("ignored"):
@@ -1216,6 +1301,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
         "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),
         "binding_rules": binding.get("binding_rules"), "binding_policy": binding.get("binding_policy"),
+        "binding_flags": binding.get("binding_flags"), "relative_reference": binding.get("relative_reference"),
+        "stale_publication": binding.get("stale_publication"),
         "variant_map_region": binding.get("variant_map_region"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,

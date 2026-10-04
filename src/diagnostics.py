@@ -923,6 +923,18 @@ def summary_text(acq: dict, sweep: dict) -> str:
     return "\n".join(lines)
 
 
+def operations_summary(events: list[dict]) -> dict:
+    """PR #43: render fallbacks of unreadable official pages (H7) and GLM rate limiting (H8) of one vehicle run."""
+    fallbacks = [e for e in events if e.get("kind") == "rendered_fallback"]
+    unreadable = sorted({str(e.get("domain")) for e in events if e.get("kind") == "domain_unreadable"})
+    limited = [e for e in events if e.get("kind") == "api_error" and e.get("status") == 429]
+    return {"rendered_fallbacks": len(fallbacks), "rendered_fallbacks_readable": sum(1 for e in fallbacks
+                                                                                    if e.get("readable")),
+            "unreadable_domains": unreadable,
+            "rate_limited_retries": sum(1 for e in limited if e.get("will_retry")),
+            "rate_limited_failures": sum(1 for e in limited if not e.get("will_retry"))}
+
+
 def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record_id: str | None = None,
                         result: dict | None = None) -> dict:
     """`result`: the run's result.json when present (its cost / duration win over event-derived values)."""
@@ -949,6 +961,7 @@ def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record
         "recovery": recovery_summary(events),
         "final_fields": final_field_states(events),
         "binding_year": binding_year_summary(events),
+        "operations": operations_summary(events),
         "parser_gaps": parser_gap_summary(events),
         "totals": run_totals(events, result),
         "summary_text": summary_text(acq, sweep),
@@ -1064,6 +1077,7 @@ def vehicle_row(diag: dict) -> dict:
     gaps = gaps if gaps.get("recorded") else {}
     counts = final.get("counts") or {}
     year, replay = diag.get("binding_year") or {}, diag.get("binding_replay") or {}
+    ops = diag.get("operations") or {}
     phases = totals.get("by_phase") or {}
     research = phases.get("research") or {}
     return {"run_id": diag.get("run_id"), "record_id": diag.get("record_id"),
@@ -1110,6 +1124,11 @@ def vehicle_row(diag: dict) -> dict:
             "acq_site_map_offered": a.get("site_map_offered"), "acq_site_map_fetched": a.get("site_map_fetched"),
             "acq_site_map_useful": a.get("site_map_useful"),
             "acq_done_deferred": a.get("done_deferred_count"),
+            # PR #43: render fallbacks / unreadable official domains (H7) and GLM 429 handling (H8)
+            "acq_rendered_fallbacks": ops.get("rendered_fallbacks"),
+            "acq_unreadable_domains": len(ops["unreadable_domains"]) if "unreadable_domains" in ops else None,
+            "rate_limited_retries": ops.get("rate_limited_retries"),
+            "rate_limited_failures": ops.get("rate_limited_failures"),
             "parser_gap_rows": gaps.get("gaps_total"), "parser_gap_fields": gaps.get("fields_with_gaps"),
             "parser_gap_recovered_by_sweep": gaps.get("recovered_by_sweep"),
             "rec_attempts": rec.get("attempts"), "rec_model_calls": rec.get("model_calls"),

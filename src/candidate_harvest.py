@@ -44,7 +44,7 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v7 (PR #40): imperial volume / Wh units are known other units, x-joined dimension groups share their qualifiers,
 # Hebrew construct forms of exclusion terms, model years and unit-less values of unit-required fields are rejected
 # v8 (PR #42): visually ordered right-to-left PDF lines / cells are detected by dictionary hit rate and reordered
-HARVESTER_VERSION = "harvest-v8"
+HARVESTER_VERSION = "harvest-v9"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -406,6 +406,7 @@ class Dictionary:
         self.minute_units = [normalize_term(u) for u in v.get("time_minute_units") or []]
         self.hour_units = [normalize_term(u) for u in v.get("time_hour_units") or []]
         self.charging = compile_terms(v.get("charging_terms") or [])
+        self.wheel_context = compile_terms(v.get("wheel_context_terms") or [])
         self.trim_header = compile_terms(v.get("trim_header_terms") or [])
         # identity rows of a multi-variant table (power, drivetrain, battery, ...): their cells name a column's variant
         self.column_identity_rows = compile_terms(v.get("column_identity_row_terms") or [])
@@ -645,6 +646,12 @@ def dimension_assignment(rule: FieldRule, d: Dictionary, text: str) -> dict | No
         terms = [pat.pattern for _, pat, _ in r.aliases] + [_term_regex(r.spec["axis_token"])]
         for hit in re.finditer("|".join(f"(?:{t})" for t in terms), text):
             labels.append((hit.start(), hit.end(), r.name))
+    # "L×W×H" is normalized to the single word "lxwxh": its axis letters are labels too (word boundaries above never
+    # split it)
+    tokens = {normalize_term(r.spec["axis_token"]): r.name for r in axes}
+    for hit in re.finditer(r"(?<![\w])([a-z])x([a-z])x([a-z])(?![\w])", text):
+        if all(hit.group(j) in tokens for j in (1, 2, 3)):
+            labels += [(hit.start(j), hit.end(j), tokens[hit.group(j)]) for j in (1, 2, 3)]
     labels.sort(key=lambda h: (h[0], -(h[1]-h[0])))
     kept = []
     for label in labels:
@@ -657,7 +664,9 @@ def dimension_assignment(rule: FieldRule, d: Dictionary, text: str) -> dict | No
         if not all(re.fullmatch(r"\s*(?:x|/)\s*", text[a[1]:b[0]]) for a,b in zip(triple,triple[1:])):
             continue
         tail = text[triple[-1][1]:]
-        m = re.match(r"\s*(?:\([^)]{1,12}\))?\s*[:=]?\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)", tail)
+        # the values follow the labels: after a unit in brackets, a colon, or the cell separator of a label | value
+        # pair ("אורך x רוחב x גובה | 4,758 / 1,920 / 1,650 מ"מ")
+        m = re.match(r"\s*\)?\s*(?:\([^)]{1,12}\))?\s*[:=|]?\s*(?:\([^)]{1,12}\))?\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)\s*(?:x|/)\s*(\d[\d.,]*)", tail)
         if m:
             return {name: (parse_number(m.group(j+1)), (triple[-1][1]+m.start(j+1), triple[-1][1]+m.end(j+1)))
                     for j,(_,_,name) in enumerate(triple)}
@@ -789,6 +798,33 @@ def _alias_hits(rule: FieldRule, text: str) -> list[tuple[int, int, str, bool]]:
     return kept
 
 
+# --- wheel sizes (PR #43) ----------------------------------------------------------------------------
+
+WHEEL_CONTEXT_CHARS = 30
+WHEEL_MARK_BEFORE = re.compile(r'(?:"|(?<![\w])r)\s?$')
+WHEEL_MARK_AFTER = re.compile(r"\s?(?:\"|''|-?\s?(?:אינץ'?|אינטש|inch(?:es)?|in\.?)(?![a-zא-ת]))")
+
+
+def takes_inches(rule: "FieldRule | None") -> bool:
+    """Does the field accept an inch unit (rim diameter, screen size)? Those fields keep reading wheel-size forms."""
+    return bool(rule and any(u in ('"', "''", "in", "inch", "inches") for u in rule.units))
+
+
+def wheel_size_number(d: "Dictionary", text: str, start: int, end: int) -> bool:
+    """Is the number text[start:end] a wheel size: immediately preceded or followed by an inch mark (" / ״ / אינץ' /
+    inch / in.) or preceded by R ("R20"), with a wheel / rim term (harvest vocabulary wheel_context_terms) within
+    WHEEL_CONTEXT_CHARS on the same line ("עם חישוקי ״20", "20\" alloy wheels")? Such a number is never a range, a
+    consumption or any other value of a field that does not take inches."""
+    if d.wheel_context is None:
+        return False
+    if not (WHEEL_MARK_BEFORE.search(text[max(0, start - 2):start]) or WHEEL_MARK_AFTER.match(text, end)):
+        return False
+    lo = max(text.rfind("\n", 0, start) + 1, start - WHEEL_CONTEXT_CHARS)
+    line_end = text.find("\n", end)
+    hi = min(len(text) if line_end < 0 else line_end, end + WHEEL_CONTEXT_CHARS)
+    return bool(d.wheel_context.search(text[lo:hi]))
+
+
 # --- matchers ------------------------------------------------------------------------------------------
 
 def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], *, structured: bool,
@@ -804,6 +840,8 @@ def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int],
             continue  # part of the alias itself (e.g. "0-100")
         if not owns_dimension_number(rule, d, text, s, e):
             continue
+        if not takes_inches(rule) and wheel_size_number(d, text, s, e):
+            continue  # "עם חישוקי ״20": a wheel size, never this field's value
         number = parse_number(m.group(1))
         if number is None:
             continue
@@ -1474,6 +1512,8 @@ def unit_anchor_candidates(segments: list[Segment], d: Dictionary) -> list[dict]
                 continue
             value = OPERATIONS[operation](number) if operation else number
             if not owns_dimension_number(rule, d, joined, ns, m.end()+offset):
+                continue
+            if not takes_inches(rule) and wheel_size_number(d, joined, ns, m.end() + offset):
                 continue
             reason = semantic_reason(rule.spec, joined, value)
             if reason or not _plausible(rule, value):

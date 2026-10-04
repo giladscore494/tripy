@@ -20,13 +20,15 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import requests
 
-from .concurrency import ConcurrencyController, default_controller
+from .concurrency import (RATE_LIMIT_BACKOFF_BASE_S, RATE_LIMIT_BACKOFF_MAX_S, RATE_LIMIT_BUDGET_S,
+                          RATE_LIMIT_RETRY_AFTER_MAX_S, ConcurrencyController, default_controller)
 
 DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 DEFAULT_CHAT_PATH = "chat/completions"
@@ -50,11 +52,13 @@ class GLMError(RuntimeError):
         self.endpoint = endpoint
         self.timeout = False
         self.usage_unknown = False
+        self.rate_limited = False
         self.attempts: int | None = None
 
     def as_dict(self) -> dict:
         return {"message": str(self), "status": self.status, "endpoint": self.endpoint, "body": self.body,
-                "timeout": self.timeout, "usage_unknown": self.usage_unknown, "attempts": self.attempts}
+                "timeout": self.timeout, "usage_unknown": self.usage_unknown, "attempts": self.attempts,
+                "rate_limited": self.rate_limited}
 
 
 @dataclass
@@ -157,6 +161,8 @@ class GLMClient:
         self.activity_hook = activity_hook
         self.concurrency = concurrency or default_controller()
         self.cancel_event = cancel_event
+        self.rate_limit_budget_s = RATE_LIMIT_BUDGET_S
+        self.jitter: Callable[[], float] = random.random
 
     @property
     def model(self) -> str:
@@ -198,10 +204,38 @@ class GLMClient:
         if request_kind == "chat":
             common["model"] = payload.get("model")
         last: GLMError | None = None
-        for attempt in range(1, max_attempts + 1):
-            will_retry = attempt < max_attempts
+        rate_waited = 0.0          # H8: time this request spent waiting out 429s (never counted as an attempt)
+        rate_limited = 0
+        attempt, spent = 0, 0
+        while spent < max_attempts:
+            attempt += 1
+            spent += 1
+            will_retry = spent < max_attempts
             resp, failure, latency = self._attempt(url, headers, payload, request_kind, attempt, max_attempts,
                                                    timeout_s)
+            if failure is None and resp.status_code == 429:
+                # H8: a 429 lowers the shared pool's limit and is retried after Retry-After / a backoff without
+                # spending an attempt, while RATE_LIMIT_BUDGET_S of rate-limit waiting remains
+                rate_limited += 1
+                wait = self._rate_limit_wait(resp, rate_limited)
+                retry = rate_waited + wait <= self.rate_limit_budget_s
+                limit = self.concurrency.note_rate_limited(request_kind, payload.get("model"), retried=retry)
+                body = resp.text[:RAW_ERROR_BODY_LIMIT]
+                last = GLMError(f"HTTP 429 from {path}", status=429, body=body, endpoint=path)
+                last.rate_limited = True
+                self._emit("api_error", **common, attempt=attempt, latency_ms=latency, status=429,
+                           error=str(last), error_type="http_429", timeout=False, usage_unknown=False,
+                           will_retry=retry, body=body, headers=self._error_headers(resp), rate_limited=True,
+                           rate_limit_wait_s=round(wait, 2) if retry else None, concurrency_limit=limit)
+                if not retry:
+                    last.attempts = attempt
+                    raise last
+                spent -= 1
+                rate_waited += wait
+                self.sleeper(wait)
+                continue
+            if failure is None and resp.status_code == 200:
+                self.concurrency.note_success(request_kind, payload.get("model"))
             if failure is not None:
                 exc = failure
                 timeout = isinstance(exc, requests.Timeout)
@@ -236,10 +270,29 @@ class GLMClient:
                 if not retryable:
                     raise last
             if will_retry:
-                self.sleeper(min(2 ** attempt, 20))
+                self.sleeper(min(2 ** spent, 20))
         assert last is not None
-        last.attempts = max_attempts
+        last.attempts = attempt
         raise last
+
+    def _rate_limit_wait(self, resp, count: int) -> float:
+        """Seconds to wait after the `count`-th 429 of a request: Retry-After when the provider sends one (seconds or
+        an HTTP date, clamped), else an exponential backoff with up to 25 % jitter."""
+        raw = str((resp.headers or {}).get("Retry-After") or "").strip()
+        if raw:
+            try:
+                return max(0.0, min(float(raw), RATE_LIMIT_RETRY_AFTER_MAX_S))
+            except ValueError:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    from datetime import datetime, timezone
+
+                    delta = (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds()
+                    return max(0.0, min(delta, RATE_LIMIT_RETRY_AFTER_MAX_S))
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        base = min(RATE_LIMIT_BACKOFF_BASE_S * (2 ** (count - 1)), RATE_LIMIT_BACKOFF_MAX_S)
+        return base * (1 + 0.25 * self.jitter())
 
     def _attempt(self, url: str, headers: dict, payload: dict, request_kind: str, attempt: int,
                  max_attempts: int,

@@ -201,8 +201,15 @@ below.
 | `FINAL_ASSEMBLY` | `deterministic` (default): the final output values are assembled in code from the field states and admitted evidence; a model writes at most `summary` / `research_trace`. `llm`: the finalizer model writes the output (previous behaviour). See [Deterministic Final Assembly](#deterministic-final-assembly). |
 | `GLM_PRICE_INPUT_PER_MTOK` / `GLM_PRICE_OUTPUT_PER_MTOK` / `GLM_PRICE_WEB_SEARCH_PER_CALL` | Optional overrides of the built-in price defaults (see [Cost](#cost)). |
 
-`render_page` needs Playwright (`pip install playwright && playwright install chromium`).
+`render_page` needs Playwright (`pip install playwright && playwright install chromium`); the Docker image installs
+it with Chromium's headless shell (`playwright install --with-deps --only-shell chromium`).
 Without it the tool reports `render_unavailable` and the model can use `fetch_url`.
+
+**Render fallback (PR #43).** An HTML `fetch_url` of an official / importer domain that returns 2xx with fewer than 500
+visible characters (a JavaScript shell or a bot challenge) is re-fetched once with `render_page` (25 s budget, cached like
+a fetch; event `rendered_fallback`). The code decides, never the model. If the rendered page is still empty or a
+challenge page, the domain is `unreadable` for the run (event `domain_unreadable`, counter `acq_unreadable_domains`)
+and later fetches of it return `domain_unreadable` without a request. No stealth, no anti-bot evasion.
 
 ## Runs, persistence and reconnects
 
@@ -431,7 +438,11 @@ Still unverified until the first real run:
 - The `search_recency_filter` value sent by default (`noLimit`).
 - That the cached-token detail is reported as `prompt_tokens_details.cached_tokens`.
 - Error bodies, status codes and rate-limit behaviour. Retries cover timeouts, connection errors and
-  429/500/502/503/504 within the configured attempt limits, and every raw error is stored.
+  500/502/503/504 within the configured attempt limits, and every raw error is stored. An HTTP 429 (PR #43) halves the
+  shared, process-wide concurrency of that model's pool, waits out `Retry-After` (else an exponential backoff with
+  jitter) and is retried without spending an attempt while 300 s of rate-limit waiting remain; the limit recovers by
+  one slot every 15 s once 30 s passed without a 429 (defaults in `src/concurrency.py`). Counted per run as
+  `rate_limited_retries` / `rate_limited_failures` (`api_stats`, the benchmark row).
 - Whether a response always echoes `tool_calls` exactly as we send them back. Assistant messages are echoed with
   `content` and `tool_calls` only.
 
