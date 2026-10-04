@@ -520,7 +520,7 @@ def test_candidates_csv_is_byte_identical_to_the_dashboards_previous_download(cl
 
     from src.storage import trace
     from src.storage.run_log import read_events
-    from src.ui.live_state import candidate_table_rows
+    from src.runstate.live_state import candidate_table_rows
 
     events = read_events(data_root / "runs" / RUN / RECORD / "events.jsonl")
     started = trace.first_event(events, "run_started")
@@ -624,7 +624,7 @@ with TestClient(create_app(mount_mcp=False)) as client:
         assert client.get(path).status_code == 200, path
 ui = sorted(m for m in sys.modules if m.startswith("src.ui"))
 assert "streamlit" not in sys.modules and "pandas" not in sys.modules, "framework imported"
-assert ui == ["src.ui", "src.ui.labels_he", "src.ui.live_state"], ui
+assert ui == [], ui                     # framework-neutral state lives in src/runstate and src/presentation
 print("ok")
 """
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,

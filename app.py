@@ -354,7 +354,7 @@ def _render_technical(record, views: list[dict], results: list[dict]) -> None:
                 rows = live.field_rows()
                 if rows:
                     import pandas as pd
-                    from src.ui import labels_he as he
+                    from src.presentation import labels_he as he
                     st.dataframe(pd.DataFrame(rows, columns=he.FIELD_TABLE_COLUMNS_HE[::-1]), hide_index=True,
                                  width="stretch")
                 st.code("\n".join(list(live.lines)[-60:]) or "—", language=None, wrap_lines=True)

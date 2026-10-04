@@ -24,7 +24,7 @@ from collections import Counter
 from pathlib import Path
 
 from ..storage.trace import parse_ts, phase_group
-from ..ui.live_state import VehicleLive
+from .live_state import VehicleLive
 from .model import ENGINE_PHASE_TO_STAGE, STAGE_KEYS, STAGE_LABELS
 
 WAITING, RUNNING, DONE, SKIPPED, FAILED, INTERRUPTED, NOT_RUN = (

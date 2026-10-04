@@ -259,7 +259,7 @@ class Observer:
 
     def candidates(self, run_id: Any, record_id: Any, field: str | None = None, offset: Any = 0,
                    limit: Any = 100) -> dict:
-        from ..ui.live_state import candidate_table_rows
+        from ..runstate.live_state import candidate_table_rows
 
         vehicle = safety.vehicle_dir(self.runs_dir, run_id, record_id)
         events = read_events(vehicle / "events.jsonl")

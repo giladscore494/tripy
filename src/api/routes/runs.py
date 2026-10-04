@@ -9,7 +9,7 @@ Every action goes through the RunManager exactly as app.py does it:
     POST /api/runs/{id}/vehicles/{rid}/restart             RunManager.start, a new One-vehicle run ("Restart research")
 
 The finalize and restart actions are offered only where the dashboard's failure card offers them
-(runstate.failures.explain). A/B series are not exposed yet.
+(runstate.failures.explain). A/B series: routes/series.py.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from ...jobs.manager import RunRejected
 from ...app_config import blocking_errors
 from ...research_targets import ALL, MANUFACTURER, ONE, research_target
 from ...run_profiles import PRODUCTION
-from ...run_settings import build_research_request, settings_checks, settings_from_env
+from ...run_settings import build_research_request, settings_checks, settings_for_run, settings_from_env
 from ..deps import ApiContext, get_context
 from ..errors import ApiError, not_found
 from ..schemas import (ActionAccepted, EventsPage, RestartVehicle, RunCandidates, RunDetail, RunEvidence, RunList,
@@ -95,9 +95,13 @@ def run_evidence(run_id: str, record_id: str | None = None, field: str | None = 
 # --- start -----------------------------------------------------------------------------------------------------------
 
 def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: str | None, profile: str,
-           response: Response) -> dict:
-    """app.py `launch`: the server's settings, the same blocking checks, the same request, RunManager.start."""
-    settings = settings_from_env(ctx.secret, ctx.manager.controller)
+           response: Response, overrides: dict | None = None) -> dict:
+    """app.py `launch`: the server's settings with the request's per-run overrides (run_settings.settings_for_run,
+    the sidebar's assemble_settings), the same blocking checks, the same request, RunManager.start."""
+    try:
+        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides)
+    except ValueError as exc:
+        raise ApiError(422, "invalid_settings", str(exc)) from None
     blocking = blocking_errors(settings_checks(settings, ctx.secret, ctx.paths))
     if blocking:
         raise ApiError(503, "configuration_incomplete", "The server is not configured to start research.",
@@ -116,7 +120,7 @@ def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: s
     response.status_code = 201 if started.created else 200
     record = ctx.manager.get(started.run_id)
     return service.redacted({"run_id": started.run_id, "created": started.created, "message": started.message,
-                             "warnings": list(started.warnings),
+                             "warnings": list(started.warnings), "settings_overridden": sorted(overrides or {}),
                              "run": service.summary(record, service.executing_ids(ctx)) if record else None})
 
 
@@ -139,7 +143,8 @@ def start_run(body: StartRun, response: Response, ctx: ApiContext = Depends(get_
     vehicles, label = research_target(catalog, SCOPES[body.scope], value)
     if not vehicles:
         raise ApiError(422, "empty_target", "The target has no vehicles.")
-    return _start(ctx, vehicles, label, SCOPES[body.scope], body.idempotency_key, body.profile, response)
+    overrides = body.settings.model_dump(exclude_none=True) if body.settings is not None else None
+    return _start(ctx, vehicles, label, SCOPES[body.scope], body.idempotency_key, body.profile, response, overrides)
 
 
 # --- cancel / finalize / restart -------------------------------------------------------------------------------------

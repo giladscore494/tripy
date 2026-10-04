@@ -108,7 +108,7 @@ def test_any_requested_field_is_eligible_with_schema_driven_attempts():
 def test_recovery_engine_contains_no_field_names():
     names = {s["name"] for s in load_schema()} | set(FUTURE_FIELDS)
     for module in ("src/field_recovery.py", "src/fields.py", "src/storage/trace.py", "src/bundle.py",
-                   "src/candidate_harvest.py", "src/document_sweep.py", "src/ui/live_state.py", "src/ui/labels_he.py",
+                   "src/candidate_harvest.py", "src/document_sweep.py", "src/runstate/live_state.py", "src/presentation/labels_he.py",
                    "src/ui/live_dashboard.py", "src/evidence_admission.py", "src/document_binding.py",
                    "src/source_authority.py", "src/typed_values.py", "src/tail_planner.py",
                    "src/conflict_normalizer.py", "src/market_portability.py", "src/research_memory.py",

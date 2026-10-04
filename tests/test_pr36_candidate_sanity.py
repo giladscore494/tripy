@@ -2,7 +2,7 @@
 import pytest
 from src.fields import resolve_requested_fields, sanity_specs
 from src.candidate_harvest import harvest_text, collect_candidate_rejections
-from src.ui.live_state import candidate_table_rows, format_value_unit
+from src.runstate.live_state import candidate_table_rows, format_value_unit
 
 
 def values(text, field, *, segment=None, gross=None, propulsion='battery_electric'):
