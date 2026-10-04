@@ -38,7 +38,7 @@ DICTIONARY_KEYS = ("matcher", "component", "warranty_kind", "aliases_he", "alias
 # Evidence-admission policy keys (src/evidence_admission.py, src/document_binding.py). Not harvester metadata (not
 # part of the harvest schema hash) and not sent to a model either. `semantic_definition`, `time_sensitive` and
 # `not_applicable_when` stay public: they tell the model what the field means.
-POLICY_KEYS = ("binding_requirement", "semantic_exclusions", "brand_policy_scope")
+POLICY_KEYS = ("binding_requirement", "semantic_exclusions", "brand_policy_scope", "variant_invariance")
 
 
 def normalize_field_name(name: Any) -> str:

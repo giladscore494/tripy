@@ -134,6 +134,8 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "grounded_candidates(on): pin the AgentConfig default of GROUNDED_CANDIDATES "
                                        "(True | False) for this test (scripts encoding the pre-#31 model call order)")
     config.addinivalue_line("markers", "site_map(on): pin the AgentConfig default of SITE_MAP (True | False)")
+    config.addinivalue_line("markers", "il_version_pages(on): run the PR #44 Israeli version-page resolver (default off "
+                                       "in tests)")
 
 
 PINNED_DEFAULTS = (("recovery_mode", "RECOVERY_MODE", ("reacquire", "cluster", "legacy")),
@@ -162,6 +164,23 @@ def _candidate_yield_defaults(request, monkeypatch):
     def init(self, *args, **kwargs):
         for key, value in pinned.items():
             kwargs.setdefault(key, value)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(agent.AgentConfig, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _il_version_pages_default(request, monkeypatch):
+    """PR #44: the Israeli version-page resolver (a deterministic first acquisition wave) is off in tests unless a test
+    asks for it with the `il_version_pages(True)` marker: scripted runs encode their exact search / fetch sequence."""
+    marker = request.node.get_closest_marker("il_version_pages")
+    value = bool(marker.args[0]) if marker else False
+    from src import agent
+
+    original = agent.AgentConfig.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs.setdefault("il_version_pages", value)
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(agent.AgentConfig, "__init__", init)

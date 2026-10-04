@@ -62,7 +62,10 @@ VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", R
                  ROOT / "variant_map.py",
                  ROOT / "candidate_harvest.py", ROOT / "binding_replay.py", ROOT / "source_authority.py",
                  ROOT.parent / "data" / "identity_vocabulary.json", ROOT.parent / "data" / "catalog_trim_index.json",
-                 ROOT.parent / "data" / "enrichment_fields.json", ROOT / "fields.py")
+                 ROOT.parent / "data" / "enrichment_fields.json", ROOT / "fields.py",
+                 # PR #44: Israeli version pages (P2 / P4), the registry binding (P1) and their data
+                 ROOT / "il_version_pages.py", ROOT / "gov_registry.py", ROOT.parent / "data" / "source_rules.json",
+                 ROOT.parent / "data" / "gov_registry_index.json")
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
                 "binding_requirement", "binding_version", "year_context", "binding_rules", "binding_policy",

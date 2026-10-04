@@ -22,7 +22,9 @@ from urllib.parse import urlparse
 
 RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "source_rules.json"
 AUTHORITY_CLASSES = ("government", "official_manufacturer", "official_importer", "official_media", "aggregator",
-                     "marketplace", "publisher", "unknown")
+                     "marketplace", "publisher", "unknown",
+                     # PR #44 (P1): the government vehicle registry index (src/gov_registry.py), never a URL rule
+                     "government_registry")
 OFFICIAL_CLASSES = ("government", "official_manufacturer", "official_importer", "official_media")
 _CACHE: dict[str, tuple[float, dict]] = {}
 HEBREW = re.compile(r"[א-ת]")

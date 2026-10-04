@@ -29,7 +29,18 @@ def main() -> int:
     for check in info["checks"]:
         line = f"{check['name']}: {check['status']}" + (f" — {check['detail']}" if check["detail"] else "")
         {"ok": log.info, "warning": log.warning}.get(check["level"], log.error)("check %s", line)
+    log_playwright(log)
     return 0
+
+
+def log_playwright(log) -> dict:
+    """PR #44 (P5): one boot line on whether this host really launches Chromium (render_page and the render fallback
+    depend on it): Playwright version, the Chromium executable, launch ok / error, a JavaScript probe."""
+    from .tools.render import boot_check
+
+    result = boot_check()
+    (log.info if result.get("launch") == "ok" else log.error)("playwright boot: %s", json.dumps(result))
+    return result
 
 
 if __name__ == "__main__":

@@ -44,7 +44,9 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v7 (PR #40): imperial volume / Wh units are known other units, x-joined dimension groups share their qualifiers,
 # Hebrew construct forms of exclusion terms, model years and unit-less values of unit-required fields are rejected
 # v8 (PR #42): visually ordered right-to-left PDF lines / cells are detected by dictionary hit rate and reordered
-HARVESTER_VERSION = "harvest-v9"
+# v10 (PR #44): rpm_guard (an engine speed is never a torque), a unit named in the row label converts a bare value
+# (kgf·m -> Nm, rounded to whole Nm)
+HARVESTER_VERSION = "harvest-v10"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -230,7 +232,8 @@ def _num_value(value: float) -> int | float:
 
 OPERATIONS: dict[str, Callable[[float], float]] = {
     "identity": lambda v: v,
-    "multiply_by_9_80665": lambda v: v * 9.80665,
+    # kgf·m (קג"מ) -> Nm, to whole Nm as torque is published (32.6 -> 320, 33 -> 324)
+    "multiply_by_9_80665": lambda v: float(round(v * 9.80665)),
     "divide_by_10": lambda v: v / 10,
     "multiply_by_10": lambda v: v * 10,
     "divide_by_1000": lambda v: v / 1000,
@@ -435,9 +438,52 @@ class Dictionary:
 
 # --- segments --------------------------------------------------------------------------------------
 
+UNIT_LINE = re.compile(r"\(\s*[^()\d]{1,25}\s*\)")
+BLOCK_LABEL_MAX, BLOCK_VALUE_MAX, BLOCK_DESCRIPTION_MIN, BLOCK_LOOKAHEAD = 40, 40, 40, 5
+
+
+def spec_block_segments(norms: list[tuple[str, str, bool]], descriptions: set[int] | None = None) -> list["Segment"]:
+    """Spec rows written as "label / description / value" blocks (PR #44; Israeli publisher pages put a tooltip between
+    a row's label and its value): a short label line, then within BLOCK_LOOKAHEAD lines an optional unit line ("(ס"מ)"),
+    an optional repetition of the label (the tooltip's title) and at least one description line (>= 40 characters),
+    then a short value line. Read as a structured "label (unit) | value" segment (method spec_block); a label whose value
+    is on the next line is the line harvest's (label_next_line) and a DOM pair's, never a block."""
+    out: list[Segment] = []
+    for i, (norm, quote, _) in enumerate(norms):
+        if not (2 <= len(norm) <= BLOCK_LABEL_MAX) or not re.search(r"[a-zא-ת]", norm) or UNIT_LINE.fullmatch(norm):
+            continue
+        if any(norms[k][0] == norm for k in range(max(0, i - 2), i)):
+            continue                                  # the tooltip's repetition of the label above, not a label
+        unit, described, j = None, False, i + 1
+        prose: list[int] = []
+        while j < len(norms) and j <= i + BLOCK_LOOKAHEAD:
+            nxt = norms[j][0]
+            if UNIT_LINE.fullmatch(nxt) and unit is None and not described:
+                unit = norms[j][1]
+            elif nxt == norm and not described:
+                pass
+            elif len(nxt) >= BLOCK_DESCRIPTION_MIN:
+                described = True
+                prose.append(j)
+            else:
+                break
+            j += 1
+        if not described or j >= len(norms):
+            continue
+        value_norm, value_quote = norms[j][0], norms[j][1]
+        if len(value_norm) > BLOCK_VALUE_MAX or UNIT_LINE.fullmatch(value_norm) or value_norm == norm:
+            continue
+        if descriptions is not None:
+            descriptions.update(prose)
+        label = f"{quote} {unit}" if unit else quote
+        out.append(Segment("block", normalize_text(f"{label} : {value_quote}"), f"{label} | {value_quote}",
+                           label=normalize_text(label), value=value_norm, raw_value=value_quote))
+    return out
+
+
 @dataclass
 class Segment:
-    kind: str                 # line | row | leaf | pair (a structural DOM label/value pair)
+    kind: str                 # line | row | leaf | pair (a structural DOM label/value pair) | block (PR #44)
     text: str                 # text matched (normalized)
     quote: str                # original text for the quote
     label: str = ""           # rows/leaves: normalized label
@@ -524,9 +570,13 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
             logical = reverse_hebrew_line(line)
         reversed_ = logical is not None
         norms.append((normalize_text(logical if reversed_ else line), logical if reversed_ else line, reversed_))
+    descriptions: set[int] = set()
+    blocks = [] if is_pdf else spec_block_segments(norms, descriptions)
     for i, (norm, quote, reversed_) in enumerate(norms):
-        nxt = norms[i + 1] if i + 1 < len(norms) else ("", "", False)
+        nxt = norms[i + 1] if i + 1 < len(norms) and i not in descriptions else ("", "", False)
+        # a block's description is prose: the value below it is the block's, never the prose's (PR #44)
         segments.append(Segment("line", norm, quote, reversed=reversed_, next_text=nxt[0], next_quote=nxt[1]))
+    segments += blocks
     for t_index, table in enumerate(tables or []):
         rows = table.get("rows") or []
         header = table_header(rows, dictionary.trim_header)
@@ -632,7 +682,63 @@ def semantic_reason(spec: dict, text: str, value: Any = None) -> str | None:
     for exclusion in spec.get("value_exclusion_patterns") or []:
         if re.search(exclusion["regex"], normalize_text(str(value if value is not None else text))):
             return exclusion.get("reason") or "invalid text value"
+    if own and spec.get("rpm_guard") and all(rpm_number(spec, text, n.start(), n.end()) for n in own):
+        return RPM_REASON
     return None
+
+
+# --- engine speeds (PR #44) ------------------------------------------------------------------------------------------
+
+RPM_REASON = "an engine speed (rpm), not this field's value"
+_RPM: dict[str, Any] = {}
+
+
+def rpm_terms() -> re.Pattern | None:
+    """The harvest vocabulary's rpm_terms (rpm, סל"ד, min⁻¹, ...), compiled once per vocabulary version."""
+    terms = harvest_vocabulary().get("rpm_terms") or []
+    key = json.dumps(terms, ensure_ascii=False)
+    if key not in _RPM:
+        _RPM.clear()
+        _RPM[key] = compile_terms(terms)
+    return _RPM[key]
+
+
+def _field_units(spec: dict) -> re.Pattern | None:
+    """Every unit variant of a field, its conversions' too ("Nm", "נ"מ", "kgf·m", "קג"מ")."""
+    units = list(spec.get("accepted_unit_variants") or []) + list(spec.get("expected_units") or [])
+    for rule in spec.get("conversion_rules") or []:
+        units += [rule.get("from_unit") or ""] + list(rule.get("from_unit_variants") or [])
+    return compile_terms(u for u in units if u and len(u) > 1)
+
+
+RANGE_TAIL = re.compile(r"\s*-\s*\d[\d,.]*")
+
+
+def rpm_number(spec: dict, text: str, start: int, end: int) -> bool:
+    """Is the number text[start:end] (normalized text) an ENGINE SPEED for a field with `rpm_guard`? Yes when an rpm
+    term follows it (also through a range: "1,500-4,100 rpm", "ב-1,500 סל"ד"), or when its row label (the line up to
+    its first number; a "label | value" cell pair) names an rpm term and either names no unit of the field or the
+    number is part of a range there ("מומנט מירבי (סל"ד/ קג"מ) 1,500-3,500 / 25.5": the range is the rpm, 25.5 the
+    torque). A number with the field's own unit right after it is never an engine speed."""
+    rpm = rpm_terms()
+    if rpm is None:
+        return False
+    units = _field_units(spec)
+    tail = text[end:end + 40]
+    ranged = RANGE_TAIL.match(tail)
+    after = tail[ranged.end():] if ranged else tail
+    stripped = after.lstrip(" -")
+    if units is not None and units.match(stripped) and not ranged:
+        return False
+    if (m := rpm.search(stripped)) and m.start() == 0:
+        return True
+    line_start = text.rfind("\n", 0, start) + 1
+    first = NUMBER.search(text, line_start)
+    label = text[line_start:first.start() if first else start]
+    if not rpm.search(label):
+        return False
+    in_range = bool(ranged) or bool(RANGE_BEFORE.search(text[max(line_start, start - 12):start]))
+    return in_range or units is None or not units.search(label)
 
 
 def dimension_assignment(rule: FieldRule, d: Dictionary, text: str) -> dict | None:
@@ -783,6 +889,15 @@ def _label_unit(rule: FieldRule, label: str) -> str | None:
     return None
 
 
+def _label_conversion(rule: FieldRule, label: str) -> tuple[str, str] | None:
+    """(to unit, operation) when the label names a unit the field converts from ("מומנט מרבי (קג"מ)")."""
+    for variants, operation, to_unit in rule.conversions:
+        for variant in sorted(variants, key=len, reverse=True):
+            if len(variant) > 1 and re.search(rf"(?<![\wא-ת]){re.escape(variant)}(?![\wא-ת])", label):
+                return to_unit or rule.normalized_unit, operation
+    return None
+
+
 def _alias_hits(rule: FieldRule, text: str) -> list[tuple[int, int, str, bool]]:
     hits = []
     for alias, pattern, abbr in rule.aliases:
@@ -828,7 +943,8 @@ def wheel_size_number(d: "Dictionary", text: str, start: int, end: int) -> bool:
 # --- matchers ------------------------------------------------------------------------------------------
 
 def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], *, structured: bool,
-             label_unit: str | None = None, value_from: int | None = None) -> Hit | None:
+             label_unit: str | None = None, value_from: int | None = None,
+             label_conversion: tuple[str, str] | None = None) -> Hit | None:
     a, b = anchor
     bounds = _clause_bounds(text, a)
     lo = value_from if value_from is not None else max(bounds[0], a - LINE_BACK)
@@ -842,6 +958,8 @@ def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int],
             continue
         if not takes_inches(rule) and wheel_size_number(d, text, s, e):
             continue  # "עם חישוקי ״20": a wheel size, never this field's value
+        if rule.spec.get("rpm_guard") and rpm_number(rule.spec, text, s, e):
+            continue  # "סל"ד מומנט מרבי | 1,500", "320 Nm at 1,500-4,100 rpm": an engine speed (PR #44)
         number = parse_number(m.group(1))
         if number is None:
             continue
@@ -851,6 +969,8 @@ def _numeric(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int],
             continue
         if kind == "none" and label_unit:
             kind, norm_unit = "ok", label_unit
+        elif kind == "none" and label_conversion:
+            kind, (norm_unit, operation) = "convert", label_conversion
         distance = (s - b) if s >= b else (a - e) * 1.5
         rank = 0 if kind in ("ok", "convert") else 1
         if kind == "none" and (rule.units or rule.conversions) and not structured and distance > 25:
@@ -1000,11 +1120,32 @@ def _gearbox(d: Dictionary, text: str, has_alias: bool) -> list[dict]:
     if not found:
         matches = [(m, value) for value, pat in d.gearbox_types for m in [pat.search(text)]
                    if m and (has_alias or value in STRONG_GEARBOX)]
+        separate = {v for mv, v in matches if not any(o is not mv and o.start() <= mv.start() and mv.end() <= o.end()
+                                                      for o, _ in matches)}
+        if len(separate) > 1:
+            return []   # "תיבה ידנית ותיבה אוטומטית": prose naming several gearbox types states none of them (PR #44)
         if matches:   # the most specific wording wins ("e-CVT" over "CVT")
             m, value = max(matches, key=lambda mv: mv[0].end() - mv[0].start())
             found.append({"count": 1 if value == "single-speed" else None, "type": value, "raw": m.group(0),
                           "span": m.span()})
     return found
+
+
+BARE_COUNT = re.compile(r"\s*[:|\-–]?\s*(\d{1,2})\s*$")
+
+
+def _labelled_count(seg: "Segment", alias_end: int, structured: bool) -> list[dict]:
+    """A gear count written as a bare integer in the gear-count label's own cell (PR #44): the value cell of a
+    structural pair or the rest of a "label | 8" / "label: 8" line."""
+    if structured:
+        m = re.fullmatch(r"\s*(\d{1,2})\s*", seg.value)
+        span = (len(seg.label), len(seg.text))
+    else:
+        m = BARE_COUNT.fullmatch(seg.text, alias_end)
+        span = (0, m.end(1)) if m else (0, 0)
+    if m is None:
+        return []
+    return [{"count": int(m.group(1)), "type": None, "raw": m.group(1), "span": span}]
 
 
 TIRE = re.compile(r"(?<!\d)(\d{3})\s?/\s?(\d{2})\s?(z?r|-)\s?(\d{2})(?!\d)")
@@ -1166,7 +1307,7 @@ def _price(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], s
 def _candidate(rule: FieldRule, seg: Segment, hit: Hit, method: str, alias: str | None, wide: str) -> dict:
     quote = seg.quote if len(seg.quote) <= QUOTE_CHARS else _cut_quote(seg, hit.span)
     block = f"table:{seg.table_index}:row:{seg.row_index}" if seg.table_index is not None else seg.quote
-    origin = "dom_pair" if method == "dom_pair" else "unit_anchor" if method == "unit_anchor" else (
+    origin = method if method in ("dom_pair", "unit_anchor", "spec_block") else (
         "column_identity" if seg.column_identity else "table" if seg.kind == "row" else "line")
     out = {"origin": origin, "block": block, "field": rule.name, "value": hit.value, "raw_value": hit.raw_value, "unit": hit.unit,
            "raw_unit": hit.raw_unit, "quote": quote, "matched_alias": alias, "extraction_method": method,
@@ -1199,8 +1340,9 @@ def _cut_quote(seg: Segment, span: tuple[int, int]) -> str:
 def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, str, str | None, str]]:
     """(hit, method, alias, wide context) for one rule over one segment."""
     out: list[tuple[Hit, str, str | None, str]] = []
-    structured = seg.kind in ("row", "leaf", "pair")
-    base = {"row": "table_row", "leaf": "structured_data", "pair": "dom_pair"}.get(seg.kind, "alias_proximity")
+    structured = seg.kind in ("row", "leaf", "pair", "block")
+    base = {"row": "table_row", "leaf": "structured_data", "pair": "dom_pair",
+            "block": "spec_block"}.get(seg.kind, "alias_proximity")
     text = seg.text
 
     if structured:
@@ -1250,9 +1392,18 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
             if structured:
                 label_unit = _label_unit(rule, seg.label)
                 accept(_numeric(rule, d, text, (s, e), structured=True, label_unit=label_unit,
-                                value_from=len(seg.label)), base, alias, abbr)
+                                value_from=len(seg.label),
+                                label_conversion=None if label_unit else _label_conversion(rule, seg.label)),
+                       base, alias, abbr)
             else:
-                hit = _numeric(rule, d, text, (s, e), structured=False)
+                # a unit the field converts from, named between the label and its first value ("מומנט מירבי (סל"ד/
+                # קג"מ) 1,500-3,500 / 25.5", "בסיס גלגלים (ס"מ) | 300"): the bare value is read in that unit (PR #44)
+                first = NUMBER.search(text, e)
+                zone = text[e:first.start()] if first else ""
+                zone_conversion = _label_conversion(rule, zone) if zone else None
+                hit = _numeric(rule, d, text, (s, e), structured=bool(zone_conversion),
+                               label_conversion=zone_conversion,
+                               value_from=first.start() if zone_conversion else None)
                 if hit is None and len(text) <= 60 and seg.next_text and len(seg.next_text) <= 80:
                     joined = f"{text} : {seg.next_text}"
                     hit = _numeric(rule, d, joined, (s, e), structured=True, value_from=len(text))
@@ -1298,7 +1449,11 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
     elif m == "gearbox":
         has_alias = bool(anchors) or _contains(rule.alias_any, text)
         source = seg.value if structured and anchors else (text if not structured else "")
-        for fact in _gearbox(d, source, has_alias) if source else []:
+        facts = _gearbox(d, source, has_alias) if source else []
+        if not facts and rule.component == "count" and anchors:
+            # "מספר הילוכים | 8", "מספר הילוכים: 8", a label line above "8": a bare count in the label's own cell
+            facts = _labelled_count(seg, anchors[0][1], structured)
+        for fact in facts:
             value = fact["count"] if rule.component == "count" else fact["type"]
             if value is None or (rule.component == "count" and not _plausible(rule, value)):
                 continue
