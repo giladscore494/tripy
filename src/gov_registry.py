@@ -117,11 +117,14 @@ def facts(entry: dict | None) -> list[dict]:
                         "statement": f"{label} | {majority} ({round(share * 100)}% of {n} registered vehicles)"})
         else:
             alternatives += [s for s in top[:2] if s not in alternatives]
-    if standard:
-        rims = {rim_of(s) for s in standard.values()}
+    # A rim diameter is only strong enough to emit when BOTH axles independently passed the
+    # registry confidence thresholds and agree on the same R diameter. One reliable axle is
+    # enough for that axle's tyre-size fact, but never enough to promote a trim-level rim fact.
+    if set(standard) == {"front", "rear"}:
+        rims = {rim_of(standard["front"]), rim_of(standard["rear"])}
         if len(rims) == 1 and None not in rims:
             rim = rims.pop()
-            size = standard.get("front") or standard.get("rear")
+            size = standard["front"]
             out.append({"field": "rim_diameter_in", "value": rim,
                         "statement": f"קוטר חישוק | {rim} (R{rim} of {size})"})
     if alternatives:
