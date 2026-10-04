@@ -271,7 +271,8 @@ def test_retry_after_http_date_and_backoff_with_jitter():
     client.jitter = lambda: 1.0
     assert client._rate_limit_wait(PostResponse(429), 1) == 2.5         # 2 s + 25 % jitter
     assert client._rate_limit_wait(PostResponse(429), 3) == 10.0
-    assert client._rate_limit_wait(PostResponse(429, "Wed, 21 Oct 2015 07:28:00 GMT"), 1) == 0.0   # in the past
+    assert client._rate_limit_wait(PostResponse(429, "0"), 1) == 2.5                              # never spin at 0 s
+    assert client._rate_limit_wait(PostResponse(429, "Wed, 21 Oct 2015 07:28:00 GMT"), 1) == 2.5  # past -> backoff
     assert client._rate_limit_wait(PostResponse(429, "900"), 1) == 120.0                           # clamped
 
 
