@@ -299,8 +299,10 @@ def render_benchmark_export(runs_dir: Path, run_ids: list[str], labels: dict[str
         st.caption(f"{result['vehicles']} vehicle run(s) · mean turns {a['turns']['mean']} · mean searches "
                    f"{a['searches_per_vehicle']['mean']} · sweep resolution rate {s['resolution_rate']}")
         import json as _json
-        csv_data = diag_mod.per_vehicle_csv(result["per_vehicle"])
-        st.download_button("Download benchmark.json", _json.dumps(result, ensure_ascii=False, indent=1, default=str),
+
+        from ..exports import benchmark_json, per_vehicle_csv     # the same bytes the HTTP API serves
+        csv_data = per_vehicle_csv(result)
+        st.download_button("Download benchmark.json", benchmark_json(result),
                            file_name="tripy_benchmark.json", mime="application/json", width="stretch")
         st.download_button("Download per_vehicle.csv", csv_data, file_name="tripy_per_vehicle.csv",
                            mime="text/csv", width="stretch", disabled=not result["per_vehicle"])

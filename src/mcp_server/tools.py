@@ -96,7 +96,7 @@ class Observer:
 
     # -- runs ----------------------------------------------------------------------------------------------------
     def list_runs(self, limit: Any = 20, offset: Any = 0) -> dict:
-        from ..ui.dashboard import elapsed_s
+        from ..runstate.report import elapsed_s
 
         records = self.repository.list_runs()
         active = self._active_ids()

@@ -7,7 +7,25 @@ is re-measured or duplicated; a value the run did not record stays None.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from .model import RunRecord
 from .pipeline import VehiclePipeline
+from .repository import parse_ts
+
+
+def elapsed_s(record: RunRecord, now: datetime | None = None) -> float | None:
+    """Active: wall time since start. Finished: the summed execution time of its jobs (the research run plus any
+    finalization retry), so idle time between a failure and a retry is not counted."""
+    jobs = [(parse_ts(j.get("started_at")), parse_ts(j.get("finished_at"))) for j in record.jobs or []]
+    if not record.active and jobs and all(a and b for a, b in jobs):
+        return sum(max(0.0, (b - a).total_seconds()) for a, b in jobs)
+    start = parse_ts(record.started_at or record.created_at)
+    if start is None:
+        return None
+    end = parse_ts(record.finished_at) if record.finished_at and not record.active else None
+    end = end or now or datetime.now(timezone.utc)
+    return max(0.0, (end - start).total_seconds())
 
 
 def vehicle_report(result: dict | None, pipeline: VehiclePipeline | None) -> dict:

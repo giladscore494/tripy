@@ -634,13 +634,9 @@ class BatchLiveState:
         }
 
 
-def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | None = None) -> list[dict]:
-    """The Hebrew candidate-matrix table: what the parser found per field, how many sources, whether
-    verified evidence exists, and the current state. Display only; candidates never change a state."""
-    from ..candidate_harvest import candidate_matrix
-
-    applicable = [s for s in specs if s.get("applicable", True)]
-    matrix = candidate_matrix(events, applicable, vehicle)
+def rejected_candidates_by_field(events: list[dict]) -> dict[str, list[dict]]:
+    """Rejected candidates per field, with their origin: parser rejections, grounded rows that were not admissible
+    and model proposals refused by the evidence admission gate."""
     rejected_by_field: dict[str, list[dict]] = {}
     for event in events:
         rows = []
@@ -660,6 +656,17 @@ def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | 
             name = normalize_field_name(row.get("field"))
             if name:
                 rejected_by_field.setdefault(name, []).append(row)
+    return rejected_by_field
+
+
+def candidate_table_rows(events: list[dict], specs: list[dict], vehicle: dict | None = None) -> list[dict]:
+    """The Hebrew candidate-matrix table: what the parser found per field, how many sources, whether
+    verified evidence exists, and the current state. Display only; candidates never change a state."""
+    from ..candidate_harvest import candidate_matrix
+
+    applicable = [s for s in specs if s.get("applicable", True)]
+    matrix = candidate_matrix(events, applicable, vehicle)
+    rejected_by_field = rejected_candidates_by_field(events)
     evaluation = {e["field"]: e for e in current_evaluation(events, applicable)} if applicable else {}
     rows = []
     for spec in applicable:

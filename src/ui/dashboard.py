@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import html
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +17,7 @@ import streamlit as st
 from ..runstate.model import (ACTIVE_STATUSES, CANCELLED, COMPLETED, FAILED, INTERRUPTED, STAGE_LABELS,
                               STATUS_LABELS, RunRecord)
 from ..runstate.pipeline import RUNNING
+from ..runstate.report import elapsed_s  # noqa: F401  (framework-neutral; re-exported for the UI)
 from ..runstate.repository import parse_ts
 from ..schemas import iter_fields
 
@@ -85,20 +85,6 @@ def fmt_duration(seconds: float | None) -> str:
         return f"{minutes}m {sec:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m"
-
-
-def elapsed_s(record: RunRecord, now: datetime | None = None) -> float | None:
-    """Active: wall time since start. Finished: the summed execution time of its jobs (the research run plus any
-    finalization retry), so idle time between a failure and a retry is not counted."""
-    jobs = [(parse_ts(j.get("started_at")), parse_ts(j.get("finished_at"))) for j in record.jobs or []]
-    if not record.active and jobs and all(a and b for a, b in jobs):
-        return sum(max(0.0, (b - a).total_seconds()) for a, b in jobs)
-    start = parse_ts(record.started_at or record.created_at)
-    if start is None:
-        return None
-    end = parse_ts(record.finished_at) if record.finished_at and not record.active else None
-    end = end or now or datetime.now(timezone.utc)
-    return max(0.0, (end - start).total_seconds())
 
 
 def fmt_time(value: str | None) -> str:

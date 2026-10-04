@@ -22,14 +22,15 @@ import streamlit as st
 
 from src import access_control
 from src.agent import PROMPT_VERSION
-from src.app_config import (Check, allow_ui_api_key, blocking_errors, endpoint_reachable,
-                            redact, validate_config)
-from src.benchmark import HANDSHAKE_RECORD_ID, benchmark_vehicles, manufacturers, select_vehicles, vehicle_label
+from src.app_config import allow_ui_api_key, blocking_errors, endpoint_reachable, redact
+from src.benchmark import HANDSHAKE_RECORD_ID
 from src.db import Level15Error
 from src.glm_client import GLMError
 from src.jobs.manager import (ResearchRequest, RunRejected, SeriesRequest, get_manager, series_progress,
                               shared_controller)
+from src.research_targets import ALL, MANUFACTURER, ONE, VehicleCatalog, research_target
 from src.run_profiles import ARMS, BASELINE, PRODUCTION, PROFILE_LABELS, PROFILES, TREATMENT
+from src.run_settings import build_research_request, settings_checks
 from src.runstate.failures import explain
 from src.runstate.model import COMPLETED, STATUS_LABELS
 from src.runstate.pipeline import PipelineCache
@@ -51,10 +52,6 @@ def secret(name: str, default: str = "") -> str:
         return default
 
 
-def vehicle_title(v: dict) -> str:
-    return " · ".join(str(x) for x in (f"{v['manufacturer']} {v['model']}", v.get("year"), v.get("trim")) if x)
-
-
 @st.cache_resource
 def pipelines() -> PipelineCache:
     """Incremental event readers shared by every browser session of this process."""
@@ -70,10 +67,8 @@ if not access_control.gate(secret):
     st.stop()
 
 paths = resolve_paths(secret)
-vehicles = benchmark_vehicles()
-vehicles_by_id = {v["upstream_record_id"]: v for v in vehicles}
-labels = {v["upstream_record_id"]: vehicle_label(v) for v in vehicles}
-titles = {v["upstream_record_id"]: vehicle_title(v) for v in vehicles}
+catalog = VehicleCatalog.load()          # src/research_targets.py (shared with the HTTP API)
+vehicles, vehicles_by_id, labels, titles = catalog.vehicles, catalog.by_id, catalog.labels, catalog.titles
 manager = get_manager(paths, controller=shared_controller(secret), vehicle_label=lambda rid: titles.get(rid, rid))
 manager.watch_server_shutdown()
 manager.maybe_reconcile()
@@ -112,20 +107,7 @@ with st.sidebar:
 # --- configuration validation ----------------------------------------------------------------------------
 
 
-def effective_lookup(name: str) -> str:
-    """What the next run will use: the settings panel's model/key over the environment (presence only)."""
-    if name == "GLM_MODEL":
-        return settings.model_id
-    if name == "GLM_API_KEY":
-        return "set" if settings.api_key else ""
-    if name == "SEARCH_BACKEND":
-        return settings.search_backend
-    return secret(name)
-
-
-checks = validate_config(effective_lookup, paths)
-if settings.extra_error:
-    checks.append(Check("Configuration", "error", "Invalid value", settings.extra_error))
+checks = settings_checks(settings, secret, paths)       # src/run_settings.py (the API gates a start on the same)
 blocking = blocking_errors(checks)
 reach = endpoint_reachable(settings.base_url) if settings.api_key and not blocking else None
 
@@ -155,15 +137,12 @@ with left:
     elif mode_label == "One vehicle":
         chosen_id = st.selectbox("Vehicle", list(labels), format_func=labels.get, key="vehicle",
                                  index=list(labels).index(HANDSHAKE_RECORD_ID))
-        selection = select_vehicles(vehicles, "one", chosen_id)
-        target_label = titles[chosen_id]
+        selection, target_label = research_target(catalog, ONE, chosen_id)
     elif mode_label == "Manufacturer":
-        maker = st.selectbox("Manufacturer", manufacturers(vehicles), key="maker")
-        selection = select_vehicles(vehicles, "manufacturer", maker)
-        target_label = f"{maker} · {len(selection)} vehicles"
+        maker = st.selectbox("Manufacturer", catalog.manufacturers(), key="maker")
+        selection, target_label = research_target(catalog, MANUFACTURER, maker)
     else:
-        selection = select_vehicles(vehicles, "all")
-        target_label = f"Benchmark v1 · {len(selection)} vehicles"
+        selection, target_label = research_target(catalog, ALL)
     if mode_label != "Benchmark A/B":
         target_ids = {v["upstream_record_id"] for v in selection}
         busy = next((r for r in active_records if set(r.record_ids) & target_ids), None)
@@ -186,11 +165,7 @@ with right:
 def research_request(vehicle_list: list[dict], label: str, scope: str, key: str | None,
                      profile: str | None = None) -> ResearchRequest:
     profile = profile or st.session_state.get("run_profile") or PRODUCTION
-    return ResearchRequest(vehicles=vehicle_list, label=label, scope=scope, settings=settings.glm_settings(),
-                           agent_cfg=settings.agent_config(secret, profile), tool_cfg=settings.tool_config(secret),
-                           pricing=settings.pricing, prompt_version=PROMPT_VERSION, data_source=settings.data_source,
-                           dsn=settings.dsn, workers=settings.workers, chat_limits=settings.chat_limits,
-                           search_limit=settings.search_limit, idempotency_key=key)
+    return build_research_request(settings, secret, vehicle_list, label, scope, key, profile)
 
 
 def launch(request: ResearchRequest) -> None:

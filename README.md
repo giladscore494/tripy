@@ -124,6 +124,85 @@ Offline end-to-end check without credentials: `python scripts/fake_glm_server.py
 `GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash NO_PROXY=127.0.0.1`
 (`--fail finalizer` exercises the failure and retry UI).
 
+## HTTP API (FastAPI) — migration step 1
+
+TRIPY is moving to a frontend that does not depend on Streamlit. This step adds a **backend-only** HTTP API next to
+the dashboard; nothing about the dashboard, Railway or the research engine changes.
+
+```
+Streamlit dashboard (app.py) ──┐
+                               ├──► RunManager · run_state.json / events.jsonl / result.json · research engine
+HTTP API (src/api, FastAPI) ───┘        (one engine, one source of truth: the same functions, the same files)
+```
+
+| Mode | Command |
+| --- | --- |
+| Existing UI (unchanged; Railway still runs this) | `streamlit run app.py` |
+| New API | `uvicorn src.api.app:app --host 0.0.0.0 --port 8000` |
+
+The API reuses the dashboard's own code: `RunManager.start` / `cancel` / `retry_finalization`, the durable run
+repository, the pipeline state behind the live dashboard (`src/runstate/pipeline.py`), the failure card
+(`src/runstate/failures.py`), the result loaders (`src/storage/run_loader.py`), the MCP's event reader and redaction
+(`src/mcp_server`), and the dashboard's settings, target selection and export serializers, which now live in
+framework-neutral modules (`src/run_settings.py`, `src/research_targets.py`, `src/exports.py`). It never imports
+Streamlit. A run started through the API uses exactly the settings an untouched dashboard would (the server's
+environment; a client cannot pass a model, key or provider setting) and is gated by the same configuration checks.
+
+**One process per data directory.** Each process reconciles runs it does not own as `INTERRUPTED` (a redeploy
+leaves orphans; see *Runs, persistence and reconnects*). Do not run the API and the dashboard against the **same**
+`TRIPY_DATA_DIR` at the same time: each would mark the other's active runs as interrupted. Locally, give the API its
+own folder (`TRIPY_DATA_DIR=.tripy-data-api uvicorn ...`) or stop the dashboard first. Serving both from one process
+is the next step of the migration.
+
+The API reads configuration from the process environment only (not `.streamlit/secrets.toml`).
+
+**Authentication.** `/health` is public. In production (`TRIPY_ENV=production` or Railway) every `/api/*` route
+requires `Authorization: Bearer <TRIPY_ACCESS_TOKEN>` (constant-time comparison, the dashboard's rule); without a
+configured token the API answers 503 (fails closed). Tokens are never accepted in the URL or a cookie. Outside
+production the API is open, like the dashboard.
+
+| Endpoint | What it returns / does |
+| --- | --- |
+| `GET /health` | `{"status": "ok", "service": "tripy"}` (no I/O; safe for a health check) |
+| `GET /api/runs` | run history, newest first (`?limit=`) |
+| `GET /api/runs/{run_id}` | identity, scope, profile, status, timestamps, request, per-vehicle pipeline / failure / report |
+| `GET /api/runs/{run_id}/progress` | live stage states and counters; vehicles completed / total (no invented percentages) |
+| `GET /api/runs/{run_id}/events?after=&limit=&record_id=&kind=` | events.jsonl rows after a line cursor; `next_cursor` for the next poll |
+| `GET /api/runs/{run_id}/results` | structured results per vehicle (fields, values, units, markets, states, evidence ids) |
+| `GET /api/runs/{run_id}/candidates?record_id=&field=` | candidate matrix: candidates, rejections with reasons, field state |
+| `GET /api/runs/{run_id}/evidence?record_id=&field=` | admitted evidence (binding metadata) and rejected requests (reasons) |
+| `GET /api/runs/{run_id}/export/candidates.csv` | the dashboard's candidates.csv (byte-identical) |
+| `GET /api/runs/{run_id}/export/per_vehicle.csv`, `.../benchmark.json` | the Benchmark diagnostics exports for this run |
+| `POST /api/runs` | start research: `{"scope": "one"\|"manufacturer"\|"all", "record_id", "manufacturer", "profile", "idempotency_key"}` → 201 (200 for a repeated key) |
+| `POST /api/runs/{run_id}/cancel` | stop at the next safe point (202; 409 if not executing in this process) |
+| `POST /api/runs/{run_id}/vehicles/{record_id}/finalize` | finalize from preserved research (only where the failure card offers it) |
+| `POST /api/runs/{run_id}/vehicles/{record_id}/restart` | a new One-vehicle run with the run's profile (only for a vehicle that did not complete) |
+| `GET /api/config/status` | configuration checks, models, search backend, storage, access control (presence only, never secrets) |
+| `GET /api/vehicles` | the benchmark vehicles and manufacturers a run can target |
+
+Errors are `{"error": {"code", "message", ...}}`: 401 unauthorized, 404 unknown run / vehicle, 409 conflicting run
+(`existing_run_id`) or unavailable action, 422 invalid input, 503 configuration / provider / Level 1.5 unavailable,
+500 unexpected (logged server-side; no traceback in the response). Every response is redacted. Interactive docs:
+`/docs`. Not exposed yet: A/B series and per-run setting overrides (the dashboard's Advanced settings).
+
+```bash
+export TRIPY_URL=http://127.0.0.1:8000
+export TOKEN='<your TRIPY_ACCESS_TOKEN>'          # only needed in production mode; never put it in a URL
+curl -s "$TRIPY_URL/health"
+curl -s -H "Authorization: Bearer $TOKEN" "$TRIPY_URL/api/config/status"
+curl -s -H "Authorization: Bearer $TOKEN" "$TRIPY_URL/api/runs?limit=10"
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"scope": "one", "record_id": "101122", "profile": "production", "idempotency_key": "my-click-1"}' \
+     "$TRIPY_URL/api/runs"
+curl -s -H "Authorization: Bearer $TOKEN" "$TRIPY_URL/api/runs/<run_id>/progress"
+curl -s -H "Authorization: Bearer $TOKEN" "$TRIPY_URL/api/runs/<run_id>/events?after=0"   # then ?after=<next_cursor>
+curl -s -H "Authorization: Bearer $TOKEN" -X POST "$TRIPY_URL/api/runs/<run_id>/cancel"
+curl -s -H "Authorization: Bearer $TOKEN" -o candidates.csv "$TRIPY_URL/api/runs/<run_id>/export/candidates.csv"
+```
+
+With `TRIPY_MCP_TOKEN` set, the API also serves the read-only MCP at `/mcp/<TRIPY_MCP_TOKEN>` with the same route and
+lifespan as the Streamlit launcher (`tripy_server.py`); production keeps serving it from Streamlit for now.
+
 ## Configuration
 
 Every supported variable, with safe placeholders, is in [`.env.example`](.env.example). Values come from the
@@ -1793,6 +1872,10 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
   the presentation limit vs storage, routing without votes, recovery still breadth-first after the sweep, no paid
   stage when nothing is open, and per-phase settings. `python tests/fixtures/corolla_orchestration.py` prints the
   report; the same file runs unchanged against an older checkout for a before/after comparison.
+- the HTTP API (`tests/test_api.py`): health, Bearer authentication, run history / details / progress, starts
+  through the real RunManager (409 conflicts, blocked configuration), cancel / finalize / restart, the events
+  cursor, results, candidates, evidence, byte-identical exports, secret redaction, the API settings equal to an
+  untouched sidebar, no Streamlit import, and the MCP mounted into the API;
 - the Railway migration (`tests/test_railway_runstate.py`, `tests/test_dashboard_app.py`): persistent path
   configuration and storage detection, run-state serialization and the repository, pipeline phase transitions,
   reconnect (incremental event replay equals a fresh replay), background execution, duplicate-run prevention,
