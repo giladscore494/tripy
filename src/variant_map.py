@@ -116,17 +116,16 @@ def _catalog_tokens(trim: str) -> list[str]:
 
 def _token_ends(token: str, doc: list[str], p: int, aliases: dict, first: bool) -> list[tuple[int, bool]]:
     """(end, whole) of each way a catalog trim token can match from doc word p: the word itself (whole), a word it is
-    a prefix of (not whole; never a number, never a 1-letter token, a 2-letter token only after the trim's first
-    token: "PR" is "Pro" in "LR PR", never "SE" for "seats"), the join of 2-3 words ("BLACKEDITION" = "Black
-    Edition", whole) or a listed alias (catalog_trim_aliases: "LR" = "Long Range", whole)."""
+    a prefix of (not whole; never a number; tokens shorter than 3 letters require an exact match or an explicit
+    alias), the join of 2-3 words ("BLACKEDITION" = "Black Edition", whole) or a listed alias
+    (catalog_trim_aliases: "LR" = "Long Range", "PR" = "Pro", whole)."""
     if p >= len(doc):
         return []
     word = doc[p]
     ends: set[tuple[int, bool]] = set()
     if token == word:
         ends.add((p + 1, True))
-    elif not token.isdigit() and not word.isdigit() and word.startswith(token) \
-            and (len(token) >= 3 or (len(token) == 2 and not first)):
+    elif not token.isdigit() and not word.isdigit() and len(token) >= 3 and word.startswith(token):
         ends.add((p + 1, False))
     joined = word
     for m in (2, 3):
