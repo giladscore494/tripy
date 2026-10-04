@@ -16,7 +16,6 @@ import streamlit as st
 
 from .. import diagnostics as diag_mod
 from ..binding_replay import code_version
-from ..storage.run_log import read_events
 from . import dashboard as ui
 
 _CACHE: dict[str, tuple[tuple, dict]] = {}
@@ -48,12 +47,7 @@ def diagnostics_for(run_dir: Path) -> dict | None:
         hit = _CACHE.get(key)
         if hit and hit[0] == stamp:
             return hit[1]
-    data = diag_mod.load_vehicle_diagnostics(run_dir, rebuild_if_missing=False)
-    if data is None or not data.get("complete"):
-        events = read_events(events_path)
-        data = diag_mod.with_binding_replay(diag_mod.vehicle_diagnostics(events, run_id=run_dir.parent.name,
-                                                                         record_id=run_dir.name), run_dir) \
-            if events else None
+    data = diag_mod.diagnostics_from_dir(run_dir)
     if data is not None:
         with _LOCK:
             _CACHE[key] = (stamp, data)

@@ -195,8 +195,9 @@ def _document_date(meta: dict, structured: dict | None) -> tuple[str | None, str
     return None, None
 
 
-def document_text(cache, meta: dict) -> DocumentText:
-    """The shared, target-independent material of a cached document (built once per document version)."""
+def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
+    """The shared, target-independent material of a cached document (built once per document version).
+    `remember=False` (read-only observers such as the MCP) builds it without adding it to the shared LRU."""
     from .tools.extract import document_structured
 
     doc_id = meta["document_id"]
@@ -234,6 +235,8 @@ def document_text(cache, meta: dict) -> DocumentText:
                             lines=[(ln, " " + squash(ln) + " ") for ln in lines], headings=headings,
                             subheadings=subheadings, body_text=body_text,
                             market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis)
+    if not remember:
+        return material
     with _TEXTS_LOCK:
         _TEXTS[key] = material
         while len(_TEXTS) > SHARED_TEXT_CACHE:

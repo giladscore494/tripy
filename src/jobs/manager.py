@@ -964,12 +964,23 @@ _MANAGERS: dict[tuple[str, str], RunManager] = {}
 _MANAGERS_LOCK = threading.Lock()
 
 
+def _manager_key(paths: DataPaths) -> tuple[str, str]:
+    return str(Path(paths.runs_dir).resolve()), str(Path(paths.cache_dir).resolve())
+
+
 def get_manager(paths: DataPaths, **kwargs) -> RunManager:
     """The process-wide manager for these paths (created once; shared by every browser session)."""
-    key = (str(Path(paths.runs_dir).resolve()), str(Path(paths.cache_dir).resolve()))
+    key = _manager_key(paths)
     with _MANAGERS_LOCK:
         manager = _MANAGERS.get(key)
         if manager is None:
             manager = RunManager(paths, **kwargs)
             _MANAGERS[key] = manager
         return manager
+
+
+def existing_manager(paths: DataPaths) -> RunManager | None:
+    """The process-wide manager for these paths if one was already created, else None. Never creates one (creating
+    a manager reconciles run state on disk); for read-only observers such as the MCP."""
+    with _MANAGERS_LOCK:
+        return _MANAGERS.get(_manager_key(paths))

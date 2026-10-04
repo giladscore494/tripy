@@ -48,6 +48,7 @@ What Railway uses (all in the repo):
 | --- | --- |
 | Builder | `Dockerfile` (`railway.json` → `build.builder = DOCKERFILE`) |
 | Start command | `sh scripts/start.sh` → `streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true …` |
+| Start command with `TRIPY_MCP_TOKEN` | the same flags with `streamlit run tripy_server.py` (Streamlit's `st.App` serving the same `app.py` plus `/mcp/<token>`) |
 | Port | Railway's injected `$PORT` (8501 when unset) |
 | Health check | `GET /_stcore/health` (Streamlit's built-in endpoint, returns `ok`) |
 | Volume mount path | `/data` |
@@ -67,6 +68,33 @@ locks the session again without touching runs or history. After five wrong token
 next attempt. A browser refresh starts a new Streamlit session, so the token is asked for again. The token is never
 read from the URL or a cookie, and it is redacted from logs, run state, diagnostics and error details like the other
 secrets. The `/_stcore/health` check is not gated. Outside production (local development) the gate is open.
+
+### Read-only MCP for Claude (optional)
+
+One variable turns on a **read-only** MCP server on the same service and port: runs, live events, results,
+diagnostics, binding replay, candidates, fetched documents and the server log (12 tools; nothing can start, cancel,
+delete or write). Without the variable it does not exist at all (no route, no process, the plain start command).
+
+1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
+   Redeploy.
+2. claude.ai → **Settings → Connectors → Add custom connector** → URL
+   `https://tripy-production.up.railway.app/mcp/<the value>` → no auth.
+3. To revoke: change or delete the variable, then redeploy.
+
+The URL path is the password: keep it secret. Any other `/mcp/...` path answers 404. The token is never logged; every
+tool call writes one audit line (tool, ids, size, ms) to the server log (`/data/logs/tripy.log`, rotating 5 × 5 MB).
+
+**MCP לקריאה בלבד עבור Claude (אופציונלי).** משתנה אחד מפעיל שרת MCP לקריאה בלבד באותו שירות ובאותו פורט: ריצות,
+אירועים חיים, תוצאות, דיאגנוסטיקה, binding replay, מועמדים, מסמכים שנשלפו ולוג השרת. אף כלי לא מתחיל, מבטל, מוחק או
+כותב דבר. בלי המשתנה ה-MCP לא קיים בכלל.
+
+1. ב-Railway: השירות ← **Variables** ← להוסיף `TRIPY_MCP_TOKEN` עם ערך אקראי ארוך (`openssl rand -hex 32`), ואז
+   Redeploy.
+2. ב-claude.ai: **Settings ← Connectors ← Add custom connector**, כתובת
+   `https://tripy-production.up.railway.app/mcp/<הערך>`, בלי אימות (no auth).
+3. לביטול הגישה: לשנות או למחוק את המשתנה, ואז Redeploy.
+
+הנתיב בכתובת הוא הסיסמה ויש לשמור עליו בסוד. כל נתיב אחר תחת `/mcp/` מחזיר 404.
 
 **Secrets never go into the UI in production.** `TRIPY_ENV=production` (set by the Dockerfile, also implied by
 Railway's own variables) removes the development-only API-key box; keys come from Railway variables only.

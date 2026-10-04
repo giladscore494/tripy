@@ -21,8 +21,9 @@ from .storage.paths import DataPaths, resolve_paths, storage_status
 
 Lookup = Callable[[str], str | None]
 
-# Values that must never be shown. DATABASE_URL / SUPABASE_DB_URL may embed a password.
-SECRET_VARS = ("GLM_API_KEY", "TRIPY_ACCESS_TOKEN", "DATABASE_URL", "SUPABASE_DB_URL")
+# Values that must never be shown. DATABASE_URL / SUPABASE_DB_URL may embed a password. TRIPY_MCP_TOKEN is the secret
+# path of the optional read-only MCP endpoint (src/mcp_server).
+SECRET_VARS = ("GLM_API_KEY", "TRIPY_ACCESS_TOKEN", "DATABASE_URL", "SUPABASE_DB_URL", "TRIPY_MCP_TOKEN")
 
 REQUIRED_VARS = ("GLM_API_KEY", "GLM_MODEL")
 # Strongly recommended on Railway (the app runs without them, but state is then not persistent).

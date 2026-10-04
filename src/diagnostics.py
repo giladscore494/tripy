@@ -989,7 +989,8 @@ def write_vehicle_diagnostics(run_dir: Path | str, *, run_id: str | None = None)
         return None
 
 
-def load_vehicle_diagnostics(run_dir: Path | str, *, rebuild_if_missing: bool = True) -> dict | None:
+def load_vehicle_diagnostics(run_dir: Path | str, *, rebuild_if_missing: bool = True,
+                             persist_replay: bool = True) -> dict | None:
     path = Path(run_dir) / DIAGNOSTICS_FILE
     diag = None
     if path.is_file():
@@ -999,10 +1000,25 @@ def load_vehicle_diagnostics(run_dir: Path | str, *, rebuild_if_missing: bool = 
             diag = None
     if diag is None and rebuild_if_missing:
         diag = write_vehicle_diagnostics(run_dir)
-    return with_binding_replay(diag, run_dir)
+    return with_binding_replay(diag, run_dir, persist=persist_replay)
 
 
-def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
+def diagnostics_from_dir(run_dir: Path | str, *, persist_replay: bool = True) -> dict | None:
+    """One vehicle run folder's diagnostics: diagnostics.json when the run finished and wrote it, otherwise built in
+    memory from events.jsonl (nothing is written here); with its current Binding Replay either way.
+    `persist_replay=False` (the read-only MCP) never stores a replay computed on demand."""
+    from .storage.run_log import read_events
+
+    run_dir = Path(run_dir)
+    data = load_vehicle_diagnostics(run_dir, rebuild_if_missing=False, persist_replay=persist_replay)
+    if data is None or not data.get("complete"):
+        events = read_events(run_dir / "events.jsonl")
+        data = with_binding_replay(vehicle_diagnostics(events, run_id=run_dir.parent.name, record_id=run_dir.name),
+                                   run_dir, persist=persist_replay) if events else None
+    return data
+
+
+def with_binding_replay(diag: dict | None, run_dir: Path | str, *, persist: bool = True) -> dict | None:
     """The diagnostics with this run's CURRENT Binding Replay summary, when one exists.
 
     Binding Replay summaries are cached by a content hash of the binding code/data. Never surface a stale summary in
@@ -1013,7 +1029,7 @@ def with_binding_replay(diag: dict | None, run_dir: Path | str) -> dict | None:
         from .binding_replay import load_replay, load_or_replay
         replay = load_replay(run_dir)
         if replay is None and diag.get("complete"):
-            replay = load_or_replay(run_dir)
+            replay = load_or_replay(run_dir, persist=persist)
     except Exception as exc:
         return {**diag, "binding_replay": {"replay_error": f"{type(exc).__name__}: {exc}"}}
     summary = (replay or {}).get("summary") or {}
