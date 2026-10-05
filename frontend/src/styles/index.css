@@ -66,6 +66,18 @@
     @apply w-full rounded-xl border border-line bg-white/[0.04] px-3 py-2 text-sm text-ink placeholder:text-ink-faint
       transition-colors focus:border-accent/60 focus:bg-white/[0.07] focus:outline-none disabled:opacity-50;
   }
+
+  /* Native <select> popups are rendered by the browser/OS, not by our glass surface. On Windows Chrome they can
+     otherwise open with the inherited light text on a white popup background. Keep every native dropdown readable
+     across New Research, run filters, diagnostics, Binding Replay and Advanced Settings. */
+  select.input {
+    color-scheme: dark;
+  }
+  select.input option,
+  select.input optgroup {
+    background-color: rgb(var(--c-bg-secondary));
+    color: rgb(var(--c-text));
+  }
   .table-wrap {
     @apply w-full overflow-x-auto rounded-card border border-line;
   }
