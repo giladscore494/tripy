@@ -114,7 +114,7 @@ def index(path: Path | str | None = None) -> dict:
     return data
 
 
-_NORMALIZED: dict[int, dict] = {}
+_NORMALIZED: dict[int, tuple[dict, dict]] = {}
 
 
 def normalize_key(key: str | None) -> str | None:
@@ -128,21 +128,23 @@ def normalize_key(key: str | None) -> str | None:
 def _normalized_entries(entries: dict) -> dict:
     """The entries by normalized key. An index built before PR #45 may hold two raw trims of one normalized key: their
     summaries cannot be merged, so such a key resolves to nothing (fail-closed; a rebuild merges the counts)."""
-    view = _NORMALIZED.get(id(entries))
-    if view is None:
-        view, clash = {}, set()
-        for raw, entry in entries.items():
-            key = normalize_key(raw)
-            if key is None:
-                continue
-            if key in view and raw != key:
-                clash.add(key)
+    cached = _NORMALIZED.get(id(entries))
+    if cached is not None and cached[0] is entries:
+        return cached[1]
+    view, clash = {}, set()
+    for raw, entry in entries.items():
+        key = normalize_key(raw)
+        if key is None:
+            continue
+        if key in view:
+            clash.add(key)
+        else:
             view[key] = entry
-        for key in clash:
-            view.pop(key, None)
-        if len(_NORMALIZED) > 8:
-            _NORMALIZED.clear()
-        _NORMALIZED[id(entries)] = view
+    for key in clash:
+        view.pop(key, None)
+    if len(_NORMALIZED) > 8:
+        _NORMALIZED.clear()
+    _NORMALIZED[id(entries)] = (entries, view)
     return view
 
 
@@ -154,7 +156,9 @@ def entry_for(key: str | None, data: dict | None = None) -> dict | None:
     norm = normalize_key(key)
     if norm is None:
         return None
-    return entries.get(norm) or _normalized_entries(entries).get(norm)
+    # Always use the normalized view. Direct lookup would let an already-normalized raw key bypass a collision with
+    # another legacy raw spelling (for example both "S-LINE" and "S LINE"), violating the fail-closed rule above.
+    return _normalized_entries(entries).get(norm)
 
 
 def rim_of(size: str | None) -> int | None:
