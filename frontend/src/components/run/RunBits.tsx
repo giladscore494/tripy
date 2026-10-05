@@ -33,6 +33,7 @@ export function RunRow({ run, profiles, now }: { run: RunSummary; profiles?: { i
             <span>{profileLabel(run.profile, profiles)}</span>
             {run.stage && <span>stage {run.stage}</span>}
             <span>{run.record_ids.length} vehicle{run.record_ids.length === 1 ? "" : "s"}</span>
+            {run.resolved_fields_text && <span className="tabular-nums">{run.resolved_fields_text} fields</span>}
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-ink-muted sm:justify-end sm:text-right">

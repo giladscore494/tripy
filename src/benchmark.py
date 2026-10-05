@@ -427,9 +427,9 @@ def run_batch(vehicles: list[dict], rows_by_id: dict[str, dict], run_one: Callab
     Otherwise vehicles run concurrently on a thread pool of min(max_workers, vehicles) workers. The
     real request guards are the shared ConcurrencyController pools (per HTTP attempt), not the
     worker count. All callbacks (`on_start`, `on_done`, `on_poll`) run on the CALLING thread, never
-    on a worker, so a Streamlit caller can render from them. An ordinary exception in one worker
+    on a worker, so a UI caller can render from them. An ordinary exception in one worker
     becomes an `error` result for that vehicle and never cancels the others. A control-flow
-    BaseException raised by a callback (Ctrl+C, Streamlit stop) cancels the batch: nothing new is
+    BaseException raised by a callback (Ctrl+C, a UI stop) cancels the batch: nothing new is
     scheduled, queued vehicles are cancelled, running workers are asked to stop at their next safe
     point (they persist a partial, interrupted result.json in their own folders), and it is re-raised.
     """

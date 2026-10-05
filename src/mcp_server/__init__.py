@@ -1,13 +1,12 @@
 """Read-only MCP observation channel for runs, logs and documents (optional).
 
-Enabled by exactly one environment variable, TRIPY_MCP_TOKEN. Unset or empty: this package is never imported by the
-dashboard (app.py does not import it, scripts/start.sh keeps the plain `streamlit run app.py` command) and nothing
-under /mcp exists. Set: scripts/start.sh starts `tripy_server.py`, which serves the same app.py through Streamlit's
-public st.App API with one extra route, `/mcp/<TRIPY_MCP_TOKEN>` (Streamable HTTP, stateless, JSON responses).
+Enabled by exactly one environment variable, TRIPY_MCP_TOKEN. Unset or empty: the web application (src/api/app.py)
+never builds the MCP server, the `mcp` SDK is never imported and /mcp does not exist. Set: the same single process
+mounts one extra route, `/mcp/<TRIPY_MCP_TOKEN>` (Streamable HTTP, stateless, JSON responses), with its lifespan.
 
     asgi.py    the /mcp route (secret-path gate, constant-time) and the session-manager lifespan
     server.py  the FastMCP server: tool registration, worker threads, audit log line per call
-    tools.py   the tools themselves: plain functions over the dashboard's own loaders, never writing anything
+    tools.py   the tools themselves: plain functions over the same loaders the HTTP API reads, never writing anything
     safety.py  id / path validation, secret redaction, response size caps and paging
 
 Importing this module itself has no side effects and does not import the `mcp` SDK.

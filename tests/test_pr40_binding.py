@@ -513,7 +513,7 @@ def test_the_stored_synthetic_g6_run_replays_from_binding_v3_to_v4(tmp_path):
     import shutil
 
     from src import binding_replay as R
-    from src.ui.diagnostics_view import binding_rows
+    from src.presentation.run_views import binding_rows
 
     shutil.copytree(R.ROOT.parent / "tests" / "fixtures" / "pr40_runs", tmp_path / "runs")
     replay = R.replay_run(tmp_path / "runs" / "SYNTH-pr40" / "101122", tmp_path / "runs" / "_cache", write=False)

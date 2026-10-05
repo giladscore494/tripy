@@ -1,6 +1,6 @@
 """The FastMCP server: tool registration, worker threads and the audit log line of every call.
 
-Tools run in worker threads (the event loop is Streamlit's: a slow replay must never stall the dashboard), at most
+Tools run in worker threads (the event loop is the web server's: a slow replay must never stall the API), at most
 MAX_CONCURRENT_CALLS at a time. Each call logs exactly one line to the `tripy.mcp` logger (stdout + the rotating
 server log): tool, ids, response size, milliseconds, outcome. Neither the URL nor the token ever reaches this module.
 """

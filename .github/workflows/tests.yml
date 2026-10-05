@@ -45,3 +45,27 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+
+  docker:
+    # The production image exactly as Railway builds it (Dockerfile): the frontend stage (npm ci, tsc, vite build) and
+    # the Python runtime with Chromium's headless shell; then the container must answer /health and serve the SPA.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build -t tripy:ci .
+      - name: Start the container and check /health, the SPA and the API gate
+        run: |
+          docker run -d --name tripy -e PORT=8080 -e TRIPY_ACCESS_TOKEN=ci-access-token-0123456789 -p 8080:8080 tripy:ci
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:8080/runs/x | grep -q 'id="root"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/config/status)" = "401"
+          # exactly one server process (Uvicorn), no Streamlit, no Node
+          docker exec tripy python -c "import os, pathlib; argv = [p.read_bytes().split(b'\\0')[:2] for p in pathlib.Path('/proc').glob('[0-9]*/cmdline') if p.parent.name != str(os.getpid()) and p.read_bytes()]; names = [os.path.basename(a.decode()) for args in argv for a in args]; assert names.count('uvicorn') == 1, argv; assert 'streamlit' not in names and 'node' not in names and 'npm' not in names, argv"
+          docker exec tripy python -c "import importlib.util, sys; sys.exit(importlib.util.find_spec('streamlit') is not None)"
+          docker exec tripy python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(); b.close(); p.stop()"
+      - name: Container logs
+        if: always()
+        run: docker logs tripy || true

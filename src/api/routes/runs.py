@@ -1,6 +1,6 @@
 """Runs: history, details, progress, events, results, candidates, evidence, and the actions the dashboard offers.
 
-Every action goes through the RunManager exactly as app.py does it:
+Every action goes through the process-wide RunManager:
 
     POST /api/runs                                         RunManager.start(ResearchRequest)          ("Start research")
     POST /api/runs/{id}/cancel                             RunManager.cancel                          ("Stop run")
@@ -37,7 +37,7 @@ SCOPES = {"one": ONE, "manufacturer": MANUFACTURER, "all": ALL}
 
 
 def reconciled(ctx: ApiContext = Depends(get_context)) -> ApiContext:
-    """Like every dashboard render: mark orphaned runs INTERRUPTED (at most every 30 s)."""
+    """Mark orphaned runs INTERRUPTED (RunManager.maybe_reconcile: at most every 30 s, however often clients poll)."""
     ctx.manager.maybe_reconcile()
     return ctx
 
@@ -96,7 +96,7 @@ def run_evidence(run_id: str, record_id: str | None = None, field: str | None = 
 
 def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: str | None, profile: str,
            response: Response, overrides: dict | None = None) -> dict:
-    """app.py `launch`: the server's settings with the request's per-run overrides (run_settings.settings_for_run,
+    """Start a run: the server's settings with the request's per-run overrides (run_settings.settings_for_run,
     the sidebar's assemble_settings), the same blocking checks, the same request, RunManager.start."""
     try:
         settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides)

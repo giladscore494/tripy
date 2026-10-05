@@ -1,30 +1,22 @@
 #!/bin/sh
-# TRIPY production start (Railway / Docker). Binds 0.0.0.0:$PORT (Railway injects PORT; 8501 locally).
+# TRIPY production start (Railway / Docker): ONE Uvicorn process serving the FastAPI application, which serves the
+# API (/api), the health check (/health), the React production bundle (frontend/dist) and, only when TRIPY_MCP_TOKEN
+# is set, the read-only MCP (/mcp/<token>). Binds 0.0.0.0:$PORT (Railway injects PORT; 8000 when unset).
+#
+# Exactly one worker: the process-wide RunManager owns TRIPY_DATA_DIR (one process per data directory). Never add
+# --workers, and never run a second server against the same data directory.
 set -e
 cd "$(dirname "$0")/.."
 
 # Diagnostics: resolved paths and presence of configuration (never secret values). Never blocks startup:
-# configuration problems are also shown precisely in the UI, and the health check must still pass.
+# configuration problems are also reported by /api/config/status, and the health check must still pass.
 python -m src.startup_check || echo "startup diagnostics failed (continuing)" >&2
 
-# TRIPY_MCP_TOKEN set: the same server and app.py through tripy_server.py (st.App), plus the read-only MCP at
-# /mcp/<TRIPY_MCP_TOKEN> (src/mcp_server). Unset or empty: exactly the plain command below, no MCP at all.
-if [ -n "$(printf '%s' "${TRIPY_MCP_TOKEN:-}" | tr -d '[:space:]')" ]; then
-  exec streamlit run tripy_server.py \
-    --server.address=0.0.0.0 \
-    --server.port="${PORT:-8501}" \
-    --server.headless=true \
-    --server.fileWatcherType=none \
-    --server.runOnSave=false \
-    --client.showErrorDetails=none \
-    --browser.gatherUsageStats=false
-fi
-
-exec streamlit run app.py \
-  --server.address=0.0.0.0 \
-  --server.port="${PORT:-8501}" \
-  --server.headless=true \
-  --server.fileWatcherType=none \
-  --server.runOnSave=false \
-  --client.showErrorDetails=none \
-  --browser.gatherUsageStats=false
+# exec: the shell is replaced by Uvicorn, so the platform's SIGTERM reaches Uvicorn directly; the application's lifespan
+# shutdown then asks active runs to stop at their next safe point (RunManager.shutdown, within Railway's draining
+# window: at most 5 s for open requests, then TRIPY_SHUTDOWN_GRACE_S for the runs).
+exec uvicorn src.api.app:app \
+  --host 0.0.0.0 \
+  --port "${PORT:-8000}" \
+  --timeout-graceful-shutdown 5 \
+  --no-server-header

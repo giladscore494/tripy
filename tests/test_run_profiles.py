@@ -67,7 +67,7 @@ def test_ui_phase_settings_merge_per_phase_and_key_over_env():
 
 
 def test_the_ui_settings_object_builds_the_run_config(monkeypatch):
-    from src.ui.settings_panel import UISettings
+    from src.run_settings import UISettings
 
     ui = UISettings(model_id="m", finalizer_model_id="", base_url="", chat_path="", api_key="", api_key_from_ui=False,
                     search_backend="glm", search_path="", search_engine="", chat_attempts=1, search_attempts=1,

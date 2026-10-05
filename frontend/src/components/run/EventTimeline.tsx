@@ -4,7 +4,7 @@ import type { RunEvent } from "../../api/types";
 import type { EventStream } from "../../hooks/useEventStream";
 import { compactJson, domainOf, formatTime, formatValue, humanize, str, truncate } from "../../lib/format";
 import type { Tone } from "../../lib/status";
-import { Badge, Button, cx, Dir, EmptyState, ErrorState, Mono, SkeletonRows } from "../ui/primitives";
+import { Badge, Button, cx, Dir, EmptyState, ErrorState, JsonBlock, Mono, SkeletonRows } from "../ui/primitives";
 
 // runstate.model.ENGINE_PHASE_TO_STAGE: an event's `phase` shown as the pipeline stage it belongs to
 const PHASE_STAGE: Record<string, string> = {
@@ -189,6 +189,10 @@ export function EventTimeline({ stream, active }: { stream: EventStream; active:
                 {summary.source && <span className="truncate text-ink-faint" dir="ltr" title={summary.url ?? undefined}>{summary.source}</span>}
               </div>
               {summary.text && <Dir as="p" className="mt-0.5 break-words text-[13px] text-ink">{summary.text}</Dir>}
+              <details className="mt-1 text-[11px] text-ink-faint">
+                <summary className="cursor-pointer select-none hover:text-ink-muted">Event JSON</summary>
+                <JsonBlock value={event} maxHeight="18rem" />
+              </details>
             </li>
           );
         })}

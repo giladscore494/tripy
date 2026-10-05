@@ -277,7 +277,8 @@ def test_progress_reads_the_live_pipeline(client, ctx, gate):
     assert {s["key"]: s["state"] for s in vehicle["stages"]}["harvest"] == "done"
     assert "percent" not in json.dumps(progress)                 # no invented percentage
     assert client.get(f"/api/runs/{run_id}/results").json() == {"run_id": run_id, "available": False,
-                                                                  "reason": "The run is still active.", "vehicles": []}
+                                                                  "reason": "The run is still active.", "vehicles": [],
+                                                                  "output_source_caption": None}
     gate.set()
     wait_terminal(ctx.manager, run_id)
     done = client.get(f"/api/runs/{run_id}/progress").json()
@@ -516,23 +517,16 @@ def test_candidates_and_evidence(client):
 # --- exports ---------------------------------------------------------------------------------------------------------
 
 def test_candidates_csv_is_byte_identical_to_the_dashboards_previous_download(client, data_root):
-    import pandas as pd
-
-    from src.storage import trace
-    from src.storage.run_log import read_events
-    from src.runstate.live_state import candidate_table_rows
-
-    events = read_events(data_root / "runs" / RUN / RECORD / "events.jsonl")
-    started = trace.first_event(events, "run_started")
-    previous = pd.DataFrame(candidate_table_rows(events, started["requested_field_specs"],
-                                                 started.get("vehicle_label"))).to_csv(index=False)
+    """tests/fixtures/pr40_candidates_pandas_golden.csv is what the dashboard's download wrote for this run
+    (pandas.DataFrame(candidate_table_rows(...)).to_csv(index=False)), frozen before pandas left the dependencies."""
+    golden = (Path(__file__).parent / "fixtures" / "pr40_candidates_pandas_golden.csv").read_bytes()
     response = client.get(f"/api/runs/{RUN}/export/candidates.csv")
     assert response.status_code == 200 and response.headers["content-type"].startswith("text/csv")
     assert 'filename="tripy_candidates.csv"' in response.headers["content-disposition"]
-    assert response.content.decode("utf-8") == previous
+    assert response.content == golden
     from src.exports import rows_to_csv
     tricky = [{"a": 'x,"y"', "b": None, "c": 3}, {"a": "line\nbreak", "b": True, "c": 0}]
-    assert rows_to_csv(tricky) == pd.DataFrame(tricky).to_csv(index=False)
+    assert rows_to_csv(tricky) == 'a,b,c\n"x,""y""",,3\n"line\nbreak",True,0\n'       # pandas' to_csv bytes
 
 
 def test_benchmark_exports(client):
@@ -573,40 +567,67 @@ def test_config_status_reports_presence_only(client, monkeypatch):
 
 # --- shared settings: the API starts runs with exactly what an untouched dashboard would use ------------------------
 
-def test_settings_from_env_equal_the_untouched_sidebar(data_root, monkeypatch):
-    from streamlit.testing.v1 import AppTest
+def sidebar_settings(secret, controller, **edits):
+    """The former Streamlit "Advanced settings" sidebar without widgets: every widget's default exactly as it read it
+    (environment defaults from run_settings, numbers within the widget ranges), the given edits applied, the model-
+    dependent defaults (prices, in-flight limits) following the edited model, then the same assemble_settings call.
+    The reference the HTTP API's settings path is held to now that the sidebar is gone."""
+    from src.run_settings import (EFFORT_PHASES, agent_defaults, assemble_settings, chat_limits_for, clamp,
+                                  dsn_default, effort_default, glm_defaults, pricing_defaults, pricing_from,
+                                  search_limit_default, workers_default)
+    from src.run_profiles import env_overrides
 
+    g, a = glm_defaults(secret), agent_defaults(secret)
+    v = {"model_id": g["model_id"], "finalizer_model_id": g["finalizer_model_id"],
+         "search_backend": g["search_backend"], "search_engine": g["search_engine"],
+         "chat_attempts": g["chat_attempts"], "search_attempts": g["search_attempts"],
+         "chat_timeout": g["chat_timeout"], "workers": workers_default(secret),
+         **{k: a[k] for k in ("max_steps", "no_artifact", "idle_turns", "tool_chars", "recovery_on",
+                              "recovery_attempts", "recovery_steps", "recovery_total", "include_level3",
+                              "acquisition_mode", "card_choice", "site_map_choice", "grounded_choice", "recovery_mode",
+                              "sweep_attempts", "sweep_fields", "sweep_candidates")},
+         "temperature": None, "max_tokens": 0, "data_source": "auto",
+         **{f"effort_{phase}": effort_default(secret, phase) for phase, _ in EFFORT_PHASES}}
+    v = {k: clamp(k, x) if isinstance(x, (int, float)) and not isinstance(x, bool) else x for k, x in v.items()}
+    v.update(edits)
+    prices = pricing_defaults(v["model_id"], secret)
+    return assemble_settings(
+        model_id=v["model_id"], finalizer_model_id=v["finalizer_model_id"], base_url=g["base_url"],
+        chat_path=g["chat_path"], api_key=secret("GLM_API_KEY"), api_key_from_ui=False,
+        search_backend=v["search_backend"], search_path=g["search_path"], search_engine=v["search_engine"],
+        chat_attempts=v["chat_attempts"], search_attempts=v["search_attempts"], chat_timeout=v["chat_timeout"],
+        workers=v["workers"], chat_limits=chat_limits_for(controller, v["model_id"], v["finalizer_model_id"]),
+        search_limit=clamp("search_limit", search_limit_default(controller)), max_steps=v["max_steps"],
+        no_artifact=v["no_artifact"], idle_turns=v["idle_turns"], tool_chars=v["tool_chars"],
+        recovery_on=v["recovery_on"], recovery_attempts=v["recovery_attempts"], recovery_steps=v["recovery_steps"],
+        recovery_total=v["recovery_total"], include_level3=v["include_level3"], temperature=v["temperature"],
+        max_tokens=v["max_tokens"], efforts={phase: v[f"effort_{phase}"] for phase, _ in EFFORT_PHASES},
+        extra_raw=a["extra_raw"], acquisition_mode=v["acquisition_mode"], card_choice=v["card_choice"],
+        site_map_choice=v["site_map_choice"], grounded_choice=v["grounded_choice"], recovery_mode=v["recovery_mode"],
+        sweep_attempts=v["sweep_attempts"], sweep_fields=v["sweep_fields"], sweep_candidates=v["sweep_candidates"],
+        pricing=pricing_from(prices, edits.get("price_in", prices["input_per_mtok"]),
+                             edits.get("price_out", prices["output_per_mtok"]),
+                             edits.get("price_search", prices["web_search_per_call"])),
+        data_source=v["data_source"], dsn=dsn_default(secret), env_overrides=env_overrides(secret))
+
+
+def test_settings_from_env_equal_the_untouched_sidebar(data_root, monkeypatch):
     for name, value in {"GLM_FINALIZER_MODEL": "glm-5.3", "PRIMARY_RESEARCH_MAX_TURNS": "9",
                         "GLM_PRICE_INPUT_PER_MTOK": "0.7", "GLM_EXTRA_BODY": '{"x": 1}', "SEARCH_BACKEND": "glm",
                         "GLM_RECOVERY_REASONING_EFFORT": "medium", "DOCUMENT_SWEEP_MAX_FIELDS": "20",
                         "BATCH_MAX_WORKERS": "3", "GLM_CHAT_TIMEOUT_S": "300"}.items():
         monkeypatch.setenv(name, value)
-
-    def script():
-        import dataclasses
-        import os
-
-        import streamlit as st
-
-        from src.concurrency import ConcurrencyController
-        from src.ui.settings_panel import render_settings
-
-        def secret(name):
-            return os.environ.get(name) or ""
-
-        settings = render_settings(secret, ConcurrencyController.from_env(secret), allow_ui_key=False)
-        st.session_state["settings"] = dataclasses.asdict(settings)
-
-    app = AppTest.from_function(script, default_timeout=60)
-    app.run()
-    assert not app.exception, app.exception
     from src.concurrency import ConcurrencyController
     from src.run_settings import settings_from_env
 
-    api = dataclasses.asdict(settings_from_env(env_secret, ConcurrencyController.from_env(env_secret)))
-    assert app.session_state["settings"] == api
+    controller = ConcurrencyController.from_env(env_secret)
+    api = dataclasses.asdict(settings_from_env(env_secret, controller))
+    assert api == dataclasses.asdict(sidebar_settings(env_secret, controller))
     assert api["agent_overrides"]["max_steps"] == 9 and api["workers"] == 3 and api["chat_timeout"] == 300.0
     assert set(api["chat_limits"]) == {"glm-5.3-flash", "glm-5.3"} and api["pricing"]["input_per_mtok"] == 0.7
+    # an env value outside a widget's range is clamped into it, as the sidebar's widgets required
+    monkeypatch.setenv("BATCH_MAX_WORKERS", "500")
+    assert settings_from_env(env_secret, controller).workers == 50
 
 
 # --- framework independence and MCP ----------------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -35,6 +36,38 @@ class RedactingFilter(logging.Filter):
             record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
             record.exc_info = None
         return True
+
+
+_MCP_PATH = re.compile(r"(?i)(/mcp/)[^\s?#\"]+")
+
+
+def redact_path(text: str) -> str:
+    """A request line / path as it may be logged: configured secrets removed and the /mcp/<token> segment hidden
+    (the MCP's secret is its URL path)."""
+    return redact(_MCP_PATH.sub(r"\1[redacted]", text))
+
+
+class ServerLogRedactingFilter(logging.Filter):
+    """Uvicorn's records keep their args for its own formatters (the access log formats (client, method, path,
+    version, status)); the message and every string arg are scrubbed in place."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact_path(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_path(a) if isinstance(a, str) else a for a in record.args)
+        if record.exc_info:
+            record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+            record.exc_info = None
+        return True
+
+
+def redact_server_logs() -> None:
+    """Idempotent: scrub secrets out of the web server's own loggers (uvicorn access and error logs)."""
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, ServerLogRedactingFilter) for f in logger.filters):
+            logger.addFilter(ServerLogRedactingFilter())
 
 
 def configure_logging() -> logging.Logger:

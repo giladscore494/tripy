@@ -7,7 +7,6 @@ import pytest
 
 from src import binding_replay as R, diagnostics as D
 from src.storage.run_log import RunLog, read_events
-from src.ui import diagnostics_view
 from test_binding_v3 import replay_fixture
 
 
@@ -78,12 +77,3 @@ def test_lazy_stale_summary_is_recomputed(tmp_path):
     old['code_version'] = 'stale'
     (folder / R.SUMMARY_FILE).write_text(json.dumps(old))
     assert D.load_vehicle_diagnostics(folder)['binding_replay']['code_version'] == R.code_version()
-
-
-def test_binding_replay_ui_exception_is_never_silent(monkeypatch, tmp_path):
-    errors = []
-    monkeypatch.setattr(diagnostics_view, '_render_binding_replay',
-                        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('synthetic UI failure')))
-    monkeypatch.setattr(diagnostics_view.st, 'error', errors.append)
-    diagnostics_view.render_binding_replay(tmp_path, tmp_path, key='forced')
-    assert len(errors) == 1 and 'RuntimeError: synthetic UI failure' in errors[0]

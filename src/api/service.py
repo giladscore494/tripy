@@ -25,6 +25,7 @@ from ..fields import normalize_field_name
 from ..mcp_server import safety
 from ..mcp_server.safety import ToolInputError
 from ..mcp_server.tools import Observer
+from ..presentation import run_views
 from ..runstate.failures import explain
 from ..runstate.model import COMPLETED, STATUS_LABELS, TERMINAL_STATUSES, RunRecord
 from ..runstate.report import elapsed_s, vehicle_report
@@ -72,7 +73,8 @@ def summary(record: RunRecord, executing: set[str]) -> dict:
             "record_ids": record.record_ids, "created_at": record.created_at, "updated_at": record.updated_at,
             "started_at": record.started_at, "finished_at": record.finished_at, "active": record.active,
             "executing": record.run_id in executing, "cancel_requested": record.cancel_requested,
-            "legacy": record.legacy, "elapsed_s": round(duration, 1) if duration is not None else None}
+            "legacy": record.legacy, "elapsed_s": round(duration, 1) if duration is not None else None,
+            "resolved_fields_text": run_views.resolved_text(record)}
 
 
 def vehicles_of(record: RunRecord) -> list[tuple[str, str]]:
@@ -112,7 +114,7 @@ def _result(ctx: ApiContext, record: RunRecord, record_id: str) -> dict | None:
 
 
 def _failure(record: RunRecord, record_id: str, view: dict, result: dict | None) -> dict | None:
-    """app.py `_failure_of`: the failure card of one vehicle (None while active or when it succeeded)."""
+    """The failure card of one vehicle (None while active or when it succeeded)."""
     if record.active:
         return None
     vstate = (record.vehicles.get(record_id) or {}).get("status")
@@ -130,13 +132,14 @@ def vehicle_state(ctx: ApiContext, record: RunRecord, record_id: str, title: str
     report = None
     if not record.active:
         report = ((record.report or {}).get("vehicles") or {}).get(record_id) or vehicle_report(result, pipeline)
+    notices = run_views.result_notices(result, view.get("counters") or {}, failure is not None)
     return {"record_id": record_id, "title": title, "status": durable.get("status") or record.status,
             "engine_status": durable.get("engine_status") or view.get("engine_status"),
             "stage": durable.get("stage"), "error": durable.get("error"), "pipeline": pipeline_view(view),
             "failure": None if failure is None else {k: failure.get(k) for k in (
                 "code", "title", "stage", "stage_label", "reason", "preserved", "actions", "technical")},
             "result_available": bool(result and result.get("output") is not None),
-            "report": report}
+            "report": report, "notices": notices, "_view": view}
 
 
 def progress_counts(vehicles: list[dict]) -> dict:
@@ -147,7 +150,9 @@ def progress_counts(vehicles: list[dict]) -> dict:
 
 def run_detail(ctx: ApiContext, record: RunRecord) -> dict:
     vehicles = [vehicle_state(ctx, record, rid, title) for rid, title in vehicles_of(record)]
+    views = [v.pop("_view") for v in vehicles]
     return {**summary(record, executing_ids(ctx)), "request": dict(record.request or {}),
+            "status_panel": [[label, value] for label, value in run_views.status_panel_rows(record, views)],
             "heartbeat_at": record.heartbeat_at, "error": record.error, "notes": list(record.notes),
             "jobs": list(record.jobs), "terminal": record.terminal, "completed": record.status == COMPLETED,
             "progress": progress_counts(vehicles), "vehicles": vehicles}
@@ -214,7 +219,9 @@ def vehicle_result(result: dict, title: str) -> dict:
             "summary": (output or {}).get("summary"), "fields": _result_fields(result),
             "conflicts": list((output or {}).get("conflicts") or []),
             "additional_findings": list((output or {}).get("additional_findings") or []),
-            "evidence_admission": result.get("evidence_admission")}
+            "evidence_admission": result.get("evidence_admission"),
+            "output_source": result.get("output_source") or ("model" if output is not None else None),
+            "no_output_message": None if output is not None else run_views.no_output_message(result)}
 
 
 def run_results(ctx: ApiContext, record: RunRecord) -> dict:
@@ -223,6 +230,8 @@ def run_results(ctx: ApiContext, record: RunRecord) -> dict:
     titles = dict(vehicles_of(record))
     results = load_runs(ctx.runs_dir, record.run_id, cache=ctx.manager.cache)
     return {"run_id": record.run_id, "available": True, "reason": None,
+            "output_source_caption": run_views.output_source_caption(results)
+            if any(r.get("output") is not None for r in results) else None,
             "vehicles": [safety.clip(vehicle_result(r, titles.get(str(r.get("record_id")), str(r.get("record_id")))),
                                      STRING_CLIP) for r in results]}
 

@@ -207,6 +207,27 @@ function joined(value: unknown): string {
   return Array.isArray(value) ? value.map(String).join(", ") : str(value) ?? "";
 }
 
+/** The column the item was read from: its header and (effective) column identity, else the candidate match count. */
+function columnLabel(item: JsonObject): string {
+  const parts = [...new Set([str(item.column_header), str(item.effective_column_identity) ?? str(item.column_identity)]
+    .filter(Boolean))];
+  if (parts.length) return parts.join(" · ");
+  const count = Number(item.candidate_match_count);
+  return count ? `${count} candidates${item.candidate_match_ambiguous ? " (ambiguous)" : ""}` : "—";
+}
+
+/** "table:0:col:2 target (AWD 486 כ"ס) catalog 2 → 1" (the Document Variant Map region that proves the level). */
+function regionLabel(region: JsonObject): string {
+  if (!Object.keys(region).length) return "";
+  const before = Array.isArray(region.candidates_before) ? region.candidates_before : [];
+  const after = Array.isArray(region.candidates_after) ? region.candidates_after : [];
+  const parts = [str(region.region_id), str(region.status)];
+  if (str(region.identity_text)) parts.push(`(${String(region.identity_text).slice(0, 60)})`);
+  if (before.length || after.length) parts.push(`catalog ${before.length} → ${after.length}`);
+  if (Array.isArray(region.blocked_by) && region.blocked_by.length) parts.push(`blocked: ${region.blocked_by.join(",")}`);
+  return parts.filter(Boolean).join(" ");
+}
+
 export function BindingReplayView({ data, onOpenDocument }: { data: BindingReplay; onOpenDocument?: (docId: string) => void }) {
   const [field, setField] = useState("");
   const [kind, setKind] = useState("");
@@ -229,6 +250,11 @@ export function BindingReplayView({ data, onOpenDocument }: { data: BindingRepla
         <Stat label="Rejected now" value={formatValue(vehicle.rejected_now)} tone={Number(vehicle.rejected_now) ? "warn" : undefined} />
         <Stat label="Missing documents" value={formatValue(vehicle.missing_documents)} />
       </div>
+      <p className="text-xs text-ink-muted">
+        Rose by the year rules: {formatValue(vehicle.evidence_rose_by_year_rules)}
+        {Object.keys(obj(vehicle.gap_counts)).length > 0 && <> · Blocking dimensions now: {Object.entries(obj(vehicle.gap_counts))
+          .sort((a, b) => Number(b[1]) - Number(a[1])).map(([k, v]) => `${k} ${String(v)}`).join(", ")}</>}
+      </p>
       {names.length > 0 && (
         <div className="table-wrap max-h-80">
           <table className="data-table">
@@ -267,7 +293,7 @@ export function BindingReplayView({ data, onOpenDocument }: { data: BindingRepla
       {items.length ? (
         <div className="table-wrap max-h-[40rem]">
           <table className="data-table">
-            <thead><tr><th>Field</th><th>Value</th><th>Kind</th><th>Recorded</th><th>Now</th><th>Would be ok</th><th>Basis now</th><th>Flags / vetoes</th><th>Source</th></tr></thead>
+            <thead><tr><th>Field</th><th>Value</th><th>Kind</th><th>Column header / identity</th><th>Recorded</th><th>Now</th><th>Would be ok</th><th>Basis now</th><th>Variant map region · year</th><th>Flags / vetoes</th><th>Source</th></tr></thead>
             <tbody>
               {items.map((item, i) => {
                 const now = item.missing_document ? "missing document" : str(item.replay_error) ?? str(item.binding_level_now) ?? "—";
@@ -280,12 +306,14 @@ export function BindingReplayView({ data, onOpenDocument }: { data: BindingRepla
                     <td><Mono className="text-ink">{String(item.field ?? "")}</Mono></td>
                     <td className="min-w-[7rem]"><Dir className="text-ink">{formatValue(item.value)}</Dir></td>
                     <td><Badge>{String(item.kind ?? "")}</Badge></td>
+                    <td className="text-xs text-ink-muted"><Dir>{columnLabel(item)}</Dir></td>
                     <td className="text-xs">{item.kind === "evidence" ? str(item.binding_level_recorded) ?? "—" : "candidate"}
                       {str(item.variant_match_recorded) && <span className="block text-ink-faint">{str(item.variant_match_recorded)}</span>}</td>
                     <td className="text-xs text-ink">{now}
                       {str(item.variant_match_now) && <span className="block text-ink-faint">{str(item.variant_match_now)}</span>}</td>
                     <td>{item.would_be_ok ? <Badge tone="ok">yes</Badge> : <Badge>no</Badge>}</td>
                     <td className="text-xs text-ink-muted">{[str(item.binding_basis_now), joined(item.binding_rules_now)].filter(Boolean).join(" · ") || "—"}</td>
+                    <td className="text-xs text-ink-muted"><Dir>{[regionLabel(obj(item.variant_map_region_now)), str(obj(item.year_context).status)].filter(Boolean).join(" · ") || "—"}</Dir></td>
                     <td className="min-w-[9rem] text-xs text-warn">{flags || <span className="text-ink-faint">—</span>}</td>
                     <td className="max-w-[14rem] text-xs">
                       <ExternalLink href={str(item.source_url)} />

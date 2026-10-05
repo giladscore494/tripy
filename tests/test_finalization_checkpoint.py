@@ -16,7 +16,7 @@ from src.agent import AgentConfig
 from src.recovery import finalize_existing_run, plan_recovery
 from src.storage.run_loader import load_runs
 from src.storage.run_log import read_events, write_batch
-from src.ui import labels_he as he
+from src.presentation import labels_he as he
 
 
 class ProcessDied(BaseException):
@@ -94,8 +94,10 @@ def test_runs_that_need_no_finalizer_write_no_checkpoint(tmp_path, make_ctx):
     assert "finalization_checkpoint_written" not in [e["kind"] for e in events] and client.calls["finalization"] == 0
 
 
-def test_streamlit_shows_the_hebrew_pending_message(tmp_path, make_ctx, monkeypatch):
-    from streamlit.testing.v1 import AppTest
+def test_the_api_shows_the_hebrew_pending_message(tmp_path, make_ctx, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.api.app import create_app
 
     ctx = make_ctx({})
     client = PhaseGLM([say({"summary": "primary", "fields": {}})])
@@ -116,11 +118,11 @@ def test_streamlit_shows_the_hebrew_pending_message(tmp_path, make_ctx, monkeypa
     monkeypatch.setenv("MILO_RUNS_DIR", str(dead))
     monkeypatch.setenv("MILO_CACHE_DIR", str(tmp_path / "cache2"))
     monkeypatch.delenv("GLM_API_KEY", raising=False)
-    app = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=60)
-    app.run()
-    assert not app.exception, app.exception
-    infos = " ".join(i.value for i in app.info)
+    with TestClient(create_app(mount_mcp=False, frontend=None)) as api:
+        tech = api.get("/api/runs/b/vehicles/85095/technical").json()
+    infos = " ".join(n["text"] for n in tech["notices"])
     assert "המחקר הושלם וכל הראיות נשמרו" in infos and "ניתן להריץ Finalizer מחדש" in infos
+    assert tech["status"] == "finalization_pending" and "--finalize-existing" in tech["notices"][0]["detail"]
 
 
 # --- the write boundary: atomic, durable, fail closed ----------------------------------------------------

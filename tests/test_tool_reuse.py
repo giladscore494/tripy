@@ -16,7 +16,7 @@ from src.context import REPLAY_SAFE_TOOLS, ResearchTracker, call_signature
 from src.field_recovery import attempted_operations
 from src.storage.run_loader import load_runs
 from src.storage.run_log import RunLog, read_events
-from src.ui import run_view
+from src.runstate.live_state import feed_line
 
 PAGE = "https://www.cadillac.example/escalade-iq"
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "year": 2025,
@@ -350,13 +350,13 @@ def test_cadillac_trace_regression_reuse_and_dynamic_queue(tmp_path, make_ctx, c
 
     # Live feed: recovery rows name field + attempt; model turns too, while usage grouping is unchanged.
     tool_event = next(e for e in events if e["kind"] == "tool_call" and e.get("phase") == "field_recovery")
-    assert run_view.tool_call_line(tool_event).startswith("🔧 battery_gross_kwh · attempt 1 · step 2\n   ")
+    assert feed_line("tool_call", tool_event).startswith("🔧 battery_gross_kwh · attempt 1 · step 2\n   ")
     turn_event = next(e for e in events if e["kind"] == "model_response" and e.get("phase") == "field_recovery")
     assert turn_event["phase"] == "field_recovery" and (turn_event["field"], turn_event["attempt"]) == \
         ("battery_gross_kwh", 1)
-    assert run_view.model_turn_line(turn_event).startswith(
+    assert feed_line("model_response", turn_event).startswith(
         "🧠 field_recovery · battery_gross_kwh · attempt 1/2 · turn 1/4 · 3 tool call(s) · tokens 120")
-    assert run_view.tool_call_line({"name": "search_web", "step": 3, "arguments": "{}"}).startswith("🔧 step 3 · ")
+    assert feed_line("tool_call", {"name": "search_web", "step": 3, "arguments": "{}"}).startswith("🔧 step 3 · ")
     assert result["usage_field_recovery"]["model_calls"] == 7 and result["usage_research"]["model_calls"] == 2
 
     # Incomplete-run reconstruction still counts the replays from events.

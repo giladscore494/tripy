@@ -1,5 +1,5 @@
 """The HTTP API the React workspace adds on top of PR #45: the typed per-run settings contract (run_settings is the one
-source of truth, aligned with the Streamlit sidebar), A/B series over the RunManager, documents, Binding Replay and
+source of truth, held to the former dashboard sidebar's defaults), A/B series over the RunManager, documents, Binding Replay and
 run diagnostics over the read-only MCP implementations. No network: runs execute through the real RunManager with the
 scripted research function of tests/test_api.py."""
 
@@ -15,9 +15,9 @@ import pytest
 from src.api.app import create_app
 from src.api.deps import env_secret
 from src.jobs import manager as JM
-from src.run_profiles import ARMS, BASELINE, TREATMENT, TREATMENT_CARD, code_default
+from src.run_profiles import ARMS, BASELINE, TREATMENT, TREATMENT_CARD, build_agent_config, code_default
 from src.run_settings import (BOUNDS, RUN_OVERRIDES, pinned_by_named_profiles, run_setting_defaults,
-                              settings_for_run, settings_from_env, validate_overrides)
+                              build_research_request, settings_for_run, settings_from_env, validate_overrides)
 from test_api import (ACCESS, LEAKS, OTHER, RECORD, RUN, SECRETS, VEHICLE, client, ctx, data_root, gate,  # noqa: F401
                       make_context, scripted_research, wait_terminal)
 
@@ -84,53 +84,21 @@ def test_settings_for_run_without_overrides_is_the_untouched_sidebar(data_root):
         dataclasses.asdict(settings_from_env(env_secret, controller))
 
 
-def test_api_overrides_equal_the_same_edits_in_the_streamlit_sidebar(data_root, monkeypatch):
-    """The same per-run edits made in the dashboard's Advanced settings and passed to settings_for_run produce the
-    identical settings object (including the model-dependent price defaults and in-flight limits)."""
-    from streamlit.testing.v1 import AppTest
-
+def test_api_overrides_equal_the_same_edits_in_the_sidebar(data_root, monkeypatch):
+    """The same per-run edits applied to the former sidebar's defaults (test_api.sidebar_settings) and passed to
+    settings_for_run produce the identical settings object (including the model-dependent price defaults and
+    in-flight limits)."""
     from src.concurrency import ConcurrencyController
+    from test_api import sidebar_settings
 
     monkeypatch.setenv("GLM_FINALIZER_MODEL", "glm-5.3")
-
-    def script():
-        import dataclasses
-        import os
-
-        import streamlit as st
-
-        from src.concurrency import ConcurrencyController
-        from src.ui.settings_panel import render_settings
-
-        def secret(name):
-            return os.environ.get(name) or ""
-
-        settings = render_settings(secret, ConcurrencyController.from_env(secret), allow_ui_key=False)
-        st.session_state["settings"] = dataclasses.asdict(settings)
-
-    app = AppTest.from_function(script, default_timeout=60)
-    app.run()
-    edits = {"cfg_model": ("text_input", "glm-5.1"), "cfg_workers": ("number_input", 7),
-             "cfg_turns": ("slider", 12), "cfg_recovery": ("checkbox", False), "cfg_l3": ("checkbox", True),
-             "cfg_maxtok": ("number_input", 4096), "cfg_effort_recovery": ("selectbox", "medium"),
-             "cfg_acq_mode": ("selectbox", "legacy"), "cfg_card": ("selectbox", "on"),
-             "cfg_recovery_mode": ("selectbox", "cluster"), "cfg_sweep_fields": ("number_input", 30),
-             "cfg_source": ("selectbox", "snapshot"), "cfg_backend": ("selectbox", "duckduckgo"),
-             "cfg_timeout": ("number_input", 600), "price_search": ("number_input", 0.02)}
-    for key, (kind, value) in edits.items():
-        getattr(app, kind)(key=key).set_value(value)
-    app.run()
-    app.checkbox(key="cfg_usetemp").check()
-    app.run()
-    app.slider(key="cfg_temp").set_value(0.3)
-    app.run()
-    assert not app.exception, app.exception
     overrides = {"model_id": "glm-5.1", "workers": 7, "max_steps": 12, "recovery_on": False, "include_level3": True,
                  "max_tokens": 4096, "effort_recovery": "medium", "acquisition_mode": "legacy", "card_choice": "on",
                  "recovery_mode": "cluster", "sweep_fields": 30, "data_source": "snapshot",
                  "search_backend": "duckduckgo", "chat_timeout": 600, "price_search": 0.02, "temperature": 0.3}
-    api = dataclasses.asdict(settings_for_run(env_secret, ConcurrencyController.from_env(env_secret), overrides))
-    assert app.session_state["settings"] == api
+    controller = ConcurrencyController.from_env(env_secret)
+    api = dataclasses.asdict(settings_for_run(env_secret, controller, overrides))
+    assert api == dataclasses.asdict(sidebar_settings(env_secret, controller, **overrides))
     assert api["model_id"] == "glm-5.1" and set(api["chat_limits"]) == {"glm-5.1", "glm-5.3"}
     assert api["pricing"]["source"] == "edited in UI" and api["agent_overrides"]["temperature"] == 0.3
 
@@ -274,7 +242,8 @@ def test_series_idempotency_one_at_a_time_and_cancellation(client, ctx, gate):
     {"record_ids": [VEHICLE], "repeats": 6, "arms": [BASELINE]}, {"record_ids": [VEHICLE], "repeats": 1, "arms": []},
     {"record_ids": [VEHICLE], "repeats": 1, "arms": ["production"]},
     {"record_ids": [VEHICLE], "repeats": "2", "arms": [BASELINE]},
-    {"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE], "settings": {"workers": 2}},
+    {"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE], "settings": {"api_key": "sk-x"}},
+    {"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE], "settings": {"base_url": "http://evil"}},
     {"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE], "arm_configs": {BASELINE: {}}}])
 def test_invalid_series_requests_are_422(client, ctx, body):
     response = client.post("/api/series", json=body)
@@ -440,8 +409,160 @@ def test_the_openapi_schema_types_the_new_contracts(data_root):
     assert overrides["additionalProperties"] is False
     assert set(overrides["properties"]) == {o.name for o in RUN_OVERRIDES}
     series = schema["components"]["schemas"]["StartSeries"]
-    assert set(series["properties"]) == {"record_ids", "repeats", "arms", "idempotency_key"}
+    assert set(series["properties"]) == {"record_ids", "repeats", "arms", "idempotency_key", "settings"}
+    assert series["additionalProperties"] is False
+    assert "RunSettingsOverrides" in json.dumps(series["properties"]["settings"])     # the same typed contract
     for path in ("/api/run-settings", "/api/series", "/api/series/{series_id}", "/api/series/{series_id}/cancel",
                  "/api/runs/{run_id}/documents", "/api/documents/{doc_id}/text", "/api/documents/{doc_id}/structure",
                  "/api/runs/{run_id}/binding-replay", "/api/runs/{run_id}/diagnostics"):
         assert path in schema["paths"], path
+
+
+# --- A/B series: the same typed per-run settings as a run (the former A/B launcher used the Advanced settings) -------
+
+@pytest.fixture
+def capture_series(ctx, monkeypatch):
+    seen = []
+    real = ctx.manager.start_series
+
+    def start_series(request):
+        seen.append(request)
+        return real(request)
+
+    monkeypatch.setattr(ctx.manager, "start_series", start_series)
+    return seen
+
+
+def test_series_settings_become_the_template_and_each_arm_keeps_its_profile(client, ctx, gate, capture_series):
+    gate.set()
+    ctx.manager.series_poll_s = 0.02
+    overrides = {"model_id": "glm-5.1", "workers": 3, "search_backend": "duckduckgo", "data_source": "snapshot",
+                 "max_steps": 12, "price_in": 0.9}
+    response = client.post("/api/series", json={"record_ids": [VEHICLE], "repeats": 1, "arms": [TREATMENT, BASELINE],
+                                                "idempotency_key": "ab-settings", "settings": overrides})
+    assert response.status_code == 201, response.text
+    assert response.json()["settings_overridden"] == sorted(overrides)
+    request = capture_series[0]
+    settings = settings_for_run(env_secret, ctx.manager.controller, overrides)
+    expected = JM.SeriesRequest(
+        template=build_research_request(settings, env_secret, [ctx.catalog.by_id[VEHICLE]], "A/B · 1 vehicle(s)",
+                                        "Benchmark A/B", None, "production"),
+        arm_configs={arm: settings.agent_config(env_secret, arm) for arm in (BASELINE, TREATMENT)}, repeats=1,
+        label="A/B · 1 vehicle(s)", idempotency_key="series:ab-settings")
+    assert dataclasses.asdict(request) == dataclasses.asdict(expected)
+    assert request.template.settings.model == "glm-5.1" and request.template.workers == 3
+    assert request.template.tool_cfg.search_backend == "duckduckgo" and request.template.data_source == "snapshot"
+    assert request.template.pricing["input_per_mtok"] == 0.9
+    # a named arm profile still pins its experiment settings: max_steps is pinned, so the arm keeps its own value
+    assert request.arm_configs[BASELINE].run_profile == BASELINE
+    assert request.arm_configs[BASELINE] == build_agent_config(env_secret, settings.agent_overrides, BASELINE)
+    final = wait_series(ctx.manager, response.json()["series_id"])
+    assert final["status"] == JM.SERIES_COMPLETED
+    records = [ctx.manager.get(r) for r in final["run_ids"]]
+    assert all(r.request.get("research_model") == "glm-5.1" for r in records)
+
+
+def test_series_without_settings_use_the_server_configuration(client, ctx, gate, capture_series):
+    gate.set()
+    ctx.manager.series_poll_s = 0.02
+    response = client.post("/api/series", json={"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE]})
+    assert response.status_code == 201 and response.json()["settings_overridden"] == []
+    default = settings_from_env(env_secret, ctx.manager.controller)
+    assert dataclasses.asdict(capture_series[0].template.settings) == dataclasses.asdict(default.glm_settings())
+    wait_series(ctx.manager, response.json()["series_id"])
+
+
+@pytest.mark.parametrize("settings,message", [({"workers": 51}, "between"), ({"acquisition_mode": "turbo"}, "one of"),
+                                              ({"model_id": "bad id!"}, "model id")])
+def test_invalid_series_settings_are_422_and_start_nothing(client, ctx, settings, message):
+    response = client.post("/api/series", json={"record_ids": [VEHICLE], "repeats": 1, "arms": [BASELINE],
+                                                "settings": settings})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] in ("invalid_settings", "invalid_request")
+    assert not ctx.manager.list_series()
+
+
+# --- technical views, benchmark metrics, multi-run exports, cache, reachability -------------------------------------
+
+def test_a_vehicles_technical_sections(client):
+    tech = client.get(f"/api/runs/{RUN}/vehicles/{RECORD}/technical")
+    assert tech.status_code == 200, tech.text
+    body = tech.json()
+    assert body["available"] and body["record_id"] == RECORD
+    for key in ("notices", "raw", "partial_research", "consistency_checks", "tool_calls", "model_responses",
+                "level15_input", "config", "api_attempts", "field_recovery", "candidates", "brief", "diagnostics"):
+        assert key in body, key
+    assert body["diagnostics"]["turns"] is not None and isinstance(body["brief"]["acquisition"], list)
+    assert body["partial_research"]["target_status"].keys() == {"no_evidence", "unresolved", "level3"}
+    text = json.dumps(body)
+    assert not any(leak in text for leak in LEAKS)
+    assert client.get(f"/api/runs/{RUN}/vehicles/nope/technical").status_code == 404
+    assert client.get(f"/api/runs/nope/vehicles/{RECORD}/technical").status_code == 404
+
+
+def test_live_view_and_technical_view_of_an_active_run(client, ctx, gate):
+    run_id = client.post("/api/runs", json={"scope": "one", "record_id": VEHICLE}).json()["run_id"]
+    tech = client.get(f"/api/runs/{run_id}/vehicles/{VEHICLE}/technical").json()
+    assert tech["available"] is False and "active" in tech["reason"]
+    live = client.get(f"/api/runs/{run_id}/live").json()
+    assert live["active"] and live["columns"][0] == "קבוצה" and isinstance(live["lines"], list)
+    assert all(len(row) == len(live["columns"]) for row in live["fields"])
+    assert client.get(f"/api/runs/{run_id}/benchmark").json()["available"] is False
+    gate.set()
+    wait_terminal(ctx.manager, run_id)
+
+
+def test_benchmark_tab_metrics(client):
+    bench = client.get(f"/api/runs/{RUN}/benchmark").json()
+    assert bench["available"] and bench["vehicles"] == 1 and bench["aggregate"]["vehicles"] == 1
+    assert bench["columns"][0] == "vehicle" and set(bench["rows"][0]) == set(bench["columns"])
+    from src.presentation.run_views import PER_VEHICLE_COLS
+    assert all(c in PER_VEHICLE_COLS for c in bench["columns"])
+    batches = client.get("/api/benchmark/batches").json()
+    assert isinstance(batches["batches"], list)
+
+
+def test_multi_run_benchmark_exports_are_the_canonical_bytes(client, ctx):
+    from src import diagnostics as D
+    from src import exports
+
+    summary = client.get("/api/benchmark/summary", params=[("run_id", RUN), ("run_id", RUN)]).json()
+    assert summary["run_ids"] == [RUN] and summary["vehicles"] == 1 and "benchmark.json" in summary["files"]
+    diags = exports.run_diagnostics(ctx.runs_dir, [RUN])
+    expected = {"benchmark.json": exports.benchmark_json(D.aggregate(diags)),
+                "per_vehicle.csv": exports.per_vehicle_csv(D.aggregate(diags)),
+                "binding_replay_items.jsonl": "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
+                                                      for r in D.binding_replay_rows(diags))}
+    for name, text in expected.items():
+        response = client.get(f"/api/benchmark/export/{name}", params={"run_id": RUN})
+        assert response.status_code == 200, name
+        assert response.content == text.encode("utf-8"), name
+        assert "attachment" in response.headers["content-disposition"]
+    gaps = client.get("/api/benchmark/export/parser_gaps.jsonl", params={"run_id": RUN})
+    assert gaps.status_code in (200, 404)
+    assert client.get("/api/benchmark/export/benchmark.json").json()["error"]["code"] == "run_id_required"
+    assert client.get("/api/benchmark/export/benchmark.json", params={"run_id": "nope"}).status_code == 404
+    assert client.get("/api/benchmark/export/series.json", params={"run_id": RUN}).status_code == 404
+
+
+def test_cache_listing_and_reachability(client, monkeypatch):
+    docs = client.get("/api/cache/documents", params={"limit": 2}).json()
+    assert docs["total"] >= 1 and docs["returned"] <= 2 and "document_hits" in docs["stats"]
+    assert {"document_id", "url", "status"} <= set(docs["documents"][0])
+    from src.api.routes import technical
+    calls = []
+    monkeypatch.setattr(technical, "endpoint_reachable", lambda url: calls.append(url) or (True, "HTTP 404"))
+    reach = client.get("/api/config/reachability").json()
+    assert reach == {"checked": True, "reachable": True, "detail": "HTTP 404"} and len(calls) == 1
+    assert SECRETS["GLM_API_KEY"] not in json.dumps(reach)
+
+
+def test_detail_carries_status_totals_and_history_carries_resolved_fields(client):
+    detail = client.get(f"/api/runs/{RUN}").json()
+    labels = [row[0] for row in detail["status_panel"]]
+    assert labels[:2] == ["Run", "Status"] and "Resolved fields" in labels and "Model calls" in labels
+    assert "notices" in detail["vehicles"][0]
+    run = next(r for r in client.get("/api/runs").json()["runs"] if r["run_id"] == RUN)
+    assert "resolved_fields_text" in run
+    results = client.get(f"/api/runs/{RUN}/results").json()
+    assert "output_source_caption" in results and "no_output_message" in results["vehicles"][0]

@@ -21,7 +21,7 @@ from src.phase_settings import for_phase
 from src.recovery import finalize_existing_run
 from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
-from src.ui.settings_panel import merge_effort_settings
+from src.run_settings import merge_effort_settings
 
 PHASES = ("research", "document_sweep", "field_recovery", "finalization")
 DEFAULT_EFFORTS = {"research": "high", "document_sweep": "low", "field_recovery": "low", "finalization": "low"}
@@ -489,7 +489,7 @@ def test_coverage_counts_only_values_backed_by_existing_evidence_ids():
 
 
 def test_results_caption_names_the_output_source():
-    from src.ui.run_view import output_source_caption
+    from src.presentation.run_views import output_source_caption
 
     assert "admitted evidence" in output_source_caption([{"output": {}, "output_source": "code"}])
     assert "exactly as the model returned" in output_source_caption([{"output": {}}])     # an old result

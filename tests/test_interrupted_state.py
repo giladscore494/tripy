@@ -1,11 +1,10 @@
-"""Interrupted runs: clean Streamlit-control classification, current field state recomputed from ALL
+"""Interrupted runs: clean script-control (UI stop) classification, current field state recomputed from ALL
 events, and the strict "no stored evidence" vs operational "unresolved" split.
 Scripted GLM / fake HTTP only: no network, no paid calls."""
 
 import json
 
 import pytest
-from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
 from conftest import labelled_quote, seed_evidence_sources
 from test_run_config import PostResponse, ScriptedPostSession, chat_reply, tool_call
@@ -19,7 +18,11 @@ from src.storage.cache import DocumentCache
 from src.storage.run_loader import load_runs
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
-from src.ui.run_view import target_status_lines
+from src.presentation.run_views import target_status_lines
+
+
+class StopException(BaseException):
+    """A UI's script-control stop (a BaseException, not an Exception): what a UI callback may raise to abort."""
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "government_record_id": "85095"},
            "engine_drivetrain": {"propulsion_normalized": "battery_electric", "power_hp": 750}}
@@ -53,7 +56,7 @@ def seeded(make_ctx, script):
 
 
 class StopsWhenScriptEnds(ScriptedGLM):
-    """Raises Streamlit's StopException (a BaseException) on the first call past the script."""
+    """Raises a UI StopException (a BaseException) on the first call past the script."""
 
     def chat(self, messages, tools=None, **kwargs):
         if not self.messages:
@@ -151,7 +154,7 @@ def test_stop_raised_by_the_ui_callback_is_not_swallowed(tmp_path, make_ctx):
             seen_after_stop.append(kind)
         if kind == "evidence" and event["evidence"]["field"] == "gear_count":
             state["stopped"] = True
-            raise StopException()                            # Streamlit raises from the UI update
+            raise StopException()                            # a UI raises from its update callback
 
     log = RunLog(tmp_path / "runs", "b", "85095", listener=listener)
     client = ScriptedGLM(list(SCRIPT) + [say({"field": "cargo_volume_l", "status": "unresolved"})])

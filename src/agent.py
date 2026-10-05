@@ -39,7 +39,7 @@
 
 The finalizer never receives the research conversation. Every started run leaves
 a result.json, including research failures, finalization failures and
-interrupts (Ctrl+C / Streamlit stop), with whatever was collected.
+interrupts (Ctrl+C / a UI stop), with whatever was collected.
 
 The loop is deliberately permissive: the model chooses tools and sources and
 stores evidence. The code keeps the conversation within technical limits, notices
@@ -3745,7 +3745,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     """Research one vehicle, retry failed requested fields, finalize from a compact bundle, persist.
 
     `persist(result)` runs on EVERY exit path (default: write result.json). On
-    KeyboardInterrupt (or another BaseException such as a Streamlit stop) the
+    KeyboardInterrupt (or another BaseException such as a UI stop) the
     partial result is persisted first and the exception is re-raised; no further
     model call is made. `cancel_event` (a threading.Event of the batch) requests the same cooperative
     interruption from another thread: BatchCancelled is raised at the next safe point.
@@ -4254,7 +4254,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                         status = "completed" if output is not None else "completed_unparsed"
                     else:
                         status = FINALIZED_STATUS[stop_reason]
-    except BaseException as exc:  # KeyboardInterrupt, Streamlit stop/rerun, SystemExit, BatchCancelled
+    except BaseException as exc:  # KeyboardInterrupt, a UI stop, SystemExit, BatchCancelled
         # A script-control interruption, not a research/API/tool error: stop all model and tool calls (no
         # finalizer), persist everything already completed, rebuild current state from events, re-raise.
         interrupted = exc

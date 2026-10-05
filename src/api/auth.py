@@ -1,7 +1,7 @@
-"""Bearer authentication for /api/*, with the dashboard's access rule (src/access_control.py):
+"""Bearer authentication for /api/*, with the access rule of src/access_control.py:
 
-    not production (TRIPY_ENV / Railway)   open, like the dashboard's gate in local development
-    production, TRIPY_ACCESS_TOKEN unset   503 for every /api route (fails closed, like the dashboard)
+    not production (TRIPY_ENV / Railway)   open (local development)
+    production, TRIPY_ACCESS_TOKEN unset   503 for every /api route (fails closed)
     production, token configured           `Authorization: Bearer <TRIPY_ACCESS_TOKEN>` required, else 401
 
 The comparison is access_control.verify_token (constant time, the token opaque). The token is only ever read from

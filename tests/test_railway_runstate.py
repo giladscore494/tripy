@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.agent import AgentConfig
-from src.app_config import (allow_ui_api_key, blocking_errors, diagnostics, is_production, redact,
+from src.app_config import (blocking_errors, diagnostics, is_production, redact,
                             validate_config)
 from src.jobs.manager import ResearchRequest, RunManager, RunRejected, _StageTracker
 from src.runstate import model as M
@@ -447,17 +447,6 @@ def test_shutdown_interrupts_active_runs(tmp_path):
         manager.start(request(key="late"))
 
 
-def test_shutdown_watcher_reacts_to_the_server_stopping(tmp_path):
-    gate = threading.Event()
-    manager = make_manager(tmp_path, scripted_research(gate))
-    run_id = manager.start(request()).run_id
-    stopping = threading.Event()
-    manager.watch_server_shutdown(is_stopping=stopping.is_set, poll_s=0.02)
-    time.sleep(0.1)
-    stopping.set()
-    assert wait_terminal(manager, run_id).status == M.INTERRUPTED
-
-
 # --- failure explanations --------------------------------------------------------------------------------------
 
 def test_failure_reasons_are_plain_language():
@@ -501,13 +490,10 @@ def test_missing_required_variables_are_reported_precisely(tmp_path):
     assert "GLM_EXTRA_BODY" in problem.detail and "BATCH_MAX_WORKERS" in problem.detail
 
 
-def test_production_never_asks_for_an_api_key_in_the_ui():
+def test_production_is_tripy_env_or_railway():
     assert is_production(env_of({"TRIPY_ENV": "production"}))
     assert is_production(env_of({"RAILWAY_ENVIRONMENT": "production"}))
     assert not is_production(env_of({}))
-    assert not allow_ui_api_key(env_of({"TRIPY_ENV": "production"}))
-    assert allow_ui_api_key(env_of({}))
-    assert allow_ui_api_key(env_of({"TRIPY_ENV": "production", "TRIPY_ALLOW_UI_API_KEY": "true"}))
 
 
 def test_redaction_and_diagnostics_never_leak_secrets():
@@ -521,22 +507,29 @@ def test_redaction_and_diagnostics_never_leak_secrets():
 
 # --- Railway start configuration ---------------------------------------------------------------------------------
 
-def test_railway_start_binds_all_interfaces_on_port():
+def test_railway_starts_one_uvicorn_process_on_port():
     start = (ROOT / "scripts" / "start.sh").read_text()
-    assert "streamlit run app.py" in start and "--server.address=0.0.0.0" in start
-    assert '--server.port="${PORT:-8501}"' in start and "--server.headless=true" in start
+    command = [line for line in start.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    assert "exec uvicorn src.api.app:app \\" in command and "--host 0.0.0.0 \\" in [c.strip() for c in command]
+    assert '--port "${PORT:-8000}"' in start
+    assert "streamlit" not in start.lower() and "--workers" not in "\n".join(command)
+    assert "--reload" not in start and "tripy_server" not in start
     railway = json.loads((ROOT / "railway.json").read_text())
     assert railway["build"]["builder"] == "DOCKERFILE"
     assert railway["deploy"]["startCommand"] == "sh scripts/start.sh"
-    assert railway["deploy"]["healthcheckPath"] == "/_stcore/health"
+    assert railway["deploy"]["healthcheckPath"] == "/health"
+    assert "_stcore" not in json.dumps(railway)
     docker = (ROOT / "Dockerfile").read_text()
     assert 'CMD ["sh", "scripts/start.sh"]' in docker and "TRIPY_DATA_DIR=/data" in docker
+    assert "8501" not in docker and "_stcore" not in docker and "streamlit" not in docker.lower()
+    assert "npm ci" in docker and "npm install" not in docker and "COPY --from=frontend" in docker
     ignored = (ROOT / ".dockerignore").read_text()
     assert ".env" in ignored and "runs/" in ignored and ".tripy-data/" in ignored
+    assert "frontend/node_modules" in ignored and "frontend/dist" in ignored
 
 
 def test_env_example_documents_every_variable_the_code_reads():
-    sources = [ROOT / "app.py", *ROOT.glob("src/**/*.py")]
+    sources = list(ROOT.glob("src/**/*.py"))
     pattern = re.compile(r"""(?:environ\.get|environ\[|env|secret|_get\(lookup,|lookup)\(\s*["']([A-Z][A-Z0-9_]{2,})["']""")
     names = set()
     for path in sources:

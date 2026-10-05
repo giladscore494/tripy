@@ -1,13 +1,16 @@
-"""A/B benchmark series, through the RunManager exactly as the dashboard's "Benchmark A/B" scope starts them (app.py):
+"""A/B benchmark series, through the process-wide RunManager (the former dashboard's "Benchmark A/B" semantics):
 
     POST /api/series                     RunManager.start_series(SeriesRequest)     ("Start A/B series")
     POST /api/series/{id}/cancel         RunManager.cancel_series                    ("Cancel series")
     GET  /api/series, /api/series/{id}   RunManager.list_series / get_series + series_progress (runs/_series/<id>)
     GET  /api/series/{id}/export/{file}  the benchmark files the finished series wrote ("Benchmark diagnostics")
 
-A request carries only what the dashboard's A/B form offers: benchmark vehicles, runs per arm (1-5) and arms from
-run_profiles.ARMS (run in ARMS order, interleaved per repeat by jobs.manager.plan_series). Models, search and provider
-settings are the server's configuration; one series executes at a time per process (RunManager.start_series).
+A request carries what the A/B form offers: benchmark vehicles, runs per arm (1-5), arms from run_profiles.ARMS (run in
+ARMS order, interleaved per repeat by jobs.manager.plan_series) and optional per-run settings, the SAME typed
+RunSettingsOverrides as POST /api/runs, through the same run_settings.settings_for_run. Those settings become the
+SeriesRequest template; each arm's AgentConfig is settings.agent_config(secret, arm), so the arm's named profile pins
+its experiment settings as before. Endpoints, credentials and the process-wide limits stay the server's; one series
+executes at a time per process (RunManager.start_series).
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from ...diagnostics import PARSER_GAPS_FILE
 from ...glm_client import GLMError
 from ...jobs.manager import RunManager, RunRejected, SeriesRequest, series_progress
 from ...run_profiles import ARMS, BASELINE, PRODUCTION, PROFILE_LABELS, TREATMENT
-from ...run_settings import build_research_request, settings_checks, settings_from_env
+from ...run_settings import build_research_request, settings_checks, settings_for_run
 from ..deps import ApiContext, get_context
 from ..errors import ApiError, not_found
 from ..schemas import SeriesList, SeriesStarted, SeriesState, StartSeries
@@ -87,9 +90,10 @@ def get_series(series_id: str, ctx: ApiContext = Depends(get_context)) -> dict:
 @router.post("", response_model=SeriesStarted, status_code=201,
              responses={200: {"model": SeriesStarted, "description": "the idempotency key already started it"}})
 def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depends(get_context)) -> dict:
-    """app.py's "Start A/B series": the server's settings and blocking checks, the dashboard's request template, one
+    """Start an A/B series: the server's settings with the request's per-run overrides (run_settings.settings_for_run,
+    exactly as POST /api/runs), the same blocking checks, the request template built from those settings, one
     AgentConfig per arm (UISettings.agent_config(secret, arm)), RunManager.start_series. 201; 200 for a repeated
-    idempotency key; 409 while another series executes."""
+    idempotency key; 409 while another series executes; 422 for invalid settings."""
     catalog = ctx.catalog
     record_ids = list(dict.fromkeys(body.record_ids))
     unknown = [rid for rid in record_ids if rid not in catalog.by_id]
@@ -97,7 +101,11 @@ def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depend
         raise ApiError(422, "unknown_vehicle", "Every record_id must be a benchmark vehicle.",
                        record_ids=unknown[:20])
     arms = [arm for arm in ARMS if arm in body.arms]              # the dashboard's checkbox order
-    settings = settings_from_env(ctx.secret, ctx.manager.controller)
+    overrides = body.settings.model_dump(exclude_none=True) if body.settings is not None else None
+    try:
+        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides)
+    except ValueError as exc:
+        raise ApiError(422, "invalid_settings", str(exc)) from None
     blocking = blocking_errors(settings_checks(settings, ctx.secret, ctx.paths))
     if blocking:
         raise ApiError(503, "configuration_incomplete", "The server is not configured to start research.",
@@ -123,6 +131,7 @@ def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depend
     response.status_code = 201 if started.created else 200
     series = ctx.manager.get_series(started.run_id)
     return service.redacted({"series_id": started.run_id, "created": started.created, "message": started.message,
+                             "settings_overridden": sorted(overrides or {}),
                              "series": series_state(ctx.manager, series) if series else None})
 
 

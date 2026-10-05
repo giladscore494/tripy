@@ -1,4 +1,4 @@
-"""The read-only MCP tools: plain functions over the same storage and loaders the dashboard reads.
+"""The read-only MCP tools: plain functions over the same storage and loaders the HTTP API reads.
 
 Nothing here writes: documents are read through binding_replay.ReadOnlyCache (a derived extraction missing from disk
 is computed in memory only), the RunManager is only looked up (never created: creating one reconciles run state on
@@ -35,7 +35,7 @@ _PIPELINES = PipelineCache()          # in-memory incremental event readers (nev
 
 
 class Observer:
-    """The tools over one data root (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR, as the dashboard resolves)."""
+    """The tools over one data root (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR, as the application resolves)."""
 
     def __init__(self, paths: DataPaths | None = None):
         self.paths = paths or resolve_paths()

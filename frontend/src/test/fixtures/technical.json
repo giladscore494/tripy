@@ -1,0 +1,437 @@
+{
+ "run_id": "SYNTH-pr40",
+ "record_id": "101122",
+ "title": "101122",
+ "available": true,
+ "reason": null,
+ "status": "incomplete",
+ "duration_s": null,
+ "synthesized": true,
+ "recovered": false,
+ "has_output": false,
+ "has_research": true,
+ "no_output_message": "Not produced — the run ended without a result.json (finalization did not complete).",
+ "error": null,
+ "notices": [
+  {
+   "tone": "warn",
+   "text": "This run did not produce a final result.json. The research trace below was recovered from events.jsonl.",
+   "detail": "status incomplete · started None · latest event None · last successful step None · 0 model turn(s) · 0 tool call(s)\nThe log ends with a `evidence` event."
+  }
+ ],
+ "human": null,
+ "partial_research": {
+  "evidence_count": 17,
+  "candidate_facts": [
+   {
+    "field": "wheelbase_mm",
+    "values": "[2890, 2890, 2890]",
+    "evidence": "e1, e12, e17"
+   },
+   {
+    "field": "height_mm",
+    "values": "[1650, 1650]",
+    "evidence": "e2, e13"
+   },
+   {
+    "field": "cargo_volume_l",
+    "values": "[571, 571]",
+    "evidence": "e3, e14"
+   },
+   {
+    "field": "ac_max_charging_power_kw",
+    "values": "[11]",
+    "evidence": "e4"
+   },
+   {
+    "field": "dc_max_charging_power_kw",
+    "values": "[451]",
+    "evidence": "e5"
+   },
+   {
+    "field": "electric_range_km",
+    "values": "[550, 550]",
+    "evidence": "e6, e15"
+   },
+   {
+    "field": "curb_weight_kg",
+    "values": "[2190, 2190]",
+    "evidence": "e7, e16"
+   },
+   {
+    "field": "acceleration_0_100_s",
+    "values": "[4.1]",
+    "evidence": "e8"
+   },
+   {
+    "field": "vehicle_warranty",
+    "values": "[\"7 years / 160,000 km\"]",
+    "evidence": "e9"
+   },
+   {
+    "field": "warranty_years",
+    "values": "[7]",
+    "evidence": "e10"
+   },
+   {
+    "field": "warranty_km",
+    "values": "[160000]",
+    "evidence": "e11"
+   }
+  ],
+  "fields_with_multiple_stored_values": [],
+  "model_noted_conflicts": [],
+  "response_excerpts": [],
+  "last_model_content": null,
+  "urls": [
+   "https://www.heyxpeng.co.il/g6",
+   "https://www.heyxpeng.co.il/warranty",
+   "https://www.xpeng.com/de-de/g6/specs",
+   "https://www.carnews.co.il/xpeng-g6-review"
+  ],
+  "documents": [
+   {
+    "document_id": "d_c21f8ddbe51c5f2b",
+    "kind": "fetch",
+    "url": "https://www.heyxpeng.co.il/g6",
+    "final_url": "https://www.heyxpeng.co.il/g6",
+    "status": 200,
+    "content_type": "text/html",
+    "extraction_path": null,
+    "bytes": 623,
+    "text_chars": 268,
+    "pages": null,
+    "truncated": null,
+    "fetched_at": "2026-10-03T23:49:35+00:00"
+   },
+   {
+    "document_id": "d_6fd97c7e7d0da278",
+    "kind": "fetch",
+    "url": "https://www.heyxpeng.co.il/warranty",
+    "final_url": "https://www.heyxpeng.co.il/warranty",
+    "status": 200,
+    "content_type": "text/html",
+    "extraction_path": null,
+    "bytes": 266,
+    "text_chars": 119,
+    "pages": null,
+    "truncated": null,
+    "fetched_at": "2026-10-03T23:49:35+00:00"
+   },
+   {
+    "document_id": "d_647a84be06077771",
+    "kind": "fetch",
+    "url": "https://www.xpeng.com/de-de/g6/specs",
+    "final_url": "https://www.xpeng.com/de-de/g6/specs",
+    "status": 200,
+    "content_type": "text/html",
+    "extraction_path": null,
+    "bytes": 282,
+    "text_chars": 184,
+    "pages": null,
+    "truncated": null,
+    "fetched_at": "2026-10-03T23:49:35+00:00"
+   },
+   {
+    "document_id": "d_e72c24d9a7826fe7",
+    "kind": "fetch",
+    "url": "https://www.carnews.co.il/xpeng-g6-review",
+    "final_url": "https://www.carnews.co.il/xpeng-g6-review",
+    "status": 200,
+    "content_type": "text/html",
+    "extraction_path": null,
+    "bytes": 175,
+    "text_chars": 73,
+    "pages": null,
+    "truncated": null,
+    "fetched_at": "2026-10-03T23:49:35+00:00"
+   }
+  ],
+  "target_status": {
+   "no_evidence": [],
+   "unresolved": [
+    "ac_max_charging_power_kw — variant_not_exact",
+    "acceleration_0_100_s — variant_not_exact",
+    "cargo_volume_l — foreign_market_only",
+    "curb_weight_kg — foreign_market_only",
+    "dc_max_charging_power_kw — variant_not_exact",
+    "electric_range_km — foreign_market_only",
+    "height_mm — foreign_market_only",
+    "vehicle_warranty — variant_not_exact",
+    "warranty_km — variant_not_exact",
+    "warranty_years — variant_not_exact",
+    "wheelbase_mm — foreign_market_only"
+   ],
+   "level3": [
+    "known_issues_reliability",
+    "ownership_costs",
+    "maintenance",
+    "insurance",
+    "depreciation",
+    "recalls"
+   ]
+  },
+  "error": null,
+  "api_errors": [],
+  "bundle": {
+   "trimmed": true
+  }
+ },
+ "evidence_admission": {
+  "admitted": 17,
+  "rejected": 0,
+  "rejected_by_reason": {},
+  "admitted_by_variant_match": {
+   "exact": 5,
+   "unbound": 3,
+   "unclear": 9
+  },
+  "admitted_by_binding_level": {
+   "exact_technical_variant": 5,
+   "generation": 9,
+   "unknown": 3
+  },
+  "admitted_by_source_authority": {
+   "official_importer": 11,
+   "official_manufacturer": 5,
+   "publisher": 1
+  }
+ },
+ "consistency_checks": [
+  {
+   "check": "co2_vs_fuel_consumption",
+   "status": "not_checkable",
+   "fields": [
+    "fuel_consumption_combined_l_100km",
+    "government:co2_wltp"
+   ],
+   "evidence_ids": [],
+   "detail": "needs fuel consumption evidence, the government WLTP CO2 and a petrol/diesel fuel"
+  },
+  {
+   "check": "curb_vs_gross_mass",
+   "status": "not_checkable",
+   "fields": [
+    "curb_weight_kg",
+    "government:gross_weight_kg"
+   ],
+   "evidence_ids": [
+    "e16",
+    "e7"
+   ],
+   "detail": "needs curb weight evidence and the government gross mass"
+  },
+  {
+   "check": "rim_vs_tire_size",
+   "status": "not_checkable",
+   "fields": [
+    "rim_diameter_in",
+    "tire_size_front",
+    "tire_size_rear",
+    "alternative_tire_sizes"
+   ],
+   "evidence_ids": [],
+   "detail": "needs rim diameter and tire size evidence"
+  },
+  {
+   "check": "usable_vs_gross_battery",
+   "status": "not_checkable",
+   "fields": [
+    "battery_usable_kwh",
+    "battery_gross_kwh"
+   ],
+   "evidence_ids": [],
+   "detail": "needs gross and usable battery evidence"
+  },
+  {
+   "check": "dimensions_below_length",
+   "status": "not_checkable",
+   "fields": [
+    "length_mm",
+    "wheelbase_mm",
+    "width_mm",
+    "height_mm"
+   ],
+   "evidence_ids": [
+    "e1",
+    "e12",
+    "e13",
+    "e17",
+    "e2"
+   ],
+   "detail": "needs length and another dimension"
+  },
+  {
+   "check": "fields_vs_propulsion",
+   "status": "consistent",
+   "fields": [
+    "ac_max_charging_power_kw",
+    "dc_max_charging_power_kw",
+    "electric_range_km"
+   ],
+   "evidence_ids": [
+    "e15",
+    "e4",
+    "e5",
+    "e6"
+   ],
+   "detail": "propulsion battery_electric"
+  }
+ ],
+ "tool_calls": [],
+ "level15_input": {
+  "trimmed": true,
+  "keys": [
+   "identity",
+   "engine_drivetrain",
+   "structure"
+  ]
+ },
+ "config": {
+  "api_error": null,
+  "research_model": null,
+  "finalizer_model": null,
+  "stop_reason": null,
+  "prompt_version": null,
+  "finalization": null,
+  "effective_config": {
+   "glm": {},
+   "agent": {},
+   "tools": {},
+   "prompt_version": null
+  },
+  "usage_known": true,
+  "usage": {
+   "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "cached_tokens": 0,
+    "model_calls": 0,
+    "model_latency_ms": 0
+   },
+   "usage_research": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "cached_tokens": 0,
+    "model_calls": 0,
+    "model_latency_ms": 0
+   },
+   "usage_finalizer": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "cached_tokens": 0,
+    "model_calls": 0,
+    "model_latency_ms": 0
+   },
+   "search_api_calls": 0,
+   "pricing": null,
+   "pricing_finalizer": null,
+   "cost": {
+    "tokens_usd": null,
+    "web_search_usd": null,
+    "total_usd": null
+   },
+   "cost_details": {
+    "basis": "returned_usage_only",
+    "research_tokens_usd": null,
+    "finalizer_tokens_usd": 0.0,
+    "web_search_usd": null,
+    "unknown_usage_attempts": 0,
+    "complete": true,
+    "note": "Recorded API cost from returned usage."
+   },
+   "research_tracking": {
+    "duplicate_calls_suppressed": 0,
+    "duplicate_searches_suppressed": 0,
+    "duplicate_fetches_suppressed": 0,
+    "duplicate_inspections_suppressed": 0
+   }
+  }
+ },
+ "api_attempts": {
+  "api_stats": {
+   "api_attempts": 0,
+   "chat_attempts": 0,
+   "search_attempts": 0,
+   "api_successes": 0,
+   "api_errors": 0,
+   "chat_errors": 0,
+   "search_errors": 0,
+   "timeout_count": 0,
+   "chat_timeouts": 0,
+   "search_timeouts": 0,
+   "unknown_usage_attempts": 0,
+   "unknown_usage_chat_attempts": 0,
+   "unknown_usage_search_attempts": 0,
+   "rate_limited_retries": 0,
+   "rate_limited_failures": 0
+  },
+  "api_errors": []
+ },
+ "field_recovery": {
+  "requested_fields": 0,
+  "available": false
+ },
+ "candidates": {
+  "candidate_summary": {},
+  "primary_research": null,
+  "document_sweep": null
+ },
+ "brief": {
+  "acquisition": [
+   [
+    "Search calls",
+    0
+   ]
+  ],
+  "sweep": [
+   [
+    "Fields entering",
+    0
+   ],
+   [
+    "Fields resolved",
+    0
+   ],
+   [
+    "Model calls",
+    0
+   ],
+   [
+    "Deterministic misses recovered",
+    0
+   ],
+   [
+    "Timeouts",
+    0
+   ]
+  ],
+  "sweep_skipped": null
+ },
+ "diagnostics": {
+  "schema": "tripy-diagnostics/1",
+  "configured_models": {
+   "research": null,
+   "document_sweep": null,
+   "recovery": null,
+   "finalizer": null,
+   "research_fallback": null
+  },
+  "summary_text": "SOURCE ACQUISITION\n\nTurns: n/a\nSearch calls: 0\nUseful documents: n/a\nOfficial documents: n/a\nTarget-market documents: n/a\nCandidates: n/a\nCandidate fields: n/a\nFinal scoped coverage: n/a\nNo-artifact turns: 0\nExtended research turns: 0\nStop reason: n/a\n\nDOCUMENT SWEEP\n\nCalls: 0 (0 model calls)\nFields entered: 0\nFields resolved: 0\nFields remaining: 0\nDeterministic harvest misses recovered: 0\nEvidence accepted: 0\nEvidence rejected: 0\nInput tokens: n/a\nOutput tokens: n/a\nLatency: n/a\nTimeouts: 0",
+  "turns": [],
+  "sweep_calls": [],
+  "sweep_fields": [],
+  "raw": {
+   "trimmed": true
+  }
+ },
+ "raw": {
+  "parse_note": "no_result_json",
+  "output": null,
+  "raw_final_text": ""
+ },
+ "model_responses": []
+}

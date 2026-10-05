@@ -5,6 +5,7 @@ import type { ApiError } from "../../api/client";
 import { textDirection } from "../../lib/bidi";
 import type { Tone } from "../../lib/status";
 import { IconAlert, IconChevron, IconClose, IconCopy, IconExternal, IconRefresh } from "./icons";
+import { formatValue } from "../../lib/format";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -373,6 +374,36 @@ export function Field({ label, hint, children, htmlFor }: { label: ReactNode; hi
       <label htmlFor={htmlFor} className="block text-xs font-medium text-ink-muted">{label}</label>
       {children}
       {hint && <p className="text-[11.5px] text-ink-faint">{hint}</p>}
+    </div>
+  );
+}
+
+/** A plain table of server rows (every cell formatted with formatValue, LTR ids kept readable). Shows `limit` rows
+ *  and a "Show all" control beyond that; never computes anything. */
+export function DataTable({ rows, columns, limit = 100, label, maxHeight = "max-h-[32rem]" }: {
+  rows: Record<string, unknown>[]; columns?: string[]; limit?: number; label?: string; maxHeight?: string;
+}) {
+  const [all, setAll] = useState(false);
+  const cols = columns ?? [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  if (!rows.length) return null;
+  const shown = all ? rows : rows.slice(0, limit);
+  return (
+    <div className="space-y-1.5">
+      <div className={cx("table-wrap", maxHeight)}>
+        <table className="data-table" aria-label={label}>
+          <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+          <tbody>
+            {shown.map((row, i) => (
+              <tr key={i}>{cols.map((c) => (
+                <td key={c} className="max-w-[28rem] text-xs text-ink-muted"><span dir="auto" className="break-words">{formatValue(row[c])}</span></td>
+              ))}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > limit && (
+        <Button size="sm" variant="ghost" onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${rows.length} rows`}</Button>
+      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ per-vehicle artifacts (events.jsonl, result.json, the finalization checkpoint) s
 research; `run_state.json` adds only what the engine does not know: the job lifecycle (queued, running in
 which process, heartbeat, cancelled), the request and a final observability report.
 
-Streamlit session state is never the source of truth for any of this.
+No browser or HTTP session is ever the source of truth for any of this.
 """
 
 from __future__ import annotations

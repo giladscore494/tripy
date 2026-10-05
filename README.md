@@ -10,18 +10,45 @@ production.
 ```
 Supabase Level 1.5 → benchmark loader → GLM primary research (source acquisition) → deterministic harvest
   → local-first document sweep → clustered tail recovery → durable checkpoint → GLM finalizer
-  → structured result → Streamlit dashboard
+  → structured result → React research workspace (served by FastAPI)
 ```
+
+## Architecture
+
+```
+Browser
+   │
+   ▼
+FastAPI / ASGI — ONE Uvicorn process (scripts/start.sh)
+   ├── React SPA ............ frontend/dist (built in the Docker image; never Node at runtime)
+   ├── /api/* ............... the HTTP API (Bearer TRIPY_ACCESS_TOKEN in production)
+   ├── /health .............. public, constant, no I/O
+   └── /mcp/<token> ......... the read-only MCP, only when TRIPY_MCP_TOKEN is set
+         │
+         ▼
+process-wide RunManager (src/jobs/manager.py: background threads, startup reconciliation, shutdown)
+         │
+         ▼
+TRIPY research engine (unchanged)
+         │
+         ▼
+TRIPY_DATA_DIR=/data — durable runs / cache / logs (a Railway Volume)
+```
+
+**One process per `TRIPY_DATA_DIR`.** The RunManager lives in the web process and owns the data directory: on
+startup it marks runs whose owner process is gone as `INTERRUPTED`. Never run a second server (or a second Uvicorn
+worker) against the same data directory: each would reconcile the other's active runs as interrupted. Scaling to
+several workers needs a different, external job architecture and is not supported.
 
 ## Deploy TRIPY to Railway
 
-TRIPY deploys as **one Railway service** (Streamlit UI + background research runs in the same process) built
-from the repository's `Dockerfile`, with one **Railway Volume** for durable state.
+TRIPY deploys as **one Railway service** built from the repository's `Dockerfile`, with one **Railway Volume** for
+durable state.
 
 ```
-GitHub repo ──► Railway service (Dockerfile) ──► TRIPY Streamlit app ──► RunManager threads ──► research engine
-                       │                                                                         │
-                       └── Volume mounted at /data (TRIPY_DATA_DIR=/data)                        └─► GLM / web search
+GitHub repo ──► Railway service (Dockerfile) ──► Uvicorn: FastAPI + React ──► RunManager threads ──► research engine
+                       │                                                                              │
+                       └── Volume mounted at /data (TRIPY_DATA_DIR=/data)                             └─► GLM / web search
 ```
 
 1. Create a Railway account at <https://railway.com>.
@@ -40,40 +67,51 @@ GitHub repo ──► Railway service (Dockerfile) ──► TRIPY Streamlit app
 9. **Deploy** (Railway redeploys automatically after variable / volume changes).
 10. Service → **Settings → Networking → Generate Domain** to get a public URL — **only after** `GLM_API_KEY`,
     `GLM_MODEL`, `TRIPY_ACCESS_TOKEN` and `TRIPY_DATA_DIR=/data` are configured. A Railway public domain exposes the
-    service to the internet; `TRIPY_ACCESS_TOKEN` is what protects the dashboard and your GLM / search budget.
+    service to the internet; `TRIPY_ACCESS_TOKEN` is what protects the workspace and your GLM / search budget.
 
 What Railway uses (all in the repo):
 
 | Item | Value |
 | --- | --- |
-| Builder | `Dockerfile` (`railway.json` → `build.builder = DOCKERFILE`) |
-| Start command | `sh scripts/start.sh` → `streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true …` |
-| Start command with `TRIPY_MCP_TOKEN` | the same flags with `streamlit run tripy_server.py` (Streamlit's `st.App` serving the same `app.py` plus `/mcp/<token>`) |
-| Port | Railway's injected `$PORT` (8501 when unset) |
-| Health check | `GET /_stcore/health` (Streamlit's built-in endpoint, returns `ok`) |
+| Builder | `Dockerfile` (`railway.json` → `build.builder = DOCKERFILE`): stage 1 `node:22-slim` runs `npm ci` + `npm run build` (TypeScript + Vite); stage 2 `python:3.11-slim` installs `requirements.txt` and Chromium's headless shell, and copies only `frontend/dist` from stage 1 |
+| Start command | `sh scripts/start.sh` → `exec uvicorn src.api.app:app --host 0.0.0.0 --port "$PORT" --timeout-graceful-shutdown 5 --no-server-header` (one worker) |
+| Port | Railway's injected `$PORT` (8000 when unset) |
+| Health check | `GET /health` → `{"status": "ok", "service": "tripy"}` (public, no provider / storage access) |
 | Volume mount path | `/data` |
 | Replicas | **1** (a Volume attaches to one deployment; research runs execute inside the web process) |
 
 On startup `python -m src.startup_check` logs the resolved paths and which variables are present (never their
-values). The app itself shows a **System** panel (GLM, Search, Persistent storage, Level 1.5 data). If
-`GLM_API_KEY` / `GLM_MODEL` are missing, it says exactly which ones and disables *Start research*; if no volume is
-attached on Railway it warns that runs are stored on ephemeral disk.
+values). The workspace's Diagnostics page (and `GET /api/config/status`) shows the configuration checks (GLM, Search,
+Persistent storage, Level 1.5 data, Access control); if `GLM_API_KEY` / `GLM_MODEL` are missing it says exactly which
+ones and *Start research* stays disabled (the API refuses a start with 503); if no volume is attached on Railway it
+warns that runs are stored on ephemeral disk. In production the server refuses to start without the built React
+bundle (`frontend/dist`) instead of serving a broken site.
 
-**Access control (production).** The production dashboard fails closed: without `TRIPY_ACCESS_TOKEN` it shows only
-*"Production access control is not configured."*; with it, every browser session first sees a minimal lock screen
-(access token + *Unlock*) and nothing else — no research target, *Start research*, run history, results, diagnostics,
-retry / restart or settings — until the token is entered. The check is constant-time and the token is opaque
-(compared exactly as configured). The session keeps only an `authenticated` flag, never the token; *Logout* (sidebar)
-locks the session again without touching runs or history. After five wrong tokens a session waits 30 s before the
-next attempt. A browser refresh starts a new Streamlit session, so the token is asked for again. The token is never
-read from the URL or a cookie, and it is redacted from logs, run state, diagnostics and error details like the other
-secrets. The `/_stcore/health` check is not gated. Outside production (local development) the gate is open.
+**Redeploys and restarts.** SIGTERM reaches Uvicorn directly (`exec`); the application's shutdown asks active runs to
+stop at their next safe point so they persist an `interrupted` partial result (`TRIPY_SHUTDOWN_GRACE_S`, within
+Railway's 30 s draining window). Completed runs, run history, A/B series and the document cache stay on the Volume. A
+run that was active when the container stopped is shown as `INTERRUPTED` after the restart — it is **not** resumed
+(its in-memory thread is gone); its failure card offers *Restart research* (and *Finalize from preserved research*
+where the saved research allows it).
+
+**Rollback.** Revert the commit (or redeploy the previous main SHA in Railway → Deployments → *Redeploy*). There is no
+second, legacy start path behind a flag: git history is the rollback.
+
+**Access control (production).** The server fails closed: without `TRIPY_ACCESS_TOKEN` every `/api` route answers 503
+*"Production access control is not configured."* and the workspace shows a configuration screen (no login loop).
+With it, the React shell loads but shows only the unlock screen until the token is entered; the token is sent as
+`Authorization: Bearer <token>` on every API request, kept only in that tab's `sessionStorage`, and a 401 clears it
+and returns to the unlock screen. The check is constant-time and the token is opaque (compared exactly as
+configured). It is never read from the URL or a cookie, never written to a log (Uvicorn's access log only ever sees
+paths without secrets; the MCP path is logged as `/mcp/[redacted]`), and it is redacted from run state, diagnostics
+and error details like the other secrets. There is no per-client lockout (behind Railway's proxy every client shares
+one address); the protection is a long random token. `/health` is not gated. Outside production the API is open.
 
 ### Read-only MCP for Claude (optional)
 
-One variable turns on a **read-only** MCP server on the same service and port: runs, live events, results,
-diagnostics, binding replay, candidates, fetched documents and the server log (12 tools; nothing can start, cancel,
-delete or write). Without the variable it does not exist at all (no route, no process, the plain start command).
+One variable turns on a **read-only** MCP server in the same process and on the same port: runs, live events,
+results, diagnostics, binding replay, candidates, fetched documents and the server log (12 tools; nothing can start,
+cancel, delete or write). Without the variable it does not exist at all (no route; the `mcp` SDK is not imported).
 
 1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
    Redeploy.
@@ -84,7 +122,7 @@ delete or write). Without the variable it does not exist at all (no route, no pr
 The URL path is the password: keep it secret. Any other `/mcp/...` path answers 404. The token is never logged; every
 tool call writes one audit line (tool, ids, size, ms) to the server log (`/data/logs/tripy.log`, rotating 5 × 5 MB).
 
-**MCP לקריאה בלבד עבור Claude (אופציונלי).** משתנה אחד מפעיל שרת MCP לקריאה בלבד באותו שירות ובאותו פורט: ריצות,
+**MCP לקריאה בלבד עבור Claude (אופציונלי).** משתנה אחד מפעיל שרת MCP לקריאה בלבד באותו תהליך ובאותו פורט: ריצות,
 אירועים חיים, תוצאות, דיאגנוסטיקה, binding replay, מועמדים, מסמכים שנשלפו ולוג השרת. אף כלי לא מתחיל, מבטל, מוחק או
 כותב דבר. בלי המשתנה ה-MCP לא קיים בכלל.
 
@@ -96,115 +134,107 @@ tool call writes one audit line (tool, ids, size, ms) to the server log (`/data/
 
 הנתיב בכתובת הוא הסיסמה ויש לשמור עליו בסוד. כל נתיב אחר תחת `/mcp/` מחזיר 404.
 
-**Secrets never go into the UI in production.** `TRIPY_ENV=production` (set by the Dockerfile, also implied by
-Railway's own variables) removes the development-only API-key box; keys come from Railway variables only.
+**Secrets never reach the browser.** `GLM_API_KEY`, `DATABASE_URL`, `TRIPY_ACCESS_TOKEN` and `TRIPY_MCP_TOKEN` are read
+from the server environment only; the React bundle is built without them (no `VITE_*` secret exists) and the API
+never returns their values.
 
 ## Local development
+
+FastAPI and the Vite dev server, against a **dedicated development data directory**:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate        # Python 3.11+
 pip install -r requirements.txt
 cp .env.example .env                                  # fill GLM_API_KEY and GLM_MODEL (DATABASE_URL optional)
 set -a; . ./.env; set +a
-streamlit run app.py                                  # http://localhost:8501, hot reload on
+TRIPY_DATA_DIR=.tripy-data-dev uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+cd frontend && npm ci && npm run dev                  # http://localhost:5173; /api and /health proxied to :8000
 ```
 
-State goes to `./.tripy-data/` (git-ignored) unless `TRIPY_DATA_DIR` is set. To keep using an existing `runs/`
-folder, set `MILO_RUNS_DIR=runs` (the cache then stays at `runs/_cache`, as before). In development you may type an
-API key in *Advanced settings* instead of exporting it (`TRIPY_ALLOW_UI_API_KEY` controls this).
+Without a built bundle (development) the backend serves the API only; the Vite dev server serves the UI with hot
+reload. `npm run build` in `frontend/` writes `frontend/dist`, which `uvicorn src.api.app:app` then serves on :8000
+exactly as production does. State goes to `./.tripy-data/` (git-ignored) unless `TRIPY_DATA_DIR` is set; to keep
+using an existing `runs/` folder, set `MILO_RUNS_DIR=runs` (the cache then stays at `runs/_cache`, as before).
 
 Production-like run, exactly as Railway starts it:
 
 ```bash
 docker build -t tripy .
-docker run -p 8501:8501 -e GLM_API_KEY=... -e GLM_MODEL=glm-5.3-flash -v "$PWD/.tripy-data:/data" tripy
+docker run -p 8000:8000 -e TRIPY_ACCESS_TOKEN=... -e GLM_API_KEY=... -e GLM_MODEL=glm-5.3-flash \
+  -v "$PWD/.tripy-data:/data" tripy                   # http://localhost:8000
 ```
 
-Offline end-to-end check without credentials: `python scripts/fake_glm_server.py --port 8765` and start the app with
-`GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash NO_PROXY=127.0.0.1`
-(`--fail finalizer` exercises the failure and retry UI).
+Offline end-to-end check without credentials: `python scripts/fake_glm_server.py --port 8765 --delay 1` and start
+the server with `GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash
+NO_PROXY=127.0.0.1,localhost` (`--fail finalizer` with `FINAL_ASSEMBLY=llm` and the Custom profile exercises the
+failure and finalize UI).
 
-## HTTP API (FastAPI) — migration step 1
+## HTTP API (FastAPI)
 
-TRIPY is moving to a frontend that does not depend on Streamlit. This step adds a **backend-only** HTTP API next to
-the dashboard; nothing about the dashboard, Railway or the research engine changes.
-
-```
-Streamlit dashboard (app.py) ──┐
-                               ├──► RunManager · run_state.json / events.jsonl / result.json · research engine
-HTTP API (src/api, FastAPI) ───┘        (one engine, one source of truth: the same functions, the same files)
-```
-
-| Mode | Command |
-| --- | --- |
-| Existing UI (unchanged; Railway still runs this) | `streamlit run app.py` |
-| New API | `uvicorn src.api.app:app --host 0.0.0.0 --port 8000` |
-
-The API reuses the dashboard's own code: `RunManager.start` / `cancel` / `retry_finalization`, the durable run
-repository, the pipeline state behind the live dashboard (`src/runstate/pipeline.py`), the failure card
+The API is a thin interface over the engine's own code: `RunManager.start` / `cancel` / `retry_finalization` /
+`start_series`, the durable run repository, the pipeline state (`src/runstate/pipeline.py`), the failure card
 (`src/runstate/failures.py`), the result loaders (`src/storage/run_loader.py`), the MCP's event reader and redaction
-(`src/mcp_server`), and the dashboard's settings, target selection and export serializers, which now live in
-framework-neutral modules (`src/run_settings.py`, `src/research_targets.py`, `src/exports.py`). It never imports
-Streamlit. A run started through the API uses the settings an untouched dashboard would (the server's environment),
-optionally with typed **per-run overrides** of the dashboard's non-secret Advanced settings (see below), and is gated
-by the same configuration checks.
-
-**One process per data directory.** Each process reconciles runs it does not own as `INTERRUPTED` (a redeploy
-leaves orphans; see *Runs, persistence and reconnects*). Do not run the API and the dashboard against the **same**
-`TRIPY_DATA_DIR` at the same time: each would mark the other's active runs as interrupted. Locally, give the API its
-own folder (`TRIPY_DATA_DIR=.tripy-data-api uvicorn ...`) or stop the dashboard first. Serving both from one process
-is the next step of the migration.
-
-The API reads configuration from the process environment only (not `.streamlit/secrets.toml`).
+(`src/mcp_server`), the run settings, target selection and export serializers (`src/run_settings.py`,
+`src/research_targets.py`, `src/exports.py`) and the view models of the technical views
+(`src/presentation/run_views.py`). It holds no research logic. A run started through the API uses the server's
+environment, optionally with typed **per-run overrides** (see below), and is gated by the configuration checks.
 
 **Authentication.** `/health` is public. In production (`TRIPY_ENV=production` or Railway) every `/api/*` route
-requires `Authorization: Bearer <TRIPY_ACCESS_TOKEN>` (constant-time comparison, the dashboard's rule); without a
-configured token the API answers 503 (fails closed). Tokens are never accepted in the URL or a cookie. Outside
-production the API is open, like the dashboard.
+requires `Authorization: Bearer <TRIPY_ACCESS_TOKEN>` (constant-time comparison); without a configured token the API
+answers 503 (fails closed). Tokens are never accepted in the URL or a cookie. Outside production the API is open.
 
 | Endpoint | What it returns / does |
 | --- | --- |
 | `GET /health` | `{"status": "ok", "service": "tripy"}` (no I/O; safe for a health check) |
-| `GET /api/runs` | run history, newest first (`?limit=`) |
-| `GET /api/runs/{run_id}` | identity, scope, profile, status, timestamps, request, per-vehicle pipeline / failure / report |
+| `GET /api/runs` | run history, newest first (`?limit=`), with resolved / applicable fields from the final report |
+| `GET /api/runs/{run_id}` | identity, scope, profile, status, timestamps, request, status totals, per-vehicle pipeline / failure / report / notices |
 | `GET /api/runs/{run_id}/progress` | live stage states and counters; vehicles completed / total (no invented percentages) |
 | `GET /api/runs/{run_id}/events?after=&limit=&record_id=&kind=` | events.jsonl rows after a line cursor; `next_cursor` for the next poll |
-| `GET /api/runs/{run_id}/results` | structured results per vehicle (fields, values, units, markets, states, evidence ids) |
+| `GET /api/runs/{run_id}/live?record_id=` | the live field-progress table (Hebrew), the activity log and the acquisition / sweep brief |
+| `GET /api/runs/{run_id}/results` | structured results per vehicle (fields, values, units, markets, states, evidence ids, output source) |
 | `GET /api/runs/{run_id}/candidates?record_id=&field=` | candidate matrix: candidates, rejections with reasons, field state |
 | `GET /api/runs/{run_id}/evidence?record_id=&field=` | admitted evidence (binding metadata) and rejected requests (reasons) |
-| `GET /api/runs/{run_id}/export/candidates.csv` | the dashboard's candidates.csv (byte-identical) |
+| `GET /api/runs/{run_id}/vehicles/{record_id}/technical` | a finished vehicle's technical views: notices, raw output, partial research, consistency checks, tool calls, model responses, Level 1.5 input, config & cost, API attempts, field recovery, layered candidate metrics, detailed acquisition / sweep diagnostics |
+| `GET /api/runs/{run_id}/benchmark` | the Benchmark tab: observation metrics per vehicle (`benchmark.compute_metrics`), aggregate, tool usage |
+| `GET /api/runs/{run_id}/export/candidates.csv` | candidates.csv of one vehicle (byte-identical to the former dashboard's download) |
 | `GET /api/runs/{run_id}/export/per_vehicle.csv`, `.../benchmark.json` | the Benchmark diagnostics exports for this run |
-| `POST /api/runs` | start research: `{"scope": "one"\|"manufacturer"\|"all", "record_id", "manufacturer", "profile", "idempotency_key"}` → 201 (200 for a repeated key) |
+| `GET /api/benchmark/summary?run_id=…` | aggregate diagnostics over several runs (repeatable `run_id`) and which files exist |
+| `GET /api/benchmark/export/{file}?run_id=…` | benchmark.json, per_vehicle.csv, parser_gaps.jsonl, binding_replay_items.jsonl over several runs |
+| `GET /api/benchmark/batches` | "Compare batches": one aggregate row per recorded batch |
+| `POST /api/runs` | start research: `{"scope": "one"\|"manufacturer"\|"all", "record_id", "manufacturer", "profile", "idempotency_key", "settings"}` → 201 (200 for a repeated key) |
 | `POST /api/runs/{run_id}/cancel` | stop at the next safe point (202; 409 if not executing in this process) |
 | `POST /api/runs/{run_id}/vehicles/{record_id}/finalize` | finalize from preserved research (only where the failure card offers it) |
 | `POST /api/runs/{run_id}/vehicles/{record_id}/restart` | a new One-vehicle run with the run's profile (only for a vehicle that did not complete) |
 | `GET /api/config/status` | configuration checks, models, search backend, storage, access control (presence only, never secrets) |
+| `GET /api/config/reachability` | whether the GLM base URL answers at all (no credentials sent; cached 5 min) |
 | `GET /api/vehicles` | the benchmark vehicles and manufacturers a run can target |
 | `GET /api/run-settings` | the per-run settings contract: defaults, ranges, options, which settings a named profile pins, what stays server-controlled |
 | `GET /api/series`, `GET /api/series/{id}` | A/B series history / state with `series_progress` (runs/_series/&lt;id&gt;/series.json) |
-| `POST /api/series` | start an A/B series: `{"record_ids": [...], "repeats": 1-5, "arms": [ARMS...], "idempotency_key"}` (409 while one runs) |
+| `POST /api/series` | start an A/B series: `{"record_ids": [...], "repeats": 1-5, "arms": [ARMS...], "idempotency_key", "settings"}` (409 while one runs) |
 | `POST /api/series/{id}/cancel` | cancel the running run of the series and every planned one (202) |
 | `GET /api/series/{id}/export/{file}` | benchmark.json, per_vehicle.csv, parser_gaps.jsonl, binding_replay_items.jsonl of a finished series |
 | `GET /api/runs/{run_id}/documents?record_id=` | fetched documents: title, URL, authority, market, type, HTTP status, size, fields they supplied |
+| `GET /api/cache/documents?offset=&limit=` | every document in the shared cache (metadata) and the cache counters |
 | `GET /api/documents/{doc_id}/text?offset=&limit=` | a cached document's text, in character pages |
 | `GET /api/documents/{doc_id}/structure?run_id=&record_id=` | tables, DOM pairs, Document Variant Map (computed in memory for a run's target) |
 | `GET /api/runs/{run_id}/binding-replay?record_id=&field=` | Binding Replay (recorded vs today's binding), never persisted |
 | `GET /api/runs/{run_id}/diagnostics` | the benchmark export's diagnostics for the run (aggregate + per-vehicle rows), read-only |
 
-Errors are `{"error": {"code", "message", ...}}`: 401 unauthorized, 404 unknown run / vehicle, 409 conflicting run
-(`existing_run_id`) or unavailable action, 422 invalid input, 503 configuration / provider / Level 1.5 unavailable,
-500 unexpected (logged server-side; no traceback in the response). Every response is redacted. Interactive docs:
-`/docs`.
+Errors are `{"error": {"code", "message", ...}}`: 401 unauthorized, 404 unknown run / vehicle / path, 409 conflicting
+run (`existing_run_id`) or unavailable action, 422 invalid input, 503 configuration / provider / Level 1.5
+unavailable, 500 unexpected (logged server-side; no traceback in the response). Every response is redacted; `/api`
+responses carry `Cache-Control: no-store`. Interactive docs: `/docs`.
 
-**Per-run settings.** `POST /api/runs` takes an optional `settings` object: a strict allowlist generated from
-`src/run_settings.py` (`RUN_OVERRIDES`, the one source of truth) of the dashboard's non-secret Advanced settings
-(models, search backend / engine, attempts, timeout, vehicle workers, research budget, recovery, Level 3,
-temperature, max_tokens, per-phase reasoning effort, experiment switches, document sweep limits, cost-reporting
-prices, Level 1.5 source). They go through the same `assemble_settings` / `build_research_request` /
-`settings_checks` path as the sidebar, for that one run only. Never accepted: credentials (`GLM_API_KEY`,
-`DATABASE_URL`, tokens), provider endpoints, the extra request JSON, and the in-flight request limits
-(`RunManager.start` applies those to the process-wide `ConcurrencyController`, so they are not per-run). A/B series
-and restarts use the server's settings, as before.
+**Per-run settings.** `POST /api/runs` and `POST /api/series` take an optional `settings` object: a strict allowlist
+generated from `src/run_settings.py` (`RUN_OVERRIDES`, the one source of truth) of the non-secret settings (models,
+search backend / engine, attempts, timeout, vehicle workers, research budget, recovery, Level 3, temperature,
+max_tokens, per-phase reasoning effort, experiment switches, document sweep limits, cost-reporting prices, Level 1.5
+source). They go through `validate_overrides` / `settings_for_run` / `assemble_settings` / `build_research_request` /
+`settings_checks`, for that run (or every run of that series) only. For a series they become the `SeriesRequest`
+template; each arm's AgentConfig is still `settings.agent_config(secret, arm)`, so a named arm profile pins its own
+experiment settings. Never accepted: credentials (`GLM_API_KEY`, `DATABASE_URL`, tokens), provider endpoints, the
+extra request JSON, and the in-flight request limits (`RunManager.start` applies those to the process-wide
+`ConcurrencyController`, so they are not per-run). Restarts use the server's settings.
 
 Documents, Binding Replay and run diagnostics reuse the read-only MCP implementations (`mcp_server.tools.Observer`)
 with their id validation, path containment, paging and redaction; nothing they compute is written to disk.
@@ -224,53 +254,41 @@ curl -s -H "Authorization: Bearer $TOKEN" -X POST "$TRIPY_URL/api/runs/<run_id>/
 curl -s -H "Authorization: Bearer $TOKEN" -o candidates.csv "$TRIPY_URL/api/runs/<run_id>/export/candidates.csv"
 ```
 
-With `TRIPY_MCP_TOKEN` set, the API also serves the read-only MCP at `/mcp/<TRIPY_MCP_TOKEN>` with the same route and
-lifespan as the Streamlit launcher (`tripy_server.py`); production keeps serving it from Streamlit for now.
+## React research workspace (frontend/)
 
-## React research workspace (frontend/) — migration step 2
+React + TypeScript + Vite + Tailwind over the HTTP API, served in production by the same FastAPI process from
+`frontend/dist`:
 
-A Streamlit-independent UI (React + TypeScript + Vite + Tailwind) over the HTTP API above. Streamlit stays available
-as the fallback and Railway still runs it; serving `frontend/dist` from FastAPI is the next step.
+| Path | Served as |
+| --- | --- |
+| `/assets/*` | Vite's content-hashed files, `Cache-Control: public, max-age=31536000, immutable`; an unknown asset is a real 404 |
+| `/`, `/runs/<id>`, `/series/<id>`, `/research/new`, `/diagnostics`, `/settings`, any other client path | `index.html` with `Cache-Control: no-cache` (a deploy is picked up on the next load) and a same-origin Content-Security-Policy |
+| `/api/*`, `/health`, `/mcp/*` | never the SPA: the API (JSON 404 for an unknown path), the health check, the MCP |
 
-```
-React workspace (frontend/) ──► FastAPI (src/api) ──► the process-wide RunManager ──► the research engine / run state
-```
-
-> **One process per data directory.** Run the API against a dedicated development `TRIPY_DATA_DIR`, or give the
-> dashboard and the API separate data directories. Two processes on one `TRIPY_DATA_DIR` reconcile each other's
-> active runs as `INTERRUPTED`.
-
-```bash
-# backend (a dedicated dev data directory)
-TRIPY_DATA_DIR=.tripy-data-api uvicorn src.api.app:app --host 127.0.0.1 --port 8000
-# frontend (http://localhost:5173; /api and /health are proxied to :8000, so no CORS is needed)
-cd frontend && npm install && npm run dev
-# offline end-to-end: the fake provider drives the real engine (no key, no internet)
-python scripts/fake_glm_server.py --port 8765 --delay 1
-GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash NO_PROXY=127.0.0.1,localhost \
-  TRIPY_DATA_DIR=.tripy-data-api uvicorn src.api.app:app --port 8000
-```
+Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`.
+There is no CORS: the frontend and the API are the same origin (the Vite dev server proxies `/api` locally).
 
 | Command (in `frontend/`) | |
 | --- | --- |
 | `npm run dev` | Vite dev server with the API proxy (`TRIPY_API_URL` overrides the backend URL) |
 | `npm test` | Vitest + React Testing Library (HTTP mocked; no GLM / search calls) |
 | `npm run typecheck` | TypeScript, strict |
-| `npm run build` | production bundle in `frontend/dist` (client-side routes; the server must answer every non-API path with `index.html`) |
+| `npm run build` | production bundle in `frontend/dist` |
 
 Pages: Dashboard, New Research (one / manufacturer / whole benchmark, run profile, per-run settings), Runs, run
-detail (pipeline, live timeline, results, candidates, evidence, documents, Binding Replay, diagnostics, technical,
-exports, failure recovery, cancel; a vehicle list for multi-vehicle runs), A/B Series (create, progress, cancel,
-benchmark downloads), Diagnostics and Settings. Access in production: the unlock screen takes
-`TRIPY_ACCESS_TOKEN`, keeps it in this tab's `sessionStorage` only and sends it as a Bearer header; a 401 clears it
-and returns to the unlock screen. Exports are fetched through the authenticated client and handed to the browser
-as downloads (the token never appears in a URL). Live data is HTTP polling: progress every 2 s and events every
-~1.75 s with the backend's line cursor while a run is active, nothing once it is terminal. See `frontend/README.md`.
+detail (pipeline with the live field table and activity log, live timeline, results with the all-vehicles table,
+candidates, evidence, documents with the entire cache, Binding Replay, diagnostics, Benchmark metrics, technical
+sections, run report, exports, failure recovery, cancel; a vehicle list for multi-vehicle runs), A/B Series (create
+with per-run settings, progress, cancel, benchmark downloads), Diagnostics (configuration, GLM reachability,
+benchmark diagnostics over chosen runs, compare batches) and Settings. Exports are fetched through the authenticated
+client and handed to the browser as downloads (the token never appears in a URL). Live data is HTTP polling: progress
+every 2 s and events every ~1.75 s with the backend's line cursor while a run is active, nothing once it is terminal.
+See `frontend/README.md`.
 
 ## Configuration
 
 Every supported variable, with safe placeholders, is in [`.env.example`](.env.example). Values come from the
-environment first, then Streamlit secrets (same names).
+process environment (Railway variables in production).
 
 ### REQUIRED
 
@@ -278,15 +296,15 @@ environment first, then Streamlit secrets (same names).
 | --- | --- |
 | `GLM_API_KEY` | Z.ai / GLM API key (secret). Also used by the default `glm` web search backend. |
 | `GLM_MODEL` | Research model id (e.g. `glm-5.3-flash`), sent unchanged as the API `model`. |
-| `TRIPY_ACCESS_TOKEN` | **Production:** the private dashboard access secret (a long random string). Without it the production dashboard refuses to open. Optional in local development (not enforced). |
+| `TRIPY_ACCESS_TOKEN` | **Production:** the private workspace access secret (a long random string), sent by the React workspace as a Bearer header. Without it every production `/api` route answers 503 (fails closed). Optional in local development (not enforced). |
 
 ### Deployment
 
 | Variable | Purpose |
 | --- | --- |
 | `TRIPY_DATA_DIR` | Root of all durable state. Railway: `/data` (the Volume mount path). Local default `./.tripy-data`. |
-| `TRIPY_ENV` | `production` disables development conveniences (set by the Dockerfile). |
-| `PORT` | Injected by Railway; do not set it there. |
+| `TRIPY_ENV` | `production` enforces `TRIPY_ACCESS_TOKEN` and requires the built React bundle (set by the Dockerfile). |
+| `PORT` | Injected by Railway; do not set it there (8000 when unset). |
 
 ### OPTIONAL
 
@@ -298,9 +316,9 @@ environment first, then Streamlit secrets (same names).
 | `TARGET_MARKET` | Target market (default `IL`). |
 | `TRIPY_MAX_ACTIVE_RUNS` | Research runs that may execute at once in this server (default **1**). |
 | `TRIPY_SHUTDOWN_GRACE_S` | Seconds active runs get to persist an interrupted result when the server stops (default 20; keep below Railway's `drainingSeconds`, 30 in `railway.json`). |
-| `TRIPY_ALLOW_UI_API_KEY` | Allow typing an API key in the UI (default: development yes, production no). |
 | `TRIPY_LOG_LEVEL` | Server log level on stdout (default `INFO`). |
 | `MILO_RUNS_DIR`, `MILO_CACHE_DIR` | Legacy explicit storage overrides (win over `TRIPY_DATA_DIR`). |
+| `TRIPY_FRONTEND_DIST` | Another React production bundle to serve instead of `frontend/dist` (tests; never needed on Railway). |
 
 ### ADVANCED TUNING
 
@@ -366,14 +384,10 @@ installs the headless shell as the Dockerfile does; the test is skipped on a hos
 
 ## Runs, persistence and reconnects
 
-**Before:** the research batch ran on the Streamlit script thread; the page blocked while it rendered. A browser
-refresh, a closed tab or a dropped websocket ended that script run, which cancelled the research (persisted as
-`interrupted`). Run discovery depended on the page that started the run.
-
-**Now:**
+Research never runs on a request or a browser session:
 
 ```
-browser session(s) ──read──► runs/<run_id>/run_state.json  (lifecycle: QUEUED … COMPLETED/FAILED/…)
+browser / API client(s) ──read──► runs/<run_id>/run_state.json  (lifecycle: QUEUED … COMPLETED/FAILED/…)
         │                    runs/<run_id>/<record_id>/events.jsonl, result.json  (the engine's own artifacts)
         │ start / stop / retry
         ▼
@@ -385,15 +399,15 @@ RunManager (src/jobs/manager.py, one per server process) ──► daemon thread
   atomically) holds the lifecycle status, the current pipeline stage, the owning process, a heartbeat, every
   execution attempt (research, finalization retries), a user-safe error summary and the end-of-run report.
 - **Progress is reconstructed from the engine's own `events.jsonl`** (`src/runstate/pipeline.py`, read
-  incrementally), with the same state machine the live dashboard always used. Refreshing, reopening a tab or
-  opening the app on another device shows the same run, phase and counters. `st.session_state` is only a UI cache
-  (the form-submission nonce); the URL carries `?run=<run_id>`.
+  incrementally). Refreshing, reopening a tab or opening the workspace on another device shows the same run, phase
+  and counters; the URL carries the run (`/runs/<run_id>`). Polling clients only read state: they never create a
+  RunManager or start work.
 - **Statuses:** `QUEUED`, `STARTING`, `RESEARCHING` (source acquisition), `HARVESTING`, `SWEEPING`, `RECOVERING`
   (tail recovery), `FINALIZING`, `COMPLETED`, `FAILED`, `CANCELLED` (stopped by a user), `INTERRUPTED` (the server
   stopped while it was active).
 - **No duplicate execution:** a run executes only on the thread `start` created; a submission is idempotent
   (nonce), a second run for a vehicle with an active run is refused, at most `TRIPY_MAX_ACTIVE_RUNS` run at once,
-  and a finalization retry is refused while the run is active. Streamlit reruns only re-read state.
+  and a finalization retry is refused while the run is active.
 - **Restarts:** a run whose owning process is gone (redeploy, crash) is marked `INTERRUPTED` by the next process
   at startup, using the engine's own `interrupted` / `finalization_pending` results. On a normal stop (SIGTERM),
   active runs are asked to stop at their next safe point and persist their partial result within
@@ -411,8 +425,8 @@ RunManager (src/jobs/manager.py, one per server process) ──► daemon thread
   (and later a separate API / worker tier) can replace it without touching the research engine. Run folders written
   before `run_state.json` existed, or by the CLI, are listed read-only from their files.
 
-**Limits (single-process design):** a research run lives inside the server process. A browser refresh, closed tab,
-websocket drop or Streamlit rerun never interrupts it, but a redeploy, restart or crash of the Railway service does:
+**Limits (single-process design):** a research run lives inside the server process. A browser refresh, a closed tab
+or a polling client never interrupts it, but a redeploy, restart or crash of the Railway service does:
 the run is then shown as `INTERRUPTED`, everything it acquired stays on the volume, and it can be finalized from the
 preserved research or restarted. Run one replica only.
 
@@ -429,7 +443,7 @@ deployment, cannot leak into a profiled run). The **Run profile** selector sits 
 | Benchmark: Baseline | legacy (site map off: it is part of the Treatment) | off |
 | Benchmark: Treatment | contract | off |
 | Benchmark: Treatment + card | contract | on |
-| Custom | the Advanced settings as edited (their defaults come from env) | |
+| Custom | the per-run settings as edited (their defaults come from env) | |
 
 Every named profile also runs: sweep mode `adjudication`, sweep 12 fields / 16 candidates per chunk, final assembly
 `deterministic`, reasoning effort research `high` / document sweep `low` / recovery `low` / finalizer `low`, no
@@ -442,15 +456,15 @@ keeps memory on (`research_memory` / `negative_route_blocking` in `run_configura
 (also research turn ceiling 6, hard ceiling 12, minimum base 3 documents / 50 %, sweep packet 28000 chars, 2 sweep
 turns, 3 candidates per field, the `ADJUDICATION_*` limits, the `CLUSTER_*` recovery budgets, the recovery turn cap and
 the research / recovery HTTP attempts); everything else (models, timeouts, other phases' thinking / max_tokens) still
-comes from Advanced settings / env. *Production* with no env set is exactly the
+comes from the per-run settings / env. *Production* with no env set is exactly the
 code defaults. The research model is never part of a profile.
 
-**Advanced settings** has the per-run controls the Custom profile uses (acquisition mode, document card, a
-*Reasoning effort* select per phase — research, document sweep, recovery, finalizer: provider default / low / medium /
+**Per-run settings** (New Research and the A/B form, `GET /api/run-settings`) has the controls the Custom profile
+uses (acquisition mode, document card, a *Reasoning effort* select per phase — research, document sweep, recovery, finalizer: provider default / low / medium /
 high / max, defaulting to env, else the code defaults —, document sweep max attempts 1-3 / max fields / max candidates
-per chunk). The *Extra request JSON* field warns when it contains `thinking.type = disabled` (stripped). Its phase
-settings are merged per phase and per key over the env phase settings (another phase's env setting such as
-`GLM_RECOVERY_THINKING` survives). It also lists every env variable that differs from its code default as
+per chunk). The extra request JSON is server configuration only (`GLM_EXTRA_BODY`; `thinking.type = disabled` is
+stripped). Phase settings are merged per phase and per key over the env phase settings (another phase's env setting
+such as `GLM_RECOVERY_THINKING` survives). The Diagnostics page lists every env variable that differs from its code default as
 `VAR = env value (code default X)` for `ACQUISITION_MODE`, `ACQUISITION_DOCUMENT_CARD`, `DOCUMENT_SWEEP_MAX_FIELDS`,
 `DOCUMENT_SWEEP_MAX_CANDIDATES`, `DOCUMENT_SWEEP_MAX_PACKET_CHARS`, `DOCUMENT_SWEEP_MAX_TURNS`,
 `DOCUMENT_SWEEP_CANDIDATES_PER_FIELD`, `SWEEP_MODE`, `FINAL_ASSEMBLY`, `GLM_REASONING_EFFORT`,
@@ -468,14 +482,15 @@ result.json, the full AgentConfig in batch.json (so a finalization retry uses th
 `run_profile` / `document_card` in `diagnostics.run_configuration()` and `config_key()` (`by_config` separates
 Treatment from Treatment + card; `env_overrides` is informational and not part of the key).
 
-**Benchmark A/B** (a target mode next to One vehicle / Manufacturer / All 50): pick vehicles, *Runs per arm* (1-5,
-default 3) and the arms (Baseline and Treatment checked by default). One click creates a SERIES: for each repeat, for
+**Benchmark A/B** (the A/B Series page, `POST /api/series`): pick vehicles, *Runs per arm* (1-5, default 3), the arms
+(Baseline and Treatment checked by default) and optionally per-run settings (the same contract as a single run; they
+become the series' run template, while each arm's profile still pins its experiment settings). One click creates a SERIES: for each repeat, for
 each arm, one run over the selected vehicles with that arm's profile, arms interleaved (B, T, B, T, ...) so provider
 drift hits both arms equally. The runs execute strictly one after another; a vehicle in another active run makes the
 series wait. Sequencing lives in the job layer (`RunManager.start_series`, state in
 `runs/_series/<series_id>/series.json`), so it survives a page refresh; *Cancel series* stops the running run and
 every planned one. When the series ends, `diagnostics.write_benchmark` runs over exactly the series' run_ids into
-that folder (`benchmark.json`, `per_vehicle.csv/.jsonl`, `parser_gaps.jsonl`), offered under *Benchmark diagnostics*.
+that folder (`benchmark.json`, `per_vehicle.csv/.jsonl`, `parser_gaps.jsonl`), offered as downloads on the series page.
 **Restart policy:** a series cannot outlive its server process. After a restart it is marked INTERRUPTED (unstarted
 runs NOT_STARTED, the interrupted run reconciled like any run) and its benchmark is written over the runs it
 finished; it is never resumed automatically, because a restart is usually a redeploy and resuming would mix code /
@@ -543,9 +558,10 @@ at any time (`--rebuild`). The compact summary is also logged to stdout. Secrets
   is `DETERMINISTIC_VALUE_MISMATCH` (precision / normalization, not recall), the same value `PROMOTED_CANDIDATE`,
   anything unprovable `UNCLASSIFIED`. The pre-existing `document_sweep_deterministic_misses_found` (misses and
   mismatches together) is reported alongside.
-- **UI:** *Technical details* shows concise Source acquisition and Document sweep blocks and a *Detailed
-  diagnostics* expander (summary, per-turn table, per-call table, per-field table, raw JSON). The sidebar's
-  *Benchmark diagnostics* aggregates chosen runs and downloads `benchmark.json` / `per_vehicle.csv`.
+- **UI:** the run's *Technical* tab shows concise Source acquisition and Document sweep blocks and *Detailed
+  diagnostics* (summary, per-turn table, per-call table, per-field table, raw JSON). The Diagnostics page's
+  *Benchmark diagnostics* aggregates chosen runs and downloads `benchmark.json` / `per_vehicle.csv` /
+  `parser_gaps.jsonl` / `binding_replay_items.jsonl`.
 - **Benchmark aggregate:** acquisition turns (mean / median), searches, useful / official / target-market
   documents, scoped coverage after each turn, coverage gain per turn and per search, no-artifact turns, repeated
   searches, hard-max rate, latency; sweep calls, fields entering / resolved, resolution rate, harvest misses
@@ -1544,7 +1560,7 @@ Each attempt records `packet_chars`, `prior_excerpt_items`, `prior_excerpt_chars
 
 ### Interrupted runs and current field state
 
-**A Streamlit stop or rerun (or Ctrl+C) is a script-control interruption, not an error.** The run:
+**A script-control stop (Ctrl+C, a UI callback's stop, a server shutdown) is an interruption, not an error.** The run:
 
 1. stops issuing model and tool calls (no finalizer);
 2. mutes further UI callbacks, without swallowing anything;
@@ -1708,7 +1724,7 @@ Observational only. Defaults (official Z.ai pricing as provided on 2026-10-01, i
 | `glm-5.3-flashx` | $0.37 | $1.25 |
 | Web Search | $0.01 per call | |
 
-- **Overrides:** values can be overridden by environment variable or in the sidebar.
+- **Overrides:** values can be overridden by environment variable or per run (the `price_*` per-run settings).
 - **Unknown model:** a model id with no default reports token cost as n/a.
 - **Search calls:** only billable GLM `web_search` calls count. Cache hits don't, and
   `search_official_domains` counts one call per domain.
@@ -1734,7 +1750,7 @@ export GLM_MODEL="glm-5.3-flash"
 export GLM_FINALIZER_MODEL="glm-5.3"
 ```
 
-In the UI, choose **One vehicle**; #44 is preselected. The run lands in `runs/<batch>/101122/`:
+In the workspace, choose **New Research → One vehicle** and pick #44 (record `101122`). The run lands in `runs/<batch>/101122/`:
 
 - `input.json`: the Level 1.5 payload.
 - `events.jsonl`: every model turn (with `reasoning_content` and latency), tool call and full tool result
@@ -1834,14 +1850,16 @@ workers wait and reuse it, different keys run concurrently) and writes files ato
 
 ## UI
 
-The dashboard (`app.py`, `src/ui/dashboard.py`) is restrained and works on a phone (columns stack, long text wraps,
-no horizontal page scroll):
+The React workspace (`frontend/`) is restrained and works on a phone (layouts stack, long text wraps, no horizontal
+page scroll):
 
-- **Research target** — scope (one vehicle, a manufacturer, the whole Benchmark v1 sample) and *Start research*.
-- **System** — GLM (configured / reachable: an unauthenticated request to the base URL, no key sent), Search,
-  Persistent storage (writable, Railway Volume detected) and the Level 1.5 source. Problems are precise
-  ("Missing GLM_API_KEY") and block *Start research*.
-- **Active run** — the real pipeline with phase status instead of a spinner or invented percentages:
+- **New Research** — scope (one vehicle, a manufacturer, the whole Benchmark v1 sample), run profile, per-run
+  settings and *Start research*.
+- **Diagnostics** — GLM (configured / reachable: an unauthenticated request to the base URL, no key sent), Search,
+  Persistent storage (writable, Railway Volume detected), the Level 1.5 source and access control. Problems are
+  precise ("Missing GLM_API_KEY") and block *Start research*. Benchmark diagnostics over chosen runs (downloads) and
+  *Compare batches*.
+- **Run page** — the real pipeline with phase status instead of a spinner or invented percentages:
 
   ```
   ✓ Source acquisition        1m 02s
@@ -1851,30 +1869,29 @@ no horizontal page scroll):
   ○ Finalization              Waiting
   ```
 
-  with what is happening now ("Model is working", "Searching the web: …") and the counters the run actually
-  recorded: sources, target-market sources, candidates, candidate fields, resolved fields (evidence-backed state,
-  not a correctness score), research turns, searches. *Stop run* stops at the next safe point. The panel refreshes
-  itself every 2 s while the run is active.
-- **Current run** (right column) — run id, status, phase, model, start time, elapsed, sources, candidates, resolved
-  fields, search calls, model calls.
-- **Result** — summary and a field table (value, unit, market, evidence state, provenance, evidence count),
-  conflicts and additional findings. *Run report* shows the observability summary: total and per-phase durations
-  (acquisition, harvest, sweep, recovery, finalizer), search calls, model calls by phase, fetched / official /
-  target-market documents, candidates and candidate fields, admitted and rejected evidence, resolved fields, stop
-  reason and recorded cost. It is also stored in `run_state.json`.
+  with what is happening now and the counters the run actually recorded: sources, target-market sources,
+  candidates, candidate fields, resolved fields (evidence-backed state, not a correctness score), research turns,
+  searches; the Hebrew field-progress table and the activity log. *Stop run* stops at the next safe point. Progress
+  is polled every 2 s while the run is active.
+- **Result** — summary and a field table (value, unit, market, evidence state, provenance, evidence), conflicts and
+  additional findings; for a multi-vehicle run an all-vehicles table (long, or wide vehicle × field). *Run report*
+  (Technical tab) shows the observability summary: total and per-phase durations, search calls, model calls by
+  phase, fetched / official / target-market documents, candidates and candidate fields, admitted and rejected
+  evidence, resolved fields, stop reason and recorded cost. It is also stored in `run_state.json`.
 - **Failures** — a clean card: where it stopped, why in plain words (provider timeout, rate limit, credentials,
   provider error, search failure, malformed response, storage, server restart, user stop), what was preserved, and
-  the safe actions (*Retry finalization* / *Finalize from preserved research*, *Restart research*). Technical
-  details (redacted) are in an expander; stack traces only go to the server log.
-- **Run history** (sidebar) — every run with target, status, duration, resolved fields and run id; selecting one
-  restores its result and diagnostics.
-- **Technical details** — while running: the Hebrew field-progress table and the raw activity log; afterwards the
-  previous per-vehicle diagnostics (human view, JSON, partial research, evidence, tool calls, documents, model
-  responses, Level 1.5 input, config & cost, API attempts, events, field recovery, the Hebrew candidate matrix),
-  the Documents, Results and Benchmark views, and the raw run state.
-- **Advanced settings** (sidebar) — the previous sidebar knobs (models, endpoints, attempts, concurrency, research
-  budget, recovery, Level 3, temperature / thinking / max_tokens / extra body, pricing, Level 1.5 source), applied to
-  the next run. Defaults come from the environment.
+  the safe actions (*Finalize from preserved research*, *Restart research*). Technical details are redacted; stack
+  traces only go to the server log.
+- **Runs** — every run with target, status, duration, resolved fields and run id.
+- **Technical tab** — status totals, run report, the brief and detailed acquisition / sweep diagnostics, the human
+  view extras, raw output, partial research, consistency checks, tool calls, model responses, Level 1.5 input,
+  config & cost, API attempts, field recovery and the layered candidate metrics. Separate tabs: live timeline (raw
+  event JSON on demand), candidates, evidence (every column), documents (this run or the entire cache), Binding
+  Replay, diagnostics, Benchmark (observation metrics per vehicle, aggregate, tool usage).
+- **Per-run settings** — models, attempts, timeout, vehicle workers, research budget, recovery, Level 3,
+  temperature, max_tokens, reasoning efforts, experiment switches, sweep limits, prices, Level 1.5 source; applied
+  to the run (or A/B series) being started. Defaults come from the environment; endpoints, credentials, the extra
+  request JSON and the in-flight limits stay server-controlled.
 
 ## Files
 
@@ -1910,11 +1927,10 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 - a synthetic fixture of the GLM-5.3 baseline failure (`tests/fixtures/baseline_runs`, regenerate with
   `python tests/fixtures/make_baseline_fixture.py`): 30 research steps, then repeated finalize-call
   timeouts and no `result.json`;
-- Streamlit `AppTest` smoke tests (including a parallel live-dashboard batch);
 - concurrency (per-model and Search-Prime pools, per-attempt slots, hook isolation, failure isolation,
   cancellation), cache single flight, the field dictionary (all 45 fields, positive and false-positive
   phrases), deterministic harvesting, the layered pipeline (Cadillac LYRIQ-style fixture in
-  `tests/fixtures/cadillac_lyriq.py`), the finalization checkpoint and the Hebrew dashboard state;
+  `tests/fixtures/cadillac_lyriq.py`), the finalization checkpoint and the Hebrew live state;
 - the reliability foundation (`tests/test_reliability_foundation.py`, Corolla fixture in
   `tests/fixtures/corolla_touring.py`): 2.0-vs-1.8 cargo contamination, server binding over model claims,
   e-CVT gear count, boolean statements, notes, typed ranges, propulsion applicability, source authority,
@@ -1938,13 +1954,21 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
   report; the same file runs unchanged against an older checkout for a before/after comparison.
 - the HTTP API (`tests/test_api.py`): health, Bearer authentication, run history / details / progress, starts
   through the real RunManager (409 conflicts, blocked configuration), cancel / finalize / restart, the events
-  cursor, results, candidates, evidence, byte-identical exports, secret redaction, the API settings equal to an
-  untouched sidebar, no Streamlit import, and the MCP mounted into the API;
-- the Railway migration (`tests/test_railway_runstate.py`, `tests/test_dashboard_app.py`): persistent path
+  cursor, results, candidates, evidence, byte-identical exports, secret redaction, the API settings held to the former
+  sidebar's semantics, and the MCP mounted into the API; the workspace endpoints (`tests/test_api_workspace.py`):
+  the per-run settings contract, A/B series (with typed settings), documents, Binding Replay, diagnostics, the
+  technical / live / Benchmark views and multi-run exports;
+- production serving (`tests/test_production_serving.py`): the React bundle and SPA fallback (never swallowing `/api`,
+  `/health`, `/mcp` or `/assets`), cache and security headers, the bundle required in production, authentication,
+  one RunManager per process, access-log redaction, no Streamlit / pandas import, and the real server started by
+  `scripts/start.sh` (one Uvicorn process, MCP with and without the variable, graceful SIGTERM);
+- the Railway migration (`tests/test_railway_runstate.py`): persistent path
   configuration and storage detection, run-state serialization and the repository, pipeline phase transitions,
   reconnect (incremental event replay equals a fresh replay), background execution, duplicate-run prevention,
   cancellation, shutdown, orphaned-run restoration after a restart, finalization retry from the checkpoint, failure
-  explanations, configuration validation and redaction, the Railway start configuration, `.env.example`
-  completeness, and AppTest renders of the dashboard from durable state.
+  explanations, configuration validation and redaction, the Railway start configuration and `.env.example`
+  completeness.
 
-`.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment).
+`.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment), together with the
+frontend (`npm ci`, typecheck, Vitest, production build) and a production Docker image build whose container must
+answer `/health`, serve the SPA, gate `/api`, run exactly one Uvicorn process and launch Chromium.

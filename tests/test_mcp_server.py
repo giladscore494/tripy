@@ -419,25 +419,27 @@ def test_gate_compares_in_constant_time_and_an_unusable_token_serves_nothing(mon
 
 # --- variable unset: nothing exists ------------------------------------------------------------------------------------
 
-def test_dashboard_never_imports_the_mcp_package(tmp_path):
+def test_the_application_never_imports_the_mcp_package_without_the_variable(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "TRIPY_MCP_TOKEN"}
     env.update(TRIPY_DATA_DIR=str(tmp_path / "data"), PYTHONPATH=str(ROOT))
     code = ("import sys\n"
-            "from streamlit.testing.v1 import AppTest\n"
-            "at = AppTest.from_file('app.py', default_timeout=90)\n"
-            "at.run()\n"
-            "assert not at.exception, at.exception\n"
-            "bad = sorted(m for m in sys.modules if m == 'mcp' or m.startswith(('mcp.', 'src.mcp_server')))\n"
+            "from fastapi.testclient import TestClient\n"
+            "from src.api.app import create_app\n"
+            "with TestClient(create_app(frontend=None)) as client:\n"
+            "    assert client.get('/health').status_code == 200\n"
+            "    assert client.get('/api/runs').status_code == 200\n"
+            "    assert client.post('/mcp/' + 'x' * 32).status_code == 404\n"
+            "bad = sorted(m for m in sys.modules if m == 'mcp' or m.startswith(('mcp.', 'src.mcp_server.server')))\n"
             "print('MCP_MODULES', bad)\n")
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
     assert out.returncode == 0, out.stderr[-2000:]
     assert "MCP_MODULES []" in out.stdout
 
 
-def test_start_sh_keeps_todays_command_without_the_variable(tmp_path):
+def test_start_sh_runs_the_same_single_uvicorn_command_with_or_without_the_variable(tmp_path):
     fake = tmp_path / "bin"
     fake.mkdir()
-    (fake / "streamlit").write_text('#!/bin/sh\necho "streamlit $*"\n')
+    (fake / "uvicorn").write_text('#!/bin/sh\necho "uvicorn $*"\n')
     (fake / "python").write_text("#!/bin/sh\nexit 0\n")          # skip startup diagnostics in this test
     for item in fake.iterdir():
         item.chmod(0o755)
@@ -447,21 +449,10 @@ def test_start_sh_keeps_todays_command_without_the_variable(tmp_path):
         return subprocess.run(["sh", str(ROOT / "scripts" / "start.sh")], env={**base, **env}, capture_output=True,
                               text=True, timeout=30, check=True).stdout.strip()
 
-    flags = ("--server.address=0.0.0.0 --server.port=9123 --server.headless=true --server.fileWatcherType=none "
-             "--server.runOnSave=false --client.showErrorDetails=none --browser.gatherUsageStats=false")
-    assert start() == f"streamlit run app.py {flags}"
-    assert start(TRIPY_MCP_TOKEN="") == f"streamlit run app.py {flags}"
-    assert start(TRIPY_MCP_TOKEN="  ") == f"streamlit run app.py {flags}"
-    assert start(TRIPY_MCP_TOKEN=TOKEN) == f"streamlit run tripy_server.py {flags}"
+    command = ("uvicorn src.api.app:app --host 0.0.0.0 --port 9123 --timeout-graceful-shutdown 5 "
+               "--no-server-header")
+    assert start() == command
+    assert start(TRIPY_MCP_TOKEN="") == command and start(TRIPY_MCP_TOKEN=TOKEN) == command
     assert TOKEN not in start(TRIPY_MCP_TOKEN=TOKEN)
-
-
-def test_launcher_is_a_streamlit_app_over_the_unchanged_dashboard():
-    from streamlit.web.server.app_discovery import discover_asgi_app
-
-    found = discover_asgi_app(ROOT / "tripy_server.py")
-    assert found.is_asgi_app and found.import_string == "tripy_server:app"
-    assert not discover_asgi_app(ROOT / "app.py").is_asgi_app
-    source = (ROOT / "tripy_server.py").read_text()
-    assert 'st.App("app.py", routes=mcp_routes(), lifespan=mcp_lifespan)' in source
-    assert "mcp" not in (ROOT / "app.py").read_text().lower()
+    assert start(PORT="") == command.replace("9123", "8000")
+    assert not (ROOT / "tripy_server.py").exists() and not (ROOT / "app.py").exists()
