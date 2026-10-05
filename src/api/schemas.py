@@ -52,6 +52,7 @@ class RunSummary(BaseModel):
     cancel_requested: bool = False
     legacy: bool = Field(False, description="a run folder without run_state.json (CLI or an older version)")
     elapsed_s: float | None = None
+    resolved_fields_text: str | None = Field(None, description="'26 / 37' from the final report, summed over vehicles")
 
 
 class RunList(BaseModel):
@@ -95,6 +96,12 @@ class Failure(BaseModel):
     technical: str | None = Field(None, description="redacted technical detail; never a traceback")
 
 
+class Notice(BaseModel):
+    tone: Literal["info", "warn"]
+    text: str
+    detail: str | None = None
+
+
 class VehicleState(BaseModel):
     record_id: str
     title: str
@@ -106,6 +113,7 @@ class VehicleState(BaseModel):
     failure: Failure | None = None
     result_available: bool
     report: Json | None = None
+    notices: list[Notice] = []
 
 
 class ProgressCounts(BaseModel):
@@ -124,6 +132,7 @@ class RunDetail(RunSummary):
     completed: bool
     progress: ProgressCounts
     vehicles: list[VehicleState]
+    status_panel: list[list[Any]] = Field([], description="[label, value] rows: totals over every vehicle")
 
 
 class VehicleProgress(BaseModel):
@@ -196,12 +205,15 @@ class VehicleResult(BaseModel):
     conflicts: list[Any]
     additional_findings: list[Any]
     evidence_admission: Json | None = None
+    output_source: str | None = None
+    no_output_message: str | None = None
 
 
 class RunResults(BaseModel):
     run_id: str
     available: bool
     reason: str | None = None
+    output_source_caption: str | None = None
     vehicles: list[VehicleResult]
 
 
@@ -403,14 +415,18 @@ class VehicleList(BaseModel):
 # --- A/B series ------------------------------------------------------------------------------------------------------
 
 class StartSeries(BaseModel):
-    """An A/B benchmark series as the dashboard's "Benchmark A/B" scope offers it: chosen benchmark vehicles, runs per
-    arm (1-5) and arms from run_profiles.ARMS. Everything else is the server's configuration."""
+    """An A/B benchmark series: chosen benchmark vehicles, runs per arm (1-5), arms from run_profiles.ARMS and the
+    optional per-run settings every run of the series uses as its template (the SAME RunSettingsOverrides as
+    POST /api/runs; each arm's named profile still pins its own experiment settings). Endpoints, credentials and the
+    process-wide limits stay the server's."""
     model_config = ConfigDict(extra="forbid")
 
     record_ids: list[str] = Field(min_length=1, max_length=200)
     repeats: int = Field(3, ge=1, le=5, strict=True)
     arms: list[Literal[ARMS]] = Field(min_length=1, max_length=len(ARMS))  # type: ignore[valid-type]
     idempotency_key: str | None = Field(None, min_length=1, max_length=200)
+    settings: RunSettingsOverrides | None = Field(None, description="per-run overrides for every run of the series; "  # type: ignore[valid-type]
+                                                                    "absent = server defaults")
 
 
 class SeriesItem(BaseModel):
@@ -477,6 +493,7 @@ class SeriesStarted(BaseModel):
     created: bool
     message: str = ""
     series: SeriesState | None = None
+    settings_overridden: list[str] = Field([], description="the per-run settings this request overrode")
 
 
 # --- documents, binding replay, diagnostics --------------------------------------------------------------------------

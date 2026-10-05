@@ -4,7 +4,13 @@
 import { download, request } from "./client";
 import type {
   ActionAccepted,
+  BenchmarkBatches,
+  BenchmarkSummary,
   BindingReplay,
+  CacheDocuments,
+  LiveView,
+  Reachability,
+  RunBenchmark,
   ConfigStatus,
   DocumentStructure,
   DocumentText,
@@ -26,6 +32,7 @@ import type {
   StartSeries,
   Started,
   VehicleList,
+  VehicleTechnical,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -59,6 +66,17 @@ export const api = {
     request<BindingReplay>(`/api/runs/${enc(runId)}/binding-replay`,
       { ...o, query: { record_id: recordId, field, offset, limit } }),
   diagnostics: (runId: string, o: Opts = {}) => request<RunDiagnostics>(`/api/runs/${enc(runId)}/diagnostics`, o),
+  technical: (runId: string, recordId: string, o: Opts = {}) =>
+    request<VehicleTechnical>(`/api/runs/${enc(runId)}/vehicles/${enc(recordId)}/technical`, o),
+  live: (runId: string, recordId?: string, o: Opts = {}) =>
+    request<LiveView>(`/api/runs/${enc(runId)}/live`, { ...o, query: { record_id: recordId } }),
+  benchmark: (runId: string, o: Opts = {}) => request<RunBenchmark>(`/api/runs/${enc(runId)}/benchmark`, o),
+  benchmarkBatches: (o: Opts = {}) => request<BenchmarkBatches>("/api/benchmark/batches", o),
+  benchmarkSummary: (runIds: string[], o: Opts = {}) =>
+    request<BenchmarkSummary>("/api/benchmark/summary", { ...o, query: { run_id: runIds } }),
+  cacheDocuments: (offset = 0, limit = 100, o: Opts = {}) =>
+    request<CacheDocuments>("/api/cache/documents", { ...o, query: { offset, limit } }),
+  reachability: (o: Opts = {}) => request<Reachability>("/api/config/reachability", o),
 
   startRun: (body: StartRun) => request<Started>("/api/runs", { method: "POST", body }),
   cancelRun: (runId: string) => request<ActionAccepted>(`/api/runs/${enc(runId)}/cancel`, { method: "POST" }),
@@ -82,4 +100,10 @@ export const exportsApi = {
       name === "candidates.csv" ? { record_id: recordId } : undefined),
   series: (seriesId: string, name: string) =>
     download(`/api/series/${enc(seriesId)}/export/${enc(name)}`, `${seriesId}_${name}`),
+  /** The Benchmark diagnostics files over several runs (repeatable run_id; run ids are not secrets). */
+  benchmark: (runIds: string[], name: BenchmarkExport) =>
+    download(`/api/benchmark/export/${enc(name)}`, name === "binding_replay_items.jsonl" ? name : `tripy_${name}`,
+      { run_id: runIds }),
 };
+
+export type BenchmarkExport = "benchmark.json" | "per_vehicle.csv" | "parser_gaps.jsonl" | "binding_replay_items.jsonl";

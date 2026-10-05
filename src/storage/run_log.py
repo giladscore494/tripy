@@ -58,7 +58,7 @@ class RunLog:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.events_path = self.dir / "events.jsonl"
         self.listener = listener
-        # Set once a run is interrupted (e.g. a Streamlit stop): events are still written, but no further
+        # Set once a run is interrupted (e.g. a UI stop): events are still written, but no further
         # UI callback runs while the partial result is persisted. Nothing is swallowed.
         self.listener_muted = False
         self._seq = last_seq(self.events_path)

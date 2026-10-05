@@ -2,7 +2,7 @@
 
     python scripts/fake_glm_server.py --port 8765 [--delay 1.5] [--fail finalizer|research|none]
     GLM_BASE_URL=http://127.0.0.1:8765/api/paas/v4 GLM_API_KEY=fake GLM_MODEL=glm-5.3-flash \
-        NO_PROXY=127.0.0.1,localhost streamlit run app.py
+        NO_PROXY=127.0.0.1,localhost uvicorn src.api.app:app --port 8000
 
 Behaviour (deterministic):
 * primary research: turn 1 searches, turn 2 fetches the local spec page, turn 3 answers without tool calls;

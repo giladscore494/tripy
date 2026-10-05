@@ -550,7 +550,7 @@ def test_new_sweep_packet_defaults():
 
 def test_the_status_panel_shows_unknown_counts_as_a_dash():
     from src.runstate.model import RunRecord
-    from src.ui.dashboard import status_panel_rows
+    from src.presentation.run_views import status_panel_rows
 
     record = RunRecord(run_id="r1", status="COMPLETED", target={"record_ids": ["1"]})
     unknown = {"counters": {"sources": 3, "candidates": None, "model_calls": 4, "searches": None}}
@@ -580,7 +580,7 @@ def test_pipeline_candidates_fall_back_to_the_live_acquisition_count():
 
 
 def test_official_labels_never_relabel_an_old_run():
-    from src.ui.diagnostics_view import _official_pairs
+    from src.presentation.run_views import official_pairs as _official_pairs
 
     assert _official_pairs({"official_sources": 16}, {}) == [("Official", 16)]
     assert _official_pairs({"official_sources": 6, "official_urls_discovered": 16}, {}) == [

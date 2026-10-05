@@ -1,10 +1,9 @@
 # Python 3.11+
-streamlit>=1.53,<2  # st.fragment(run_every), width="stretch" buttons, st.code(wrap_lines); st.App (tripy_server.py)
 requests>=2.32
 beautifulsoup4>=4.12
 pdfplumber>=0.11
 psycopg[binary]>=3.2
-# HTTP API (src/api; `uvicorn src.api.app:app`), alongside the Streamlit dashboard during the migration
+# The web application (src/api; `uvicorn src.api.app:app`, scripts/start.sh): API, React bundle, health, MCP mount
 fastapi>=0.115,<1
 uvicorn>=0.30
 # Read-only MCP endpoint (src/mcp_server), served only when TRIPY_MCP_TOKEN is set. Official SDK, MIT.

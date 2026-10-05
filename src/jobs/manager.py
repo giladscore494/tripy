@@ -1,12 +1,9 @@
-"""Background research runs, decoupled from Streamlit sessions.
+"""Background research runs, decoupled from browser sessions and HTTP requests.
 
-Before: the research batch ran ON the Streamlit script thread (the script blocked while it rendered the live
-dashboard). A browser refresh, closed tab or websocket drop ended that script run, which cancelled the batch.
-
-Now: one `RunManager` per server process owns the research threads. Starting a run returns immediately with a
-stable `run_id`; the run executes on a daemon thread that no browser session owns, so refreshes, reconnects,
-reruns and closed tabs do not affect it. Every browser session discovers runs from the durable run repository
-(run_state.json) and replays the engine's own events.jsonl for progress.
+One `RunManager` per server process owns the research threads (the FastAPI application builds it once at startup,
+src/api/deps.py). Starting a run returns immediately with a stable `run_id`; the run executes on a daemon thread that
+no request or browser owns, so refreshes, closed tabs and polling clients do not affect it. Every client discovers runs
+from the durable run repository (run_state.json) and replays the engine's own events.jsonl for progress.
 
 The research itself is exactly the engine's `research_one` / `run_batch` / `finalize_existing_run` path the old
 UI and the CLI use, with the same shared ConcurrencyController (provider limits unchanged). Ordinary runs share
@@ -21,9 +18,9 @@ Guards against duplicate execution:
 
 Lifecycle and restarts: a run whose owning process is gone (redeploy, crash) is marked INTERRUPTED when the next
 process starts (`reconcile`), using the engine's own interrupted / finalization_pending results on disk. On a
-normal shutdown (SIGTERM → interpreter exit) active runs are asked to stop at their next safe point so they
-persist an `interrupted` partial result first. This is the limit of a single-process design: a research run
-cannot outlive the server process that executes it.
+normal shutdown (SIGTERM → the ASGI lifespan's shutdown, else interpreter exit) active runs are asked to stop at their
+next safe point so they persist an `interrupted` partial result first. This is the limit of a single-process design:
+a research run cannot outlive the server process that executes it.
 """
 
 from __future__ import annotations
@@ -240,7 +237,6 @@ class RunManager:
         # attaches to one deployment at a time). Then an active run owned by any other process is an orphan.
         # shared_storage=True (several processes on one folder) trusts a fresh heartbeat of another process instead.
         self.shared_storage = shared_storage
-        self._watcher: threading.Thread | None = None
         self.boot_id = uuid.uuid4().hex
         self.owner = {"boot_id": self.boot_id, "pid": os.getpid(), "host": socket.gethostname()}
         self._research_fn, self._level15_loader = research_fn, level15_loader
@@ -900,41 +896,6 @@ class RunManager:
         return out
 
     # -- shutdown -----------------------------------------------------------------------------------------
-    def watch_server_shutdown(self, is_stopping: Callable[[], bool] | None = None, poll_s: float = 0.5) -> None:
-        """Start (once) a daemon thread that calls `shutdown` as soon as the server starts stopping.
-
-        Streamlit handles SIGTERM itself and may keep the process alive while browsers are still connected, until
-        the platform's SIGKILL; an atexit hook alone would then never run. Watching the runtime state lets active
-        runs persist their interrupted results inside the platform's draining window."""
-        if self._watcher is not None:
-            return
-        if is_stopping is None:
-            try:
-                from streamlit.runtime import Runtime
-                from streamlit.runtime.runtime import RuntimeState
-            except Exception:  # noqa: BLE001
-                return
-            if not Runtime.exists():
-                return
-            runtime = Runtime.instance()
-
-            def is_stopping() -> bool:
-                return runtime.state in (RuntimeState.STOPPING, RuntimeState.STOPPED)
-
-        def watch() -> None:
-            while not self._shutting_down:
-                try:
-                    if is_stopping():
-                        log.warning("server is stopping: interrupting active runs")
-                        self.shutdown()
-                        return
-                except Exception:  # noqa: BLE001
-                    return
-                time.sleep(poll_s)
-
-        self._watcher = threading.Thread(target=watch, name="tripy-shutdown-watcher", daemon=True)
-        self._watcher.start()
-
     def shutdown(self, grace_s: float | None = None) -> None:
         """Interpreter exit (e.g. SIGTERM on redeploy): ask every executing run to stop at its next safe point so
         it persists an `interrupted` result, wait up to `grace_s`, and leave the rest to `reconcile` on the next

@@ -1,15 +1,13 @@
-"""Run settings shared by every launcher (framework-neutral; never imports Streamlit).
-
-The Streamlit sidebar (src/ui/settings_panel.py) and the HTTP API (src/api) start runs with the SAME settings object,
-built by the SAME code:
+"""Run settings of every launcher (framework-neutral): the HTTP API's runs and A/B series, the CLI. One settings object,
+built by ONE code path (the former dashboard sidebar's semantics, kept exactly):
 
     defaults from the environment   glm_defaults / agent_defaults / effort_default / pricing_defaults / ...
-    widget ranges                   BOUNDS (the sidebar's number inputs use them; the API clamps env values to them)
+    ranges                          BOUNDS (the per-run settings' ranges; env defaults are clamped into them)
     one settings object             assemble_settings(...) -> UISettings
     one research request            build_research_request(settings, ...) -> jobs.manager.ResearchRequest
 
-`settings_from_env(lookup, controller)` is exactly what the sidebar yields when nobody touches it: the API has no
-Advanced settings, so its runs use the server's configuration, like an untouched dashboard.
+`settings_from_env(lookup, controller)` is the server's configuration with no per-run override; settings_for_run adds
+a client's validated per-run overrides (RUN_OVERRIDES) on top.
 """
 
 from __future__ import annotations
@@ -185,7 +183,7 @@ def extra_json_disables_thinking(raw: str) -> bool:
 
 
 def pricing_defaults(model: str, secret: Secret) -> dict:
-    """Official defaults for the model id, then env / Streamlit-secrets overrides."""
+    """Official defaults for the model id, then env overrides."""
     pricing = default_pricing(model)
     for name, key in (("GLM_PRICE_INPUT_PER_MTOK", "input_per_mtok"), ("GLM_PRICE_OUTPUT_PER_MTOK", "output_per_mtok"),
                       ("GLM_PRICE_WEB_SEARCH_PER_CALL", "web_search_per_call")):

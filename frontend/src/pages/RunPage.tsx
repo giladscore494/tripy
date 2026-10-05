@@ -6,11 +6,17 @@ import { api } from "../api/endpoints";
 import type { DocumentRow } from "../api/types";
 import { CandidatesView, EvidenceView, ResultsView } from "../components/run/DataViews";
 import { EventTimeline } from "../components/run/EventTimeline";
+import {
+  AllVehiclesResults, BenchmarkView, CacheDocumentsView, LiveFieldsView, NoticeList, RunReportView, StatusPanel,
+  VehicleTechnicalView,
+} from "../components/run/ParityViews";
 import { ExportButtons, FailureCard, PipelineView, RunHeader, VehicleList } from "../components/run/RunOverview";
 import {
   BindingReplayView, DocumentDrawer, DocumentsView, RunDiagnosticsView, TabSkeleton,
 } from "../components/run/TechnicalViews";
-import { Button, Disclosure, EmptyState, ErrorState, JsonBlock, Notice, Panel, Skeleton, SkeletonRows, Tabs } from "../components/ui/primitives";
+import {
+  Button, Disclosure, EmptyState, ErrorState, JsonBlock, Notice, Panel, Segmented, Skeleton, SkeletonRows, Tabs,
+} from "../components/ui/primitives";
 import { useWorkspace } from "../hooks/WorkspaceData";
 import { useEventStream } from "../hooks/useEventStream";
 import { useNow } from "../hooks/useNow";
@@ -18,11 +24,12 @@ import { useResource } from "../hooks/useResource";
 import { useRunMonitor } from "../hooks/useRunMonitor";
 
 const TABS = ["pipeline", "timeline", "results", "candidates", "evidence", "documents", "replay", "diagnostics",
-  "technical"] as const;
+  "benchmark", "technical"] as const;
 type RunTab = (typeof TABS)[number];
 const TAB_LABELS: Record<RunTab, string> = {
   pipeline: "Pipeline", timeline: "Live timeline", results: "Results", candidates: "Candidates", evidence: "Evidence",
-  documents: "Documents", replay: "Binding Replay", diagnostics: "Diagnostics", technical: "Technical",
+  documents: "Documents", replay: "Binding Replay", diagnostics: "Diagnostics", benchmark: "Benchmark",
+  technical: "Technical",
 };
 const DATA_ACTIVE_MS = 10000;
 
@@ -37,6 +44,7 @@ export function RunPage() {
   const [cancelling, setCancelling] = useState(false);
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [openDoc, setOpenDoc] = useState<{ id: string; title?: string | null } | null>(null);
+  const [docScope, setDocScope] = useState<"vehicle" | "cache">("vehicle");
 
   const tab = (TABS as readonly string[]).includes(params.get("tab") ?? "") ? (params.get("tab") as RunTab) : "pipeline";
   const vehicles = run?.vehicles ?? [];
@@ -73,7 +81,7 @@ export function RunPage() {
     (signal) => api.candidates(runId, recordId, { signal }), { intervalMs: dataInterval });
   const evidence = useResource(tab === "evidence" ? key("evid") : null,
     (signal) => api.evidence(runId, recordId, { signal }), { intervalMs: dataInterval });
-  const documents = useResource(tab === "documents" ? key("docs") : null,
+  const documents = useResource(tab === "documents" && docScope === "vehicle" ? key("docs") : null,
     (signal) => api.documents(runId, recordId, 0, 200, { signal }), { intervalMs: dataInterval });
   const replay = useResource(tab === "replay" ? key("replay") : null,
     (signal) => api.bindingReplay(runId, recordId, undefined, 0, 500, { signal }));
@@ -81,6 +89,8 @@ export function RunPage() {
     (signal) => api.diagnostics(runId, { signal }));
   const results = useResource(tab === "results" && run && !active ? `results:${runId}:${run.status}` : null,
     (signal) => api.results(runId, { signal }));
+  const benchmark = useResource(tab === "benchmark" && run ? `bench:${runId}:${run.status}` : null,
+    (signal) => api.benchmark(runId, { signal }));
   const vehicleResult = results.data?.vehicles.find((v) => v.record_id === selected);
 
   const cancel = async () => {
@@ -147,14 +157,31 @@ export function RunPage() {
               <Tabs label="Run views" tabs={tabs} value={tab} onChange={(id) => setParam("tab", id)} />
             </div>
             <div className="p-4 sm:p-6">
-              {tab === "pipeline" && (pipeline ? <PipelineView pipeline={pipeline} /> : <EmptyState title="No vehicle in this run" />)}
+              {tab === "pipeline" && (pipeline ? (
+                <div className="space-y-5">
+                  <NoticeList notices={vehicle?.notices} />
+                  <PipelineView pipeline={pipeline} />
+                  <Disclosure title="Live field progress and activity log" defaultOpen={active}>
+                    <LiveFieldsView key={`${runId}:${selected}`} runId={runId} recordId={recordId} active={active} />
+                  </Disclosure>
+                </div>
+              ) : <EmptyState title="No vehicle in this run" />)}
               {tab === "timeline" && <EventTimeline key={`${runId}:${selected}`} stream={stream} active={active} />}
               {tab === "results" && (
                 active ? <Notice tone="accent" title="Results appear when the run finishes">The run is still active; follow the live timeline meanwhile.</Notice>
                   : results.loading ? <TabSkeleton />
                   : results.error ? <ErrorState error={results.error} onRetry={results.refresh} />
-                  : vehicleResult ? <ResultsView result={vehicleResult} />
-                  : <EmptyState title="No result for this vehicle">{results.data?.reason ?? "The vehicle did not write a result."}</EmptyState>
+                  : (
+                    <div className="space-y-5">
+                      <NoticeList notices={vehicle?.notices} />
+                      {vehicleResult?.no_output_message && <Notice tone="warn" title="Final structured result">{vehicleResult.no_output_message} The Technical tab shows the partial research.</Notice>}
+                      {vehicleResult ? <ResultsView result={vehicleResult} />
+                        : <EmptyState title="No result for this vehicle">{results.data?.reason ?? "The vehicle did not write a result."}</EmptyState>}
+                      {results.data && (multi ? (
+                        <Disclosure title="All vehicles of this run"><AllVehiclesResults results={results.data} /></Disclosure>
+                      ) : results.data.output_source_caption && <p className="text-xs text-ink-muted">{results.data.output_source_caption}</p>)}
+                    </div>
+                  )
               )}
               {tab === "candidates" && (candidates.loading ? <TabSkeleton />
                 : candidates.error ? <ErrorState error={candidates.error} onRetry={candidates.refresh} />
@@ -162,17 +189,30 @@ export function RunPage() {
               {tab === "evidence" && (evidence.loading ? <TabSkeleton />
                 : evidence.error ? <ErrorState error={evidence.error} onRetry={evidence.refresh} />
                 : evidence.data && <EvidenceView data={evidence.data} onOpenDocument={(id) => openDocument(id)} />)}
-              {tab === "documents" && (documents.loading ? <TabSkeleton />
-                : documents.error ? <ErrorState error={documents.error} onRetry={documents.refresh} />
-                : documents.data && <DocumentsView data={documents.data} onOpen={(d: DocumentRow) => openDocument(d.doc_id, d.title)} />)}
+              {tab === "documents" && (
+                <div className="space-y-4">
+                  <Segmented label="Documents" value={docScope} onChange={setDocScope}
+                             options={[{ id: "vehicle", label: multi ? "This vehicle" : "This run" }, { id: "cache", label: "Entire cache" }]} />
+                  {docScope === "cache" ? <CacheDocumentsView onOpen={openDocument} />
+                    : documents.loading ? <TabSkeleton />
+                    : documents.error ? <ErrorState error={documents.error} onRetry={documents.refresh} />
+                    : documents.data && <DocumentsView data={documents.data} onOpen={(d: DocumentRow) => openDocument(d.doc_id, d.title)} />}
+                </div>
+              )}
               {tab === "replay" && (replay.loading ? <TabSkeleton />
                 : replay.error ? <ErrorState error={replay.error} title="Binding Replay is not available" onRetry={replay.refresh} />
                 : replay.data && <BindingReplayView data={replay.data} onOpenDocument={(id) => openDocument(id)} />)}
               {tab === "diagnostics" && (diagnostics.loading ? <TabSkeleton />
                 : diagnostics.error ? <ErrorState error={diagnostics.error} onRetry={diagnostics.refresh} />
                 : diagnostics.data && <RunDiagnosticsView data={diagnostics.data} />)}
+              {tab === "benchmark" && (benchmark.loading ? <TabSkeleton />
+                : benchmark.error ? <ErrorState error={benchmark.error} onRetry={benchmark.refresh} />
+                : benchmark.data && <BenchmarkView data={benchmark.data} />)}
               {tab === "technical" && (
                 <div className="space-y-3">
+                  <StatusPanel rows={run.status_panel} />
+                  {!active && <Disclosure title="Run report"><RunReportView vehicles={vehicles} /></Disclosure>}
+                  {recordId && <VehicleTechnicalView key={`${runId}:${recordId}`} runId={runId} recordId={recordId} active={active} />}
                   <Disclosure title="Run request" defaultOpen><JsonBlock value={run.request} /></Disclosure>
                   {vehicle?.report && <Disclosure title="Vehicle report"><JsonBlock value={vehicle.report} /></Disclosure>}
                   {run.error && <Disclosure title="Run error"><JsonBlock value={run.error} /></Disclosure>}

@@ -106,8 +106,9 @@ function SettingInput({ spec, value, onChange, error }: {
   );
 }
 
-export function RunSettingsForm({ contract, values, onChange, profile }: {
+export function RunSettingsForm({ contract, values, onChange, profile, appliesTo = "this run only" }: {
   contract: RunSettingsContract; values: SettingsValues; onChange: (values: SettingsValues) => void; profile: string;
+  appliesTo?: string;
 }) {
   const named = contract.named_profiles.some((p) => p.id === profile);
   const errors = useMemo(() => settingsErrors(contract, values), [contract, values]);
@@ -118,7 +119,7 @@ export function RunSettingsForm({ contract, values, onChange, profile }: {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-white/[0.03] px-4 py-3 text-sm">
         <span className="text-ink-muted">
-          Applies to <strong className="text-ink">this run only</strong>. The server&apos;s environment and other runs are
+          Applies to <strong className="text-ink">{appliesTo}</strong>. The server&apos;s environment and other runs are
           never changed. {changed.length ? `${changed.length} setting${changed.length === 1 ? "" : "s"} changed.` : "All defaults."}
         </span>
         <Button size="sm" variant="ghost" disabled={!changed.length} onClick={() => onChange(defaultsOf(contract))}>

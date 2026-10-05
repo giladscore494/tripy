@@ -1,7 +1,7 @@
-"""Research targets: the benchmark vehicle catalog and the dashboard's scopes (framework-neutral; no Streamlit).
+"""Research targets: the benchmark vehicle catalog and the research scopes (framework-neutral).
 
-The dashboard (app.py) and the HTTP API (src/api) choose what to research with the same functions, so a run started
-from either has the same vehicles, label and scope recorded in its run_state.json.
+The HTTP API (src/api) chooses what to research with these functions, so every run records the same vehicles, label
+and scope shape in its run_state.json as the runs before it.
 
     One vehicle    one benchmark record id            label: "<manufacturer> <model> · <year> · <trim>"
     Manufacturer   every vehicle of one manufacturer  label: "<manufacturer> · <n> vehicles"

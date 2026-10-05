@@ -5,7 +5,6 @@ Scripted GLM / fake HTTP only: no network, no paid calls."""
 import json
 
 import pytest
-from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
 from conftest import cache_source, labelled_quote, seed_evidence_sources
 from test_conflict_and_budget import budget_script, FIELDS
@@ -17,6 +16,10 @@ from src.field_recovery import early_resolution_check, evaluate_field
 from src.storage.run_loader import load_runs
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig, dispatch
+
+
+class StopException(BaseException):
+    """A UI's script-control stop (a BaseException, not an Exception): what a UI callback may raise to abort."""
 
 PAYLOAD = {"identity": {"manufacturer": "קאדילאק", "commercial_name": "ESCALADE IQ", "trim": "PREMIUM SPORT",
                         "government_record_id": "85095"},

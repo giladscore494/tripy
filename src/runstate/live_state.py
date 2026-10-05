@@ -1,13 +1,14 @@
 """In-memory state of a running batch, built ONLY from events the runs already emit.
 
-    worker thread:  RunLog listener -> queue.put({"record_id", "kind", "event"})   (no Streamlit calls)
+    worker thread:  RunLog listener -> queue.put({"record_id", "kind", "event"})   (no UI calls)
     main thread:    BatchLiveState.drain(queue) -> per-vehicle VehicleLive.apply(kind, event)
-                    -> pure view models (Hebrew) -> src/ui/live_dashboard.py renders them
+                    -> pure view models (Hebrew); the HTTP API serves VehicleLive.field_rows / lines
+                    (GET /api/runs/{id}/live, through runstate.pipeline)
 
 No function here makes a model call, a search or a fetch: progress is computed with the shared field
 evaluator (current_evaluation) over the vehicle's own evidence / declaration events; "why" lines come
 from orchestration metadata (phase, failure reason, tool); reasoning is shown only when the provider
-returned reasoning_content in a model response. This module does not import Streamlit.
+returned reasoning_content in a model response. This module imports no UI framework.
 """
 
 from __future__ import annotations
@@ -572,7 +573,7 @@ class BatchLiveState:
         self.started = time.monotonic()
 
     def listener_for(self, record_id: str):
-        """A RunLog listener for a worker: it only enqueues (never touches Streamlit)."""
+        """A RunLog listener for a worker: it only enqueues (never touches a UI)."""
         q = self.queue
 
         def listen(kind: str, event: dict) -> None:

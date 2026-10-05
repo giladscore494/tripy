@@ -3,8 +3,11 @@
 import type {
   BindingReplay, ConfigStatus, DocumentStructure, DocumentText, EventsPage, RunCandidates, RunDetail, RunDiagnostics,
   RunDocuments, RunEvent, RunEvidence, RunList, RunProgress, RunResults, RunSettingsContract, RunSummary, SeriesList,
-  SeriesState, VehicleList,
+  SeriesState, VehicleList, LiveView, RunBenchmark, VehicleTechnical,
 } from "../api/types";
+import benchmarkJson from "./fixtures/benchmark.json";
+import liveJson from "./fixtures/live.json";
+import technicalJson from "./fixtures/technical.json";
 import bindingReplayJson from "./fixtures/binding_replay.json";
 import candidatesJson from "./fixtures/candidates.json";
 import configJson from "./fixtures/config.json";
@@ -37,6 +40,9 @@ export const documentText = documentTextJson as unknown as DocumentText;
 export const documentStructure = documentStructureJson as unknown as DocumentStructure;
 export const bindingReplay = bindingReplayJson as unknown as BindingReplay;
 export const diagnostics = diagnosticsJson as unknown as RunDiagnostics;
+export const technical = technicalJson as unknown as VehicleTechnical;
+export const live = liveJson as unknown as LiveView;
+export const benchmark = benchmarkJson as unknown as RunBenchmark;
 
 export const ACTIVE_ID = "20261005T100000Z-glm-5.3-flash-one";
 export const MULTI_ID = multiRun.run_id;

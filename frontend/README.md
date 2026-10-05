@@ -3,13 +3,12 @@
 React 19 · TypeScript (strict) · Vite · Tailwind CSS 3 · React Router. No state library: server state lives in a few
 polling hooks, UI state in components.
 
-> **One process per `TRIPY_DATA_DIR`.** Run the FastAPI backend against a dedicated development data directory (or
-> give Streamlit and FastAPI separate ones). Two processes on one data directory mark each other's active runs as
-> interrupted.
+> **One process per `TRIPY_DATA_DIR`.** Run the FastAPI backend against a dedicated development data directory. Two
+> processes on one data directory mark each other's active runs as interrupted.
 
 ```bash
 TRIPY_DATA_DIR=../.tripy-data-api uvicorn src.api.app:app --host 127.0.0.1 --port 8000   # from the repo root
-npm install
+npm ci
 npm run dev          # http://localhost:5173 — /api and /health proxied to TRIPY_API_URL (default http://127.0.0.1:8000)
 npm test             # Vitest + React Testing Library, HTTP mocked
 npm run typecheck
@@ -28,7 +27,8 @@ src/
   layouts/    AppShell (top bar, side nav, mobile drawer, active runs)
   pages/      Dashboard · NewResearch · Runs · Run · Series (list + detail) · Diagnostics · Settings · Unlock
   components/ ui/ (design-system primitives, icons) · run/ (pipeline, timeline, results, candidates, evidence,
-              documents, Binding Replay, diagnostics, failure card, per-run settings form)
+              documents, Binding Replay, diagnostics, failure card, per-run settings form; ParityViews: live field
+              table, technical sections, run report, Benchmark metrics, all-vehicles results, document cache)
   styles/     tokens.css (every color / glass / radius token) · index.css (atmosphere, component classes)
   lib/        formatting, status tones, bidi, idempotency keys
   test/       Vitest suites, an HTTP mock, fixtures captured from the real backend
@@ -52,5 +52,7 @@ src/
 - **Bidi.** The shell is LTR; `<Dir>` renders Hebrew labels, quotes and source text in their own direction; `<Mono>`
   keeps ids, URLs and timestamps LTR.
 
-Production serving (PR #3): FastAPI serves `dist/` and answers every non-`/api` path with `dist/index.html`, so
-refreshing `/runs/<id>` or `/series/<id>` works.
+Production serving: the FastAPI process serves `dist/` (built by the Dockerfile's Node stage; Node is not in the
+runtime image). Hashed `/assets/*` are cached immutably, every other non-`/api`, non-`/health`, non-`/mcp` path answers
+`dist/index.html` with `Cache-Control: no-cache`, so refreshing `/runs/<id>` or `/series/<id>` works. See
+`src/api/frontend.py`.

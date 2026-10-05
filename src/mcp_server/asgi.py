@@ -1,4 +1,4 @@
-"""The /mcp route mounted on Streamlit's own server (st.App(routes=..., lifespan=...), Streamlit >= 1.53).
+"""The /mcp route and its lifespan, mounted into the FastAPI application (src/api/app.py) when TRIPY_MCP_TOKEN is set.
 
 The secret path is the credential (claude.ai custom connectors take a URL and no header): exactly
 `/mcp/<TRIPY_MCP_TOKEN>` reaches the MCP handler, compared in constant time. Every other path under /mcp (any case:
@@ -23,11 +23,11 @@ log = get_logger("mcp")
 
 
 class McpRoute(BaseRoute):
-    """Claims every path equal to /mcp or below /mcp/ (case-insensitive) so nothing there falls through to
-    Streamlit's static files; serves only the exact secret path."""
+    """Claims every path equal to /mcp or below /mcp/ (case-insensitive) so nothing there falls through to the
+    React SPA fallback; serves only the exact secret path."""
 
     def __init__(self, token: str, handler: ASGIApp | None):
-        self.path = MOUNT_PREFIX                     # st.App checks user routes against its reserved prefixes
+        self.path = MOUNT_PREFIX
         self._expected = f"{MOUNT_PREFIX}/{token}".encode("utf-8") if token else None
         self._handler = handler
 
@@ -78,7 +78,7 @@ class _Mcp:
                 server = build()
                 server.streamable_http_app()            # creates the stateless session manager
                 self.session_manager = server.session_manager
-            except Exception as exc:  # noqa: BLE001 - the dashboard must start even if the MCP cannot
+            except Exception as exc:  # noqa: BLE001 - the application must start even if the MCP cannot
                 log.error("MCP disabled: could not build the server (%s: %s)", type(exc).__name__, exc)
                 self.session_manager = None
         if self.session_manager is None:

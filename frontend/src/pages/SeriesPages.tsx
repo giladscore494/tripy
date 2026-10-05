@@ -5,9 +5,10 @@ import { ApiError } from "../api/client";
 import { api, exportsApi } from "../api/endpoints";
 import type { SeriesList, SeriesState, Vehicle } from "../api/types";
 import { StatusBadge } from "../components/run/RunBits";
+import { defaultsOf, overridesOf, RunSettingsForm, settingsErrors, type SettingsValues } from "../components/run/RunSettingsForm";
 import { IconDownload, IconPlay, IconSearch, IconStop } from "../components/ui/icons";
 import {
-  Badge, Button, cx, Dir, EmptyState, ErrorState, KeyValue, Mono, Notice, Panel, ProgressBar, Skeleton, SkeletonRows,
+  Badge, Button, cx, Dir, Disclosure, EmptyState, ErrorState, KeyValue, Mono, Notice, Panel, ProgressBar, Skeleton, SkeletonRows,
 } from "../components/ui/primitives";
 import { useWorkspace } from "../hooks/WorkspaceData";
 import { useResource } from "../hooks/useResource";
@@ -70,6 +71,8 @@ function VehicleMultiPicker({ vehicles, selected, onChange }: {
 function CreateSeries({ list, onStarted }: { list: SeriesList; onStarted: (id: string) => void }) {
   const { config } = useWorkspace();
   const vehicles = useResource("vehicles", (signal) => api.vehicles({ signal }));
+  const contract = useResource("run-settings", (signal) => api.runSettings({ signal }));
+  const [values, setValues] = useState<SettingsValues | null>(null);
   const [ids, setIds] = useState<string[]>([]);
   const [repeatsText, setRepeatsText] = useState("3");
   const repeats = Number(repeatsText);
@@ -81,7 +84,13 @@ function CreateSeries({ list, onStarted }: { list: SeriesList; onStarted: (id: s
   const ordered = list.arms.filter((a) => arms.includes(a.id));          // run order = ARMS order (the backend's)
   const running = list.executing;
   const blocked = config.data ? !config.data.configured : true;
-  const can = ids.length > 0 && ordered.length > 0 && repeatsValid && !running && !blocked && !busy;
+  useEffect(() => {
+    if (contract.data && !values) setValues(defaultsOf(contract.data));
+  }, [contract.data, values]);
+  const errors = contract.data && values ? settingsErrors(contract.data, values) : {};
+  const overrides = contract.data && values ? overridesOf(contract.data, values) : {};
+  const can = ids.length > 0 && ordered.length > 0 && repeatsValid && !running && !blocked && !busy
+    && !Object.keys(errors).length;
 
   const submit = () => submission.guard(async () => {
     if (!can) return;
@@ -90,7 +99,8 @@ function CreateSeries({ list, onStarted }: { list: SeriesList; onStarted: (id: s
     let startedOk = false;
     try {
       const started = await api.startSeries({ record_ids: ids, repeats, arms: ordered.map((a) => a.id),
-                                              idempotency_key: submission.current() });
+                                              idempotency_key: submission.current(),
+                                              ...(Object.keys(overrides).length ? { settings: overrides } : {}) });
       submission.resolve();
       startedOk = true;          // navigating away: the button stays busy
       onStarted(started.series_id);
@@ -133,8 +143,19 @@ function CreateSeries({ list, onStarted }: { list: SeriesList; onStarted: (id: s
         </div>
         <p className="text-sm text-ink-muted">
           <span className="text-ink">{repeatsValid ? repeats * ordered.length : "—"} run(s)</span> over {ids.length} vehicle(s), strictly one after another,
-          arms interleaved ({ordered.map((a) => a.label).join(", ")}{ordered.length ? ", …" : ""}). Models and search come from the server configuration.
+          arms interleaved ({ordered.map((a) => a.label).join(", ")}{ordered.length ? ", …" : ""}). Every run uses the per-run settings below
+          (server defaults unless changed); each arm&apos;s profile pins its own experiment settings.
         </p>
+        {contract.error ? <ErrorState error={contract.error} title="Per-run settings are unavailable" onRetry={contract.refresh} />
+          : contract.data && values ? (
+            <Disclosure title={<span className="flex items-center gap-2">Per-run settings for every run of the series
+              {Object.keys(overrides).length > 0 && <Badge tone="accent">{Object.keys(overrides).length} changed</Badge>}</span>}>
+              <RunSettingsForm contract={contract.data} values={values} onChange={setValues}
+                               profile={ordered[0]?.id ?? list.default_arms[0] ?? ""}
+                               appliesTo="the runs of this series only" />
+            </Disclosure>
+          ) : <Skeleton className="h-12 rounded-card" />}
+        {Object.keys(errors).length > 0 && <p className="text-sm text-danger">Fix the highlighted settings first.</p>}
         {running && (
           <Notice tone="warn" title="A series is already running" action={<Link to={`/series/${encodeURIComponent(running)}`}><Button size="sm">Open it</Button></Link>}>
             Only one A/B series executes at a time on this server.

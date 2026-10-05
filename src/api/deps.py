@@ -1,12 +1,11 @@
-"""What every route needs, built once per process from the same initialization the dashboard performs (app.py):
+"""What every route needs, built ONCE per process at startup (the application lifespan, src/api/app.py):
 
     paths       storage.paths.resolve_paths (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR)
     catalog     the benchmark vehicles (research_targets.VehicleCatalog)
     manager     jobs.manager.get_manager(...): the process-wide RunManager; creating it reconciles orphaned runs
                 (startup reconciliation) and it shares the process-wide ConcurrencyController (shared_controller)
 
-Configuration is read from the process environment only (the dashboard additionally reads .streamlit/secrets.toml,
-which needs Streamlit).
+Configuration is read from the process environment only.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from .errors import ApiError
 
 
 def env_secret(name: str) -> str:
-    """The dashboard's `secret` lookup without Streamlit secrets: the environment, "" when unset."""
+    """The configuration lookup: the process environment, "" when unset."""
     return os.environ.get(name) or ""
 
 
@@ -35,7 +34,7 @@ class ApiContext:
     manager: RunManager
     catalog: VehicleCatalog
     secret: Callable[[str], str] = env_secret
-    pipelines: PipelineCache = field(default_factory=PipelineCache)   # incremental event readers (like app.py)
+    pipelines: PipelineCache = field(default_factory=PipelineCache)   # incremental event readers, one per process
     owns_manager: bool = False
 
     @property

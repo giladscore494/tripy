@@ -1,4 +1,4 @@
-"""Startup diagnostics, run by scripts/start.sh before Streamlit starts.
+"""Startup diagnostics, run by scripts/start.sh before the web server (Uvicorn) starts.
 
     python -m src.startup_check
 

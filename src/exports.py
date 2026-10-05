@@ -1,5 +1,5 @@
-"""Downloadable exports, framework-neutral (no Streamlit, no pandas): the dashboard's download buttons and the HTTP
-API serve the same bytes from the same functions.
+"""Downloadable exports, framework-neutral (no UI framework, no pandas): the HTTP API serves these bytes (the same
+files the former dashboard offered) from these functions.
 
     candidates.csv     one vehicle run's candidate table (runstate.live_state.candidate_table_rows, Hebrew headers)
     per_vehicle.csv    diagnostics.per_vehicle_csv over the runs' vehicle diagnostics (the benchmark export)

@@ -16,8 +16,8 @@ from test_layered_pipeline import PhaseGLM, read_docs, run, say
 from src.concurrency import ConcurrencyController
 from src.fields import resolve_requested_fields
 from src.glm_client import GLMClient
-from src.ui import labels_he as he
-from src.ui.live_state import BatchLiveState, VehicleLive, candidate_table_rows
+from src.presentation import labels_he as he
+from src.runstate.live_state import BatchLiveState, VehicleLive, candidate_table_rows
 
 US = "https://www.cadillac.com/lyriq"
 IL = "https://www.cadillac.co.il/lyriq"
@@ -217,54 +217,6 @@ def test_dashboard_never_calls_the_api(tmp_path, make_ctx, monkeypatch):
     assert client.calls == calls_before and ctx.session.calls == session_before
 
 
-def test_parallel_batch_smoke_in_streamlit():
-    """Real Streamlit runtime: four vehicles run concurrently on worker threads; only the script thread renders."""
-    from streamlit.testing.v1 import AppTest
-
-    def script():
-        import threading as th
-        import time as tm
-
-        from src.fields import resolve_requested_fields as resolve
-        from src.ui.live_dashboard import run_live_batch
-        from src.ui.live_state import BatchLiveState
-
-        vehicles = [{"upstream_record_id": str(i), "ordinal": i} for i in range(4)]
-        state = BatchLiveState([(v["upstream_record_id"], f"רכב {i}") for i, v in enumerate(vehicles)])
-        specs = resolve(["torque_nm", "wheelbase_mm"], propulsion="battery_electric")
-        main = th.current_thread()
-        seen = {"off_main": 0}
-
-        def run_one(vehicle, row):
-            listen = state.listener_for(vehicle["upstream_record_id"])
-            seen["off_main"] += th.current_thread() is not main
-            listen("run_started", {"requested_field_specs": specs, "research_model": "glm-5.3-flash",
-                                   "agent_config": {"field_recovery_max_total_steps": 24}})
-            listen("model_request_started", {"model": "glm-5.3-flash", "phase": "research"})
-            tm.sleep(0.3)
-            listen("model_response", {"phase": "research", "model": "glm-5.3-flash", "reasoning_content": "r",
-                                      "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
-            listen("evidence", {"seq": 5, "evidence": {"evidence_id": "e1", "field": "torque_nm", "value": 610,
-                                                       "market": "IL"}})
-            listen("run_finished", {"status": "completed"})
-            return {"record_id": vehicle["upstream_record_id"], "status": "completed"}
-
-        stats = {}
-        run_live_batch(vehicles, {v["upstream_record_id"]: {} for v in vehicles}, run_one, state, max_workers=4,
-                       cancel_event=th.Event(), stats=stats, poll_interval_s=0.05)
-        import streamlit as st
-        st.caption(f"peak={stats['peak_vehicle_workers']} off_main={seen['off_main']}")
-
-    app = AppTest.from_function(script, default_timeout=60)
-    app.run()
-    assert not app.exception, app.exception
-    markdown = " ".join(m.value for m in app.markdown)
-    assert "ריצת העשרה — 4 רכבים" in markdown and "הושלמו" in " ".join(str(m.label) for m in app.metric)
-    caption = " ".join(c.value for c in app.caption)
-    assert "off_main=4" in caption and "peak=" in caption and "peak=1" not in caption
-    assert "התקדמות זו מודדת מצב מחקר וכיסוי" in caption
-
-
 def test_a_finished_tool_action_is_not_shown_during_the_next_turn_or_phase():
     v = VehicleLive("1", "t")
     feed(v, [started(fields=["torque_nm"])])
@@ -276,14 +228,3 @@ def test_a_finished_tool_action_is_not_shown_during_the_next_turn_or_phase():
     v.apply("tool_call", {"name": "search_web", "arguments": json.dumps({"query": "lyriq torque"})})
     v.apply("finalization_started", {"phase": "finalization", "model": "glm-5.3"})
     assert v.card()["action"] is None
-
-
-def test_moved_modules_keep_their_old_import_paths():
-    """src/ui/live_state.py and src/ui/labels_he.py are aliases of the framework-neutral modules (same objects)."""
-    import src.presentation.labels_he as moved_labels
-    import src.runstate.live_state as moved_state
-    import src.ui.labels_he as old_labels
-    import src.ui.live_state as old_state
-
-    assert old_state is moved_state and old_labels is moved_labels
-    assert old_state.VehicleLive is moved_state.VehicleLive

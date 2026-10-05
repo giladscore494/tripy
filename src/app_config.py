@@ -4,7 +4,7 @@ Production secrets come from the environment (Railway service variables). Nothin
 or renders a secret value: checks report presence only, and `redact` scrubs secret values out of any text
 (error messages, technical details) before it reaches the UI or a log line.
 
-This module does not import Streamlit; the app passes a lookup (environment first, then Streamlit secrets).
+This module imports no UI framework; callers pass a lookup (the process environment).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ REQUIRED_VARS = ("GLM_API_KEY", "GLM_MODEL")
 DEPLOYMENT_VARS = ("TRIPY_DATA_DIR", "TRIPY_ENV", "TRIPY_ACCESS_TOKEN")
 ACCESS_TOKEN_MIN_LENGTH = 16
 OPTIONAL_VARS = ("GLM_FINALIZER_MODEL", "SEARCH_BACKEND", "DATABASE_URL", "TARGET_MARKET",
-                 "TRIPY_MAX_ACTIVE_RUNS", "TRIPY_ALLOW_UI_API_KEY", "TRIPY_LOG_LEVEL", "TRIPY_SHUTDOWN_GRACE_S")
+                 "TRIPY_MAX_ACTIVE_RUNS", "TRIPY_LOG_LEVEL", "TRIPY_SHUTDOWN_GRACE_S")
 SEARCH_BACKENDS = ("glm", "duckduckgo")
 
 
@@ -45,15 +45,6 @@ def _get(lookup: Lookup, name: str) -> str:
         return ""
 
 
-def _truthy(raw: str) -> bool | None:
-    raw = raw.strip().lower()
-    if raw in ("1", "true", "yes", "on"):
-        return True
-    if raw in ("0", "false", "no", "off"):
-        return False
-    return None
-
-
 def on_railway(lookup: Lookup = env_lookup) -> bool:
     return any(_get(lookup, n) for n in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID"))
 
@@ -64,14 +55,6 @@ def is_production(lookup: Lookup = env_lookup) -> bool:
     if env:
         return env in ("prod", "production")
     return on_railway(lookup)
-
-
-def allow_ui_api_key(lookup: Lookup = env_lookup) -> bool:
-    """Typing an API key into the UI is a local-development convenience only (never in production by default)."""
-    explicit = _truthy(_get(lookup, "TRIPY_ALLOW_UI_API_KEY"))
-    if explicit is not None:
-        return explicit
-    return not is_production(lookup)
 
 
 def max_active_runs(lookup: Lookup = env_lookup) -> int:
@@ -170,7 +153,7 @@ def validate_config(lookup: Lookup = env_lookup, paths: DataPaths | None = None,
                                 f"Use a random token of at least {ACCESS_TOKEN_MIN_LENGTH} characters, e.g. "
                                 "python -c \"import secrets; print(secrets.token_urlsafe(32))\"."))
         else:
-            checks.append(Check("Access control", "ok", "Enabled", "Dashboard requires TRIPY_ACCESS_TOKEN"))
+            checks.append(Check("Access control", "ok", "Enabled", "The API requires TRIPY_ACCESS_TOKEN"))
     problems = []
     raw_extra = _get(lookup, "GLM_EXTRA_BODY")
     if raw_extra:

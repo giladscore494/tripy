@@ -1,5 +1,8 @@
 # Codex handoff: finish the existing PR36 draft on TRIPY
 
+> Historical document (PR #36). The Streamlit UI, `app.py`, `src/ui/` and the Streamlit start flags it mentions
+> have since been removed: production is FastAPI + React (see the README).
+
 Repository: `giladscore494/tripy`.
 Branch: `codex/automatic-binding-replay-candidate-hygiene`.
 Original base: `b933853820e9dd5efba16436f85d1ada021c0acb` (PR35 merged).

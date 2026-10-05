@@ -4,9 +4,9 @@
 .env
 .env.*
 !.env.example
-.streamlit/secrets.toml
 runs/
 .tripy-data/
+.tripy-data-*/
 data_local/
 **/__pycache__
 **/*.pyc
@@ -16,5 +16,7 @@ data_local/
 venv
 *.log
 tests/
-Dockerfile
-.dockerignore
+# the frontend is built inside the image from package-lock.json (npm ci); never a local install or build
+frontend/node_modules
+frontend/dist
+frontend/*.tsbuildinfo

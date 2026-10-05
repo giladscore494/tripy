@@ -4,7 +4,7 @@ import type { CandidateField, ResultField, RunCandidates, RunEvidence, VehicleRe
 import { compactJson, formatCost, formatDuration, formatValue, humanize, str } from "../../lib/format";
 import { fieldStateTone } from "../../lib/status";
 import { IconSearch } from "../ui/icons";
-import { Badge, cx, Dir, Disclosure, EmptyState, ExternalLink, JsonBlock, KeyValue, Mono, Stat } from "../ui/primitives";
+import { Badge, cx, DataTable, Dir, Disclosure, EmptyState, ExternalLink, JsonBlock, KeyValue, Mono, Stat } from "../ui/primitives";
 
 function FieldState({ state }: { state: string | null | undefined }) {
   if (!state) return <span className="text-ink-faint">—</span>;
@@ -288,6 +288,12 @@ export function EvidenceView({ data, onOpenDocument }: { data: RunEvidence; onOp
           </table>
         </div>
       ) : <EmptyState title={show === "admitted" ? "No admitted evidence" : "No rejected evidence"} />}
+      {rows.length > 0 && (
+        <Disclosure title={`All ${show} evidence columns (entailment, condition, valid as of, model claims, notes, vetoes)`}>
+          <DataTable rows={rows.map((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== "request")))}
+                     label={`${show} evidence, every column`} />
+        </Disclosure>
+      )}
     </div>
   );
 }

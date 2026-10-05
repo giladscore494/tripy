@@ -36,6 +36,8 @@ export interface RunSummary {
   cancel_requested: boolean;
   legacy: boolean;
   elapsed_s: number | null;
+  /** "26 / 37" from the final report, summed over vehicles */
+  resolved_fields_text?: string | null;
 }
 
 export interface RunList {
@@ -92,6 +94,13 @@ export interface VehicleState {
   failure: Failure | null;
   result_available: boolean;
   report: JsonObject | null;
+  notices?: Notice[];
+}
+
+export interface Notice {
+  tone: "info" | "warn";
+  text: string;
+  detail?: string | null;
 }
 
 export interface ProgressCounts {
@@ -110,6 +119,8 @@ export interface RunDetail extends RunSummary {
   completed: boolean;
   progress: ProgressCounts;
   vehicles: VehicleState[];
+  /** [label, value] rows: totals over every vehicle */
+  status_panel?: [string, unknown][];
 }
 
 export interface VehicleProgress {
@@ -191,12 +202,15 @@ export interface VehicleResult {
   conflicts: unknown[];
   additional_findings: unknown[];
   evidence_admission: JsonObject | null;
+  output_source?: string | null;
+  no_output_message?: string | null;
 }
 
 export interface RunResults {
   run_id: string;
   available: boolean;
   reason: string | null;
+  output_source_caption?: string | null;
   vehicles: VehicleResult[];
 }
 
@@ -352,6 +366,8 @@ export interface StartSeries {
   repeats: number;
   arms: string[];
   idempotency_key?: string;
+  /** the same typed per-run settings as POST /api/runs; the template of every run of the series */
+  settings?: RunSettingsOverrides;
 }
 
 export interface SeriesItem {
@@ -407,6 +423,7 @@ export interface SeriesStarted {
   created: boolean;
   message: string;
   series: SeriesState | null;
+  settings_overridden?: string[];
 }
 
 // --- documents, binding replay, diagnostics ---------------------------------------------------------------------------
@@ -484,4 +501,140 @@ export interface RunDiagnostics {
   vehicles: number;
   aggregate: JsonObject;
   per_vehicle: JsonObject[];
+}
+
+// --- technical views, benchmark metrics, multi-run exports (src/api/routes/technical.py) ------------------------------
+
+export type Row = Record<string, unknown>;
+export type Pair = [string, unknown];
+
+export interface BriefPairs {
+  acquisition: Pair[];
+  sweep: Pair[] | null;
+  sweep_skipped: string | null;
+}
+
+export interface DetailedDiagnostics {
+  schema: unknown;
+  configured_models: Record<string, unknown>;
+  summary_text: string | null;
+  turns: Row[];
+  sweep_calls: Row[];
+  sweep_fields: Row[];
+  raw: JsonObject;
+}
+
+export interface FieldRecoveryView {
+  requested_fields: number;
+  available: boolean;
+  error?: string | null;
+  metrics?: { failed_after_primary: number; retried: number; recovered: number; retry_attempts: number };
+  turns?: string;
+  stopped?: string | null;
+  not_attempted_due_to_budget?: string[];
+  cut_short_by_budget?: unknown;
+  mode?: string | null;
+  cluster?: Row | null;
+  triage?: Row[];
+  fields?: Row[];
+  attempts?: Row[];
+  prior_excerpts_summary?: { items: number; chars: number; attempts_with_prior_excerpts: number };
+  prior_excerpts?: { field: string; attempt: number; items: number; chars: number; excerpts: unknown }[];
+}
+
+export interface VehicleTechnical {
+  run_id: string;
+  record_id: string;
+  title: string;
+  available: boolean;
+  reason: string | null;
+  brief: BriefPairs;
+  diagnostics?: DetailedDiagnostics | null;
+  status?: string | null;
+  duration_s?: number | null;
+  synthesized?: boolean;
+  recovered?: boolean;
+  has_output?: boolean;
+  has_research?: boolean;
+  no_output_message?: string | null;
+  error?: unknown;
+  notices?: Notice[];
+  human?: {
+    is_object: boolean; variant_identity?: JsonObject | null; alternatives?: Row[];
+    provenance?: { label: string; text: string }[]; level3?: unknown; other_keys?: JsonObject | null;
+    research_trace?: string[];
+  } | null;
+  raw?: { parse_note: unknown; output: unknown; raw_final_text: string };
+  partial_research?: {
+    evidence_count: number; candidate_facts: Row[]; fields_with_multiple_stored_values: string[];
+    model_noted_conflicts: { source: unknown; text: string }[]; response_excerpts: Row[];
+    last_model_content: string | null; urls: string[]; documents: Row[];
+    target_status: { no_evidence: string[]; unresolved: string[]; level3: string[] };
+    error: unknown; api_errors: Row[]; bundle: JsonObject | null;
+  };
+  evidence_admission?: JsonObject;
+  consistency_checks?: Row[];
+  tool_calls?: Row[];
+  model_responses?: { seq: unknown; phase: unknown; tool_calls: unknown; prompt_tokens: unknown;
+                      completion_tokens: unknown; latency_ms: unknown; content: string | null;
+                      reasoning_content: string | null }[];
+  level15_input?: JsonObject;
+  config?: { api_error: unknown; research_model: string | null; finalizer_model: string | null;
+             stop_reason: string | null; prompt_version: string | null; finalization: JsonObject | null;
+             effective_config: JsonObject; usage_known: boolean; usage: JsonObject };
+  api_attempts?: { api_stats: JsonObject; api_errors: Row[] };
+  field_recovery?: FieldRecoveryView;
+  candidates?: { candidate_summary: JsonObject; primary_research: unknown; document_sweep: unknown };
+}
+
+export interface LiveView {
+  run_id: string;
+  record_id: string;
+  active: boolean;
+  columns: string[];
+  fields: unknown[][];
+  lines: string[];
+  brief: BriefPairs;
+}
+
+export interface RunBenchmark {
+  run_id: string;
+  available: boolean;
+  reason: string | null;
+  vehicles: number;
+  aggregate: JsonObject | null;
+  columns: string[];
+  rows: Row[];
+  tool_usage: Row[];
+  cost_note: string | null;
+}
+
+export interface BenchmarkBatches {
+  batches: Row[];
+  columns: string[];
+}
+
+export interface BenchmarkSummary {
+  run_ids: string[];
+  vehicles: number;
+  mean_turns: number | null;
+  mean_searches: number | null;
+  sweep_resolution_rate: number | null;
+  files: string[];
+}
+
+export interface CacheDocuments {
+  total: number;
+  offset: number;
+  returned: number;
+  remaining: number;
+  next_offset: number | null;
+  stats: Record<string, number>;
+  documents: Row[];
+}
+
+export interface Reachability {
+  checked: boolean;
+  reachable: boolean | null;
+  detail: string;
 }

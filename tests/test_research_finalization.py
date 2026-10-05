@@ -25,7 +25,7 @@ from src.storage.cache import DocumentCache
 from src.storage.run_loader import INCOMPLETE_BANNER, load_runs, run_document_metas
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
-from src.ui import run_view
+from src.presentation import run_views as run_view
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "baseline_runs"
 BASELINE_BATCH = "20261001T185509Z-glm-5.3-one"
@@ -423,8 +423,7 @@ def test_incomplete_run_documents_are_listed(baseline):
     metas = run_document_metas(run, baseline, cache)
     assert len(metas) == 7 and all(m.get("url") for m in metas)
     assert {m["doc_type"] for m in metas} == {"html", "pdf"}
-    paired = run_view.batch_document_metas([run], baseline, cache)
-    assert [m["document_id"] for m, _ in paired] == run["documents"]
+    assert [m["document_id"] for m in metas] == run["documents"]
     # Even without the shared cache the documents still show, from the logged `document` events.
     bare = run_document_metas(run, baseline, None)
     assert len(bare) == 7 and all(m.get("url") for m in bare)
@@ -659,20 +658,27 @@ def test_market_provenance_flows_from_evidence_to_finalizer_and_metrics(make_ctx
     assert m["evidence_with_market"] == 2 and m["cited_evidence_ids"] == 2 and m["cited_ids_not_in_evidence"] == 1
 
 
-def test_streamlit_app_renders_incomplete_baseline(baseline, monkeypatch):
-    from streamlit.testing.v1 import AppTest
+def test_the_api_shows_the_incomplete_baseline(baseline, monkeypatch):
+    """What the dashboard showed for a run without result.json, through the HTTP API the React workspace reads: the
+    incomplete banner, the "Not produced" message and the synthesized-run notice."""
+    from fastapi.testclient import TestClient
+
+    from src.api.app import create_app
 
     monkeypatch.setenv("MILO_RUNS_DIR", str(baseline))
     monkeypatch.setenv("MILO_CACHE_DIR", str(baseline / "_cache"))
     monkeypatch.delenv("GLM_API_KEY", raising=False)
-    app = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=60)
-    app.run()
-    assert not app.exception, app.exception
-    texts = " ".join([*(c.value for c in app.caption), *(w.value for w in app.warning), *(m.value for m in app.markdown)])
-    assert "No results to show yet" not in texts
-    assert INCOMPLETE_BANNER in texts
-    assert "Not produced — the run ended without a result.json" in texts
-    assert "did not produce a final result.json" in texts
+    with TestClient(create_app(mount_mcp=False, frontend=None)) as client:
+        detail = client.get(f"/api/runs/{BASELINE_BATCH}").json()
+        record_id = detail["vehicles"][0]["record_id"]
+        tech = client.get(f"/api/runs/{BASELINE_BATCH}/vehicles/{record_id}/technical").json()
+        results = client.get(f"/api/runs/{BASELINE_BATCH}/results").json()
+    assert tech["available"] and tech["synthesized"] and not tech["has_output"] and tech["has_research"]
+    assert tech["no_output_message"].startswith("Not produced — the run ended without a result.json")
+    texts = " ".join(n["text"] for n in tech["notices"])
+    assert INCOMPLETE_BANNER in texts or "did not produce a final result.json" in texts
+    assert results["vehicles"][0]["no_output_message"] == tech["no_output_message"]
+    assert tech["partial_research"]["evidence_count"] == 6 and len(tech["partial_research"]["documents"]) == 7
 
 
 def test_batch_ids_never_collide_or_overwrite(tmp_path, monkeypatch):

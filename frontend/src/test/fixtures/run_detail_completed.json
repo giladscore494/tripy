@@ -169,7 +169,51 @@
     "cost_complete": true,
     "timeouts": 0,
     "note": "observational telemetry; resolved = evidence-backed field state, not a correctness score"
-   }
+   },
+   "notices": []
   }
- ]
+ ],
+ "status_panel": [
+  [
+   "Run",
+   "SYNTH-pr40"
+  ],
+  [
+   "Status",
+   "Completed"
+  ],
+  [
+   "Model",
+   "glm-5.3-flash"
+  ],
+  [
+   "Started",
+   "2026-10-03 23:49 UTC"
+  ],
+  [
+   "Duration",
+   "10m 00s"
+  ],
+  [
+   "Sources",
+   0
+  ],
+  [
+   "Candidates",
+   "—"
+  ],
+  [
+   "Resolved fields",
+   "0 / 11"
+  ],
+  [
+   "Search calls",
+   0
+  ],
+  [
+   "Model calls",
+   0
+  ]
+ ],
+ "resolved_fields_text": null
 }
