@@ -14,8 +14,15 @@ from dataclasses import dataclass
 
 from .benchmark import benchmark_vehicles, manufacturers, select_vehicles, vehicle_label
 
-ONE, MANUFACTURER, ALL = "One vehicle", "Manufacturer", "All 50"
-SCOPES = (ONE, MANUFACTURER, ALL)
+ONE, MANUFACTURER, ALL, SET = "One vehicle", "Manufacturer", "All 50", "Catalog set"
+SCOPES = (ONE, MANUFACTURER, ALL, SET)
+
+
+def catalog_target(vehicles: list[dict]) -> tuple[list[dict], str]:
+    """PR #47 (B1): (vehicles, label) of a filtered set of live-catalog vehicles (at most 50)."""
+    if len(vehicles) == 1:
+        return vehicles, vehicle_title(vehicles[0])
+    return vehicles, f"Catalog · {len(vehicles)} vehicles"
 
 
 def vehicle_title(v: dict) -> str:

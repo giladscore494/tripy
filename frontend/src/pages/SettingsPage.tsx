@@ -1,5 +1,8 @@
+import { useState } from "react";
+
+import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import { Badge, ErrorState, KeyValue, Mono, Notice, Panel, SkeletonRows } from "../components/ui/primitives";
+import { Badge, Button, ErrorState, KeyValue, Mono, Notice, Panel, SkeletonRows } from "../components/ui/primitives";
 import { useWorkspace } from "../hooks/WorkspaceData";
 import { useResource } from "../hooks/useResource";
 import { PageHeader } from "../layouts/AppShell";
@@ -7,8 +10,23 @@ import { PageHeader } from "../layouts/AppShell";
 export function SettingsPage() {
   const { config } = useWorkspace();
   const contract = useResource("run-settings", (signal) => api.runSettings({ signal }));
+  const catalog = useResource("catalog-status", (signal) => api.catalogStatus({ signal }));
+  const [rebuild, setRebuild] = useState<{ busy: boolean; message: string | null; error: ApiError | null }>(
+    { busy: false, message: null, error: null });
   const cfg = config.data;
   const c = contract.data;
+  const index = catalog.data?.derived_index;
+  const rebuildNow = async () => {
+    setRebuild({ busy: true, message: null, error: null });
+    try {
+      const out = await api.rebuildCatalogIndex();
+      setRebuild({ busy: false, message: out.message, error: null });
+      void catalog.refresh();
+    } catch (e) {
+      setRebuild({ busy: false, message: null,
+                   error: e instanceof ApiError ? e : new ApiError(0, "client_error", "The rebuild could not start.") });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -33,6 +51,31 @@ export function SettingsPage() {
             { label: "MCP", value: cfg.mcp_enabled ? "enabled" : "disabled" },
           ]} />
         )}
+      </Panel>
+      <Panel kicker="Live catalog" title="Catalog and derived trim index">
+        {catalog.loading ? <SkeletonRows rows={3} /> : catalog.error ? <ErrorState error={catalog.error} onRetry={catalog.refresh} />
+          : catalog.data && index && (
+            <div className="space-y-3">
+              <KeyValue columns={3} items={[
+                { label: "Level 1.5 catalog", value: catalog.data.label },
+                { label: "Derived trim index", value: index.available ? (index.status ?? "never built") : "unavailable (no DATABASE_URL)" },
+                { label: "Last build", value: <Mono>{index.built_at ?? "—"}</Mono> },
+                { label: "Catalog rows", value: index.rows ?? "—" },
+                { label: "Index entries", value: index.entries ?? "—" },
+                { label: "Schedule", value: `every ${index.interval_days} days` },
+              ]} />
+              {index.error && <Notice tone="danger" title="Last build failed">{index.error}</Notice>}
+              <div className="flex items-center gap-3">
+                <Button size="sm" onClick={rebuildNow} busy={rebuild.busy || index.building} disabled={!index.available || index.building}>
+                  Rebuild now
+                </Button>
+                {rebuild.message && <span className="text-xs text-ink-muted">{rebuild.message}</span>}
+              </div>
+              {rebuild.error && <ErrorState error={rebuild.error} title="The rebuild did not start" />}
+              <p className="text-xs text-ink-faint">The engine reads this copy (on the data volume) when it is newer than the
+                repository&apos;s data/catalog_trim_index.json. Nothing is written to the MILO catalog.</p>
+            </div>
+          )}
       </Panel>
       <Panel kicker="Per run" title="Per-run settings contract">
         {contract.loading ? <SkeletonRows rows={6} label="Loading per-run settings" />

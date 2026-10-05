@@ -159,6 +159,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "grounded_candidates(on): pin the AgentConfig default of GROUNDED_CANDIDATES "
                                        "(True | False) for this test (scripts encoding the pre-#31 model call order)")
     config.addinivalue_line("markers", "site_map(on): pin the AgentConfig default of SITE_MAP (True | False)")
+    config.addinivalue_line("markers", "official_guess_guard: keep PR #47's (A4) guessed-URL refusal on official / "
+                                       "importer domains on for this test (scripted runs elsewhere fetch official "
+                                       "fixture URLs without a search first)")
     config.addinivalue_line("markers", "offered_urls(*urls): URLs every run's URL provenance starts with, as if a "
                                        "search had returned them (scripted runs fetching fixture pages on "
                                        "il_version_sites domains, PR #46 P2)")
@@ -204,6 +207,17 @@ def _offered_urls(request, monkeypatch):
     marker = request.node.get_closest_marker("offered_urls")
     if marker is not None:
         offer_urls(monkeypatch, marker.args)
+
+
+@pytest.fixture(autouse=True)
+def _official_guess_guard(request, monkeypatch):
+    """PR #47 (A4): official / importer domains refuse a guessed URL. Scripted runs throughout the suite fetch official
+    fixture pages (toyota-europe.com, toyota.co.il, ...) with no search before them, which is not what they test; the
+    guard is off for them and on for every test marked `official_guess_guard` (the A4 tests)."""
+    if request.node.get_closest_marker("official_guess_guard") is None:
+        from src import acquisition
+
+        monkeypatch.setattr(acquisition, "GUESS_GUARDED_CLASSES", ())
 
 
 def offer_urls(monkeypatch, urls) -> None:

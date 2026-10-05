@@ -374,7 +374,7 @@ def test_model_page_links_lead_to_the_matching_version_page(cache):
     assert statuses[P.Q3_CARTUBE_URL] == ("accepted", "power_match")
     assert out["found"] == 1 and web.fetches == [hp245, P.Q3_MODEL_URL, P.Q3_CARTUBE_URL]
     assert ctx.counters["acq_il_version_pages_found"] == 1 and ctx.counters["acq_il_version_fetches"] == 3
-    assert ctx.counters["acq_il_version_searches"] == out["searches"] == 3
+    assert ctx.counters["acq_il_version_searches"] == out["searches"] == 4      # PR #47: max_searches 4
     assert pace.waits == ["cartube.co.il"] * 3
 
 
@@ -394,15 +394,16 @@ def test_a_page_listing_two_versions_is_not_accepted(cache):
     assert out["found"] == 0
 
 
-def test_budget_caps_three_searches_and_six_fetches(cache):
+def test_budget_caps_four_searches_and_six_fetches(cache):
     urls = [f"{P.Q3_MODEL_URL}/{500 + i}-two-versions-2024" for i in range(10)]
     pages = {u: P.q3_two_versions_html() for u in urls}
     web = _Web(cache, pages, {"cartube.co.il": urls, "icar.co.il": [], "auto.co.il": []})
     out, _, _ = _resolve(cache, web)
-    assert len(web.searches) == out["searches"] == 3 and len(web.fetches) == out["fetches"] == 6
+    # PR #47: max_searches 4 (carzone.co.il is the fourth il_version_sites entry)
+    assert len(web.searches) == out["searches"] == 4 and len(web.fetches) == out["fetches"] == 6
     # PR #45 (R1): icar's `site:` search finds nothing, so its one domain-filter retry takes the third search
     assert [(q.startswith("site:"), d) for q, d in web.searches] == [
-        (True, "cartube.co.il"), (True, "icar.co.il"), (False, "icar.co.il")]
+        (True, "cartube.co.il"), (True, "icar.co.il"), (False, "icar.co.il"), (True, "auto.co.il")]
 
 
 def test_robots_disallow_is_respected(cache):
@@ -427,8 +428,8 @@ def test_search_templates_fill_the_target_terms():
     from src.il_version_pages import search_queries, target_terms
 
     terms = target_terms(A.Q3_PAYLOAD, target_identity(A.Q3_PAYLOAD))
-    assert terms == {"make_he": "אודי", "make_en": "audi", "model": "Q3", "year": "2024", "engine_l": "2.0",
-                     "hp": "190"}
+    assert terms == {"make_he": "אודי", "make_en": "audi", "model": "Q3", "model_he": "Q3", "model_en": "q3",
+                     "body_he": "", "body_en": "", "year": "2024", "engine_l": "2.0", "hp": "190"}
     assert search_queries(terms)[0] == ("cartube.co.il", "site:cartube.co.il אודי Q3 2024 2.0 190")
 
 

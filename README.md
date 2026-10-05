@@ -110,7 +110,7 @@ one address); the protection is a long random token. `/health` is not gated. Out
 ### Read-only MCP for Claude (optional)
 
 One variable turns on a **read-only** MCP server in the same process and on the same port: runs, live events,
-results, diagnostics, binding replay, candidates, fetched documents, search bake-offs and the server log (14 tools; nothing can start,
+results, diagnostics, binding replay, candidates, fetched documents, search bake-offs, the live catalog (`catalog_search`) and the server log (15 tools; nothing can start,
 cancel, delete or write). Without the variable it does not exist at all (no route; the `mcp` SDK is not imported).
 
 1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
@@ -1099,6 +1099,47 @@ raw_url, site_native}]`.
   official domains exempt). The refusal is the tool result; counters `acq_guessed_url_refused` /
   `acq_irrelevant_result_refused`.
 
+### IL source precision: body names, the new cartube template, carzone (PR #47)
+
+Deterministic and fail-closed; vocabularies and site rules are data (`data/identity_vocabulary.json`,
+`data/source_rules.json`), nothing in Python names a brand or a model.
+
+- **Body market names (A1).** `body_market_names` lists, per manufacturer | family (and generically per body), the
+  Israeli names of a body sub-model (Corolla wagon: סטיישן / ספייס / Touring Sports / TS / Space). The resolver's site
+  searches carry the target body's first Hebrew / Latin name and the family's Hebrew name (`site:cartube.co.il טויוטה
+  קורולה סטיישן 2024 1.8`); a candidate naming the target body ranks +2, one naming another body sub-model of the family
+  -3. The family is matched on word / slug-segment boundaries: `corolla-cross` / "קורולה קרוס" is `other_family`,
+  dropped and never fetched. A weak version candidate (score < 1) waits while a listing page of the family is unfetched.
+  `max_searches` is 4 (one per site, carzone included).
+- **Version-page identity (A2).** The new cartube template ("label (unit):" on one line, the value on the next) is read
+  for identity, as is "1.8 הייבריד" in its title. An absent drivetrain does not reject a page when the catalog has one
+  drivetrain for (manufacturer, family, year, body, propulsion). The hybrid "single catalog entry" escape counts entries
+  per (manufacturer, family, year, **body**, propulsion, drivetrain). The Corolla 2024 wagon still has three such entries
+  (98 hp 1.8, 140 hp 1.8 recorded with the system power, 152 hp 2.0), so its cartube page is rejected `power_mismatch`
+  (no longer `drivetrain_absent`). `scripts/hybrid_power_pairs.py` reports every hybrid / plug-in group with two or more
+  government powers (CSV; report only, for a later human-verified engine -> system power table).
+- **carzone (A3, `src/il_trim_pages.py`).** carzone.co.il is an aggregator and an `il_version_sites` entry with its own
+  search template. A trim page (`/<Make>/<Model>/<Sub>?/<year>?trim=<slug>`) binds `exact_market_trim` (basis
+  `il_trim_page`) only when the slug's trim words are the target's government trim (`BUSINESS EDI` = "Business
+  Edition"), its displacement / propulsion / drivetrain are the target's AND the page itself names that version (the
+  static HTML of a ?trim= URL shows the default version: rejected `page_trim_unconfirmed`, and the slug never names the
+  document's trim then). On a compare page (`.../compare`) each value is mapped to its column ("-" is no value); a value
+  in the column whose trim is the target's (Hebrew trim words read through `trim_word_forms_he`, "ביזנס אדישן") binds
+  `exact_market_trim` (basis `il_compare_column`), a value only in another column never binds the market trim
+  (`trim_other_column`). A carzone trim URL is a candidate only when a search result or a fetched carzone page offered it.
+- **Guessed URLs on official domains (A4).** The P2 refusal also covers official manufacturer / importer / media domains:
+  a fetch there must have been offered (search result, fetched page's links, site map); the domain's root is allowed
+  once per run. Counted as `acq_guessed_url_refused`.
+- **Recovery stop (A5).** Cluster recovery stops after its first full cluster pass (every open cluster had its first web
+  attempt) when no new useful document arrived and no field changed state (`recovery_stopped_no_progress`, with the
+  estimated minutes saved versus the turn budget). Reacquire recovery is one pass by design; its minutes are reported.
+- **Search credits (A6).** Provider credits per search (serper's `credits`) are recorded (`search_credits` per vehicle
+  in the result, the diagnostics row and the Benchmark tab); the run setting `search_credit_cap` (default 40, 0 = no
+  cap) refuses further uncached searches of a vehicle with `search_budget_exhausted`.
+
+Proof: `python scripts/pr47_proof_gate.py` replays the resolver and admission on record 38626 from the run's search
+results and pages (no network).
+
 ### Durable pre-finalization checkpoint
 
 `result.json`, `batch.json` and `input.json` are written through one atomic primitive
@@ -1842,6 +1883,24 @@ falls back to the snapshot silently.
 The model receives the whole row (`raw_row`) plus a grouped view: identity, engine &
 drivetrain, structure, environment, and safety with all 19 assist systems and the 5
 installation sources.
+
+### The live MILO catalog (PR #47)
+
+With `DATABASE_URL` the New research page browses the whole live catalog (`public.catalog_variants_current`, read-only;
+no write path anywhere): cascading pickers (manufacturer -> model -> year -> trim) and a record-id search, server-side
+filtering and paging (`GET /api/catalog?manufacturer=&model=&year=&trim=&q=&limit=&offset=`, limit <= 200; lists at
+`/api/catalog/manufacturers`, `/models`, `/years`, `/trims`, cached 10 minutes). Scopes: one vehicle, a filtered set
+(at most 50 per run, listed before start, `scope=set`), and the Benchmark v1 presets as before. Filters use the view's
+indexes only (EXPLAIN on production): manufacturer + model [+ year] (`catalog_variants_tree_idx`), manufacturer + year
+(`catalog_variants_reading_idx`; a degem_cd or trim search only then), the upstream record id
+(`catalog_variants_record_uidx`). The manufacturer and model lists scan (no tozar index on the MILO side; reported,
+never created from TRIPY) and are cached. Without `DATABASE_URL` the page shows "snapshot (50 benchmark records)" and
+the browser is disabled; every run keeps recording `level15_source`.
+
+The server rebuilds `data/catalog_trim_index.json` weekly from the same database into `<TRIPY_DATA_DIR>/derived/`
+(`src/jobs/derived_index.py`, a background job of the RunManager; Settings shows the last build, row counts and a
+"Rebuild now" button, `POST /api/catalog/index/rebuild`). The engine reads that copy when it is newer than the
+repository's (`document_binding.trim_index_path`). The read-only MCP has `catalog_search`.
 
 ## Benchmark v1
 

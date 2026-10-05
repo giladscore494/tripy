@@ -233,6 +233,7 @@ class UrlProvenance:
         self.guessed_404: dict[str, int] = {}
         self.guessed: list[dict] = []
         self._noted: dict[str, int] = {}
+        self.roots_allowed: set[str] = set()   # PR #47 (A4): an official domain's root, allowed once unoffered
 
     def offer(self, urls: Iterable[Any]) -> None:
         for url in urls or []:
@@ -318,9 +319,11 @@ class UrlProvenance:
 
 # --- acquisition hygiene (PR #46, P2; refusals before a fetch) -----------------------------------------------------------
 #
-#   guessed_url_refused   a fetch on an il_version_sites domain (cartube / icar / auto.co.il) of a URL that no search
-#                         result, fetched page's links or site map offered (and that no cached document holds) is refused:
-#                         the model guessed a slug (production: a cartube URL that returned 404)
+#   guessed_url_refused   a fetch on an il_version_sites domain (cartube / icar / auto.co.il / carzone) of a URL that no
+#                         search result, fetched page's links or site map offered (and that no cached document holds) is
+#                         refused: the model guessed a slug (production: a cartube URL that returned 404). PR #47 (A4):
+#                         the same on official manufacturer / importer / media domains (GUESS_GUARDED_CLASSES), except
+#                         the domain's root, allowed once per run
 #   irrelevant_result     in primary research, a search result whose URL + title + snippet names neither the target's
 #                         make nor its model family (Hebrew or Latin, the identity vocabulary's aliases) is not fetched
 #                         (production: a zap.co.il TV listing). PDFs and official domains are exempt
@@ -392,6 +395,18 @@ def _fetch_refusal(ctx, name: str, url: str, phase: str) -> dict | None:
                 "message": (f"{url} was not offered by a search result, a fetched page's links or the site map, so it "
                             f"is not fetched: on {site} use only offered URLs (search for the page, or fetch the site's "
                             "model / price-list page and follow its links).")}
+    authority = classify_source(url, provenance.manufacturer).get("source_authority")
+    if not site and authority in GUESS_GUARDED_CLASSES and key not in provenance.offered and not _cached(ctx, url):
+        # A4 (PR #47): official / importer domains too (production: toyota.co.il /price-list, /warranty, /after-sales
+        # and /cars/Corolla were guessed, all 404); the domain's root is allowed once
+        domain = _registrable(url)
+        if urlparse_path(url).strip("/") == "" and domain not in provenance.roots_allowed:
+            provenance.roots_allowed.add(domain)
+            return None
+        return {"reason": "guessed_url_refused", "site": domain, "url": url, "source_authority": authority,
+                "message": (f"{url} was not offered by a search result, a fetched page's links or the site map, so it "
+                            f"is not fetched: on the official domain {domain} fetch only offered URLs (search for the "
+                            "page, fetch the domain's home page once and follow its links, or use the site map).")}
     if phase != "research" or key not in provenance.search_items or key in provenance.linked:
         return None
     if name == "fetch_pdf" or urlparse_path(url).endswith(".pdf"):
@@ -404,6 +419,9 @@ def _fetch_refusal(ctx, name: str, url: str, phase: str) -> dict | None:
     return {"reason": "irrelevant_result", "url": url,
             "message": (f"{url} is a search result whose URL, title and snippet name neither the target's make nor "
                         "its model, so it is not fetched. Fetch results about this vehicle.")}
+
+
+GUESS_GUARDED_CLASSES = ("official_manufacturer", "official_importer", "official_media")
 
 
 def urlparse_path(url: str) -> str:

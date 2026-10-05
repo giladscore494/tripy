@@ -335,8 +335,11 @@ class StartRun(BaseModel):
     Advanced settings, validated by run_settings). Endpoints, credentials and process-wide limits stay the server's."""
     model_config = ConfigDict(extra="forbid")
 
-    scope: Literal["one", "manufacturer", "all"]
-    record_id: str | None = Field(None, description="scope=one: the benchmark record id")
+    scope: Literal["one", "manufacturer", "all", "set"]
+    record_id: str | None = Field(None, description="scope=one: a benchmark record id, or (with DATABASE_URL) any "
+                                                     "upstream record id of the live catalog")
+    record_ids: list[str] | None = Field(None, min_length=1, max_length=50,
+                                         description="scope=set: up to 50 catalog record ids (listed before start)")
     manufacturer: str | None = Field(None, description="scope=manufacturer: the manufacturer name")
     profile: Literal[PROFILES] = PRODUCTION  # type: ignore[valid-type]
     idempotency_key: str | None = Field(None, min_length=1, max_length=200,

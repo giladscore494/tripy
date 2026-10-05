@@ -159,6 +159,7 @@ class DocumentMaterial:
     candidates: list[dict]
     variant_map: dict | None = None    # src/variant_map.py (None: the map could not be built)
     version_page: dict | None = None   # src/il_version_pages.version_page_verdict (None: not an IL version page)
+    trim_page: dict | None = None      # src/il_trim_pages (PR #47 A3): a carzone trim page / compare page verdict
 
     def __getattr__(self, name: str) -> Any:            # document_id, url, meta, haystack, lines, market, ...
         return getattr(self.__dict__["doc"], name)
@@ -419,6 +420,12 @@ class AdmissionContext:
             material.version_page = version_page_verdict(material, self.identity)
         except Exception as exc:  # noqa: BLE001 - the verdict is an additional layer; binding stands without it
             material.version_page = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
+        try:
+            from .il_trim_pages import trim_page_or_compare_verdict
+
+            material.trim_page = trim_page_or_compare_verdict(material, self.identity)
+        except Exception as exc:  # noqa: BLE001 - an additional layer, like the version page verdict
+            material.trim_page = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
         with self._lock:
             self._docs[doc_id] = material
         return material
@@ -1167,7 +1174,8 @@ REPEATED_POWER_TOLERANCE = 0.03
 def target_among_versions(adm: AdmissionContext, material: DocumentMaterial, versions: dict) -> dict:
     """PR #46 (P1.2): is the target one of a multi-version document's versions? {designation: the target's own
     designation is among the document's, power: the target's power (+-3 %) is among the document's powers,
-    catalog_single_entry: the catalog has exactly one entry for (manufacturer, family, year, propulsion, drivetrain),
+    catalog_single_entry: the catalog has exactly one entry for (manufacturer, family, year, body, propulsion,
+    drivetrain) (PR #47: body added),
     year_stated: the document states a model year (identity zone or full text)}."""
     from .il_version_pages import single_catalog_entry
 
@@ -1266,15 +1274,32 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         region = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200], "allowed": False}
     page = material.version_page if isinstance(material.version_page, dict) else None
     multi_version = multi_version_context(adm, material, value, ctx, region)
+    column = None
+    try:
+        # A3 (PR #47): an accepted carzone trim page (every value), or the compare-table column a value sits in
+        from .il_trim_pages import fact_column, page_trim_column
+
+        trim_page = material.trim_page if isinstance(material.trim_page, dict) else None
+        column = page_trim_column(trim_page) or fact_column(material, trim_page, value,
+                                                             [quote, *ctx.source_lines])
+    except Exception:  # noqa: BLE001 - an additional layer; the normal binding stands without it
+        column = None
     doc_statuses = profile["statuses"]
     if page and page.get("single_version"):
         # P4 / P2: a single-version Israeli page is about the version its title, URL and identity rows name; those
         # replace the full-text statuses (comparison widgets, related-article teasers) of the dimensions they state
         doc_statuses = {**doc_statuses, **{d: st for d, st in (page.get("page_statuses") or {}).items()
                                            if st != "absent"}}
+    trim_named = profile.get("trim_named_in_document", False)
+    trim_page = material.trim_page if isinstance(material.trim_page, dict) else None
+    if trim_page and trim_page.get("kind") == "trim_page" and trim_page.get("status") != "accepted":
+        # A3 (PR #47): a carzone ?trim= URL names a version the static page does not show (the default version is
+        # rendered): the URL slug never names the document's trim
+        doc_statuses = {**doc_statuses, "trim": "absent"}
+        trim_named = False
     binding = bind(adm.identity, doc_statuses, inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
-                   trim_named_in_document=profile.get("trim_named_in_document", False),
+                   trim_named_in_document=trim_named,
                    source_authority=material.authority.get("source_authority"),
                    document_names_family=profile.get("zone_statuses", {}).get("model") == "match",
                    other_trims_named=profile.get("other_trims_named"),
@@ -1283,7 +1308,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
                    powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
                    version_page=page, engine_invariant=spec.get("variant_invariance") == "engine",
-                   multi_version=multi_version)
+                   multi_version=multi_version, trim_column=column)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1294,8 +1319,16 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
     if page and page.get("status") in ("accepted", "rejected"):
         binding["version_page"] = {k: page.get(k) for k in ("status", "reason", "site", "single_version",
                                                              "page_statuses", "page_powers", "catalog_single_entry",
+                                                             "catalog_single_drivetrain",
                                                              "body_subvariant", "page_inconsistent", "version")
                                    if page.get(k) not in (None, [], {})}
+    if column:
+        binding["trim_column"] = dict(column)
+    trim_page = material.trim_page if isinstance(material.trim_page, dict) else None
+    if trim_page and trim_page.get("status") in ("accepted", "rejected"):
+        binding["trim_page"] = {k: trim_page.get(k) for k in ("kind", "status", "reason", "site", "slug",
+                                                              "target_column", "version") if trim_page.get(k)
+                                not in (None, [], {})}
     if multi_version:
         # R4 telemetry: the versions the document's inventory names and whether the value repeats for each of them
         binding["document_versions"] = {k: multi_version.get(k) for k in ("versions", "powers", "designations",
@@ -1458,6 +1491,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "stale_publication": binding.get("stale_publication"),
         "variant_map_region": binding.get("variant_map_region"),
         "version_page": binding.get("version_page"), "document_versions": binding.get("document_versions"),
+        "trim_column": binding.get("trim_column"), "trim_page": binding.get("trim_page"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,

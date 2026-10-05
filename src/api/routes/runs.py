@@ -22,7 +22,8 @@ from ...db import Level15Error
 from ...glm_client import GLMError
 from ...jobs.manager import RunRejected
 from ...app_config import blocking_errors
-from ...research_targets import ALL, MANUFACTURER, ONE, research_target
+from ...catalog import MAX_SET
+from ...research_targets import ALL, MANUFACTURER, ONE, SET, catalog_target, research_target
 from ...run_profiles import PRODUCTION
 from ...run_settings import build_research_request, settings_checks, settings_for_run, settings_from_env
 from ..deps import ApiContext, get_context
@@ -33,7 +34,7 @@ from .. import service
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
-SCOPES = {"one": ONE, "manufacturer": MANUFACTURER, "all": ALL}
+SCOPES = {"one": ONE, "manufacturer": MANUFACTURER, "all": ALL, "set": SET}
 
 
 def reconciled(ctx: ApiContext = Depends(get_context)) -> ApiContext:
@@ -130,6 +131,26 @@ def start_run(body: StartRun, response: Response, ctx: ApiContext = Depends(get_
     """Start research for one vehicle, one manufacturer or the whole benchmark (201; 200 for a repeated
     idempotency key; 409 when a run for the target is active or the active-run limit is reached)."""
     catalog = ctx.catalog
+    if body.scope == "set" or (body.scope == "one" and body.record_id and body.record_id not in catalog.by_id):
+        # PR #47 (B1): live-catalog vehicles (one, or a filtered set of at most 50), read-only from MILO
+        ids = list(dict.fromkeys(body.record_ids or ([body.record_id] if body.record_id else [])))
+        if not ids:
+            raise ApiError(422, "empty_target", "scope=set needs record_ids.")
+        if len(ids) > MAX_SET:
+            raise ApiError(422, "too_many_vehicles", f"A catalog set is capped at {MAX_SET} vehicles per run.")
+        if not ctx.catalog_browser.available:
+            raise ApiError(422, "unknown_vehicle", "Without DATABASE_URL only the benchmark vehicles (snapshot) can run.")
+        try:
+            vehicles = ctx.catalog_browser.vehicles(ids)
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError(503, "catalog_query_failed", f"The catalog query failed: {type(exc).__name__}") from None
+        missing = [i for i in ids if i not in {v["upstream_record_id"] for v in vehicles}]
+        if missing:
+            raise ApiError(422, "unknown_vehicle", f"Not in the live catalog: {', '.join(missing[:10])}.")
+        vehicles, label = catalog_target(vehicles)
+        overrides = body.settings.model_dump(exclude_none=True) if body.settings is not None else None
+        return _start(ctx, vehicles, label, ONE if body.scope == "one" else SET, body.idempotency_key, body.profile,
+                      response, overrides)
     if body.scope == "one":
         if not body.record_id or body.record_id not in catalog.by_id:
             raise ApiError(422, "unknown_vehicle", "scope=one needs the record_id of a benchmark vehicle.")

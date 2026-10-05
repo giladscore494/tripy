@@ -16,6 +16,7 @@ from typing import Callable
 
 from fastapi import Request
 
+from ..catalog import CatalogBrowser, database_query
 from ..jobs.manager import RunManager, get_manager, shared_controller
 from ..research_targets import VehicleCatalog
 from ..runstate.pipeline import PipelineCache
@@ -36,6 +37,8 @@ class ApiContext:
     secret: Callable[[str], str] = env_secret
     pipelines: PipelineCache = field(default_factory=PipelineCache)   # incremental event readers, one per process
     owns_manager: bool = False
+    # PR #47 (B1): the live MILO catalog (read-only over DATABASE_URL); unavailable without it (snapshot mode)
+    catalog_browser: CatalogBrowser = field(default_factory=lambda: CatalogBrowser(None))
 
     @property
     def runs_dir(self):
@@ -46,7 +49,11 @@ def build_context(secret: Callable[[str], str] = env_secret) -> ApiContext:
     paths = resolve_paths(secret)
     catalog = VehicleCatalog.load()
     manager = get_manager(paths, controller=shared_controller(secret), vehicle_label=catalog.title)
-    return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True)
+    dsn = (secret("DATABASE_URL") or secret("SUPABASE_DB_URL") or "").strip()
+    browser = CatalogBrowser(database_query(dsn) if dsn else None)
+    manager.derived_index.start()          # PR #47 (B2): the weekly derived catalog trim index (no-op without a DSN)
+    return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True,
+                      catalog_browser=browser)
 
 
 def get_context(request: Request) -> ApiContext:

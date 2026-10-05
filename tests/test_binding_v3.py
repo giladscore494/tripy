@@ -272,8 +272,9 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
     from src.research_memory import ResearchMemory
 
     # PR #40: catalog rules + DVM; PR #43: hybrid / relative / stale; PR #44: Israeli version pages, engine invariance;
-    # PR #45: body sub-variants, single values on multi-version documents, inconsistent pages
-    assert BINDING_VERSION == "binding-v7"
+    # PR #45: body sub-variants, single values on multi-version documents, inconsistent pages; PR #47: compare-table
+    # columns / trim pages, the body in the single-catalog-entry key
+    assert BINDING_VERSION == "binding-v8"
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",

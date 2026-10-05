@@ -64,19 +64,23 @@ VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", R
                  ROOT.parent / "data" / "identity_vocabulary.json", ROOT.parent / "data" / "catalog_trim_index.json",
                  ROOT.parent / "data" / "enrichment_fields.json", ROOT / "fields.py",
                  # PR #44: Israeli version pages (P2 / P4), the registry binding (P1) and their data
-                 ROOT / "il_version_pages.py", ROOT / "gov_registry.py", ROOT.parent / "data" / "source_rules.json",
+                 ROOT / "il_version_pages.py", ROOT / "il_trim_pages.py", ROOT / "gov_registry.py",
+                 ROOT.parent / "data" / "source_rules.json",
                  ROOT.parent / "data" / "gov_registry_index.json")
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
                 "binding_requirement", "binding_version", "year_context", "binding_rules", "binding_policy",
                 "variant_map_region", "market_trim", "binding_flags", "relative_reference", "stale_publication",
-                "version_page", "document_versions")
+                "version_page", "document_versions", "trim_column", "trim_page")
 
 
 def code_version() -> str:
     """The binding code version a replay was computed with (versions + content hash of VERSION_FILES)."""
     digest = hashlib.sha256(f"{REPLAY_VERSION}|{BINDING_VERSION}|{ADMISSION_VERSION}|{VARIANT_MAP_VERSION}".encode())
-    for path in VERSION_FILES:
+    from .document_binding import trim_index_path
+
+    # PR #47 (B2): the catalog trim index the engine reads (the data volume's derived copy when newer)
+    for path in (*VERSION_FILES, trim_index_path()):
         try:
             digest.update(path.read_bytes())
         except OSError:
@@ -215,6 +219,7 @@ def replay_fact(adm: AdmissionContext, cache, *, field: str, value: Any, quote: 
            "variant_map_region_now": binding.get("variant_map_region"),
            # PR #45: the fact document's version-page verdict (R2 / R3 / R5) and its technical versions (R4)
            "version_page_now": binding.get("version_page"),
+           "trim_column_now": binding.get("trim_column"), "trim_page_now": binding.get("trim_page"),
            "document_versions_now": binding.get("document_versions"),
            # today's admission sanity rules (semantic exclusions, plausibility): a stored value they reject now
            "rejected_now": sanity_rejection(adm, material, spec, value, quote, ctx),

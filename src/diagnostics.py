@@ -709,7 +709,24 @@ def recovery_summary(events: list[dict]) -> dict:
         "failed_attempts": sum(1 for e in window if e.get("kind") == "field_recovery_failed"
                                and e.get("attempt") is not None),
         "api_failure_stop": any(e.get("kind") == "field_recovery_api_failure_stop" for e in window),
+        # A5 (PR #47): the no-progress stop after the first full cluster pass, its minutes and the estimated saving
+        **_recovery_minutes(window, primary, final),
     }
+
+
+def _recovery_minutes(window: list[dict], primary: dict | None, final: dict | None) -> dict:
+    from datetime import datetime
+
+    def ts(event: dict | None) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str((event or {}).get("ts")))
+        except ValueError:
+            return None
+    start, end = ts(primary), ts(final)
+    stop = next((e for e in window if e.get("kind") == "recovery_stopped_no_progress"), None)
+    return {"minutes": round((end - start).total_seconds() / 60.0, 2) if start and end else None,
+            "stopped_no_progress": stop is not None,
+            "minutes_saved_estimate": (stop or {}).get("recovery_minutes_saved_estimate")}
 
 
 def final_field_states(events: list[dict]) -> dict:
@@ -956,7 +973,10 @@ def search_operations(events: list[dict]) -> dict:
         by_backend[name] = by_backend.get(name, 0) + 1
         usd[name] = round(usd.get(name, 0.0) + float(e.get("usd") or 0.0), 6)
     blocked = [e for e in events if e.get("kind") == "tool_blocked"]
-    return {"search_calls_by_backend": dict(sorted(by_backend.items())),
+    credited = [e for e in calls if e.get("credits") is not None]
+    return {"search_credits": round(sum(float(e.get("credits") or 0) for e in credited), 2) if credited else None,
+            "search_budget_exhausted": sum(1 for e in events if e.get("kind") == "search_budget_exhausted"),
+            "search_calls_by_backend": dict(sorted(by_backend.items())),
             "search_usd_by_backend": dict(sorted(usd.items())),
             "search_root_only_urls": sum(len(e.get("results") or []) for e in events
                                          if e.get("kind") == "root_only_url"),
@@ -1175,6 +1195,8 @@ def vehicle_row(diag: dict) -> dict:
             "search_usd_by_backend": json.dumps(ops["search_usd_by_backend"], sort_keys=True)
             if "search_usd_by_backend" in ops else None,
             "search_root_only_urls": ops.get("search_root_only_urls"), "search_off_site": ops.get("search_off_site"),
+            # PR #47 (A6): provider search credits (serper's `credits`) and searches refused at the credit cap
+            "search_credits": ops.get("search_credits"), "search_budget_exhausted": ops.get("search_budget_exhausted"),
             "search_fallback_used": ops.get("search_fallback_used"),
             "gemini_redirects_resolved": ops.get("gemini_redirects_resolved"),
             "gemini_redirects_failed": ops.get("gemini_redirects_failed"),
@@ -1187,6 +1209,8 @@ def vehicle_row(diag: dict) -> dict:
             "rec_fields_open_before": rec.get("fields_open_before"),
             "rec_fields_open_after": rec.get("fields_open_after"),
             "rec_fields_resolved": rec.get("fields_resolved"),
+            "rec_minutes": rec.get("minutes"), "rec_stopped_no_progress": rec.get("stopped_no_progress"),
+            "rec_minutes_saved_estimate": rec.get("minutes_saved_estimate"),
             **{f"final_{k}": counts.get(k) for k in FINAL_STATE_KEYS},
             "final_ok_fields": ",".join(final.get("ok_fields") or []) if final.get("ok_fields") is not None else None,
             # variant_not_exact fields stopped by the trim / by a technical dimension (a field may count in both)

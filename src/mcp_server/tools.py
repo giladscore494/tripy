@@ -37,8 +37,9 @@ _PIPELINES = PipelineCache()          # in-memory incremental event readers (nev
 class Observer:
     """The tools over one data root (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR, as the application resolves)."""
 
-    def __init__(self, paths: DataPaths | None = None):
+    def __init__(self, paths: DataPaths | None = None, catalog=None):
         self.paths = paths or resolve_paths()
+        self._catalog = catalog                 # PR #47 (B3): a src.catalog.CatalogBrowser (tests); default DATABASE_URL
         self.runs_dir = Path(self.paths.runs_dir)
         self.cache_dir = Path(self.paths.cache_dir)
         self.repository = FileRunRepository(self.runs_dir)
@@ -141,6 +142,35 @@ class Observer:
         return page(rows, offset, limit, lambda chunk: {
             "bakeoff": self._json_file(folder / "status.json"), "summary": self._json_file(folder / "summary.json"),
             "records": chunk}, max_limit=500, default_limit=100)
+
+    # -- the live MILO catalog (PR #47, B3): read-only, the same queries as GET /api/catalog -------------------------
+    def _catalog_browser(self):
+        if self._catalog is None:
+            from ..catalog import CatalogBrowser, database_query
+            from ..db import database_url
+
+            dsn = database_url()
+            self._catalog = CatalogBrowser(database_query(dsn) if dsn else None)
+        return self._catalog
+
+    def catalog_search(self, manufacturer: Any = None, model: Any = None, year: Any = None, trim: Any = None,
+                       q: Any = None, limit: Any = 50) -> dict:
+        from ..catalog import MAX_LIMIT, CatalogQueryRefused, CatalogUnavailable
+
+        browser = self._catalog_browser()
+        try:
+            year_value = int(year) if year not in (None, "") else None
+        except (TypeError, ValueError):
+            raise ToolInputError("year must be a number") from None
+        try:
+            return browser.search(manufacturer=str(manufacturer) if manufacturer else None,
+                                  model=str(model) if model else None, year=year_value,
+                                  trim=str(trim) if trim else None, q=str(q)[:60] if q else None,
+                                  limit=clamp(limit, 1, MAX_LIMIT, 50), offset=0)
+        except CatalogUnavailable as exc:
+            return {"available": False, "error": str(exc)}
+        except CatalogQueryRefused as exc:
+            raise ToolInputError(str(exc)) from None
 
     def list_runs(self, limit: Any = 20, offset: Any = 0) -> dict:
         from ..runstate.report import elapsed_s

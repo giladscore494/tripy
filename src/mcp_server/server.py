@@ -200,6 +200,16 @@ def build(observer_factory: Callable[[], Observer] = Observer):
                           lambda: observer_factory().bakeoff_result(bakeoff_id, offset, limit))
 
     @tool
+    async def catalog_search(manufacturer: str | None = None, model: str | None = None, year: int | None = None,
+                             trim: str | None = None, q: str | None = None, limit: int = 50) -> str:
+        """The live MILO catalog (public.catalog_variants_current over DATABASE_URL, read-only), filtered like the
+        web UI's catalog browser: manufacturer + model [+ year [+ trim]], manufacturer + year [+ trim / a degem_cd in
+        q], or q = an upstream record id. limit max 200. Without DATABASE_URL: {available: false}."""
+        args = {"manufacturer": manufacturer, "model": model, "year": year, "trim": trim, "q": q, "limit": limit}
+        return await run("catalog_search", args,
+                         lambda: observer_factory().catalog_search(manufacturer, model, year, trim, q, limit))
+
+    @tool
     async def server_log_tail(lines: int = 200, grep: str | None = None) -> str:
         """The last lines of the server log (the rotating data/logs/tripy.log), optionally only lines containing
         `grep` (case-insensitive substring). lines max 2000."""
@@ -211,4 +221,4 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "list_bakeoffs",
-              "bakeoff_result", "server_log_tail")
+              "bakeoff_result", "catalog_search", "server_log_tail")

@@ -75,6 +75,7 @@ class CallInfo:
     usage: dict = field(default_factory=dict)             # Gemini: usageMetadata
     redirects_resolved: int = 0
     redirects_failed: int = 0
+    credits: float | None = None                          # PR #47 (A6): the provider's own credit count (serper)
 
 
 class SearchBackend(Protocol):

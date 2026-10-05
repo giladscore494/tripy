@@ -83,12 +83,12 @@ binding-v6 (PR #44, Israeli source playbook), deterministic and fail-closed:
     il_version_page              a single-version Israeli publisher page whose identity (title / H1 / URL slug / spec
                                  rows: src/il_version_pages.py) matches the target's year, displacement, drivetrain,
                                  propulsion, body and power (or, for a power the catalog cannot map, the catalog's only
-                                 entry for manufacturer / family / year / propulsion / drivetrain) binds every value at
+                                 entry for manufacturer / family / year / body / propulsion / drivetrain, PR #47) binds every value at
                                  exact_technical_variant (binding_basis il_version_page); its market trim only when the
                                  page names the target trim. A single-version page's identity replaces the full-text
                                  statuses of the dimensions it names
     system_power_unmapped (P4.2) also a hybrid single-version page that states another power, unless the catalog has
-                                 exactly one entry for manufacturer / family / year / propulsion / drivetrain
+                                 exactly one entry for manufacturer / family / year / body / propulsion / drivetrain
     engine_invariant (P4.1)      a field with variant_invariance "engine" (gearbox, body dimensions) of a hybrid target
                                  is not held by system_power_unmapped when the document's displacement matches the
                                  target's (several_powertrain_versions, relative references and stale publications
@@ -109,6 +109,20 @@ binding-v7 (PR #45), deterministic and fail-closed; nothing here loosens an earl
     page_inconsistent (R5)       a single-version Israeli page whose stated power contradicts its own displacement
                                  against the catalog (1984 cc next to 341 hp while every 2.0 l entry of the family-year
                                  is <= 265 hp): its values bind at most body_powertrain
+
+binding-v8 (PR #47), deterministic and fail-closed (src/il_trim_pages.py); nothing here loosens an earlier rule:
+
+    il_compare_column (A3)       a value in the TARGET column of an accepted Israeli compare table (carzone: the one
+                                 column whose trim is the target's government trim, "ביזנס אדישן" = BUSINESS EDI,
+                                 and whose year / body / propulsion / displacement / drivetrain rows match) binds
+                                 exact_market_trim; a value stated in several columns counts for each of them
+    il_trim_page (A3)            every value of an accepted trim page (the slug's trim and technical identity are the
+                                 target's AND the page itself names that version) binds exact_market_trim
+    trim_other_column (A3)       a value only in ANOTHER version's column never binds the market trim (at most
+                                 exact_technical_variant; R4 and every veto still apply)
+    single catalog entry (A2)    the il_version_page escapes count catalog entries per (manufacturer, family, year,
+                                 BODY, propulsion, drivetrain); a drivetrain the page does not name is accepted when
+                                 the catalog has one drivetrain for (manufacturer, family, year, body, propulsion)
 """
 
 from __future__ import annotations
@@ -122,7 +136,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v7"
+BINDING_VERSION = "binding-v8"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -1020,9 +1034,55 @@ def normalize_catalog_trim(trim: Any) -> str:
     return " ".join(str(trim or "").upper().split())
 
 
+_DERIVED: dict[str, Any] = {"dir": None, "choice": None}
+
+
+def set_derived_index_dir(path: Path | str | None) -> None:
+    """PR #47 (B2): the data volume's derived-index directory (<TRIPY_DATA_DIR>/derived), set by the server at startup;
+    None falls back to TRIPY_DATA_DIR/derived when that variable is set."""
+    _DERIVED["dir"] = Path(path) if path else None
+    _DERIVED["choice"] = None
+
+
+def _generated_at(path: Path) -> str:
+    """The `generated_at` of an index file, read from its first bytes (the header precedes the entries)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+    m = re.search(r'"generated_at"\s*:\s*"([^"]+)"', head)
+    return m.group(1) if m else ""
+
+
+def trim_index_path() -> Path:
+    """Which catalog trim index the engine reads: CATALOG_TRIM_INDEX_PATH when set; else the data volume's derived copy
+    (<data dir>/derived/catalog_trim_index.json, rebuilt weekly by src/jobs/derived_index.py) when it is NEWER
+    (generated_at) than the repository's data/catalog_trim_index.json; else the repository's."""
+    override = os.environ.get("CATALOG_TRIM_INDEX_PATH")
+    if override:
+        return Path(override)
+    folder = _DERIVED["dir"] or (Path(os.environ["TRIPY_DATA_DIR"]) / "derived"
+                                 if os.environ.get("TRIPY_DATA_DIR") else None)
+    if folder is None:
+        return TRIM_INDEX_PATH
+    derived = Path(folder) / "catalog_trim_index.json"
+    try:
+        stamp = (derived.stat().st_mtime, TRIM_INDEX_PATH.stat().st_mtime)
+    except OSError:
+        return TRIM_INDEX_PATH
+    cached = _DERIVED["choice"]
+    if cached and cached[0] == (str(derived), stamp):
+        return cached[1]
+    choice = derived if _generated_at(derived) > _generated_at(TRIM_INDEX_PATH) else TRIM_INDEX_PATH
+    _DERIVED["choice"] = ((str(derived), stamp), choice)
+    return choice
+
+
 def trim_index(path: Path | str | None = None) -> dict:
-    """data/catalog_trim_index.json (CATALOG_TRIM_INDEX_PATH overrides), loaded once per file version."""
-    path = Path(path or os.environ.get("CATALOG_TRIM_INDEX_PATH") or TRIM_INDEX_PATH)
+    """The catalog trim index (trim_index_path: CATALOG_TRIM_INDEX_PATH, else the newer of the data volume's derived
+    copy and data/catalog_trim_index.json), loaded once per file version."""
+    path = Path(path or trim_index_path())
     try:
         mtime = path.stat().st_mtime
     except OSError:
@@ -1353,7 +1413,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
          powertrain_versions: dict | None = None, stale: dict | None = None,
-         version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None) -> dict:
+         version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None,
+         trim_column: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1375,7 +1436,11 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     PR #45 input: `multi_version` (evidence_admission.multi_version_context: how many technical versions the document's
     inventory names, whether the value is repeated identically for every version, whether the fact's DVM region is
-    `unresolved / inventory_without_target`), see binding-v7 in the module doc."""
+    `unresolved / inventory_without_target`), see binding-v7 in the module doc.
+
+    PR #47 input: `trim_column` (src/il_trim_pages: an accepted carzone trim page, basis il_trim_page, or the column of
+    an accepted compare table the value sits in: status `target`, basis il_compare_column, or `other_variant`), see
+    binding-v8 in the module doc."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1412,7 +1477,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         # is never identified by its displacement alone
         power_unmapped = any(name in POWER_LAYERS and st["power"] in ("mismatch", "mixed") for name, st in layer_statuses)
         # PR #44 (P4.2 tightening): a single-version page that states another power (its system power) is just as
-        # unmapped, unless the catalog has exactly ONE entry for the target's manufacturer / family / year /
+        # unmapped, unless the catalog has exactly ONE entry for the target's manufacturer / family / year / body /
         # propulsion / drivetrain (then the page's one version can only be the target's)
         if page.get("single_version") and (page.get("page_statuses") or {}).get("power") in ("mismatch", "mixed") \
                 and not page.get("catalog_single_entry"):
@@ -1535,6 +1600,21 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             s["trim"] = "match"
             level = "exact_market_trim"
         raised_by = "il_version_page"
+    column = trim_column or {}
+    column_target = column.get("status") == "target"
+    if column_target and not vetoes and not model_declared_different and s["model"] == "match" and not fact_mixed \
+            and level_index(level) >= level_index("generation") and s["year"] not in ("mismatch", "adjacent") \
+            and s["trim"] != "mismatch" and market and market == identity.target_market:
+        # binding-v8 (A3): the version the value belongs to is proven by the page (an accepted trim page) or by its
+        # compare-table column (trim + technical identity of that column, src/il_trim_pages.compare_verdict)
+        rule = column.get("basis") or "il_compare_column"
+        rules.append(rule)
+        effective["trim"] = {"status": "match", "basis": rule,
+                             **({"column": column["column"]} if column.get("column") is not None else {})}
+        s["trim"] = "match"
+        level, basis, raised_by = "exact_market_trim", rule, rule
+    else:
+        column_target = False
     not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
     if not_offered and level == "exact_market_trim":
         # F5: the document's complete model-code table sells the target's technical variant under other codes only
@@ -1550,6 +1630,10 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         catalog = single_catalog_trim(identity)
         if catalog is not None:
             level, basis = "exact_market_trim", "single_trim_catalog"
+    if column.get("status") == "other_variant" and level == "exact_market_trim":
+        # binding-v8 (A3): the value sits in ANOTHER version's column of a compare table: never the target's trim
+        level, basis, catalog = "exact_technical_variant", None, None
+        flags.append("trim_other_column")
     for veto in vetoes:
         cap = VETO_CAP[veto.split("_mismatch")[0]]
         if level_index(level) > level_index(cap):
@@ -1568,7 +1652,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     # proves it (or the value repeated identically for every version). A fact whose DVM region says the inventory does
     # not contain the target at all never binds the technical variant of a multi-version document
     mv = multi_version or {}
-    if int(mv.get("versions") or 0) >= 2 and not page_accepted \
+    if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target \
             and level_index(level) >= level_index("exact_technical_variant"):
         technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
         target_region = bool(region and region.get("allowed") and region.get("status") == "target")
@@ -1632,7 +1716,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if raised_by in ("il_version_page", "engine_invariant") and level_index(level) >= level_index(
+    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page") \
+            and level_index(level) >= level_index(
             "exact_technical_variant") and not vetoes and not model_declared_different:
         out["binding_basis"] = raised_by
     elif catalog is not None or (basis and level == "exact_market_trim" and not raised_by):
@@ -1707,7 +1792,7 @@ def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | N
 
 BINDING_FLAG_GAPS = ("system_power_unmapped", "several_powertrain_versions", "relative_variant_reference",
                      "stale_publication", "single_value_multi_version", "page_inconsistent",
-                     "repeated_without_target_version", "version_unproven")
+                     "repeated_without_target_version", "version_unproven", "trim_other_column")
 
 
 def is_trim_gap(gap: str) -> bool:

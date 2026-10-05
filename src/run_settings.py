@@ -33,7 +33,8 @@ BOUNDS = {"chat_attempts": (1, 6), "search_attempts": (1, 6), "chat_timeout": (3
           "max_steps": (3, 80), "no_artifact": (0, 20), "idle_turns": (0, 20), "tool_chars": (1000, 60000),
           "recovery_attempts": (0, 5), "recovery_steps": (1, 20), "recovery_total": (0, 400),
           "max_tokens": (0, 131072), "sweep_attempts": (1, 3), "sweep_fields": (1, 200),
-          "sweep_candidates": (1, 500), "search_limit": (1, SEARCH_PRIME_PROVIDER_LIMIT)}
+          "sweep_candidates": (1, 500), "search_limit": (1, SEARCH_PRIME_PROVIDER_LIMIT), "search_credit_cap": (0, 500)}
+SEARCH_CREDIT_CAP_DEFAULT = 40
 ACQUISITION_MODES = ["contract", "legacy"]
 RECOVERY_MODES = ["reacquire", "cluster", "legacy"]
 EFFORT_PHASES = (("research", "Research"), ("document_sweep", "Document sweep"), ("recovery", "Recovery"),
@@ -66,6 +67,7 @@ class UISettings:
     notes: list = field(default_factory=list)
     env_overrides: list = field(default_factory=list)   # env values differing from the code defaults (Part G)
     search_fallback_backend: str = "none"               # PR #46: answers a search only on 0 usable primary results
+    search_credit_cap: int = SEARCH_CREDIT_CAP_DEFAULT  # PR #47 (A6): provider search credits per vehicle (0 = no cap)
 
     def glm_settings(self) -> GLMSettings:
         """A fresh settings object per run (the API key stays in memory; never persisted)."""
@@ -83,7 +85,8 @@ class UISettings:
     def tool_config(self, secret: Secret):
         fallback = "" if self.search_fallback_backend in ("", "none", self.search_backend) \
             else self.search_fallback_backend
-        return tool_config_from_env(env=secret, search_backend=self.search_backend, search_fallback_backend=fallback)
+        return tool_config_from_env(env=secret, search_backend=self.search_backend, search_fallback_backend=fallback,
+                                    search_credit_cap=int(self.search_credit_cap))
 
 
 # --- defaults --------------------------------------------------------------------------------------------------------
@@ -332,6 +335,9 @@ RUN_OVERRIDES: tuple[RunOverride, ...] = (
                 help="Answers a search only when the primary backend returned 0 usable results (logged as "
                      "search_fallback_used). none = no fallback."),
     RunOverride("search_engine", "text", "GLM search engine", "Model", help="GLM_SEARCH_ENGINE (glm backend only)."),
+    _bounded("search_credit_cap", "int", "Search credits per vehicle (0 = no cap)", "Research budget",
+             help="Provider search credits as the provider reports them (serper's `credits`). At the cap every further "
+                  "uncached search of the vehicle is refused (search_budget_exhausted)."),
     _bounded("chat_attempts", "int", "Chat max attempts (total, 1 = no retry)", "Model"),
     _bounded("search_attempts", "int", "Search max attempts (total)", "Model"),
     _bounded("chat_timeout", "int", "Chat read timeout per attempt (s)", "Model", step=30),
@@ -429,7 +435,8 @@ def run_setting_defaults(secret: Secret) -> dict:
         "sweep_fields": clamp("sweep_fields", a["sweep_fields"]),
         "sweep_candidates": clamp("sweep_candidates", a["sweep_candidates"]),
         "price_in": pricing["input_per_mtok"], "price_out": pricing["output_per_mtok"],
-        "price_search": pricing["web_search_per_call"], "data_source": "auto"}
+        "price_search": pricing["web_search_per_call"], "data_source": "auto",
+        "search_credit_cap": SEARCH_CREDIT_CAP_DEFAULT}
 
 
 def _number(spec: RunOverride, value: Any) -> Any:
@@ -507,6 +514,7 @@ def settings_for_run(secret: Secret, controller, overrides: dict | None = None,
         pricing=pricing_from(pricing, *prices), data_source=v["data_source"], dsn=dsn_default(secret),
         env_overrides=env_overrides(secret))
     settings.search_fallback_backend = v["search_fallback_backend"]
+    settings.search_credit_cap = int(v["search_credit_cap"])
     return settings
 
 

@@ -569,6 +569,7 @@ PER_VEHICLE_COLS = ["vehicle", "status", "result_source", "final_output", "final
                     "fields_inferred", "fields_unresolved", "cited_ids_not_in_evidence", "unique_sources",
                     "unique_domains", "documents_opened", "research_steps",
                     "tool_calls", "tool_errors", "document_cache_hits", "search_cache_hits", "search_api_calls",
+                    "search_credits", "search_budget_exhausted",
                     "duplicate_searches", "duplicate_fetches", "api_errors", "api_attempts", "chat_attempts",
                     "search_attempts", "timeout_count", "unknown_usage_attempts", "conflicts_reported",
                     "additional_findings", "level3_topics", "duration_s", "model_latency_s", "model_calls",
@@ -630,6 +631,7 @@ def batch_rows(runs_dir: Path, vehicles_by_id: dict[str, dict], cache) -> list[d
             "tool_calls_mean": agg["tool_calls_mean"], "cache_hit_%": agg["document_cache_hit_rate_pct"],
             "conflicts_total": agg["conflicts_reported_total"], "findings_total": agg["additional_findings_total"],
             "time_mean_s": agg["duration_s_mean"], "searches_total": agg["search_api_calls_total"],
+            "search_credits_total": agg.get("search_credits_total"),
             "timeouts_total": agg["timeout_count_total"], "unknown_usage_total": agg["unknown_usage_attempts_total"],
             "tokens_total": agg["total_tokens_total"], "cost_usd_recorded": agg["cost_usd_total"],
         })

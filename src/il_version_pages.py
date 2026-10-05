@@ -17,7 +17,10 @@ the engine ("נפח מנוע | 1,984 סמ"ק", "הספק | 190 כ"ס", "הנעה
                                               accepted        single_version, and year, displacement (+-0.06 l),
                                                               drivetrain, propulsion and body match; the power matches
                                                               (+-3 %), or the catalog has exactly ONE complete entry for
-                                                              (manufacturer, family, year, propulsion, drivetrain)
+                                                              (manufacturer, family, year, body, propulsion,
+                                                              drivetrain) (PR #47 A2: body added; a drivetrain the
+                                                              page does not name is accepted when the catalog has one
+                                                              drivetrain for the family / year / body / propulsion)
                                                               (P4.2: a hybrid's government power is the engine's; the
                                                               page states the system power)
                                           src/document_binding.bind reads the verdict: an accepted page binds every value
@@ -60,10 +63,10 @@ from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
 
 from .candidate_harvest import compile_terms, normalize_text
-from .document_binding import (HYBRID_PROPULSIONS, TargetIdentity, body_subvariants, catalog_family_entries,
-                               designations, dimension_status, distinct_powers, mentions, merge_year_contexts,
-                               normalize_catalog_trim, subvariant_status, vocabulary, year_context, zone_names_target,
-                               zone_year_context)
+from .document_binding import (HYBRID_PROPULSIONS, TargetIdentity, _family_status, _other_family_pattern,
+                               body_subvariants, catalog_family_entries, designations, dimension_status,
+                               distinct_powers, mentions, merge_year_contexts, normalize_catalog_trim,
+                               subvariant_status, vocabulary, year_context, zone_names_target, zone_year_context)
 from .source_authority import host_of, rules
 
 VERSION_PAGE_VERSION = "il-version-page-v2"
@@ -100,11 +103,17 @@ def _row_terms():
 
 def _with_unit(label: str, unit: str | None, value: str) -> str:
     """'נפח מנוע' (סמ"ק) 2995 -> "נפח מנוע 2995 סמ"ק": a bare number takes the unit its label states (with or without a
-    thousands separator: "1984" as "1,984"; PR #45 R2: the A4 530178 page's "1984" lost its unit)."""
+    thousands separator: "1984" as "1,984"; PR #45 R2: the A4 530178 page's "1984" lost its unit). PR #47 (A2): the
+    new cartube template writes the label as 'נפח מנוע (סמ"ק):' (a trailing colon); the colon is dropped."""
+    label = _bare_label(label)
     m = re.search(r"\(\s*([^()\d]{1,25}?)\s*\)\s*$", f"{label} {unit or ''}".strip())
     if m and re.fullmatch(r"\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.,]\d+)?\s*", value):
         return f"{label} {value.strip()} {m.group(1)}"
     return f"{label} {value}"
+
+
+def _bare_label(label: str) -> str:
+    return re.sub(r"\s*:\s*$", "", str(label or "")).strip()
 
 
 def identity_rows(text: str) -> list[str]:
@@ -136,7 +145,7 @@ def identity_rows(text: str) -> list[str]:
             else:
                 break
             j += 1
-        if j < len(norms) and len(norms[j]) <= VALUE_MAX and not pattern.fullmatch(norms[j]):
+        if j < len(norms) and len(norms[j]) <= VALUE_MAX and not pattern.fullmatch(_bare_label(norms[j])):
             out.append(_with_unit(lines[i], unit, lines[j]))
     return out
 
@@ -242,19 +251,38 @@ def _versions(page: dict, profile: dict, identity: TargetIdentity) -> dict:
 
 
 def single_catalog_entry(identity: TargetIdentity, index: dict | None = None) -> dict | None:
-    """{key, records} when the catalog has exactly ONE entry for the target's (manufacturer, family, year, propulsion,
-    drivetrain), complete, and it is the target's own; None otherwise (an entry whose propulsion or drivetrain the
-    catalog left unknown could be a sibling: never single)."""
-    if not identity.propulsion or not identity.drivetrain:
+    """{key, records} when the catalog has exactly ONE entry for the target's (manufacturer, family, year, body,
+    propulsion, drivetrain), complete, and it is the target's own; None otherwise (an entry whose body, propulsion or
+    drivetrain the catalog left unknown could be a sibling: never single). PR #47 (A2): the body is part of the key
+    (sedan / hatchback / wagon of one family are separate models: a wagon page is never held back by the sedan's
+    entries), and an unknown target body is never single."""
+    if not identity.propulsion or not identity.drivetrain or not identity.body:
         return None
     same = [e for e in catalog_family_entries(identity, index)
-            if e["parts"]["propulsion"] in (identity.propulsion, "") and e["parts"]["drivetrain"] in (identity.drivetrain, "")]
+            if e["parts"]["body"] in (identity.body, "") and e["parts"]["propulsion"] in (identity.propulsion, "")
+            and e["parts"]["drivetrain"] in (identity.drivetrain, "")]
     if len(same) != 1 or not same[0]["complete"]:
         return None
     parts = same[0]["parts"]
-    if parts["propulsion"] != identity.propulsion or parts["drivetrain"] != identity.drivetrain:
+    if (parts["body"], parts["propulsion"], parts["drivetrain"]) != (identity.body, identity.propulsion,
+                                                                      identity.drivetrain):
         return None
     return {"key": same[0]["key"], "records": same[0]["records"][:20]}
+
+
+def single_catalog_drivetrain(identity: TargetIdentity, index: dict | None = None) -> dict | None:
+    """A2 (PR #47): {drivetrain, entries} when every catalog entry of the target's (manufacturer, family, year, body,
+    propulsion) is complete and has the target's drivetrain (so a page that names no drivetrain can only be that one);
+    None otherwise (no entry, an incomplete entry, an unknown part, or another drivetrain)."""
+    if not identity.drivetrain or not identity.body or not identity.propulsion:
+        return None
+    same = [e for e in catalog_family_entries(identity, index)
+            if e["parts"]["body"] in (identity.body, "") and e["parts"]["propulsion"] in (identity.propulsion, "")]
+    if not same or any(not e["complete"] for e in same):
+        return None
+    if any(e["parts"]["drivetrain"] != identity.drivetrain for e in same):
+        return None
+    return {"drivetrain": identity.drivetrain, "entries": len(same)}
 
 
 def page_inconsistency(page: dict, identity: TargetIdentity, index: dict | None = None) -> dict | None:
@@ -297,6 +325,8 @@ def version_page_verdict(material, identity: TargetIdentity, index: dict | None 
     site = site_of(doc.url)
     if doc.market != "IL" or not (site or authority in IL_AUTHORITIES):
         return None
+    if site and _site_config(site).get("single_version_pages") is False:
+        return None                     # A3 (PR #47): carzone pages are trim / compare pages (src/il_trim_pages.py)
     head = page_head(doc)
     if not zone_names_target(normalize_text(head), identity):
         return None
@@ -325,6 +355,13 @@ def version_page_verdict(material, identity: TargetIdentity, index: dict | None 
         needed.append("displacement")
     if identity.propulsion == "conventional" and statuses.get("propulsion") == "absent":
         statuses["propulsion"] = "match"   # a combustion page names no hybrid / electric term (as binding's ladder reads it)
+    if statuses.get("drivetrain") == "absent":
+        # A2 (PR #47): the catalog has one drivetrain for the target's manufacturer / family / year / body / propulsion,
+        # so a page that names none can only be that drivetrain (recorded; the page's own statuses stay "absent")
+        drivetrain = single_catalog_drivetrain(identity, index)
+        if drivetrain is not None:
+            out["catalog_single_drivetrain"] = drivetrain["drivetrain"]
+            needed.remove("drivetrain")
     bad = [d for d in needed if statuses.get(d) != "match"]
     if bad:
         return {**out, "status": "rejected", "reason": f"{bad[0]}_{statuses.get(bad[0])}"}
@@ -370,29 +407,103 @@ def pacer() -> DomainPacer:
     return _PACER
 
 
+def _latin_maker(identity: TargetIdentity) -> str:
+    makers = (vocabulary().get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])
+    return next((m for m in makers if re.fullmatch(r"[a-z0-9 \-]+", m)), "")
+
+
+def body_names(identity: TargetIdentity, body: str | None = None) -> list[str]:
+    """A1 (PR #47): the Israeli market names of a body sub-model of the target's family (identity vocabulary
+    `body_market_names`: the family's own list, else the generic list of that body); [] when unknown."""
+    cfg = vocabulary().get("body_market_names") or {}
+    body = body if body is not None else identity.body
+    if not body:
+        return []
+    family = (cfg.get("families") or {}).get(f"{_latin_maker(identity)}|{identity.family or ''}") or {}
+    return list(family.get(body) or (cfg.get("generic") or {}).get(body) or [])
+
+
+def other_body_names(identity: TargetIdentity) -> list[str]:
+    """The names of the family's OTHER body sub-models (the family's own lists and the generic lists of the other
+    bodies), minus any name the target's own body also uses."""
+    cfg = vocabulary().get("body_market_names") or {}
+    family = (cfg.get("families") or {}).get(f"{_latin_maker(identity)}|{identity.family or ''}") or {}
+    own = {normalize_text(n) for n in body_names(identity)}
+    names: list[str] = []
+    for source in (family, cfg.get("generic") or {}):
+        for body, terms in source.items():
+            if body != identity.body:
+                names += [t for t in terms or [] if normalize_text(t) not in own]
+    return list(dict.fromkeys(names))
+
+
+def _slug_text(text: str) -> str:
+    """A URL / title as words: slug separators (/ _ -) are spaces, then normalized."""
+    return normalize_text(re.sub(r"[/_\-+]+", " ", unquote(str(text or ""))))
+
+
+_NAME_PATTERNS: dict[tuple, Any] = {}
+
+
+def _names_pattern(names: Iterable[str]):
+    key = tuple(sorted({normalize_text(n) for n in names if n}))
+    if key not in _NAME_PATTERNS:
+        if len(_NAME_PATTERNS) > 512:
+            _NAME_PATTERNS.clear()
+        _NAME_PATTERNS[key] = compile_terms(key) if key else None
+    return _NAME_PATTERNS[key]
+
+
+def family_of_text(text: str, identity: TargetIdentity) -> str | None:
+    """A1: `target` when a URL / title names the target's model family on word / slug-segment boundaries (a longer
+    family that extends it, "corolla-cross" / "קורולה קרוס", is masked first and never counts), `other_family` when it
+    names another family of the identity vocabulary and not the target's, None when it names no family."""
+    norm = _slug_text(text)
+    found = _family_status(norm, identity, vocabulary())
+    if "target" in found:
+        return "target"
+    if "other_family" in found:
+        return "other_family"
+    other = _other_family_pattern(identity)
+    return "other_family" if other is not None and other.search(norm) else None
+
+
 def target_terms(payload: dict | None, identity: TargetIdentity) -> dict:
-    """Placeholders of the search templates from the Level 1.5 record, the catalog identity and the vocabularies."""
+    """Placeholders of the search templates from the Level 1.5 record, the catalog identity and the vocabularies:
+    make / model in Hebrew and Latin (the family's Hebrew alias when the vocabulary knows one, else the Latin name) and
+    A1's body market names ({body_he} / {body_en}: the first Hebrew / Latin name of the target body; "" when unknown)."""
     vocab = vocabulary()
     record = (payload or {}).get("identity") or {}
     makers = (vocab.get("manufacturers") or {}).get(str(identity.manufacturer or ""), [])
     make_he = next((m for m in makers if re.search(r"[א-ת]", m) and m != identity.manufacturer), None) \
         or identity.manufacturer or ""
-    make_en = next((m for m in makers if re.fullmatch(r"[a-z0-9 \-]+", m)), "")
+    make_en = _latin_maker(identity)
     model = str(record.get("commercial_name") or identity.family or "")
+    aliases = (vocab.get("model_families") or {}).get(str(identity.family or ""), [])
+    model_en = next((a for a in aliases if re.fullmatch(r"[a-z0-9 \-+]+", a)), None) or model.lower()
+    model_he = next((a for a in aliases if re.search(r"[א-ת]", a)), None) or model
     engine_l = f"{identity.displacement_l:.1f}" if identity.displacement_l else ""
     hp = str(int(identity.power_hp)) if identity.power_hp and identity.propulsion not in HYBRID_PROPULSIONS else ""
-    return {"make_he": make_he, "make_en": make_en, "model": model, "year": str(identity.year or ""),
-            "engine_l": engine_l, "hp": hp}
+    names = body_names(identity)
+    return {"make_he": make_he, "make_en": make_en, "model": model, "model_he": model_he, "model_en": model_en,
+            "body_he": next((n for n in names if re.search(r"[א-ת]", n)), ""),
+            "body_en": next((n for n in names if not re.search(r"[א-ת]", n)), ""),
+            "year": str(identity.year or ""), "engine_l": engine_l, "hp": hp}
 
 
 def search_queries(terms: dict, limit: int | None = None) -> list[tuple[str, str]]:
-    """(domain, query) in template-major order (the first template on every site first), at most `limit`."""
+    """(domain, query) in template-major order (the first template on every site first), at most `limit`. A site with
+    its own `search_templates` (carzone) uses them instead of the global ones."""
     cfg = settings()
     limit = int(cfg.get("max_searches") or 3) if limit is None else limit
+    per_site = [(d, _site_config(d).get("search_templates") or cfg.get("search_templates") or [])
+                for d in site_domains()]
     out = []
-    for template in cfg.get("search_templates") or []:
-        for domain in site_domains():
-            query = template
+    for index in range(max((len(t) for _, t in per_site), default=0)):
+        for domain, templates in per_site:
+            if index >= len(templates):
+                continue
+            query = templates[index]
             for key, value in {"domain": domain, **terms}.items():
                 query = query.replace("{" + key + "}", str(value or ""))
             query = re.sub(r"\s+", " ", query).strip()
@@ -408,9 +519,10 @@ def _site_config(site: str | None) -> dict:
 _URL_PATTERNS: dict[str, Any] = {}
 
 
-def _version_patterns(site: str | None) -> list:
-    """The site's version-page URL patterns (`version_url_patterns`, over the decoded, lower-case URL path)."""
-    patterns = _site_config(site).get("version_url_patterns") or []
+def _version_patterns(site: str | None, key: str = "version_url_patterns") -> list:
+    """The site's version-page URL patterns (`version_url_patterns`, or A3's `trim_url_patterns`; over the decoded,
+    lower-case URL path)."""
+    patterns = _site_config(site).get(key) or []
     key = json.dumps(patterns, ensure_ascii=False)
     if key not in _URL_PATTERNS:
         compiled = []
@@ -438,7 +550,20 @@ def classify_url(url: str | None) -> tuple[str | None, str]:
         return site, "home"
     if any(p.search(path) for p in _version_patterns(site)):
         return site, "version"
+    if trim_slug_of(url) and any(p.search(path) for p in _version_patterns(site, "trim_url_patterns")):
+        return site, "version"          # A3: a carzone trim page (/<Make>/<Model>/<Sub>?/<year>?trim=<slug>)
     return site, "listing"
+
+
+def trim_slug_of(url: str | None) -> str:
+    """A3: the trim slug of a site's trim page URL (its `trim_query_param`, carzone "?trim=..."); "" otherwise."""
+    from urllib.parse import parse_qs
+
+    param = _site_config(site_of(url)).get("trim_query_param")
+    if not param:
+        return ""
+    values = parse_qs(urlparse(str(url or "")).query).get(param) or []
+    return unquote(values[0]).strip() if values else ""
 
 
 def _payload_designations(payload: dict | None) -> set[str]:
@@ -447,16 +572,24 @@ def _payload_designations(payload: dict | None) -> set[str]:
     return designations(normalize_text(text))
 
 
+BODY_MATCH_WEIGHT, OTHER_BODY_WEIGHT, CONTRADICTION_WEIGHT = 2, 3, 2
+MIN_VERSION_SCORE = 1
+
+
 def slug_score(url: str, title: str | None, terms: dict, identity: TargetIdentity,
                payload: dict | None = None) -> dict:
     """R1: how well a candidate URL (its decoded path) and its result title name the target: +1 per target engine
     litres / power / designation / drivetrain / model-year token, -2 per contradicting one (another litres figure,
-    another drivetrain, a body sub-variant the target's names lack). {score, matched, contradicted}."""
+    another drivetrain, a body sub-variant the target's names lack). A1 (PR #47): +2 when the URL / title names the
+    target body's market name, -3 when it names another body sub-model of the family (`body_market_names`; the target's
+    own names are masked first, so "Gran Coupe" is not "Coupe"). {score, matched, contradicted, family}: `family` is
+    family_of_text (an `other_family` candidate is dropped by the caller, never fetched)."""
     path = url_path(url)
     last = path.rstrip("/").rsplit("/", 1)[-1]
     hay = normalize_text(f"{path} {title or ''}")
     slug = normalize_text(f"{last} {title or ''}")
     matched, contradicted = [], []
+    score = 0
     engine = str(terms.get("engine_l") or "")
     litres = {f"{a}.{b}" for a, b in re.findall(r"(?<![\w.])(\d)[.\-](\d)(?![\w])", slug)}
     if engine and engine in litres:
@@ -480,31 +613,52 @@ def slug_score(url: str, title: str | None, terms: dict, identity: TargetIdentit
         contradicted.append("drivetrain")
     if identity.year and re.search(rf"(?<!\d){identity.year}(?!\d)", slug):
         matched.append(f"year:{identity.year}")
-    extra = body_subvariants(hay) - set(identity.body_subvariants or [])
+    implied = (vocabulary().get("body_subvariants") or {}).get("implies_body") or {}
+    extra = {k for k in body_subvariants(hay) - set(identity.body_subvariants or [])
+             if not (implied.get(k) and implied.get(k) == identity.body)}
     if extra:
         contradicted.append(f"body_subvariant:{sorted(extra)[0]}")
-    return {"score": len(matched) - 2 * len(contradicted), "matched": matched, "contradicted": contradicted}
+    score += len(matched) - CONTRADICTION_WEIGHT * len(contradicted)
+    words = _slug_text(f"{path} {title or ''}")
+    own_names = _names_pattern(body_names(identity))
+    if own_names is not None and own_names.search(words):
+        matched.append(f"body:{identity.body}")
+        score += BODY_MATCH_WEIGHT
+        words = own_names.sub(" ", words)
+    other_names = _names_pattern(other_body_names(identity))
+    hit = other_names.search(words) if other_names is not None and not extra else None
+    if hit:                             # (a body sub-variant contradiction above already said it: counted once)
+        contradicted.append(f"other_body:{hit.group(0).strip()}")
+        score -= OTHER_BODY_WEIGHT
+    return {"score": score, "matched": matched, "contradicted": contradicted,
+            "family": family_of_text(f"{unquote(str(url or ''))} {title or ''}", identity)}
 
 
 def candidate_links(links: Iterable[dict], page_url: str, terms: dict, identity: TargetIdentity,
                     payload: dict | None = None) -> list[str]:
-    """Version-page links of a site's model / price-list page: same site, a version_url_patterns path, the model named
-    in the URL or anchor; ranked by slug_score (page order on ties)."""
+    """Version-page links of a site's model / price-list page: same site, a version URL of the site, the target family
+    named in the URL or anchor (A1: never another family, "corolla-cross" is not "corolla"); ranked by slug_score
+    (page order on ties)."""
     site = site_of(page_url)
     if site is None:
         return []
-    model = normalize_text(str(terms.get("model") or identity.family or ""))
     out = []
     for order, link in enumerate(links or []):
         url = str(link.get("url") or "").split("#")[0]
         if not url or classify_url(url) != (site, "version"):
             continue
-        hay = normalize_text(unquote(url) + " " + str(link.get("text") or ""))
-        if model and not re.search(rf"(?<![\w]){re.escape(model)}(?![\w])", hay):
+        scored = slug_score(url, link.get("text"), terms, identity, payload)
+        family = scored["family"]
+        if family == "other_family" or (family is None and not _names_page_family(page_url, identity)):
             continue
-        score = slug_score(url, link.get("text"), terms, identity, payload)["score"]
-        out.append((-score, order, url))
+        out.append((-scored["score"], order, url))
     return list(dict.fromkeys(url for _, _, url in sorted(out)))
+
+
+def _names_page_family(page_url: str, identity: TargetIdentity) -> bool:
+    """A carzone-style model page whose own URL names the family lends it to its links (a trim link "?trim=..." or a
+    "/compare" link carries the family in the page path only)."""
+    return family_of_text(url_path(page_url), identity) == "target"
 
 
 def _search_items(result: Any) -> list[dict]:
@@ -542,13 +696,9 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
     fetch = fetch or (lambda u: _default_fetch(ctx, u))
     robots = robots or (lambda u: _default_robots(ctx, u))
     terms = target_terms(payload, identity)
-    model = normalize_text(str(terms.get("model") or identity.family or ""))
     versions: list[dict] = []          # candidates: {url, score, order, source}
     listings: list[dict] = []          # pages fetched only for their version links
     seen: set[str] = set()
-
-    def names_model(text: str) -> bool:
-        return not model or bool(re.search(rf"(?<![\w]){re.escape(model)}(?![\w])", normalize_text(text)))
 
     def triage(items: list[dict], domain: str, query: str, mode: str) -> bool:
         """Records every result with its decision; True when one is useful (a version URL or a model listing)."""
@@ -567,20 +717,27 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
             elif kind == "home":
                 row.update(decision="dropped", reason="home_page")
             elif kind == "version":
-                seen.add(url)
                 scored = slug_score(url, row["title"], terms, identity, payload)
+                if scored["family"] == "other_family":
+                    # A1: another model family ("corolla-cross" for a Corolla) is never a candidate, never fetched
+                    row.update(decision="dropped", reason="other_family", score=scored["score"])
+                    out["results"].append(row)
+                    continue
+                seen.add(url)
                 versions.append({"url": url, "score": scored["score"], "order": len(versions) + len(listings),
                                  "source": "search"})
                 row.update(decision="version_candidate", score=scored["score"], matched=scored["matched"],
                            contradicted=scored["contradicted"])
                 useful = True
-            elif names_model(unquote(url) + " " + row["title"]):
+            elif family_of_text(f"{unquote(url)} {row['title']}", identity) == "target":
                 seen.add(url)
                 listings.append({"url": url, "order": len(versions) + len(listings)})
                 row.update(decision="listing_for_links")
                 useful = True
             else:
-                row.update(decision="dropped", reason="listing_without_model")
+                row.update(decision="dropped",
+                           reason="other_family" if family_of_text(f"{unquote(url)} {row['title']}", identity)
+                           == "other_family" else "listing_without_model")
             out["results"].append(row)
         return useful
 
@@ -604,9 +761,11 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
                 run_search(_strip_site(query), domain, "domain_filter")
         while out["fetches"] < max_fetches and (versions or listings):
             versions.sort(key=lambda c: (-c["score"], c["order"]))
-            if versions:
+            if versions and (versions[0]["score"] >= MIN_VERSION_SCORE or not listings):
                 candidate, role = versions.pop(0), "version"
             else:
+                # A1: a weak version candidate (score < 1 after body / family) waits while a listing page of the
+                # target family is unfetched: the listing's own version links are better candidates
                 candidate, role = listings.pop(0), "listing"
             url = candidate["url"]
             decision = {"url": url, "role": role, "score": candidate.get("score"), "source": candidate.get("source")}
@@ -634,9 +793,14 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
             _offer(ctx, urls=[url, result.get("final_url")], links=_links(ctx, doc))
             material = adm.material(ctx.cache, doc, None, [doc])
             verdict = getattr(material, "version_page", None) if material is not None else None
+            trim_page = getattr(material, "trim_page", None) if material is not None else None
+            if verdict is None and isinstance(trim_page, dict) and trim_page.get("kind"):
+                # A3 (PR #47): a carzone trim / compare page is judged by src/il_trim_pages.py
+                verdict = {**trim_page, "single_version": trim_page.get("status") == "accepted"}
             page = {"url": url, "role": role, "document_id": doc,
                     "status": (verdict or {}).get("status") or "not_a_version_page",
-                    "reason": (verdict or {}).get("reason")}
+                    "reason": (verdict or {}).get("reason"),
+                    **({"kind": verdict["kind"]} if (verdict or {}).get("kind") else {})}
             out["pages"].append(page)
             decision["decision"] = f"fetched:{page['status']}"
             if role == "version" and verdict and verdict.get("status") == "accepted":

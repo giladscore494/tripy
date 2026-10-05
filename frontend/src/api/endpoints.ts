@@ -12,6 +12,10 @@ import type {
   BenchmarkSummary,
   BindingReplay,
   CacheDocuments,
+  CatalogPage,
+  CatalogQuery,
+  CatalogStatus,
+  DerivedIndexStatus,
   LiveView,
   Reachability,
   RunBenchmark,
@@ -102,6 +106,24 @@ export const api = {
   startBakeoff: (body: StartBakeoff) => request<BakeoffStarted>("/api/bakeoffs", { method: "POST", body }),
   cancelBakeoff: (bakeoffId: string) =>
     request<{ cancelled: boolean }>(`/api/bakeoffs/${enc(bakeoffId)}/cancel`, { method: "POST" }),
+
+  // the live MILO catalog (read-only; src/api/routes/catalog.py)
+  catalogStatus: (o: Opts = {}) => request<CatalogStatus>("/api/catalog/status", o),
+  catalogSearch: (query: CatalogQuery, o: Opts = {}) =>
+    request<CatalogPage>("/api/catalog", { ...o, query: { ...query } }),
+  catalogManufacturers: (o: Opts = {}) =>
+    request<{ manufacturers: { manufacturer: string; variants: number }[] }>("/api/catalog/manufacturers", o),
+  catalogModels: (manufacturer: string, o: Opts = {}) =>
+    request<{ models: { model: string; variants: number }[] }>("/api/catalog/models", { ...o, query: { manufacturer } }),
+  catalogYears: (manufacturer: string, model: string, o: Opts = {}) =>
+    request<{ years: { year: number; variants: number }[] }>("/api/catalog/years",
+      { ...o, query: { manufacturer, model } }),
+  catalogTrims: (manufacturer: string, model: string, year: number, o: Opts = {}) =>
+    request<{ trims: { trim: string | null; variants: number }[] }>("/api/catalog/trims",
+      { ...o, query: { manufacturer, model, year } }),
+  rebuildCatalogIndex: () =>
+    request<{ started: boolean; status: DerivedIndexStatus; message: string }>("/api/catalog/index/rebuild",
+      { method: "POST" }),
 };
 
 export type RunExport = "candidates.csv" | "per_vehicle.csv" | "benchmark.json";
