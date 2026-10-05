@@ -385,6 +385,8 @@ def test_a_consistent_page_is_not_flagged(cache):
     ("Gearbox: 7-speed S tronic", "dct"), ("gearbox: 6-speed DSG", "dct"), ("Transmission: PDK", "dct"),
     ("תיבת הילוכים | אוטומטית רובוטית כפולת מצמד", "dct"), ("תיבת הילוכים | כפול מצמד", "dct"),
     ("Transmission: 8-speed Tiptronic", "automatic"), ("תיבת הילוכים | אוטומטית פלנטרית (רגילה)", "automatic"),
+    ("Transmission: 8-speed automatic Steptronic", "automatic"),
+    ("Transmission: 7-speed double clutch Steptronic", "dct"),
     ("תיבת הילוכים | רובוטית", "amt"), ("Transmission: robotized manual", "amt"),
 ])
 def test_gearbox_type_mapping(text, expected):
@@ -393,6 +395,15 @@ def test_gearbox_type_mapping(text, expected):
     values = {c["value"] for c in harvest_text(text, resolve_requested_fields(None, propulsion="conventional"))
               if c["field"] == "gearbox_type"}
     assert values == {expected}
+
+
+def test_steptronic_alone_does_not_claim_a_gearbox_type():
+    from src.candidate_harvest import harvest_text
+
+    values = {c["value"] for c in harvest_text("Transmission: 8-speed Steptronic",
+                                               resolve_requested_fields(None, propulsion="conventional"))
+              if c["field"] == "gearbox_type"}
+    assert values == set()
 
 
 def test_q3_s_tronic_gearbox_is_dct(cache):
@@ -463,8 +474,10 @@ def test_runtime_lookup_normalises_an_old_index_and_refuses_a_clash():
     axle = {"majority": "245/35 R19", "share": 1.0, "n": 30, "top": [{"size": "245/35 R19", "n": 30}]}
     old = {"complete": True, "entries": {"19|994|2020|S-LINE": {"front": axle, "rear": axle}}}
     assert entry_for("19|994|2020|S LINE", old)["front"]["n"] == 30
+    exact = {"complete": True, "entries": {"19|994|2020|S LINE": {"rear": axle}}}
+    assert entry_for("19|994|2020|S LINE", exact) == {"rear": axle}
     clash = {"complete": True, "entries": {"19|994|2020|S-LINE": {"front": axle}, "19|994|2020|S LINE": {"rear": axle}}}
-    assert entry_for("19|994|2020|S LINE", clash) == {"rear": axle}                 # the exact normalized key wins
+    assert entry_for("19|994|2020|S LINE", clash) is None                         # any legacy spelling collision fails closed
     clash2 = {"complete": True, "entries": {"19|994|2020|S-LINE": {"front": axle}, "19|994|2020|S.LINE": {"rear": axle}}}
     assert entry_for("19|994|2020|S LINE", clash2) is None                        # two raw trims, no merge: nothing
 
