@@ -137,6 +137,19 @@ def test_version_url_patterns_are_data(url, kind):
     assert classify_url(url)[1] == kind
 
 
+@pytest.mark.parametrize("path, version", [
+    ("/מחירון-רכב-חדש/10-אודי/49-אודי-q3/327-2-0-40tfsi-4x4-2024", True),
+    ("/מחירון-רכב-חדש/אודי/אודי-q3/3477-אודי-q3-2-0-40tfsi-4x4", True),       # make / model without numeric ids
+    ("/מחירון-רכב-חדש/אקספנג/אקספנג-g6/6062-אקספנג-g6-rwd-core", True),
+    ("/מחירון-רכב-חדש/", False),
+    ("/מחירון-רכב-חדש/אודי/", False),
+])
+def test_cartube_version_paths_with_or_without_id_prefixes(path, version):
+    from src.il_version_pages import classify_url
+
+    assert (classify_url("https://www.cartube.co.il" + path)[1] == "version") is version
+
+
 def test_home_page_and_listing_are_never_candidates_and_versions_are_ranked_first(cache):
     results = {"cartube.co.il": [{"url": HOME, "title": "cartube"}, {"url": P.Q3_MODEL_URL, "title": "אודי Q3"},
                                  {"url": V330, "title": "אודי Q3 ספורטבק"}, V325, P.Q3_CARTUBE_URL]}
