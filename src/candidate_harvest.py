@@ -421,6 +421,10 @@ class Dictionary:
                                       if HEBREW.match(normalize_term(a)) and len(a) >= 4})
         gearbox = next((r for r in self.rules if r.matcher == "gearbox" and r.enum), None)
         self.gearbox_types = gearbox.enum if gearbox else []
+        # PR #45 (R6): which gearbox types a wording of another type overrides ("רובוטית כפולת מצמדים" is dct)
+        self.gearbox_outranks = {str(e.get("value")): set(e.get("outranks") or [])
+                                 for e in (gearbox.spec.get("enum_values") or [] if gearbox else [])
+                                 if isinstance(e, dict) and e.get("value")}
         units: set[str] = set(self.currencies) | {"%"} | set(self.km_units) | set(self.minute_units) \
             | set(self.hour_units) | {normalize_term(u) for u in v.get("year_units") or []} \
             | {normalize_term(u) for u in GENERIC_UNITS}
@@ -1106,12 +1110,21 @@ GEAR_CODE_TYPE = {"at": "automatic", "mt": "manual", "dct": "dct", "dsg": "dct",
 STRONG_GEARBOX = {"cvt", "e-cvt", "dct", "single-speed", "amt"}
 
 
+def _outranked(d: Dictionary, values: Iterable[str]) -> list[str]:
+    """The gearbox types of one wording left once every type another named type outranks is dropped (enum_values
+    `outranks`, PR #45): {amt, dct} -> [dct] ("רובוטית כפולת מצמדים"), {automatic, amt, dct} -> [dct]."""
+    named = list(dict.fromkeys(values))
+    beaten = {v for other in named for v in getattr(d, "gearbox_outranks", {}).get(other, ())}
+    return [v for v in named if v not in beaten]
+
+
 def _gearbox(d: Dictionary, text: str, has_alias: bool) -> list[dict]:
     """Gearbox facts in one text: [{type, count, raw, span}]. CVT never yields a gear count."""
     found = []
     for m in GEAR_SPEED.finditer(text):
         near = text[max(0, m.start() - 30):m.end() + 30]
-        kind = next((value for value, pat in d.gearbox_types if pat.search(near) and value != "single-speed"), None)
+        kinds = _outranked(d, [value for value, pat in d.gearbox_types if pat.search(near) and value != "single-speed"])
+        kind = kinds[0] if kinds else None
         found.append({"count": int(m.group(1)), "type": kind, "raw": text[m.start():m.end() + 20].strip(),
                       "span": m.span()})
     for m in GEAR_CODE.finditer(text):
@@ -1122,8 +1135,11 @@ def _gearbox(d: Dictionary, text: str, has_alias: bool) -> list[dict]:
                    if m and (has_alias or value in STRONG_GEARBOX)]
         separate = {v for mv, v in matches if not any(o is not mv and o.start() <= mv.start() and mv.end() <= o.end()
                                                       for o, _ in matches)}
+        separate = set(_outranked(d, sorted(separate)))
         if len(separate) > 1:
             return []   # "תיבה ידנית ותיבה אוטומטית": prose naming several gearbox types states none of them (PR #44)
+        if separate:    # "רובוטית כפולת מצמדים": the outranking type's wording (PR #45)
+            matches = [(m, v) for m, v in matches if v in separate] or matches
         if matches:   # the most specific wording wins ("e-CVT" over "CVT")
             m, value = max(matches, key=lambda mv: mv[0].end() - mv[0].start())
             found.append({"count": 1 if value == "single-speed" else None, "type": value, "raw": m.group(0),

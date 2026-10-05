@@ -567,11 +567,12 @@
   "לא"
  ],
  "variant_designations": {
-  "_about": "PR #43: regular expressions (over normalized, lower-case text) of engine / powertrain VERSION designations a document uses to tell versions of one model apart ('55 TFSI e', '40TFSI', 'TFSIe', '4xe', 'P400'). A designation is written into a region's identity (src/variant_map.identity_vector, key `designation`, compact form '55tfsie'); two regions with different designations are never the same variant; a hybrid / plug-in document that names two or more designations (or states two or more distinct powers) never identifies the variant by displacement alone (document_binding.bind, H1). Generic patterns only, never a model name.",
+  "_about": "PR #43: regular expressions (over normalized, lower-case text) of engine / powertrain VERSION designations a document uses to tell versions of one model apart ('55 TFSI e', '40TFSI', 'TFSIe', '4xe', 'P400'). A designation is written into a region's identity (src/variant_map.identity_vector, key `designation`, compact form '55tfsie'); two regions with different designations are never the same variant; a hybrid / plug-in document that names two or more designations (or states two or more distinct powers) never identifies the variant by displacement alone (document_binding.bind, H1). Generic patterns only, never a model name. PR #45: the reversed order of Israeli used-car titles ('TFSI 45') is the same designation (compact form '45tfsi').",
   "patterns": [
    "(?<![\\w.,])\\d{2}\\s?-?(?:tfsi|tsi|tdi|tfsie)(?:\\s?e(?![a-z]))?(?![a-z0-9])",
    "(?<![\\w.,])\\dxe(?![a-z0-9])",
-   "(?<![\\w.,])p\\d{3}e?(?![a-z0-9])"
+   "(?<![\\w.,])p\\d{3}e?(?![a-z0-9])",
+   "(?<![\\w.,])(?:tfsi|tsi|tdi)\\s?-?\\d{2}(?![\\w])"
   ]
  },
  "relative_variant_terms": {
@@ -618,5 +619,65 @@
    "ידנית",
    "ידני"
   ]
+ },
+ "body_subvariants": {
+  "_about": "PR #45 (R3): body SUB-VARIANT words that tell two models of one catalog family apart (Q3 / Q3 Sportback, A4 / A4 Avant, 4 Series / 4 Series Gran Coupe): the government catalog key does not separate them, so binding reads them from names. A sub-variant named in a document's identity zone (title / H1 / URL words of a segment naming the target family) that the target's commercial name / government model name does not contain is a body mismatch (veto at the body cap); on an Israeli single-version page the reverse holds too (a target whose name contains the sub-variant needs it in the page's title / H1 / URL). `implies_body`: the Level 1.5 body_normalized the word implies; a word whose implied body IS the target's body is never a mismatch (a Corolla wagon on a 'Touring Sports' page). Terms of a longer key mask shorter ones ('gran coupe' before 'coupe').",
+  "order": [
+   "gran_coupe",
+   "shooting_brake",
+   "sportback",
+   "avant",
+   "cabrio",
+   "touring",
+   "coupe"
+  ],
+  "terms": {
+   "gran_coupe": [
+    "gran coupe",
+    "gran coupé",
+    "grand coupe",
+    "גראן קופה",
+    "גרן קופה"
+   ],
+   "shooting_brake": [
+    "shooting brake",
+    "שוטינג בריק",
+    "שוטינג ברייק"
+   ],
+   "sportback": [
+    "sportback",
+    "ספורטבק",
+    "ספורטבאק"
+   ],
+   "avant": [
+    "avant",
+    "אוונט"
+   ],
+   "cabrio": [
+    "cabrio",
+    "cabriolet",
+    "קבריו",
+    "קבריולה",
+    "קבריולט"
+   ],
+   "touring": [
+    "touring",
+    "טורינג"
+   ],
+   "coupe": [
+    "coupe",
+    "coupé",
+    "קופה"
+   ]
+  },
+  "implies_body": {
+   "gran_coupe": null,
+   "shooting_brake": "wagon",
+   "sportback": null,
+   "avant": "wagon",
+   "cabrio": "convertible",
+   "touring": "wagon",
+   "coupe": "coupe"
+  }
  }
 }

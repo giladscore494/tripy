@@ -69,7 +69,8 @@ VERSION_FILES = (ROOT / "document_binding.py", ROOT / "evidence_admission.py", R
 MATCH_ORDER = ("exact", "unclear", "unbound", "different")
 BINDING_KEYS = ("binding_level", "variant_match", "binding_veto", "binding_dimensions", "binding_basis",
                 "binding_requirement", "binding_version", "year_context", "binding_rules", "binding_policy",
-                "variant_map_region", "market_trim", "binding_flags", "relative_reference", "stale_publication")
+                "variant_map_region", "market_trim", "binding_flags", "relative_reference", "stale_publication",
+                "version_page", "document_versions")
 
 
 def code_version() -> str:
@@ -212,6 +213,9 @@ def replay_fact(adm: AdmissionContext, cache, *, field: str, value: Any, quote: 
            "binding_flags_now": binding.get("binding_flags"),
            "stale_publication_now": binding.get("stale_publication"),
            "variant_map_region_now": binding.get("variant_map_region"),
+           # PR #45: the fact document's version-page verdict (R2 / R3 / R5) and its technical versions (R4)
+           "version_page_now": binding.get("version_page"),
+           "document_versions_now": binding.get("document_versions"),
            # today's admission sanity rules (semantic exclusions, plausibility): a stored value they reject now
            "rejected_now": sanity_rejection(adm, material, spec, value, quote, ctx),
            "document_statuses": profile["statuses"], "zone_statuses": profile.get("zone_statuses"),
