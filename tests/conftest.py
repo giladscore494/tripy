@@ -159,6 +159,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "grounded_candidates(on): pin the AgentConfig default of GROUNDED_CANDIDATES "
                                        "(True | False) for this test (scripts encoding the pre-#31 model call order)")
     config.addinivalue_line("markers", "site_map(on): pin the AgentConfig default of SITE_MAP (True | False)")
+    config.addinivalue_line("markers", "offered_urls(*urls): URLs every run's URL provenance starts with, as if a "
+                                       "search had returned them (scripted runs fetching fixture pages on "
+                                       "il_version_sites domains, PR #46 P2)")
 
 
 PINNED_DEFAULTS = (("recovery_mode", "RECOVERY_MODE", ("reacquire", "cluster", "legacy")),
@@ -190,6 +193,33 @@ def _candidate_yield_defaults(request, monkeypatch):
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(agent.AgentConfig, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _offered_urls(request, monkeypatch):
+    """PR #46 (P2): a scripted model that fetches a fixture page on an il_version_sites domain (cartube.co.il ...)
+    without a search first would be refused as a guessed URL. A test marked `offered_urls(...)` starts every run's URL
+    provenance with those URLs (the search that offered them is not what the test is about); the guard itself stays
+    on for every other URL."""
+    marker = request.node.get_closest_marker("offered_urls")
+    if marker is not None:
+        offer_urls(monkeypatch, marker.args)
+
+
+def offer_urls(monkeypatch, urls) -> None:
+    """Every UrlProvenance created while `monkeypatch` holds starts with `urls` offered (see _offered_urls; a
+    module-scoped fixture uses it with pytest.MonkeyPatch.context())."""
+    from src import acquisition
+
+    original = acquisition.UrlProvenance.__init__
+
+    def init(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        for url in urls:
+            self.offered.add(acquisition.url_key(url))
+            self.linked.add(acquisition.url_key(url))
+
+    monkeypatch.setattr(acquisition.UrlProvenance, "__init__", init)
 
 
 @pytest.fixture(autouse=True)

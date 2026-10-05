@@ -103,7 +103,7 @@ def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depend
     arms = [arm for arm in ARMS if arm in body.arms]              # the dashboard's checkbox order
     overrides = body.settings.model_dump(exclude_none=True) if body.settings is not None else None
     try:
-        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides)
+        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides, arms[0] if arms else None)
     except ValueError as exc:
         raise ApiError(422, "invalid_settings", str(exc)) from None
     blocking = blocking_errors(settings_checks(settings, ctx.secret, ctx.paths))

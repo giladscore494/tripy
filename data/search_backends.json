@@ -1,0 +1,37 @@
+{
+  "_about": "PR #46 (S1): search backend prices and constants, read by src/tools/search_backends (cost accounting per backend: search_calls_by_backend / search_usd_by_backend) and scripts/search_bakeoff.py. Observational only: cost never gates a run. The glm price stays the run's own web_search_per_call (Cost reporting in the run settings, default src/pricing.py) so existing runs reprice identically; the value here is the bake-off's. Verify every price against the provider's current price list before relying on a cost comparison.",
+  "version": 1,
+  "backends": {
+    "glm": {
+      "label": "Z.ai search-prime (GLM web_search)",
+      "key_env": "GLM_API_KEY",
+      "usd_per_query": 0.01,
+      "price_source": "Z.ai official pricing (as provided 2026-10-01; src/pricing.py WEB_SEARCH_USD_PER_CALL)"
+    },
+    "serper": {
+      "label": "Serper (Google results)",
+      "key_env": "SERPER_API_KEY",
+      "endpoint": "https://google.serper.dev/search",
+      "gl": "il",
+      "hl": "iw",
+      "usd_per_query": 0.001,
+      "price_source": "serper.dev pay-as-you-go list price (operator to verify)"
+    },
+    "gemini": {
+      "label": "Gemini API, Grounding with Google Search (URLs only)",
+      "key_env": "GEMINI_API_KEY",
+      "model": "gemini-3.8-flash",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+      "usd_per_search_query": 0.014,
+      "input_usd_per_mtok": 0.30,
+      "output_usd_per_mtok": 2.50,
+      "price_source": "Gemini API grounding price per billed search query and flash token prices (operator to verify for gemini-3.8-flash)"
+    },
+    "duckduckgo": {
+      "label": "DuckDuckGo HTML (keyless)",
+      "key_env": null,
+      "usd_per_query": 0.0,
+      "price_source": "keyless"
+    }
+  }
+}

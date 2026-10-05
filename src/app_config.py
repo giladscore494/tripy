@@ -31,7 +31,7 @@ DEPLOYMENT_VARS = ("TRIPY_DATA_DIR", "TRIPY_ENV", "TRIPY_ACCESS_TOKEN")
 ACCESS_TOKEN_MIN_LENGTH = 16
 OPTIONAL_VARS = ("GLM_FINALIZER_MODEL", "SEARCH_BACKEND", "DATABASE_URL", "TARGET_MARKET",
                  "TRIPY_MAX_ACTIVE_RUNS", "TRIPY_LOG_LEVEL", "TRIPY_SHUTDOWN_GRACE_S")
-SEARCH_BACKENDS = ("glm", "duckduckgo")
+SEARCH_BACKENDS = ("glm", "serper", "gemini", "duckduckgo")      # src/tools/search_backends
 
 
 def env_lookup(name: str) -> str | None:
@@ -126,15 +126,32 @@ def validate_config(lookup: Lookup = env_lookup, paths: DataPaths | None = None,
         detail = f"research model {model}" + (f", finalizer {finalizer}" if finalizer else "")
         checks.append(Check("GLM", "ok", "Configured", detail))
     backend = (_get(lookup, "SEARCH_BACKEND") or "glm").lower()
+    fallback = (_get(lookup, "SEARCH_FALLBACK_BACKEND") or "none").lower()
     if backend not in SEARCH_BACKENDS:
-        checks.append(Check("Search", "error", f"Unknown SEARCH_BACKEND {backend!r}",
-                            "Use glm or duckduckgo."))
+        checks.append(Check("Search", "error", f"Unknown search backend {backend!r}",
+                            "Use " + ", ".join(SEARCH_BACKENDS) + "."))
     elif backend == "glm" and not key:
         checks.append(Check("Search", "error", "Missing GLM_API_KEY", "GLM web search uses the GLM API key."))
     else:
-        engine = _get(lookup, "GLM_SEARCH_ENGINE") or "search-prime"
-        checks.append(Check("Search", "ok", "Configured",
-                            f"GLM web_search ({engine})" if backend == "glm" else "DuckDuckGo (keyless)"))
+        from .tools.search_backends import unavailable_reason
+
+        # PR #46: a backend without its key is unavailable; a run selecting it is refused, never swapped
+        missing = [(role, name, unavailable_reason(name, lambda n: _get(lookup, n)))
+                   for role, name in (("search backend", backend), ("fallback search backend", fallback))
+                   if name not in ("none", "") and name != "glm"]
+        missing = [(role, name, why) for role, name, why in missing if why]
+        if missing:
+            role, name, why = missing[0]
+            checks.append(Check("Search", "error", f"The {role} {name} is unavailable",
+                                f"{why}. Set it once as a service variable, or choose another backend in the run "
+                                "settings."))
+        else:
+            engine = _get(lookup, "GLM_SEARCH_ENGINE") or "search-prime"
+            detail = {"glm": f"GLM web_search ({engine})", "serper": "Serper (Google results)",
+                      "gemini": "Gemini grounding (URLs only)", "duckduckgo": "DuckDuckGo (keyless)"}[backend]
+            if fallback not in ("none", "", backend):
+                detail += f"; fallback {fallback}"
+            checks.append(Check("Search", "ok", "Configured", detail))
     storage = storage_status(paths or resolve_paths(lookup), lookup)
     checks.append(Check("Persistent storage", storage["level"],
                         {"ok": "Connected", "warning": "Not persistent", "error": "Unavailable"}[storage["level"]],

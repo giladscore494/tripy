@@ -72,7 +72,7 @@ from .field_recovery import (RETRY_STATES, current_evaluation, early_resolution_
 from .fields import normalize_field_name
 from .fields import grouped, parse_field_list, propulsion_of, public_spec, resolve_requested_fields, semantic_notes
 from .phase_settings import for_phase
-from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_run_cost
+from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_run_cost, search_by_backend, search_cost_inputs
 from .schemas import LEVEL3_TOPICS, parse_model_output
 from .storage import trace
 from .storage.cache import DocumentCache
@@ -83,7 +83,7 @@ from .tools.evidence import EvidenceStore
 from .acquisition import (ACQUISITION_MODES, ACQUISITION_TOOLS, CARD_TOOLS, DISCOVERY_TOOLS, AcquisitionTracker,
                           acquisition_tool_specs, annotate_search_result, cluster_source_type, document_card,
                           missing_categories_note, model_tokens, navigation_links, recovery_clusters,
-                          url_provenance)
+                          fetch_refusal, url_provenance)
 from .candidate_harvest import RunHarvester
 from .final_assembly import run_deterministic_finalization
 from .parser_gaps import log_parser_gaps
@@ -1327,6 +1327,23 @@ class ToolSession:
                                       "document; nothing about the field's value is implied.")}
                 self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
                                    arguments=raw_args, reason="known_unproductive_route", **refusal, **tags)
+                self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name, "arguments": raw_args,
+                                        "duration_ms": 0, "cache_hit": None, "error": result["error"],
+                                        "document_id": None, "duplicate": False, "blocked": True})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)})
+                continue
+            hygiene = fetch_refusal(self.ctx, name, trace.parse_args(raw_args).get("url"), phase) \
+                if name in trace.FETCH_TOOLS else None
+            if hygiene is not None:
+                # PR #46 (P2): a guessed URL on an il_version_sites domain, or an irrelevant search result in primary
+                # research: the refusal is the tool result; nothing is fetched and no fetch budget is used
+                self.blocked += 1
+                counter = {"guessed_url_refused": "acq_guessed_url_refused",
+                           "irrelevant_result": "acq_irrelevant_result_refused"}[hygiene["reason"]]
+                self.ctx.counters[counter] += 1
+                result = {"error": hygiene["reason"], "message": hygiene["message"]}
+                self.run_log.event("tool_blocked", step=step, phase=phase, call_id=call.get("id"), name=name,
+                                   arguments=raw_args, **hygiene, **tags)
                 self.tool_calls.append({"step": step, "phase": phase, **tags, "name": name, "arguments": raw_args,
                                         "duration_ms": 0, "cache_hit": None, "error": result["error"],
                                         "document_id": None, "duplicate": False, "blocked": True})
@@ -3934,15 +3951,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         usage_recovery, usage_sweep = caller.usage["field_recovery"], caller.usage["document_sweep"]
         usage = trace.sum_usage(usage_research, usage_sweep, usage_recovery, usage_finalizer)
         search_calls = counters.get("search_api_calls", 0)
+        priced_calls, extra_search_usd = search_cost_inputs(counters, search_calls)
         # a sweep / recovery phase on its own model (src/phase_settings.py) is priced with that model's prices
         phase_models = {g: m for g in ("document_sweep", "field_recovery")
                         if (m := for_phase(config, g)["model"]) and m != research_model}
         cost, cost_details = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep,
                                             usage_recovery=usage_recovery, usage_finalizer=usage_finalizer,
-                                            search_api_calls=search_calls, pricing=pricing,
+                                            search_api_calls=priced_calls, pricing=pricing,
                                             pricing_finalizer=pricing_finalizer,
                                             unknown_usage_attempts=stats["unknown_usage_attempts"],
-                                            phase_models=phase_models)
+                                            phase_models=phase_models, extra_search_usd=extra_search_usd)
+        search_calls_by_backend, search_usd_by_backend = search_by_backend(counters)
+        if search_calls_by_backend:
+            cost_details["search_calls_by_backend"] = search_calls_by_backend
+            cost_details["search_usd_by_backend"] = search_usd_by_backend
         return {
             "record_id": record_id,
             "ordinal": ordinal,

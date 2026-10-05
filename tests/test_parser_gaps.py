@@ -4,6 +4,8 @@ calls, zero network, no decision changes. No network."""
 import json
 
 from conftest import cache_source
+import pytest
+
 from fixtures import corolla_tail as tail
 from test_phase_contracts import EU, GATE_OFF, PhaseClient, fetch, run, say
 
@@ -13,6 +15,8 @@ from src.candidate_harvest import harvest_document
 from src.fields import resolve_requested_fields
 from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
+
+pytestmark = [pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
 
 SPECS = resolve_requested_fields(["fuel_tank_l", "wheelbase_mm"], propulsion="hybrid")
 NO_VALUE = "Toyota Corolla Touring Sports 2024 technical data\nFuel tank: see the dealer for details\nColours: 8"

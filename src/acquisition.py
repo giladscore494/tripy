@@ -208,8 +208,9 @@ GUESSED_404_NOTE_AT = 2          # guessed 404s on one official domain before th
 
 
 def url_key(url: Any) -> str:
-    """A URL as provenance compares it: no scheme, no "www.", no fragment, no trailing slash, host lower-cased."""
-    raw = str(url or "").strip().split("#")[0]
+    """A URL as provenance compares it: no scheme, no "www.", no fragment, no trailing slash, host lower-cased, the path
+    percent-decoded (a Hebrew slug offered decoded and fetched encoded is the same URL)."""
+    raw = unquote(str(url or "").strip().split("#")[0])
     raw = re.sub(r"^[a-z][a-z0-9+.-]*://", "", raw, flags=re.I)
     host, _, path = raw.partition("/")
     host = host.lower()
@@ -227,6 +228,8 @@ class UrlProvenance:
     def __init__(self, manufacturer: str | None = None):
         self.manufacturer = manufacturer
         self.offered: set[str] = set()
+        self.linked: set[str] = set()          # offered by a fetched page's links, the site map or a fetch itself
+        self.search_items: dict[str, str] = {}   # PR #46 (P2.2): a search result's url + title + snippet
         self.guessed_404: dict[str, int] = {}
         self.guessed: list[dict] = []
         self._noted: dict[str, int] = {}
@@ -235,10 +238,20 @@ class UrlProvenance:
         for url in urls or []:
             if url:
                 self.offered.add(url_key(url))
+                self.linked.add(url_key(url))
 
     def observe_search(self, result: Any) -> None:
-        if isinstance(result, dict):
-            self.offer(item.get("url") for item in result.get("results") or [] if isinstance(item, dict))
+        if not isinstance(result, dict):
+            return
+        for item in result.get("results") or []:
+            if isinstance(item, dict) and item.get("url"):
+                key = url_key(item["url"])
+                self.offered.add(key)
+                text = " ".join(str(item.get(k) or "") for k in ("title", "snippet"))
+                self.search_items[key] = (self.search_items.get(key, "") + " " + text).strip()[:2000]
+
+    def is_offered(self, url: Any) -> bool:
+        return url_key(url) in self.offered
 
     def observe_fetch(self, ctx, url: Any, result: Any) -> dict | None:
         """Classify one executed fetch (counters on ctx) and offer the fetched page's own links."""
@@ -301,6 +314,102 @@ class UrlProvenance:
     def summary(self) -> dict:
         return {"guessed_urls": len(self.guessed), "guessed_404_by_domain": dict(sorted(self.guessed_404.items())),
                 "blocked_domains": self.blocked_domains(), "offered_urls": len(self.offered)}
+
+
+# --- acquisition hygiene (PR #46, P2; refusals before a fetch) -----------------------------------------------------------
+#
+#   guessed_url_refused   a fetch on an il_version_sites domain (cartube / icar / auto.co.il) of a URL that no search
+#                         result, fetched page's links or site map offered (and that no cached document holds) is refused:
+#                         the model guessed a slug (production: a cartube URL that returned 404)
+#   irrelevant_result     in primary research, a search result whose URL + title + snippet names neither the target's
+#                         make nor its model family (Hebrew or Latin, the identity vocabulary's aliases) is not fetched
+#                         (production: a zap.co.il TV listing). PDFs and official domains are exempt
+#
+# Both return the refusal to the model as the tool result and are counted (acq_guessed_url_refused /
+# acq_irrelevant_result_refused; tool_blocked events with the reason).
+
+def _cached(ctx, url: str) -> bool:
+    from .storage.cache import document_id_for
+
+    cache = getattr(ctx, "cache", None)
+    if cache is None:
+        return False
+    try:
+        return any(cache.get(document_id_for(kind, url)) for kind in ("rendered", "pdf", "fetch"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def target_terms(ctx) -> list[str]:
+    """The target's make and model family names, Hebrew and Latin (identity vocabulary aliases), normalized."""
+    from .candidate_harvest import normalize_text
+    from .document_binding import vocabulary
+
+    adm = getattr(ctx, "admission", None)
+    identity = getattr(adm, "identity", None)
+    vehicle = getattr(ctx, "vehicle", None) or {}
+    vocab = vocabulary()
+    maker = getattr(identity, "manufacturer", None) or vehicle.get("manufacturer") or ""
+    family = getattr(identity, "family", None) or ""
+    terms = [maker, family, vehicle.get("model") or "", *((vocab.get("manufacturers") or {}).get(str(maker), [])),
+             *((vocab.get("model_families") or {}).get(str(family), []))]
+    return sorted({normalize_text(str(t)).strip() for t in terms if t and len(str(t).strip()) >= 2}, key=len,
+                  reverse=True)
+
+
+def names_target(text: str, terms: Iterable[str]) -> bool:
+    from .candidate_harvest import normalize_text
+
+    hay = normalize_text(unquote(text or "")).replace("-", " ").replace("_", " ")
+    for term in terms:
+        term = term.replace("-", " ")
+        if re.search(r"[א-ת]", term):
+            if re.search(rf"(?<![א-ת])[ובהלמשכ]?{re.escape(term)}", hay):
+                return True
+        elif re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", hay):
+            return True
+    return False
+
+
+def fetch_refusal(ctx, name: str, url: Any, phase: str) -> dict | None:
+    """P2: {reason, message, ...} when this fetch must not run (module comment above); None otherwise. Never raises."""
+    try:
+        return _fetch_refusal(ctx, name, str(url or ""), phase)
+    except Exception:  # noqa: BLE001 - a guard failure never blocks a fetch
+        return None
+
+
+def _fetch_refusal(ctx, name: str, url: str, phase: str) -> dict | None:
+    from .il_version_pages import site_of
+
+    if not url:
+        return None
+    provenance = url_provenance(ctx)
+    key = url_key(url)
+    site = site_of(url)
+    if site and key not in provenance.offered and not _cached(ctx, url):
+        return {"reason": "guessed_url_refused", "site": site, "url": url,
+                "message": (f"{url} was not offered by a search result, a fetched page's links or the site map, so it "
+                            f"is not fetched: on {site} use only offered URLs (search for the page, or fetch the site's "
+                            "model / price-list page and follow its links).")}
+    if phase != "research" or key not in provenance.search_items or key in provenance.linked:
+        return None
+    if name == "fetch_pdf" or urlparse_path(url).endswith(".pdf"):
+        return None
+    if classify_source(url, provenance.manufacturer).get("source_authority") in OFFICIAL_CLASSES:
+        return None
+    terms = target_terms(ctx)
+    if not terms or names_target(f"{url} {provenance.search_items[key]}", terms):
+        return None
+    return {"reason": "irrelevant_result", "url": url,
+            "message": (f"{url} is a search result whose URL, title and snippet name neither the target's make nor "
+                        "its model, so it is not fetched. Fetch results about this vehicle.")}
+
+
+def urlparse_path(url: str) -> str:
+    from urllib.parse import urlparse
+
+    return unquote(urlparse(url).path or "").lower()
 
 
 def url_provenance(ctx) -> UrlProvenance:

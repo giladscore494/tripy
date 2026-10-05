@@ -28,7 +28,8 @@ from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig, dispatch
 
 # these tests encode the cluster recovery agent (RECOVERY_MODE=cluster, the pre-#31 default) and its model call order
-pytestmark = [pytest.mark.recovery_mode("cluster"), pytest.mark.grounded_candidates(False)]
+pytestmark = [pytest.mark.recovery_mode("cluster"), pytest.mark.grounded_candidates(False),
+              pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
 
 SPECS = resolve_requested_fields(None, propulsion="hybrid")
 EU = tail.EU_SPEC

@@ -73,7 +73,7 @@ async def call(tool: str, args: dict, fn: Callable[[], dict], slots: _Slots) -> 
 
 
 def build(observer_factory: Callable[[], Observer] = Observer):
-    """The FastMCP instance with the twelve read-only tools (stateless Streamable HTTP, JSON responses)."""
+    """The FastMCP instance with the fourteen read-only tools (stateless Streamable HTTP, JSON responses)."""
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
     from mcp.types import ToolAnnotations
@@ -184,6 +184,22 @@ def build(observer_factory: Callable[[], Observer] = Observer):
         return await run("target_identity", args, lambda: observer_factory().target_identity(record_id, run_id))
 
     @tool
+    async def list_bakeoffs(limit: int = 20, offset: int = 0) -> str:
+        """Search bake-offs newest first (the web UI's "Search bake-off" jobs): id, status, backends, progress and
+        each backend's version_url_hit / accepted pages / USD per record."""
+        args = {"limit": limit, "offset": offset}
+        return await run("list_bakeoffs", args, lambda: observer_factory().list_bakeoffs(limit, offset))
+
+    @tool
+    async def bakeoff_result(bakeoff_id: str, offset: int = 0, limit: int = 100) -> str:
+        """One search bake-off: its job status, the metrics per backend (full_path_ratio, on_site_ratio,
+        version_url_hit, first_version_rank, israeli_domain_share, accepted pages, latency, cost) and the per-record
+        rows (paged)."""
+        args = {"bakeoff_id": bakeoff_id, "offset": offset, "limit": limit}
+        return await run("bakeoff_result", args,
+                          lambda: observer_factory().bakeoff_result(bakeoff_id, offset, limit))
+
+    @tool
     async def server_log_tail(lines: int = 200, grep: str | None = None) -> str:
         """The last lines of the server log (the rotating data/logs/tripy.log), optionally only lines containing
         `grep` (case-insensitive substring). lines max 2000."""
@@ -194,4 +210,5 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
-              "candidates", "documents", "document_text", "document_structure", "target_identity", "server_log_tail")
+              "candidates", "documents", "document_text", "document_structure", "target_identity", "list_bakeoffs",
+              "bakeoff_result", "server_log_tail")

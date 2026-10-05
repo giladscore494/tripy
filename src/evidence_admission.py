@@ -48,7 +48,7 @@ from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
 from .document_binding import (OFFICIAL_AUTHORITIES, STALE_PUBLICATION_YEARS, TargetIdentity, about_target, bind,
-                               document_profile, identity_zone, level_index, normalize_catalog_trim,
+                               designations, document_profile, identity_zone, level_index, normalize_catalog_trim,
                                target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
@@ -324,6 +324,9 @@ class AdmissionContext:
         self.dictionary = dictionary_for(self.parse_specs)
         self.target_market = normalize_market(target_market) or "IL"
         self.manufacturer = manufacturer or identity.manufacturer
+        # PR #46 (P1.2): the version designations the target's own names state ("45 TFSI" in a commercial name / trim)
+        self.target_designations: set[str] = designations(normalize_text(" ".join(
+            [identity.family or "", *identity.trim_words, identity.model_code or ""])))
         self._docs: dict[str, DocumentMaterial] = {}
         self._lock = threading.Lock()
         vocab = harvest_vocabulary()
@@ -343,6 +346,9 @@ class AdmissionContext:
         ctx = cls(identity=identity, specs=specs, target_market=target_market,
                    manufacturer=((payload or {}).get("identity") or {}).get("manufacturer")
                    or (vehicle or {}).get("manufacturer"))
+        record = (payload or {}).get("identity") or {}
+        ctx.target_designations |= designations(normalize_text(" ".join(
+            str(record.get(k) or "") for k in ("commercial_name", "trim", "model_code"))))
         ctx.fallback = {s["name"]: s for s in sanity_specs(ctx.fallback.values(), payload=payload, vehicle=vehicle)}
         merged = {**ctx.fallback, **ctx.specs}
         ctx.parse_specs = list(merged.values())
@@ -1119,8 +1125,13 @@ def stale_publication(adm: AdmissionContext, material: DocumentMaterial) -> dict
 def document_versions(material: DocumentMaterial) -> dict:
     """R4 (PR #45): the technical versions a document's inventory names: distinct powers, version designations and
     displacements of the document profile (identity zone + body) and of its Document Variant Map inventory.
-    {powers, designations, displacements, versions: the largest of the three counts}."""
+    {powers, designations, displacements, versions: the largest of the three counts}.
+
+    PR #46 (P1.1): a PDF's multi-column power rows (src/power_rows.py: "הספק מרבי (כ"ס)" rows of its tables and text
+    lines, visual-order lines included) add one power per column; `power_columns` lists each column's power with its
+    column identity (the header cell / line and the designation it names)."""
     from .document_binding import distinct_powers
+    from .power_rows import power_rows
 
     profile = material.profile or {}
     versions = profile.get("powertrain_versions") or {}
@@ -1131,9 +1142,49 @@ def document_versions(material: DocumentMaterial) -> dict:
         powers |= {float(p) for p in item.get("power") or []}
         names |= set(item.get("designation") or [])
         litres |= {float(v) for v in item.get("displacement") or []}
+    columns: list[dict] = []
+    if (material.meta or {}).get("doc_type") == "pdf":
+        try:
+            rows = power_rows(material.text, (material.variant_map or {}).get("tables"))
+        except Exception:  # noqa: BLE001 - an unreadable power row is just no power
+            rows = {}
+        powers |= set(rows.get("powers") or [])
+        seen: set = set()
+        for col in rows.get("columns") or []:          # a table row and its text line state the same columns
+            if (col.get("power"), col.get("designation")) not in seen:
+                seen.add((col.get("power"), col.get("designation")))
+                columns.append({k: col.get(k) for k in ("power", "designation", "identity", "source")})
     out = {"powers": distinct_powers(powers), "designations": sorted(names), "displacements": sorted(litres)}
+    if columns:
+        out["power_columns"] = columns[:12]
     out["versions"] = max(len(out["powers"]), len(out["designations"]), len(out["displacements"]))
     return out
+
+
+REPEATED_POWER_TOLERANCE = 0.03
+
+
+def target_among_versions(adm: AdmissionContext, material: DocumentMaterial, versions: dict) -> dict:
+    """PR #46 (P1.2): is the target one of a multi-version document's versions? {designation: the target's own
+    designation is among the document's, power: the target's power (+-3 %) is among the document's powers,
+    catalog_single_entry: the catalog has exactly one entry for (manufacturer, family, year, propulsion, drivetrain),
+    year_stated: the document states a model year (identity zone or full text)}."""
+    from .il_version_pages import single_catalog_entry
+
+    identity = adm.identity
+    target = identity.power_hp
+    power = bool(target) and any(abs(float(p) - target) <= REPEATED_POWER_TOLERANCE * target
+                                 for p in versions.get("powers") or [])
+    profile = material.profile or {}
+    year_stated = any((profile.get(k) or {}).get("year", "absent") != "absent"
+                      for k in ("zone_statuses", "full_statuses"))
+    try:
+        single = single_catalog_entry(identity) is not None
+    except Exception:  # noqa: BLE001 - no catalog: never single
+        single = False
+    return {"designation": bool(set(getattr(adm, "target_designations", set()) or ())
+                                & set(versions.get("designations") or [])),
+            "power": power, "catalog_single_entry": single, "year_stated": year_stated}
 
 
 def repeated_for_every_version(value: Any, ctx: FactContext, versions: int) -> bool:
@@ -1165,7 +1216,8 @@ def multi_version_context(adm: AdmissionContext, material: DocumentMaterial, val
     region = region or {}
     return {**versions, "repeated": repeated_for_every_version(value, ctx, versions["versions"]),
             "inventory_without_target": region.get("status") == "unresolved"
-            and region.get("reason") == "inventory_without_target"}
+            and region.get("reason") == "inventory_without_target",
+            "target_listed": target_among_versions(adm, material, versions)}
 
 
 def region_agreement_violations(binding: dict, multi_version: dict | None) -> list[str]:
@@ -1248,7 +1300,9 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         # R4 telemetry: the versions the document's inventory names and whether the value repeats for each of them
         binding["document_versions"] = {k: multi_version.get(k) for k in ("versions", "powers", "designations",
                                                                           "displacements", "repeated",
-                                                                          "inventory_without_target")}
+                                                                          "inventory_without_target", "target_listed",
+                                                                          "power_columns")
+                                        if k in multi_version}
     # the R4 invariant (asserted): region and binding agree; bind guarantees it, a violation is a code defect
     violations = region_agreement_violations(binding, multi_version)
     assert not violations, f"binding / variant_map_region disagree: {violations}"

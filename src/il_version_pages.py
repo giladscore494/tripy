@@ -592,6 +592,7 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
         except Exception as exc:  # noqa: BLE001 - a failed search costs only its results
             out["skipped"].append({"query": query, "mode": mode, "error": f"{type(exc).__name__}"})
             return False
+        _offer(ctx, search_result=result)
         return triage(_search_items(result), domain, query, mode)
 
     try:
@@ -630,6 +631,7 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
                 out["skipped"].append({"url": url, "reason": reason})
                 decision["decision"] = f"fetch_failed:{reason}"
                 continue
+            _offer(ctx, urls=[url, result.get("final_url")], links=_links(ctx, doc))
             material = adm.material(ctx.cache, doc, None, [doc])
             verdict = getattr(material, "version_page", None) if material is not None else None
             page = {"url": url, "role": role, "document_id": doc,
@@ -668,6 +670,20 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
         except Exception:  # noqa: BLE001
             pass
     return out
+
+
+def _offer(ctx, *, search_result: Any = None, urls: Iterable[Any] = (), links: Iterable[dict] = ()) -> None:
+    """PR #46 (P2): what the resolver saw is offered to the run's URL provenance (its search results, the pages it
+    fetched and their links), so the model may fetch them later without a guessed-URL refusal. Never raises."""
+    try:
+        from .acquisition import url_provenance
+
+        provenance = url_provenance(ctx)
+        if search_result is not None:
+            provenance.observe_search(search_result)
+        provenance.offer([u for u in urls if u] + [link.get("url") for link in links or [] if isinstance(link, dict)])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _links(ctx, doc: str) -> list[dict]:

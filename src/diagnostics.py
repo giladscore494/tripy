@@ -940,7 +940,32 @@ def operations_summary(events: list[dict]) -> dict:
             "rate_limited_failures": sum(1 for e in limited if not e.get("will_retry")),
             "il_version_searches": il_pages.get("searches"), "il_version_fetches": il_pages.get("fetches"),
             "il_version_pages_found": il_pages.get("found"),
-            "gov_registry_evidence": registry.get("stored")}
+            "gov_registry_evidence": registry.get("stored"),
+            **search_operations(events)}
+
+
+def search_operations(events: list[dict]) -> dict:
+    """PR #46: which backend answered each provider search (search_backend_call events of cache misses), its cost, the
+    results the sanity rules dropped (root_only_url, off-site), fallbacks and Gemini redirects; and the P2 acquisition
+    refusals (guessed_url_refused, irrelevant_result)."""
+    calls = [e for e in events if e.get("kind") == "search_backend_call" and not e.get("cache_hit")]
+    by_backend: dict[str, int] = {}
+    usd: dict[str, float] = {}
+    for e in calls:
+        name = str(e.get("backend") or "")
+        by_backend[name] = by_backend.get(name, 0) + 1
+        usd[name] = round(usd.get(name, 0.0) + float(e.get("usd") or 0.0), 6)
+    blocked = [e for e in events if e.get("kind") == "tool_blocked"]
+    return {"search_calls_by_backend": dict(sorted(by_backend.items())),
+            "search_usd_by_backend": dict(sorted(usd.items())),
+            "search_root_only_urls": sum(len(e.get("results") or []) for e in events
+                                         if e.get("kind") == "root_only_url"),
+            "search_off_site": sum(int(e.get("off_site") or 0) for e in calls),
+            "search_fallback_used": sum(1 for e in events if e.get("kind") == "search_fallback_used"),
+            "gemini_redirects_resolved": sum(int(e.get("redirects_resolved") or 0) for e in calls),
+            "gemini_redirects_failed": sum(int(e.get("redirects_failed") or 0) for e in calls),
+            "guessed_url_refused": sum(1 for e in blocked if e.get("reason") == "guessed_url_refused"),
+            "irrelevant_result_refused": sum(1 for e in blocked if e.get("reason") == "irrelevant_result")}
 
 
 def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record_id: str | None = None,
@@ -1142,6 +1167,19 @@ def vehicle_row(diag: dict) -> dict:
             "acq_il_version_fetches": ops.get("il_version_fetches"),
             "acq_il_version_pages_found": ops.get("il_version_pages_found"),
             "gov_registry_evidence": ops.get("gov_registry_evidence"),
+            # PR #46: search backends (S1 / S3) and acquisition hygiene (P2)
+            "search_backends_used": ",".join(ops["search_calls_by_backend"]) if "search_calls_by_backend" in ops
+            else None,
+            "search_calls_by_backend": json.dumps(ops["search_calls_by_backend"], sort_keys=True)
+            if "search_calls_by_backend" in ops else None,
+            "search_usd_by_backend": json.dumps(ops["search_usd_by_backend"], sort_keys=True)
+            if "search_usd_by_backend" in ops else None,
+            "search_root_only_urls": ops.get("search_root_only_urls"), "search_off_site": ops.get("search_off_site"),
+            "search_fallback_used": ops.get("search_fallback_used"),
+            "gemini_redirects_resolved": ops.get("gemini_redirects_resolved"),
+            "gemini_redirects_failed": ops.get("gemini_redirects_failed"),
+            "acq_guessed_url_refused": ops.get("guessed_url_refused"),
+            "acq_irrelevant_result_refused": ops.get("irrelevant_result_refused"),
             "parser_gap_rows": gaps.get("gaps_total"), "parser_gap_fields": gaps.get("fields_with_gaps"),
             "parser_gap_recovered_by_sweep": gaps.get("recovered_by_sweep"),
             "rec_attempts": rec.get("attempts"), "rec_model_calls": rec.get("model_calls"),

@@ -1571,10 +1571,29 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     if int(mv.get("versions") or 0) >= 2 and not page_accepted \
             and level_index(level) >= level_index("exact_technical_variant"):
         technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
+        target_region = bool(region and region.get("allowed") and region.get("status") == "target")
         proven = any(effective[d].get("basis") in FACT_LAYER_NAMES + TARGET_REGION_BASES for d in technical) \
-            or bool(region and region.get("allowed") and region.get("status") == "target")
-        if mv.get("inventory_without_target") or not (proven or mv.get("repeated")):
+            or target_region
+        listed = mv.get("target_listed") or {}
+        # P1.3 (PR #46): >= 2 designations, no readable power and no stated model year: the displacement alone never
+        # identifies the version (the model code, a fact-level power, a target region naming the version or the
+        # catalog's single entry still do)
+        version_named = s.get("model_code") == "match" \
+            or (s.get("power") == "match" and effective["power"].get("basis") != "document") \
+            or (target_region and names_version(region))
+        if len(mv.get("designations") or []) >= 2 and not mv.get("powers") and not listed.get("year_stated") \
+                and not version_named and not listed.get("catalog_single_entry"):
+            flags.append("version_unproven")
+            level, basis, catalog, raised_by = "body_powertrain", None, None, None
+        elif mv.get("inventory_without_target") or not (proven or mv.get("repeated")):
             flags.append("single_value_multi_version")
+            level, basis, catalog, raised_by = "body_powertrain", None, None, None
+        elif not proven and not (listed.get("designation") or listed.get("catalog_single_entry")
+                                 or (listed.get("power") and listed.get("year_stated"))):
+            # P1.2 (PR #46): a value repeated identically in every column is the target's only when the target is
+            # one of the columns: its designation, the catalog's single entry, or its power (+-3 %) in a document
+            # that states a model year (a year-less catalog's near power may be another generation's version)
+            flags.append("repeated_without_target_version")
             level, basis, catalog, raised_by = "body_powertrain", None, None, None
     # R5 (PR #45): a single-version page whose stated power contradicts its own displacement against the catalog
     if page.get("page_inconsistent"):
@@ -1687,7 +1706,8 @@ def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | N
 
 
 BINDING_FLAG_GAPS = ("system_power_unmapped", "several_powertrain_versions", "relative_variant_reference",
-                     "stale_publication", "single_value_multi_version", "page_inconsistent")
+                     "stale_publication", "single_value_multi_version", "page_inconsistent",
+                     "repeated_without_target_version", "version_unproven")
 
 
 def is_trim_gap(gap: str) -> bool:

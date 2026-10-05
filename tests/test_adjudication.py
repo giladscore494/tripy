@@ -42,7 +42,8 @@ GHOST_LENGTH = {"field": "length_mm", "value": 4650, "unit": "mm", "quote": "Ove
                 "extraction_method": "alias_proximity", "parser_confidence": 0.9}
 # these tests encode the adjudication sweep (they hold under `SWEEP_MODE=legacy pytest` too); the model call order is
 # scripted, so the grounded-candidate step (its own tests: test_grounded.py) is off
-pytestmark = [pytest.mark.sweep_mode("adjudication"), pytest.mark.grounded_candidates(False)]
+pytestmark = [pytest.mark.sweep_mode("adjudication"), pytest.mark.grounded_candidates(False),
+              pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
 WARRANTY_404 = "https://www.toyota.co.il/warranty"
 WARRANTY_404_TEXT = "\n".join(["Page not found", "Length: 4,650 mm", "Width: 1,790 mm", "Wheelbase: 2,700 mm",
                                "Top speed: 180 km/h", "Fuel tank capacity: 43 l"])

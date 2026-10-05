@@ -99,7 +99,7 @@ def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: s
     """Start a run: the server's settings with the request's per-run overrides (run_settings.settings_for_run,
     the sidebar's assemble_settings), the same blocking checks, the same request, RunManager.start."""
     try:
-        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides)
+        settings = settings_for_run(ctx.secret, ctx.manager.controller, overrides, profile)
     except ValueError as exc:
         raise ApiError(422, "invalid_settings", str(exc)) from None
     blocking = blocking_errors(settings_checks(settings, ctx.secret, ctx.paths))

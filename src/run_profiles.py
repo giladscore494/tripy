@@ -67,6 +67,18 @@ NAMED_PROFILES: dict[str, dict] = {
     TREATMENT_CARD: {"acquisition_mode": "contract", "acquisition_document_card": True, **_SWEEP, **_YIELD},
 }
 
+# PR #46 (S3): each named profile's default search backend / fallback. A run's own choice in the run settings wins (they
+# are not pinned); without one a named profile uses these, never env. Production stays glm until the operator picks the
+# bake-off's winner in the run settings.
+PROFILE_SEARCH: dict[str, dict] = {p: {"search_backend": "glm", "search_fallback_backend": "none"}
+                                   for p in (PRODUCTION, BASELINE, TREATMENT, TREATMENT_CARD)}
+
+
+def profile_search(profile: str | None) -> dict:
+    """The named profile's search defaults ({} for Custom / unknown: the env defaults apply)."""
+    return dict(PROFILE_SEARCH.get(profile or "", {}))
+
+
 # (env variable, AgentConfig field | ("phase", phase, key), kind): the settings a named profile pins and the
 # Advanced settings list when env differs from the code default
 ENV_OVERRIDE_VARS: tuple[tuple[str, Any, str], ...] = (
