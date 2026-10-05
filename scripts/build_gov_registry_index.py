@@ -6,6 +6,10 @@
            (sizes as "235/50 R19", src/gov_registry.normalize_tire)
     stats  build diagnostics (PR #45): keys kept / dropped for n < MIN_KEEP / dropped by unparsed tyre strings, per
            manufacturer kept / dropped keys, merged-trim keys, the TOP_UNPARSED raw unparsed strings with counts
+    model_years  per tozeret_cd | degem_cd | shnat_yitzur, EVERY trim of that model year (kept or not):
+           {"front": {majority, share, n, majority_n}, "rear": {...} (pooled over the trims, when n >= MIN_KEEP),
+            "trims": {trim: {"rows": r, "front": [majority, majority n, n], "rear": [...], "unparsed": [front, rear]}}}
+           read by the level B fallback of src/gov_registry.py and the reasons of scripts/gov_registry_coverage.py
 
 Source: the data.gov.il CKAN datastore resource of the registry of private and commercial vehicles (licence-plate
 level), read with paged `datastore_search` calls (only the six columns used, PAGE rows per call, a pause of
@@ -159,6 +163,47 @@ def build_stats(counts: dict, kept: set, stats: dict | None = None) -> dict:
     return out
 
 
+def _trim_row(counts: Counter) -> list | None:
+    n = sum(counts.values())
+    if not n:
+        return None
+    (majority, top_n), *_ = counts.most_common(1)
+    return [majority, top_n, n]
+
+
+def build_model_years(counts: dict) -> dict:
+    """The level B pools: per tozeret_cd | degem_cd | shnat_yitzur, the pooled majority of all its trims (only
+    when n >= MIN_KEEP) and every trim's own majority, vehicle count and unparsed cells. Never across years / degem."""
+    groups: dict[str, dict] = {}
+    for key in sorted(counts):
+        group, trim = key.rsplit("|", 1) if key.count("|") == 3 else (None, None)
+        if group is None:
+            continue
+        entry = counts[key]
+        pool = groups.setdefault(group, {"front": Counter(), "rear": Counter(), "trims": {}})
+        info: dict = {"rows": int(sum((entry.get("trims") or Counter()).values()))}
+        for axle in ("front", "rear"):
+            pool[axle].update(entry[axle])
+            row = _trim_row(entry[axle])
+            if row:
+                info[axle] = row
+        unparsed = entry.get("unparsed") or Counter()
+        if unparsed["front"] or unparsed["rear"]:
+            info["unparsed"] = [unparsed["front"], unparsed["rear"]]
+        pool["trims"][trim] = info
+    out = {}
+    for group, pool in groups.items():
+        item = {}
+        for axle in ("front", "rear"):
+            summary = summarize(pool[axle])
+            if summary and max(sum(pool["front"].values()), sum(pool["rear"].values())) >= MIN_KEEP:
+                item[axle] = {**{k: summary[k] for k in ("majority", "share", "n")},
+                              "majority_n": summary["top"][0]["n"]}
+        item["trims"] = pool["trims"]
+        out[group] = item
+    return out
+
+
 def build_index(counts: dict, *, source: str, resource_id: str | None, rows: int, complete: bool = True,
                 stats: dict | None = None) -> dict:
     entries = {}
@@ -171,23 +216,33 @@ def build_index(counts: dict, *, source: str, resource_id: str | None, rows: int
         if len(trims) > 1:
             # two raw trims normalize to this key ("S-LINE" / "S LINE"): their counts are merged, recorded here
             entries[key]["merged_trims"] = dict(sorted(trims.items()))
+    model_years = build_model_years(counts)
     index_stats = build_stats(counts, set(entries), {"rows": rows, **(stats or {})})
+    index_stats["model_years"] = len(model_years)
+    index_stats["model_years_pooled"] = sum(1 for pool in model_years.values() if "front" in pool or "rear" in pool)
     return {"_about": "Government vehicle registry index (PR #44, P1; scripts/build_gov_registry_index.py, read by "
                       "src/gov_registry.py): per tozeret_cd | degem_cd | shnat_yitzur | ramat_gimur (the trim "
                       "normalized: upper case, - _ . as a space, collapsed whitespace), the front / rear tyre size "
                       f"distribution of the registered vehicles. Entries with fewer than {MIN_KEEP} vehicles are left "
-                      "out. `merged_trims`: the raw trims merged into one key; `stats`: the build diagnostics (PR #45).",
+                      "out. `merged_trims`: the raw trims merged into one key; `stats`: the build diagnostics "
+                      "(PR #45). `model_years`: per tozeret_cd | degem_cd | shnat_yitzur, the pooled sizes of all its trims and "
+                      "each trim's majority / n (the level B fallback).",
             "version": INDEX_VERSION, "complete": complete,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source,
-            "resource_id": resource_id, "rows": rows, "stats": index_stats, "entries": entries}
+            "resource_id": resource_id, "rows": rows, "stats": index_stats, "entries": entries,
+            "model_years": model_years}
 
 
 def dumps(index: dict) -> str:
-    """Compact JSON with one entry per line (reviewable diffs when the index is regenerated)."""
-    head = json.dumps({k: v for k, v in index.items() if k != "entries"}, ensure_ascii=False)
-    lines = [json.dumps(k, ensure_ascii=False) + ":" + json.dumps(v, ensure_ascii=False, separators=(",", ":"))
-             for k, v in index["entries"].items()]
-    return head[:-1] + ', "entries": {\n' + ",\n".join(lines) + "\n}}\n"
+    """Compact JSON with one entry (and one model year) per line (reviewable diffs when the index is regenerated)."""
+    sections = [k for k in ("entries", "model_years") if k in index]
+    head = json.dumps({k: v for k, v in index.items() if k not in sections}, ensure_ascii=False)
+    blocks = []
+    for section in sections:
+        lines = [json.dumps(k, ensure_ascii=False) + ":" + json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+                 for k, v in index[section].items()]
+        blocks.append(f'"{section}": {{\n' + ",\n".join(lines) + "\n}")
+    return head[:-1] + ", " + ", ".join(blocks) + "}\n"
 
 
 def read_ckan(resource_id: str, *, page: int = PAGE, pause_s: float = PAUSE_S, get=ckan_get, sleep=time.sleep):
@@ -217,6 +272,8 @@ def report(index: dict) -> str:
     lines = [f"keys {st.get('keys', 0)}, kept {st.get('kept', 0)} (n >= {MIN_KEEP}); dropped n < {MIN_KEEP}: "
              f"{st.get('dropped_small', 0)}, dropped by unparsed sizes: {st.get('dropped_unparsed', 0)}; merged trims: "
              f"{st.get('merged_keys', 0)} keys",
+             f"model years (level B pools): {st.get('model_years', 0)}, with n >= {MIN_KEEP}: "
+             f"{st.get('model_years_pooled', 0)}",
              f"unparsed tyre cells {st.get('unparsed_sizes', 0)} in {st.get('unparsed_rows', 0)} rows; top "
              f"{len(st.get('unparsed_top') or [])} raw strings:"]
     lines += [f"  {row['n']:>9}  {row['raw']!r}" for row in st.get("unparsed_top") or []]
