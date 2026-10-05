@@ -48,7 +48,8 @@ from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
 from .document_binding import (OFFICIAL_AUTHORITIES, STALE_PUBLICATION_YEARS, TargetIdentity, about_target, bind,
-                               document_profile, identity_zone, normalize_catalog_trim, target_identity)
+                               document_profile, identity_zone, level_index, normalize_catalog_trim,
+                               target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
@@ -1115,6 +1116,69 @@ def stale_publication(adm: AdmissionContext, material: DocumentMaterial) -> dict
     return {"publication_date": date, "basis": basis, "target_year": target}
 
 
+def document_versions(material: DocumentMaterial) -> dict:
+    """R4 (PR #45): the technical versions a document's inventory names: distinct powers, version designations and
+    displacements of the document profile (identity zone + body) and of its Document Variant Map inventory.
+    {powers, designations, displacements, versions: the largest of the three counts}."""
+    from .document_binding import distinct_powers
+
+    profile = material.profile or {}
+    versions = profile.get("powertrain_versions") or {}
+    powers = set(versions.get("powers") or [])
+    names = set(versions.get("designations") or [])
+    litres = {float(v) for v in (profile.get("mentions") or {}).get("displacement") or []}
+    for item in (material.variant_map or {}).get("inventory") or []:
+        powers |= {float(p) for p in item.get("power") or []}
+        names |= set(item.get("designation") or [])
+        litres |= {float(v) for v in item.get("displacement") or []}
+    out = {"powers": distinct_powers(powers), "designations": sorted(names), "displacements": sorted(litres)}
+    out["versions"] = max(len(out["powers"]), len(out["designations"]), len(out["displacements"]))
+    return out
+
+
+def repeated_for_every_version(value: Any, ctx: FactContext, versions: int) -> bool:
+    """R4 exception: the value's number is stated at least once per version on its own row / line ("4,939 4,939 | אורך"),
+    the way a table states a row identical in every column. A converted value (kgf·m -> Nm) is read by the numbers of
+    its quote fragment."""
+    from .candidate_harvest import NUMBER, parse_number
+
+    if versions < 2:
+        return False
+    line = normalize_text(" ".join(ctx.source_lines) or ctx.fragment)
+    numbers = [parse_number(m.group(1)) for m in NUMBER.finditer(line)]
+    numbers = [n for n in numbers if n is not None]
+    wanted = [float(n) for n in numbers_in(value)]
+    if not any(any(abs(n - w) <= 1e-6 * max(1.0, abs(w)) for n in numbers) for w in wanted):
+        wanted = [n for n in (parse_number(m.group(1)) for m in NUMBER.finditer(ctx.fragment)) if n is not None]
+    return any(sum(1 for n in numbers if abs(n - w) <= 1e-6 * max(1.0, abs(w))) >= versions for w in wanted)
+
+
+def multi_version_context(adm: AdmissionContext, material: DocumentMaterial, value: Any, ctx: FactContext,
+                          region: dict | None) -> dict | None:
+    """R4's input to bind: None unless a conventional target's document names >= 2 technical versions (H1 already
+    covers hybrids / plug-ins, whose engine and system powers are not two versions)."""
+    if adm.identity.propulsion != "conventional":
+        return None
+    versions = document_versions(material)
+    if versions["versions"] < 2:
+        return None
+    region = region or {}
+    return {**versions, "repeated": repeated_for_every_version(value, ctx, versions["versions"]),
+            "inventory_without_target": region.get("status") == "unresolved"
+            and region.get("reason") == "inventory_without_target"}
+
+
+def region_agreement_violations(binding: dict, multi_version: dict | None) -> list[str]:
+    """The binding invariant R4 guarantees (asserted on every fact): on a multi-version document a fact whose DVM region
+    is `unresolved / inventory_without_target` is never bound at the technical variant or above."""
+    region = binding.get("variant_map_region") or {}
+    if multi_version and int(multi_version.get("versions") or 0) >= 2 \
+            and region.get("status") == "unresolved" and region.get("reason") == "inventory_without_target" \
+            and level_index(binding.get("binding_level")) >= level_index("exact_technical_variant"):
+        return ["exact_with_inventory_without_target"]
+    return []
+
+
 def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str,
                  ctx: FactContext, *, variant_text: str = "", claim: str | None = None, market: str | None = None,
                  candidates: list[dict] | None = None) -> tuple[dict, dict]:
@@ -1149,6 +1213,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
     except Exception as exc:  # noqa: BLE001 - the map is an additional layer; per-value binding stands without it
         region = {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200], "allowed": False}
     page = material.version_page if isinstance(material.version_page, dict) else None
+    multi_version = multi_version_context(adm, material, value, ctx, region)
     doc_statuses = profile["statuses"]
     if page and page.get("single_version"):
         # P4 / P2: a single-version Israeli page is about the version its title, URL and identity rows name; those
@@ -1165,7 +1230,8 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    brand_policy=brand_policy_eligibility(adm, material, spec, name, value, market),
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
                    powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
-                   version_page=page, engine_invariant=spec.get("variant_invariance") == "engine")
+                   version_page=page, engine_invariant=spec.get("variant_invariance") == "engine",
+                   multi_version=multi_version)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1176,7 +1242,16 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
     if page and page.get("status") in ("accepted", "rejected"):
         binding["version_page"] = {k: page.get(k) for k in ("status", "reason", "site", "single_version",
                                                              "page_statuses", "page_powers", "catalog_single_entry",
-                                                             "version") if page.get(k) not in (None, [], {})}
+                                                             "body_subvariant", "page_inconsistent", "version")
+                                   if page.get(k) not in (None, [], {})}
+    if multi_version:
+        # R4 telemetry: the versions the document's inventory names and whether the value repeats for each of them
+        binding["document_versions"] = {k: multi_version.get(k) for k in ("versions", "powers", "designations",
+                                                                          "displacements", "repeated",
+                                                                          "inventory_without_target")}
+    # the R4 invariant (asserted): region and binding agree; bind guarantees it, a violation is a code defect
+    violations = region_agreement_violations(binding, multi_version)
+    assert not violations, f"binding / variant_map_region disagree: {violations}"
     year = profile.get("year_context") or {}
     if year.get("statements") or year.get("ignored"):
         # telemetry only: the model-year statements behind the year dimension and the years the rules ignored
@@ -1328,7 +1403,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "binding_flags": binding.get("binding_flags"), "relative_reference": binding.get("relative_reference"),
         "stale_publication": binding.get("stale_publication"),
         "variant_map_region": binding.get("variant_map_region"),
-        "version_page": binding.get("version_page"),
+        "version_page": binding.get("version_page"), "document_versions": binding.get("document_versions"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,

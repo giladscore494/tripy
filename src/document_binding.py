@@ -93,6 +93,22 @@ binding-v6 (PR #44, Israeli source playbook), deterministic and fail-closed:
                                  is not held by system_power_unmapped when the document's displacement matches the
                                  target's (several_powertrain_versions, relative references and stale publications
                                  still hold it)
+
+binding-v7 (PR #45), deterministic and fail-closed; nothing here loosens an earlier rule:
+
+    body sub-variants (R3)       a body sub-variant word (Sportback, Avant, Coupé / קופה, Cabrio, Gran Coupé, Touring,
+                                 Shooting Brake, ...; vocabulary `body_subvariants`) in the identity zone that the
+                                 target's commercial name / government model name does not contain is a body mismatch
+                                 (veto at the body cap); an Israeli single-version page also needs the target's own
+                                 sub-variant in its title / H1 / URL. The catalog family key does not separate them
+    single_value_multi_version   (R4) a value stated once in a document whose inventory names >= 2 technical versions
+                                 (powers, designations or displacements) binds at most body_powertrain unless its own
+                                 context layers or a target DVM region name the version, or it is repeated identically
+                                 for every version; a fact whose DVM region is `unresolved / inventory_without_target`
+                                 never binds the technical variant of such a document (evidence_admission asserts it)
+    page_inconsistent (R5)       a single-version Israeli page whose stated power contradicts its own displacement
+                                 against the catalog (1984 cc next to 341 hp while every 2.0 l entry of the family-year
+                                 is <= 265 hp): its values bind at most body_powertrain
 """
 
 from __future__ import annotations
@@ -106,7 +122,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v6"
+BINDING_VERSION = "binding-v7"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -213,6 +229,9 @@ class TargetIdentity:
     # the government model code (Level 1.5 identity.government_codes.degem_cd): the number Israeli importers publish
     # as "קוד דגם" in their mandatory safety-equipment table (verified, PR #42); identity-only, never a scope key
     gov_model_code: int | None = None
+    # PR #45 (R3): the body sub-variant words (identity vocabulary `body_subvariants`) the target's commercial name /
+    # government model name contains ("sportback" for an A1 SPORTBACK); identity-only, never a scope key
+    body_subvariants: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v not in (None, [], "")}
@@ -367,7 +386,10 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
         transmission={1: "automatic", 0: "manual", "1": "automatic", "0": "manual", True: "automatic",
                       False: "manual"}.get(engine.get("automatic")),
         gov_model_code=_gov_code((ident.get("government_codes") or {}).get("degem_cd")
-                                 if isinstance(ident.get("government_codes"), dict) else None))
+                                 if isinstance(ident.get("government_codes"), dict) else None),
+        body_subvariants=sorted(body_subvariants(" ".join(str(v or "") for v in (
+            ident.get("commercial_name") or vehicle.get("model"), ident.get("model_code") or vehicle.get("model_code"))),
+            vocab)))
 
 
 def _gov_code(value: Any) -> int | None:
@@ -429,11 +451,54 @@ def designation_spans(text: str, vocab: dict | None = None) -> list[tuple[str, i
     pattern = _designation_pattern(vocabulary() if vocab is None else vocab)
     if pattern is None:
         return []
-    return [(re.sub(r"[\s\-]+", "", m.group(0)), m.start(), m.end()) for m in pattern.finditer(text)]
+    return [(_canonical_designation(m.group(0)), m.start(), m.end()) for m in pattern.finditer(text)]
+
+
+def _canonical_designation(raw: str) -> str:
+    """The compact form of a designation; the reversed order of Israeli used-car titles ("TFSI 45") is "45tfsi"."""
+    compact = re.sub(r"[\s\-]+", "", raw)
+    m = re.fullmatch(r"([a-z]+)(\d{2})", compact)
+    return f"{m.group(2)}{m.group(1)}" if m else compact
 
 
 def designations(text: str, vocab: dict | None = None) -> set[str]:
     return {d for d, _, _ in designation_spans(text, vocab)}
+
+
+def body_subvariants(text: str, vocab: dict | None = None) -> set[str]:
+    """The body sub-variant keys a text names (identity vocabulary `body_subvariants`, PR #45 R3): "Q3 Sportback" ->
+    {"sportback"}; a longer key's terms are masked before shorter ones are searched ("gran coupe" is not "coupe")."""
+    vocab = vocabulary() if vocab is None else vocab
+    cfg = vocab.get("body_subvariants") or {}
+    terms = cfg.get("terms") or {}
+    order = [k for k in cfg.get("order") or [] if k in terms] + [k for k in terms if k not in (cfg.get("order") or [])]
+    work, found = normalize_text(text or ""), set()
+    for key in order:
+        pattern = _terms(("body_subvariant", key), terms.get(key) or [])
+        if pattern and pattern.search(work):
+            found.add(key)
+            work = _masked(pattern, work)
+    return found
+
+
+def subvariant_status(text: str, identity: "TargetIdentity", *, reverse: bool = False) -> dict | None:
+    """R3: {status: mismatch | match, subvariant, direction} of an identity text (a title / H1 / URL zone that names
+    the target family), None when it decides nothing. `mismatch` (direction page_only): the text names a sub-variant
+    the target's names do not contain; with `reverse` also (target_only) when the target's names contain one the text
+    does not name. A sub-variant whose implied body (`implies_body`) is the target's own body never mismatches."""
+    vocab = vocabulary()
+    implied = (vocab.get("body_subvariants") or {}).get("implies_body") or {}
+    named = body_subvariants(text, vocab)
+    own = set(identity.body_subvariants or [])
+    extra = sorted(k for k in named - own if not (implied.get(k) and implied.get(k) == identity.body))
+    if extra:
+        return {"status": "mismatch", "subvariant": extra[0], "direction": "page_only"}
+    missing = sorted(k for k in own - named if not (implied.get(k) and implied.get(k) == identity.body))
+    if reverse and missing:
+        return {"status": "mismatch", "subvariant": missing[0], "direction": "target_only"}
+    if named & own:
+        return {"status": "match", "subvariant": sorted(named & own)[0], "direction": "both"}
+    return None
 
 
 def distinct_powers(powers: Iterable[float], rel: float = 0.03) -> list[float]:
@@ -887,6 +952,9 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
     zone_year = zone_year_context(title=title, url=url, identity=identity, headings=headings,
                                   subheadings=subheadings, text=text)
     zone_found["year"] = zone_year["years"]
+    # R3 (PR #45): a body sub-variant the zone names and the target's names do not ("Q3 Sportback" for a Q3) is another
+    # model of the same catalog family
+    subvariant = subvariant_status(zone, identity) if named else None
     full_found = mentions(f"{zone}\n{body}", identity)
     zone_text = identity_zone(title=title, url=None, headings=headings, text=text, identity=identity)
     full_year = year_context(f"{zone_text}\n{body}", identity)
@@ -894,6 +962,8 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
     full_found["year_context"] = {k: full_year[k] for k in ("statements", "ignored")}
     combined: dict[str, str] = {}
     zone_statuses = {dim: dimension_status(dim, zone_found[dim], identity) for dim in DIMENSIONS}
+    if subvariant and subvariant["status"] == "mismatch":
+        zone_statuses["body"] = "mismatch"
     full_statuses = {dim: dimension_status(dim, full_found[dim], identity) for dim in DIMENSIONS}
     year_basis = "none"
     for dim in DIMENSIONS:
@@ -926,7 +996,9 @@ def document_profile(*, text: str, title: str | None, url: str | None, identity:
                                     "designations": sorted(full_found["designation"])},
             # PR #43 (H3): does the document state the target's model year anywhere (zone or full text)?
             "states_target_year": identity.year is not None
-            and identity.year in (set(zone_year["years"]) | set(full_year["years"]))}
+            and identity.year in (set(zone_year["years"]) | set(full_year["years"])),
+            # PR #45 (R3): the identity zone's body sub-variant verdict (None: it decides nothing)
+            "body_subvariant": subvariant}
 
 
 # --- government catalog trim index (single_trim_catalog) -------------------------------------------------
@@ -1227,6 +1299,9 @@ def fact_layer_statuses(identity: TargetIdentity, layers: list[tuple[str, str]] 
 
 
 TECHNICAL_DIMS = ("displacement", "power", "drivetrain")
+# R4 (PR #45): the bases that name the version for ONE fact (its own context layers, or a target DVM region)
+FACT_LAYER_NAMES = ("value_clause", "column_header", "column_identity", "quote", "source_line", "section_heading")
+TARGET_REGION_BASES = ("dvm_region", "gov_model_code", "designation_region")
 
 
 def _ladder(s: dict[str, str], identity: TargetIdentity, veto_dims: tuple[str, ...],
@@ -1278,7 +1353,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          document_propulsions: list[str] | None = None, brand_policy: dict | None = None,
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
          powertrain_versions: dict | None = None, stale: dict | None = None,
-         version_page: dict | None = None, engine_invariant: bool = False) -> dict:
+         version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1296,7 +1371,11 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     PR #44 inputs: `version_page` (src/il_version_pages.version_page_verdict of the fact's document; its page statuses
     already replaced the document statuses of a single-version page) and `engine_invariant` (the field's
-    variant_invariance is "engine"), see binding-v6 in the module doc."""
+    variant_invariance is "engine"), see binding-v6 in the module doc.
+
+    PR #45 input: `multi_version` (evidence_admission.multi_version_context: how many technical versions the document's
+    inventory names, whether the value is repeated identically for every version, whether the fact's DVM region is
+    `unresolved / inventory_without_target`), see binding-v7 in the module doc."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1484,6 +1563,24 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         flags.append("relative_variant_reference")
         if level_index(level) > level_index("body_powertrain"):
             level, basis, catalog, raised_by = "body_powertrain", None, None, None
+    # R4 (PR #45): a value stated once in a document whose inventory names >= 2 technical versions is not identified by
+    # the document's own statuses or a shared-row reading: only a fact layer or a target DVM region naming the version
+    # proves it (or the value repeated identically for every version). A fact whose DVM region says the inventory does
+    # not contain the target at all never binds the technical variant of a multi-version document
+    mv = multi_version or {}
+    if int(mv.get("versions") or 0) >= 2 and not page_accepted \
+            and level_index(level) >= level_index("exact_technical_variant"):
+        technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
+        proven = any(effective[d].get("basis") in FACT_LAYER_NAMES + TARGET_REGION_BASES for d in technical) \
+            or bool(region and region.get("allowed") and region.get("status") == "target")
+        if mv.get("inventory_without_target") or not (proven or mv.get("repeated")):
+            flags.append("single_value_multi_version")
+            level, basis, catalog, raised_by = "body_powertrain", None, None, None
+    # R5 (PR #45): a single-version page whose stated power contradicts its own displacement against the catalog
+    if page.get("page_inconsistent"):
+        flags.append("page_inconsistent")
+        if level_index(level) > level_index("body_powertrain"):
+            level, basis, catalog, raised_by = "body_powertrain", None, None, None
     # H3: a document published >= 2 years before the target model year that never states that year speaks of an
     # earlier car: at most the generation, unless a DVM region assigned to the target by power + designation holds it
     if stale:
@@ -1590,7 +1687,7 @@ def binding_gaps(item: dict, requirement: str | None = None, propulsion: str | N
 
 
 BINDING_FLAG_GAPS = ("system_power_unmapped", "several_powertrain_versions", "relative_variant_reference",
-                     "stale_publication")
+                     "stale_publication", "single_value_multi_version", "page_inconsistent")
 
 
 def is_trim_gap(gap: str) -> bool:

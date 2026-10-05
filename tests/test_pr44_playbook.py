@@ -400,8 +400,9 @@ def test_budget_caps_three_searches_and_six_fetches(cache):
     web = _Web(cache, pages, {"cartube.co.il": urls, "icar.co.il": [], "auto.co.il": []})
     out, _, _ = _resolve(cache, web)
     assert len(web.searches) == out["searches"] == 3 and len(web.fetches) == out["fetches"] == 6
-    assert {d for _, d in web.searches} == {"cartube.co.il", "icar.co.il", "auto.co.il"}
-    assert all(q.startswith("site:") for q, _ in web.searches)
+    # PR #45 (R1): icar's `site:` search finds nothing, so its one domain-filter retry takes the third search
+    assert [(q.startswith("site:"), d) for q, d in web.searches] == [
+        (True, "cartube.co.il"), (True, "icar.co.il"), (False, "icar.co.il")]
 
 
 def test_robots_disallow_is_respected(cache):
@@ -586,12 +587,21 @@ def test_registry_evidence_replays_to_the_same_binding(cache, tmp_path, monkeypa
     assert moved["variant_match_now"] == "different"
 
 
-def test_shipped_registry_index_is_an_empty_fail_closed_placeholder():
+def test_shipped_registry_index_is_a_placeholder_or_a_well_formed_index():
+    """The shipped file is either the empty fail-closed placeholder or a complete build (main carries the first build
+    since the regenerated index was merged): 4-part keys with integer codes, every entry above MIN_KEEP vehicles."""
     import json
     from pathlib import Path
 
     data = json.loads((Path(__file__).resolve().parent.parent / "data" / "gov_registry_index.json").read_text("utf-8"))
-    assert data["complete"] is False and data["entries"] == {}
+    if data["complete"] is not True:
+        assert data["entries"] == {}
+        return
+    assert data["entries"] and data["rows"] > 0
+    for key, entry in data["entries"].items():
+        parts = key.split("|")
+        assert len(parts) == 4 and all(p.isdigit() for p in parts[:3]), key
+        assert max(entry.get(a, {}).get("n", 0) for a in ("front", "rear")) >= 20, key
 
 
 def test_q8_model_page_gearbox_stays_non_exact(cache):

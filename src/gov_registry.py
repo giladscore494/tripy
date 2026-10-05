@@ -5,7 +5,10 @@ data.gov.il publishes the registry of private and commercial vehicles at licence
 codes of each vehicle (tozeret_cd, degem_cd, shnat_yitzur, ramat_gimur) and its front / rear tyre sizes (zmig_kidmi,
 zmig_ahori). scripts/build_gov_registry_index.py aggregates it offline into data/gov_registry_index.json:
 
-    key     tozeret_cd | degem_cd | shnat_yitzur | ramat_gimur        (the Level 1.5 record's government codes)
+    key     tozeret_cd | degem_cd | shnat_yitzur | ramat_gimur        (the Level 1.5 record's government codes; the trim
+                                                                       normalized identically on both sides: upper
+                                                                       case, "-" / "_" / "." as a space, collapsed
+                                                                       whitespace; PR #45)
     value   {"front": {majority, share, n, top: [{size, n}]}, "rear": {...}}
 
 At the start of a run (src/agent.run_vehicle) the target's entry becomes GOVERNMENT EVIDENCE (source_authority
@@ -29,7 +32,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from .candidate_harvest import TIRE
 
 INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "gov_registry_index.json"
 REGISTRY_VERSION = "gov-registry-v1"
@@ -41,14 +43,41 @@ KEY_PARTS = ("tozeret_cd", "degem_cd", "shnat_yitzur", "ramat_gimur")
 _INDEX: dict[str, tuple[float, dict]] = {}
 
 
+# PR #45 (R7): the registry's tyre strings. One size, metric "W/A [Z]R RIM" with optional spaces, a load / speed index
+# ("98Y", "101/99V", glued to the rim: "R1998Y"), reinforcement / run-flat / service markers; anything else is garbage.
+REGISTRY_TIRE = re.compile(r"^P?(\d{3})\s*/\s*(\d{2})\s*(?:Z\s*R|R|-|Z)\s*F?\s*(\d{2})(?=$|[^\d]|\d{2,3}[A-Z])(.*)$")
+TIRE_TAIL_TOKEN = re.compile(r"\d{2,3}(?:/\d{2,3})?[A-Z]{1,2}(?![A-Z\d])|[A-Z][A-Z+&]*|\d+|\S")
+TIRE_TAIL_MARKS = set("*()[],.-:+&;")
+TIRE_RANGES = {"width": (125, 395), "aspect": (20, 95), "rim": (10, 24)}
+
+
 def normalize_tire(raw: Any) -> str | None:
-    """"235/50R19", "235/50 r19 99V" -> "235/50 R19" (the tire_size matcher's form); None when it is not a size."""
-    m = TIRE.search(str(raw or "").lower())
-    return f"{m.group(1)}/{m.group(2)} R{m.group(4)}" if m else None
+    """A registry tyre string as "W/A RDD" (the tire_size matcher's form), None when it is not ONE metric size:
+    "235/50R19", "235/50 R19", "235/50ZR19", "235/50 ZR 19", "245/40R20XL", "245/45R19 98Y", "245/45 R19 98W XL",
+    "225/45R17 RFT" / "ROF" / "RF", Hebrew words and extra whitespace around it -> "235/50 R19" ... Garbage (no size,
+    two sizes, another number after the size, an implausible width / aspect / rim) -> None."""
+    text = re.sub(r"[^\x20-\x7e]+", " ", str(raw or "")).upper()
+    text = re.sub(r"\s+", " ", text).strip()
+    m = REGISTRY_TIRE.match(text)
+    if not m:
+        return None
+    width, aspect, rim = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    for value, (low, high) in zip((width, aspect, rim), TIRE_RANGES.values()):
+        if not low <= value <= high:
+            return None
+    # the rest: load / speed indexes, words (XL, RF / RFT / ROF, M+S, a pattern name) and marks; any other number or a
+    # second size ("235/50R19 / 255/45R19") is garbage
+    for token in TIRE_TAIL_TOKEN.findall(m.group(4)):
+        if not (re.fullmatch(r"\d{2,3}(?:/\d{2,3})?[A-Z]{1,2}", token) or re.fullmatch(r"[A-Z][A-Z+&]{0,11}", token)
+                or token in TIRE_TAIL_MARKS):
+            return None
+    return f"{width}/{aspect:02d} R{rim}"
 
 
 def normalize_trim(raw: Any) -> str:
-    return " ".join(str(raw or "").upper().split())
+    """The registry join key's trim (R7): upper case, "-" / "_" / "." as a space, whitespace collapsed, trimmed.
+    "S-LINE" = "S LINE" = " s  line ". Applied identically by the index build and the runtime lookup; nothing fuzzier."""
+    return " ".join(re.sub(r"[-_.]", " ", str(raw or "")).upper().split())
 
 
 def registry_key(tozeret_cd: Any, degem_cd: Any, shnat_yitzur: Any, ramat_gimur: Any) -> str | None:
@@ -85,11 +114,51 @@ def index(path: Path | str | None = None) -> dict:
     return data
 
 
+_NORMALIZED: dict[int, tuple[dict, dict]] = {}
+
+
+def normalize_key(key: str | None) -> str | None:
+    """A registry key with its trim part normalized (normalize_trim); None when it is not a 4-part key."""
+    parts = str(key or "").split("|")
+    if len(parts) != 4:
+        return None
+    return "|".join([*(p.strip() for p in parts[:3]), normalize_trim(parts[3])])
+
+
+def _normalized_entries(entries: dict) -> dict:
+    """The entries by normalized key. An index built before PR #45 may hold two raw trims of one normalized key: their
+    summaries cannot be merged, so such a key resolves to nothing (fail-closed; a rebuild merges the counts)."""
+    cached = _NORMALIZED.get(id(entries))
+    if cached is not None and cached[0] is entries:
+        return cached[1]
+    view, clash = {}, set()
+    for raw, entry in entries.items():
+        key = normalize_key(raw)
+        if key is None:
+            continue
+        if key in view:
+            clash.add(key)
+        else:
+            view[key] = entry
+    for key in clash:
+        view.pop(key, None)
+    if len(_NORMALIZED) > 8:
+        _NORMALIZED.clear()
+    _NORMALIZED[id(entries)] = (entries, view)
+    return view
+
+
 def entry_for(key: str | None, data: dict | None = None) -> dict | None:
     data = index() if data is None else data
     if not key or data.get("complete") is not True:
         return None
-    return (data.get("entries") or {}).get(key)
+    entries = data.get("entries") or {}
+    norm = normalize_key(key)
+    if norm is None:
+        return None
+    # Always use the normalized view. Direct lookup would let an already-normalized raw key bypass a collision with
+    # another legacy raw spelling (for example both "S-LINE" and "S LINE"), violating the fail-closed rule above.
+    return _normalized_entries(entries).get(norm)
 
 
 def rim_of(size: str | None) -> int | None:
