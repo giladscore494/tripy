@@ -127,37 +127,96 @@ def test_build_writes_the_model_year_pools():
     assert data["stats"]["model_years_pooled"] == 1
 
 
-def test_level_b_emits_at_the_technical_variant_when_every_trim_agrees(cache):
-    from src.binding_replay import replay_fact
-    from src.field_recovery import binding_satisfies
+def _model_year(target_n):
+    """The target's model year: SLINE (30) + a trim with 1 odd vehicle (n < 3, no vote) + the target trim SLINE SUPER
+    with target_n vehicles (none when 0), all on 285/45 R21; another degem and another year that are never pooled."""
+    return _index((_vehicles(target_n, "285/45R21", trim="SLINE SUPER") if target_n else [])
+                  + _vehicles(30, "285\\45 R21", trim="SLINE") + _vehicles(1, "285/40R22", trim="BLACK EDITION")
+                  + _vehicles(40, "255/55R19", trim="SLINE SUPER", degem=261)
+                  + _vehicles(40, "255/55R19", trim="SLINE SUPER", year=2024))
 
-    # the target's trim has 7 vehicles (no level A entry); its model year: 37 + 1 odd vehicle of a trim with n < 3
-    data = _index(_vehicles(7, "285/45R21", trim="SLINE SUPER") + _vehicles(30, "285\\45 R21", trim="SLINE")
-                  + _vehicles(1, "285/40R22", trim="BLACK EDITION")
-                  + _vehicles(40, "255/55R19", trim="SLINE SUPER", degem=261)       # another degem: never pooled
-                  + _vehicles(40, "255/55R19", trim="SLINE SUPER", year=2024))      # another year: never pooled
-    out, ctx = _emit(cache, data)
+
+def _states(ctx, fields):
+    from src.field_recovery import evaluate_fields
+
+    specs = resolve_requested_fields(fields, propulsion="plug_in")
+    return {e["field"]: e["state"] for e in evaluate_fields(specs, [{"kind": k, **d} for k, d in ctx.events], "IL")}
+
+
+def test_level_b_confirmed_by_the_target_trim_binds_the_market_trim_and_fills_the_fields(cache):
+    from src.binding_replay import replay_fact
+
+    out, ctx = _emit(cache, _model_year(10))                 # the target trim: 10 vehicles (no level A), same majority
     assert out["level"] == "B" and out["stored"] == 3 and "reason" not in out
     items = {e["field"]: e for e in ctx.evidence.items}
     assert set(items) == {"tire_size_front", "tire_size_rear", "rim_diameter_in"}
     assert items["tire_size_front"]["value"] == "285/45 R21" and items["rim_diameter_in"]["value"] == 21
     for item in items.values():
-        assert item["registry_level"] == "B"
-        assert item["binding_level"] == "exact_technical_variant"
-        assert item["binding_basis"] == "gov_registry_model_year"
-        assert item["variant_match"] == "unclear"              # below the fields' exact_market_trim requirement
-        assert not binding_satisfies(item, "exact_market_trim")    # stored and visible, never the trim's own value
+        assert item["registry_level"] == "B" and item["variant_match"] == "exact"
+        assert item["binding_level"] == "exact_market_trim"
+        assert item["binding_basis"] == "gov_registry_model_year_trim_confirmed"
+    assert (items["tire_size_front"]["target_trim_n"], items["tire_size_front"]["target_trim_majority"]) == \
+        (10, "285/45 R21")
+    assert items["rim_diameter_in"]["target_trim_n"] == {"front": 10, "rear": 10}
+    assert items["rim_diameter_in"]["target_trim_majority"] == {"front": "285/45 R21", "rear": "285/45 R21"}
+    assert _states(ctx, ["tire_size_front", "tire_size_rear", "rim_diameter_in"]) == \
+        {"tire_size_front": "ok", "tire_size_rear": "ok", "rim_diameter_in": "ok"}
     doc = ctx.cache.get(items["tire_size_front"]["document_id"])
     assert doc["registry_key"] == "21|260|2025" and doc["registry_level"] == "B"
-    # Binding Replay reads the same document and re-derives the same binding
-    item = items["tire_size_front"]
-    now = replay_fact(_adm(A.Q8_PAYLOAD), cache, field=item["field"], value=item["value"], quote=item["quote"],
-                      document_id=item["document_id"], source_url=item["source_url"])
-    assert now["binding_level_now"] == "exact_technical_variant"
-    other = dict(A.Q8_PAYLOAD, identity={**A.Q8_PAYLOAD["identity"], "year": 2024})
-    moved = replay_fact(_adm(other), cache, field=item["field"], value=item["value"], quote=item["quote"],
-                        document_id=item["document_id"], source_url=item["source_url"])
-    assert moved["variant_match_now"] == "different"
+    # Binding Replay re-reads the pool on the document: the same binding for the target, none for another year, and only
+    # the technical variant for another trim of the same model year (it does not confirm the fact)
+    for field in ("tire_size_front", "rim_diameter_in"):
+        item = items[field]
+        kwargs = dict(field=item["field"], value=item["value"], quote=item["quote"], document_id=item["document_id"],
+                      source_url=item["source_url"])
+        now = replay_fact(_adm(A.Q8_PAYLOAD), cache, **kwargs)
+        assert (now["binding_level_now"], now["variant_match_now"]) == ("exact_market_trim", "exact"), field
+        other_year = dict(A.Q8_PAYLOAD, identity={**A.Q8_PAYLOAD["identity"], "year": 2024})
+        assert replay_fact(_adm(other_year), cache, **kwargs)["variant_match_now"] == "different"
+        other_trim = dict(A.Q8_PAYLOAD, identity={**A.Q8_PAYLOAD["identity"], "trim": "SLINE"})
+        moved = replay_fact(_adm(other_trim), cache, **kwargs)
+        assert (moved["binding_level_now"], moved["variant_match_now"]) == ("exact_market_trim", "exact")
+        third = dict(A.Q8_PAYLOAD, identity={**A.Q8_PAYLOAD["identity"], "trim": "COMPETITION"})
+        moved = replay_fact(_adm(third), cache, **kwargs)
+        assert (moved["binding_level_now"], moved["variant_match_now"]) == ("exact_technical_variant", "unclear")
+
+
+@pytest.mark.parametrize("target_n", [2, 0], ids=["target_trim_n_2", "target_trim_absent"])
+def test_level_b_without_the_target_trim_stays_at_the_technical_variant(cache, target_n):
+    from src.field_recovery import binding_satisfies
+
+    out, ctx = _emit(cache, _model_year(target_n))
+    assert out["level"] == "B" and out["stored"] == 3
+    items = {e["field"]: e for e in ctx.evidence.items}
+    for item in items.values():
+        assert item["registry_level"] == "B" and item["variant_match"] == "unclear"
+        assert item["binding_level"] == "exact_technical_variant"
+        assert item["binding_basis"] == "gov_registry_model_year"
+        assert not binding_satisfies(item, "exact_market_trim")
+    assert items["tire_size_front"]["target_trim_n"] == target_n
+    assert items["tire_size_front"].get("target_trim_majority") == ("285/45 R21" if target_n else None)
+    assert items["rim_diameter_in"]["target_trim_n"] == {"front": target_n, "rear": target_n}
+    states = _states(ctx, ["tire_size_front", "tire_size_rear", "rim_diameter_in"])
+    assert "ok" not in states.values(), states                                    # the fields stay unfilled
+
+
+def test_level_b_rim_needs_both_axles_of_the_target_trim():
+    from src.gov_registry import target_trim_check
+
+    axle = {"majority": "285/45 R21", "share": 1.0, "n": 40, "majority_n": 40}
+    pool = {"front": axle, "rear": axle,
+            "trims": {"SLINE SUPER": {"rows": 10, "front": ["285/45 R21", 10, 10], "rear": ["285/45 R21", 2, 2]}}}
+    words = ("sline", "super")
+    assert target_trim_check(pool, words, "tire_size_front")["confirmed"] is True
+    assert target_trim_check(pool, words, "tire_size_rear")["confirmed"] is False                # rear n = 2
+    rim = target_trim_check(pool, words, "rim_diameter_in")
+    assert rim == {"confirmed": False, "target_trim_n": {"front": 10, "rear": 2},
+                   "target_trim_majority": {"front": "285/45 R21", "rear": "285/45 R21"}}
+    pool["trims"]["SLINE SUPER"]["rear"] = ["285/40 R22", 9, 10]                  # n 10, another majority
+    assert target_trim_check(pool, words, "tire_size_rear")["confirmed"] is False
+    assert target_trim_check(pool, words, "alternative_tire_sizes")["confirmed"] is False       # never confirmed
+    pool["trims"]["S LINE"] = {"rows": 5, "front": ["285/45 R21", 5, 5], "rear": ["285/45 R21", 5, 5]}
+    assert target_trim_check(pool, ("s_line",), "rim_diameter_in")["confirmed"] is True     # "S_LINE" = "S LINE"
 
 
 def test_level_a_items_carry_their_level(cache):
@@ -258,17 +317,20 @@ def test_coverage_reasons_per_benchmark_record(tmp_path, capsys):
     assert (by["7"]["reason"], by["7"]["under"], by["7"]["trims"]) == ("level_b", "no_key", ["DESIGN"])
     assert (by["4"]["reason"], by["4"]["n"]) == ("small", 6)
     assert by["4"]["level_b"] == {"used": True, "refusal": "level_b_trims_disagree",
-                                  "fields": ["alternative_tire_sizes"]}
+                                  "fields": ["alternative_tire_sizes"], "market_trim": []}
+    assert by["2"]["level_b"]["market_trim"] == ["rim_diameter_in", "tire_size_front", "tire_size_rear"]
+    assert by["7"]["level_b"]["market_trim"] == []                               # the target trim is not in the pool
     assert (by["5"]["reason"], by["5"]["n"], by["5"]["unparsed"]) == ("unparsed", 8, [15, 15])
     assert by["6"]["reason"] == "no_government_codes"
     assert bench["reasons"] == {"level_b": 2, "no_government_codes": 1, "no_key": 1, "small": 1, "unparsed": 1}
     assert C.main(args) == 0
     text = capsys.readouterr().out
     assert "no entry: 2 אאודי Q8 2025 key=21|261|2025|BASE: level B used: rim_diameter_in, tire_size_front, " \
-           "tire_size_rear (trim n=5)" in text
+           "tire_size_rear (trim n=5); confirmed by the trim (exact_market_trim): rim_diameter_in, tire_size_front, " \
+           "tire_size_rear" in text
     assert "key=21|262|2025|BASE: no key at all (model year trims: none); level B refused: no_pool" in text
-    assert "key=21|265|2025|BASE: level B used: rim_diameter_in, tire_size_front, tire_size_rear (trim: no_key)" \
-        in text
+    assert "key=21|265|2025|BASE: level B used: rim_diameter_in, tire_size_front, tire_size_rear (trim: no_key); " \
+           "not confirmed by the trim (exact_technical_variant, fields stay unfilled)" in text
     assert "key=21|263|2025|BASE: n<20 (n=6); level B refused: trims_disagree (evidence: alternative_tire_sizes)" \
         in text
     assert "key=21|264|2025|BASE: unparsed (n=8 parsed, unparsed cells front/rear=[15, 15])" in text

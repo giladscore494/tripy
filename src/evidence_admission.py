@@ -1192,7 +1192,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         # PR #44 (P1): a government registry aggregate binds by the government model code, never by its text
         from .gov_registry import registry_binding
 
-        return registry_binding(material.meta, adm.identity, spec.get("binding_requirement")), inputs
+        return registry_binding(material.meta, adm.identity, spec.get("binding_requirement"), name), inputs
     profile = material.profile
     region = None
     offer = None

@@ -12,7 +12,8 @@ Every benchmark record without a level A entry gets a reason, from the index's `
     no_key                no registered vehicle under the key at all (its model year's trims are listed)
     small                 n < 20 vehicles under the key (the n is printed)
     unparsed              n < 20 parsed, but >= 20 with the tyre cells the parser rejected
-    level_b               the model-year pool (level B) emits for it; else the level B refusal is printed
+    level_b               the model-year pool (level B) emits for it, with the fields the record's own trim confirms
+                          (exact_market_trim, they fill); else the level B refusal is printed
     index_without_model_years   an index built before the model-year pools: the reason cannot be told
 
 Read-only, no network. Printed at the end of the build-gov-registry-index Action, also when an earlier step failed.
@@ -31,8 +32,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.db import build_level15_payload  # noqa: E402
-from src.gov_registry import (MIN_VEHICLES, lookup, model_year_for, normalize_key, normalize_trim,  # noqa: E402
-                              payload_key)
+from src.gov_registry import (LEVEL_B, MIN_VEHICLES, lookup, model_year_for, normalize_key,  # noqa: E402
+                              normalize_trim, payload_key, target_trim_check)
 from src.gov_registry import index as load_index  # noqa: E402
 
 SNAPSHOT_PATH = ROOT / "data" / "benchmark_v1_level15_snapshot.json"
@@ -40,8 +41,9 @@ CATALOG_PATH = ROOT / "data" / "catalog_trim_index.json"
 TYRE_FIELDS = ("tire_size_front", "tire_size_rear")
 
 
-def missing_reason(key: str | None, found: dict, data: dict) -> dict:
-    """Why a record has no level A entry: {reason, n?, unparsed?, trims?, level_b?} (see the module doc)."""
+def missing_reason(key: str | None, found: dict, data: dict, trim: str | None = None) -> dict:
+    """Why a record has no level A entry: {reason, n?, unparsed?, trims?, level_b?} (see the module doc). level_b
+    names the fields the record's own trim confirms (`market_trim`: bound at exact_market_trim, they fill)."""
     if key is None:
         return {"reason": "no_government_codes"}
     if not isinstance(data.get("model_years"), dict):
@@ -60,8 +62,11 @@ def missing_reason(key: str | None, found: dict, data: dict) -> dict:
                "unparsed": unparsed}
     if found["level"] == "B" and any(r["field"] != "alternative_tire_sizes" for r in found["rows"]):
         out = {**out, "under": out["reason"], "reason": "level_b"}
-    out["level_b"] = {"used": found["level"] == "B", "refusal": found["reason"],
-                      "fields": sorted({r["field"] for r in found["rows"]})}
+    fields = sorted({r["field"] for r in found["rows"]})
+    words = [w for w in str(trim or "").lower().split() if w]
+    out["level_b"] = {"used": found["level"] == LEVEL_B, "refusal": found["reason"], "fields": fields,
+                      "market_trim": [f for f in fields if found["level"] == LEVEL_B
+                                      and target_trim_check(found["entry"], words, f)["confirmed"]]}
     return out
 
 
@@ -85,7 +90,7 @@ def level15_coverage(rows: list[dict], data: dict) -> dict:
                 "name": " ".join(str(row.get(k) or "") for k in ("tozar", "kinuy_mishari", "shnat_yitzur")).strip(),
                 "key": key, "entry": entry, "level": found["level"], "fields": fields}
         if not entry:
-            item.update(missing_reason(key, found, data))
+            item.update(missing_reason(key, found, data, (payload.get("identity") or {}).get("trim")))
             out["reasons"][item["reason"]] = out["reasons"].get(item["reason"], 0) + 1
             out["with_level_b"] += item["reason"] == "level_b"
             out["missing"].append(item)
@@ -98,7 +103,10 @@ def _reason_text(m: dict) -> str:
     if reason == "level_b":
         detail = f"level B used: {', '.join(m['level_b']['fields'])}"
         under = m.get("under")
-        return detail + (f" (trim n={m.get('n')})" if under == "small" else f" (trim: {under})" if under else "")
+        detail += f" (trim n={m.get('n')})" if under == "small" else f" (trim: {under})" if under else ""
+        confirmed = m["level_b"].get("market_trim") or []
+        return detail + (f"; confirmed by the trim (exact_market_trim): {', '.join(confirmed)}" if confirmed
+                         else "; not confirmed by the trim (exact_technical_variant, fields stay unfilled)")
     detail = {"no_government_codes": "no government codes on the record",
               "index_without_model_years": "index built before the model-year pools (no model_years): rebuild for "
                                            "the reason",

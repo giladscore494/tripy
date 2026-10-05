@@ -28,7 +28,12 @@ that trim), fail-closed. The level used is stored on every emitted item (`regist
                                                    emits a standard size only at n >= MIN_VEHICLES, share >=
                                                    LEVEL_B_MIN_SHARE (0.95) AND every trim with n >= LEVEL_B_TRIM_MIN
                                                    (3) has that same majority; binding exact_technical_variant (basis
-                                                   gov_registry_model_year). When the trims' majorities differ, no
+                                                   gov_registry_model_year), raised to exact_market_trim (basis
+                                                   gov_registry_model_year_trim_confirmed) only when the target's own
+                                                   trim is in the pool with n >= LEVEL_B_TRIM_MIN on that axle (the rim:
+                                                   on both) and its majority is the pooled majority (target_trim_n /
+                                                   target_trim_majority are recorded on the item). When the trims'
+                                                   majorities differ, no
                                                    standard size: the trims with their majority sizes become
                                                    alternative_tire_sizes evidence. Never pooled across years or degem.
 
@@ -336,19 +341,51 @@ def _document(cache, key: str, entry: dict, rows: list[dict], data: dict, level:
     return cache.put("registry", document_url(key), text.encode("utf-8"), meta, text)["document_id"]
 
 
-def registry_binding(meta: dict, identity, requirement: str | None) -> dict:
+FIELD_AXLES = {"tire_size_front": ("front",), "tire_size_rear": ("rear",), "rim_diameter_in": ("front", "rear")}
+
+
+def target_trim_check(pool: dict | None, trim_words, field: str | None) -> dict:
+    """Does the target's own trim confirm a level B fact? {confirmed, target_trim_n, target_trim_majority}: the trim of
+    the pool whose words are the target's (exactly one, else absent), with n >= LEVEL_B_TRIM_MIN on the fact's axle (the
+    rim: both axles) and that axle's majority equal to the pooled majority. A one-axle fact records an int and a size;
+    the rim and alternative_tire_sizes (never confirmed) record {front, rear}."""
+    pool = pool or {}
+    words = _words(normalize_trim(" ".join(trim_words or ())))       # the pool's trims are normalize_trim'd
+    matches = [info for trim, info in (pool.get("trims") or {}).items() if words and _words(trim) == words]
+    info = (matches[0] or {}) if len(matches) == 1 else {}
+    axles = FIELD_AXLES.get(field or "")
+    checked = {}
+    for axle in axles or ("front", "rear"):
+        row = info.get(axle) if isinstance(info.get(axle), list) and len(info.get(axle)) == 3 else [None, 0, 0]
+        pooled = (pool.get(axle) or {}).get("majority")
+        checked[axle] = (row[0], int(row[2] or 0), bool(row[0]) and int(row[2] or 0) >= LEVEL_B_TRIM_MIN
+                         and row[0] == pooled)
+    confirmed = bool(axles) and all(ok for _, _, ok in checked.values())
+    if axles and len(axles) == 1:
+        majority, n, _ = checked[axles[0]]
+        return {"confirmed": confirmed, "target_trim_n": n, "target_trim_majority": majority}
+    return {"confirmed": confirmed, "target_trim_n": {a: n for a, (_, n, _) in checked.items()},
+            "target_trim_majority": {a: m for a, (m, _, _) in checked.items()}}
+
+
+def registry_binding(meta: dict, identity, requirement: str | None, field: str | None = None) -> dict:
     """The binding of a registry fact: exact_market_trim (basis gov_model_code) when the document's key is the
-    target's own government key; for a level B (model-year pool) document exact_technical_variant (basis
-    gov_registry_model_year) when its degem_cd and model year are the target's; else `different` (another model code /
-    year / trim). variant_match is `exact` only when the level reaches the requirement (src/document_binding.bind).
-    Deterministic."""
+    target's own government key; for a level B (model-year pool) document whose degem_cd and model year are the
+    target's, exact_market_trim (basis gov_registry_model_year_trim_confirmed) when the target's own trim confirms the
+    fact (target_trim_check), else exact_technical_variant (basis gov_registry_model_year); else `different` (another
+    model code / year / trim). variant_match is `exact` only when the level reaches the requirement
+    (src/document_binding.bind). Deterministic: a replay re-reads the pool stored on the document."""
     pooled = meta.get("registry_level") == LEVEL_B
     own = (str(identity.gov_model_code), str(identity.year), tuple(identity.trim_words)) \
         if identity.gov_model_code and identity.year else None
     key = str(meta.get("registry_key") or "")
+    check = None
     if pooled:
         same = bool(key) and own is not None and _comparable_model_year(key) == own[:2]
-        level, basis = ("exact_technical_variant", "gov_registry_model_year") if same else ("unknown", None)
+        check = target_trim_check(meta.get("registry_entry"), own[2] if own else (), field) if same else None
+        level, basis = ("unknown", None) if not same else \
+            ("exact_market_trim", "gov_registry_model_year_trim_confirmed") if check["confirmed"] else \
+            ("exact_technical_variant", "gov_registry_model_year")
     else:
         same = bool(key) and own is not None and _comparable(key) == own
         level, basis = ("exact_market_trim", "gov_model_code") if same else ("unknown", None)
@@ -357,8 +394,10 @@ def registry_binding(meta: dict, identity, requirement: str | None) -> dict:
 
     match = "different" if not same else "exact" if level_index(level) >= level_index(required) else "unclear"
     dimensions = {"gov_model_code": {"status": "match" if same else "mismatch", "basis": "government_registry"}}
-    if pooled and same:
-        dimensions["trim"] = {"status": "absent", "basis": "gov_registry_model_year"}
+    if check is not None:
+        dimensions["trim"] = {"status": "match" if check["confirmed"] else "absent", "basis": basis,
+                              "target_trim_n": check["target_trim_n"],
+                              "target_trim_majority": check["target_trim_majority"]}
     return {"binding_level": level, "variant_match": match,
             "binding_requirement": required, "binding_veto": [] if same else ["gov_model_code_mismatch"],
             "binding_dimensions": dimensions, "binding_basis": basis, "binding_version": REGISTRY_VERSION}
@@ -376,7 +415,12 @@ def _comparable(key: str) -> tuple:
     parts = key.split("|")
     if len(parts) != 4:
         return ()
-    return parts[1], parts[2], tuple(w for w in re.split(r"[^\wא-ת]+", parts[3].lower()) if w)
+    return parts[1], parts[2], _words(parts[3])
+
+
+def _words(trim: str) -> tuple:
+    """A trim's words as the target identity holds them (src/document_binding._trim_words)."""
+    return tuple(w for w in re.split(r"[^\wא-ת]+", str(trim or "").lower()) if w)
 
 
 def emit(ctx, payload: dict | None, data: dict | None = None) -> dict:
@@ -407,7 +451,8 @@ def emit(ctx, payload: dict | None, data: dict | None = None) -> dict:
             spec = adm.spec(row["field"])
             if spec.get("applicable") is False:
                 continue
-            binding = registry_binding(meta, adm.identity, spec.get("binding_requirement"))
+            binding = registry_binding(meta, adm.identity, spec.get("binding_requirement"), row["field"])
+            trim_check = (binding.get("binding_dimensions") or {}).get("trim") or {}
             unit = spec.get("normalized_unit")
             record = {"field": row["field"], "value": row["value"], "unit": unit, "source_url": meta.get("final_url"),
                       "document_id": doc, "quote": row["statement"], "market": "IL", "market_basis": "government_registry",
@@ -419,6 +464,8 @@ def emit(ctx, payload: dict | None, data: dict | None = None) -> dict:
                       **{k: v for k, v in binding.items() if k != "variant_match" and v not in (None, [], {})},
                       "source_authority": SOURCE_AUTHORITY, "authority_basis": "gov_registry_index",
                       "registry_level": found["level"],
+                      **({k: trim_check.get(k) for k in ("target_trim_n", "target_trim_majority")}
+                         if found["level"] == LEVEL_B else {}),
                       "source_domain": "data.gov.il", "observed_at": meta.get("fetched_at"),
                       "source_date": data.get("generated_at"), "source_date_basis": "gov_registry_index"}
             item, reused, _ = ctx.evidence.add_or_reuse({k: v for k, v in record.items() if v not in (None, "", [])})
