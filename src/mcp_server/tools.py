@@ -95,6 +95,53 @@ class Observer:
         return doc, folder, cache, cache.get(doc) or {}
 
     # -- runs ----------------------------------------------------------------------------------------------------
+    # -- search bake-offs (PR #46, S4): <data_dir>/bakeoffs/<id>/, read from disk only ------------------------------
+    def _bakeoffs_root(self) -> Path:
+        return Path(self.paths.data_dir) / "bakeoffs"
+
+    def _bakeoff_dir(self, bakeoff_id: Any) -> Path:
+        name = str(bakeoff_id or "").strip()
+        if not name or "/" in name or "\\" in name or name.startswith(".") \
+                or not (self._bakeoffs_root() / name / "status.json").is_file():
+            raise ToolInputError(f"unknown bakeoff id: {name[:80]!r}")
+        return self._bakeoffs_root() / name
+
+    @staticmethod
+    def _json_file(path: Path) -> dict | None:
+        import json
+
+        try:
+            value = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def list_bakeoffs(self, limit: Any = 20, offset: Any = 0) -> dict:
+        root = self._bakeoffs_root()
+        states = [s for s in (self._json_file(p / "status.json") for p in root.iterdir() if p.is_dir())
+                  if s] if root.is_dir() else []
+        states.sort(key=lambda s: (s.get("created_at") or "", s.get("bakeoff_id") or ""), reverse=True)
+
+        def row(state: dict) -> dict:
+            summary = self._json_file(root / str(state.get("bakeoff_id")) / "summary.json") or {}
+            return {k: state.get(k) for k in ("bakeoff_id", "label", "status", "created_at", "finished_at",
+                                               "progress", "error")} | {
+                "backends": (state.get("config") or {}).get("backends"),
+                "fetch_top": (state.get("config") or {}).get("fetch_top"),
+                "metrics": [{k: m.get(k) for k in ("backend", "version_url_hit", "accepted", "usd_per_record")}
+                            for m in summary.get("metrics") or []]}
+        return page(states, offset, limit, lambda chunk: {"bakeoffs": [row(s) for s in chunk]}, max_limit=200,
+                    default_limit=20)
+
+    def bakeoff_result(self, bakeoff_id: Any, offset: Any = 0, limit: Any = 100) -> dict:
+        from ..search_bakeoff import read_rows
+
+        folder = self._bakeoff_dir(bakeoff_id)
+        rows = read_rows(folder / "records.jsonl")
+        return page(rows, offset, limit, lambda chunk: {
+            "bakeoff": self._json_file(folder / "status.json"), "summary": self._json_file(folder / "summary.json"),
+            "records": chunk}, max_limit=500, default_limit=100)
+
     def list_runs(self, limit: Any = 20, offset: Any = 0) -> dict:
         from ..runstate.report import elapsed_s
 

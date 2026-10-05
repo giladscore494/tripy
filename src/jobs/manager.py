@@ -251,8 +251,16 @@ class RunManager:
         self._series_cancel: dict[str, threading.Event] = {}
         self._series_lock = threading.RLock()
         self.series_poll_s = 1.0
+        # PR #46 (S4): search bake-offs, a background job of this manager (<data_dir>/bakeoffs/<id>/)
+        from .bakeoffs import BakeoffJobs
+
+        self.bakeoffs = BakeoffJobs(paths.data_dir / "bakeoffs", cache=self.cache, owner=self.owner)
         self.reconcile()
         self.reconcile_series()
+        try:
+            self.bakeoffs.reconcile(self.boot_id)
+        except Exception:  # noqa: BLE001 - a bake-off's bookkeeping never blocks the server
+            log.warning("could not reconcile search bake-offs", exc_info=True)
         if register_atexit:
             atexit.register(self.shutdown)
 
@@ -905,6 +913,10 @@ class RunManager:
                 grace_s = float(os.environ.get("TRIPY_SHUTDOWN_GRACE_S") or DEFAULT_SHUTDOWN_GRACE_S)
             except ValueError:
                 grace_s = DEFAULT_SHUTDOWN_GRACE_S
+        try:
+            self.bakeoffs.shutdown(grace_s=min(5.0, max(0.0, grace_s)))
+        except Exception:  # noqa: BLE001
+            pass
         with self._lock:
             if self._shutting_down and not self._threads:
                 return

@@ -36,6 +36,9 @@ export function settingError(spec: RunSettingSpec, value: SettingValue): string 
     if (spec.max !== null && value > spec.max) return `Maximum ${spec.max}`;
   }
   if (spec.kind === "choice" && !spec.options.includes(String(value))) return "Choose an option";
+  if (spec.kind === "choice" && spec.unavailable_options?.[String(value)]) {
+    return `Unavailable: ${spec.unavailable_options[String(value)]}`;
+  }
   if (spec.kind === "model" || spec.kind === "text") {
     const text = String(value);
     if (!text && !spec.allow_empty) return "Required";
@@ -73,7 +76,14 @@ function SettingInput({ spec, value, onChange, error }: {
   if (spec.kind === "choice") {
     return (
       <select id={id} className={common} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
-        {spec.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        {spec.options.map((option) => {
+          const unavailable = spec.unavailable_options?.[option];
+          return (
+            <option key={option} value={option} disabled={Boolean(unavailable)} title={unavailable || undefined}>
+              {unavailable ? `${option} — unavailable: ${unavailable}` : option}
+            </option>
+          );
+        })}
       </select>
     );
   }

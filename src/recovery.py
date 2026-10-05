@@ -31,7 +31,7 @@ from .agent import (AgentConfig, ModelCaller, effective_glm_config, finalizer_me
                     run_finalization)
 from .bundle import _is_electrified, _requested, build_research_bundle
 from .final_assembly import run_deterministic_finalization
-from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_models_of, phase_run_cost
+from .pricing import UNKNOWN_USAGE_NOTE, default_pricing, phase_models_of, phase_run_cost, search_cost_inputs
 from .storage import trace
 from .storage.atomic import atomic_write_json
 from .storage.run_loader import reconstruct_run
@@ -210,9 +210,11 @@ def finalize_existing_run(runs_dir: Path | str, batch_id: str, record_id: str, *
     usage_sweep = base.get("usage_document_sweep") or phases["document_sweep"]
     usage_finalizer = trace.sum_usage(base.get("usage_finalizer"), caller.usage["finalization"])
     search_calls = base.get("search_api_calls") or 0
+    priced_searches, extra_search_usd = search_cost_inputs(base.get("counters"), search_calls)
     cost, cost_details = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep,
                                         usage_recovery=usage_recovery, usage_finalizer=usage_finalizer,
-                                        search_api_calls=search_calls, pricing=research_pricing,
+                                        search_api_calls=priced_searches, extra_search_usd=extra_search_usd,
+                                        pricing=research_pricing,
                                         pricing_finalizer=pricing_finalizer,
                                         unknown_usage_attempts=stats["unknown_usage_attempts"],
                                         phase_models=phase_models_of(base.get("cost_details")))

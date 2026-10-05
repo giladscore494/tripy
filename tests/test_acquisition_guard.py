@@ -4,6 +4,8 @@ document card (Part C). Scripted GLM / fake HTTP only: no network, no paid calls
 import json
 
 from conftest import FakeResponse, FakeSession
+import pytest
+
 from fixtures import corolla_tail as tail
 from fixtures.corolla_touring import PAYLOAD, VEHICLE
 from test_phase_contracts import EU, PhaseClient, fetch, run, say, search
@@ -18,6 +20,8 @@ from src.storage.run_log import RunLog
 from src.tools import ToolContext, ToolConfig
 from src.tools.evidence import EvidenceStore
 from src.storage.cache import DocumentCache
+
+pytestmark = [pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
 
 DONE = say({"done": True, "reason": "enough"})
 

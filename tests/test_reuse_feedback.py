@@ -11,6 +11,7 @@ import pytest
 
 from conftest import FakeSession
 from fixtures import corolla_family as family
+from fixtures import corolla_tail as tail
 from fixtures.corolla_touring import CARTUBE, PAYLOAD, TOYOTA_UK, TWO_LITRE, VEHICLE, put_documents
 from test_tools_smoke import ScriptedGLM, _call
 
@@ -23,6 +24,8 @@ from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig
 from src.training_feedback import export_feedback, feedback_examples, improvement_report
+
+pytestmark = [pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
 
 ROOT = Path(__file__).resolve().parent.parent
 SPECS = {s["name"]: s for s in load_schema()}
@@ -132,7 +135,11 @@ def test_a_colliding_record_from_another_powertrain_fails_readmission(tmp_path, 
 
 @pytest.fixture(scope="module")
 def corolla_family(tmp_path_factory):
-    return family.benchmark(tmp_path_factory.mktemp("family"))
+    from conftest import offer_urls
+
+    with pytest.MonkeyPatch.context() as patch:      # module scope: the offered_urls marker does not reach it
+        offer_urls(patch, tail.OFFERED_IL_SITE_PAGES)
+        return family.benchmark(tmp_path_factory.mktemp("family"))
 
 
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract

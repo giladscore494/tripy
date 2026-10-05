@@ -283,6 +283,9 @@ class RunSettingSpec(BaseModel):
     nullable: bool
     allow_empty: bool
     pinned_by_named_profile: bool
+    # PR #46: search backend settings only: {backend: why it is unavailable here} and {named profile: its default}
+    unavailable_options: dict[str, str] | None = None
+    profile_defaults: dict[str, Any] | None = None
 
 
 class ServerControlled(BaseModel):

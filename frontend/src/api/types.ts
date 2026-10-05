@@ -259,6 +259,10 @@ export interface RunSettingSpec {
   nullable: boolean;
   allow_empty: boolean;
   pinned_by_named_profile: boolean;
+  /** Search backend settings only: backends unavailable on this server (their key is not set) and why. */
+  unavailable_options?: Record<string, string> | null;
+  /** Search backend settings only: each named profile's default. */
+  profile_defaults?: Record<string, SettingValue> | null;
 }
 
 export interface ModelLimit {
@@ -637,4 +641,105 @@ export interface Reachability {
   checked: boolean;
   reachable: boolean | null;
   detail: string;
+}
+
+// --- search bake-off (PR #46, S4) -------------------------------------------------------------------------------------
+
+export interface BakeoffBackendOption {
+  name: string;
+  label: string;
+  available: boolean;
+  reason: string;
+  key_env: string | null;
+}
+
+export interface BakeoffOptions {
+  backends: BakeoffBackendOption[];
+  records: { record_id: string; label: string }[];
+  defaults: { backends: string[]; record_ids: string[]; fetch_top: boolean };
+  note: string;
+}
+
+export interface BakeoffJob {
+  bakeoff_id: string;
+  label: string;
+  status: string;
+  executing: boolean;
+  config: { backends: string[]; records: string[]; fetch_top: number; label: string };
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  progress: { done: number; total: number | null };
+  error: string | null;
+}
+
+export interface BakeoffMetrics {
+  backend: string;
+  queries: number;
+  errors: number;
+  results: number;
+  full_path_ratio: number | null;
+  on_site_ratio: number | null;
+  version_url_hit: number;
+  version_url_hit_ratio: number | null;
+  first_version_rank: number | null;
+  israeli_domain_share: number | null;
+  unique_urls: number;
+  candidates: number;
+  fetched: number;
+  accepted: number;
+  rejected: number;
+  rejected_by_reason: Record<string, number>;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  usd: number;
+  usd_per_1000_queries: number | null;
+  usd_per_record: number | null;
+  accepted_per_usd: number | null;
+}
+
+export interface BakeoffRecordRow {
+  record_id: string;
+  vehicle: string | null;
+  backend: string;
+  queries: number;
+  results: number;
+  version_url_hit: boolean;
+  first_version_rank: number | null;
+  candidate_url: string | null;
+  candidate_score: number | null;
+  verdict: string | null;
+  verdict_reason: string | null;
+  usd: number;
+}
+
+export interface BakeoffSummary {
+  schema: string;
+  status: string;
+  records: number;
+  queries: number;
+  metrics: BakeoffMetrics[];
+  note: string;
+}
+
+export interface BakeoffList {
+  bakeoffs: BakeoffJob[];
+}
+
+export interface BakeoffDetail {
+  bakeoff: BakeoffJob;
+  summary: BakeoffSummary | null;
+  records: BakeoffRecordRow[];
+}
+
+export interface StartBakeoff {
+  backends: string[];
+  record_ids?: string[];
+  fetch_top: boolean;
+  label?: string;
+}
+
+export interface BakeoffStarted {
+  bakeoff_id: string;
+  bakeoff: BakeoffJob | null;
 }

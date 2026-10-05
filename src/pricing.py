@@ -50,7 +50,32 @@ def default_pricing(model: str) -> dict:
     return pricing
 
 
-def compute_cost(usage: dict, search_api_calls: int, pricing: dict | None) -> dict:
+def search_cost_inputs(counters: dict | None, search_api_calls: int | None = None) -> tuple[int, float]:
+    """(searches priced at the run's web_search_per_call, USD of the other backends' searches) of a run's counters
+    (PR #46): with per-backend counters (`search_calls:<backend>`, `search_usd:<backend>`) only glm searches use the run's
+    GLM price; serper / gemini searches carry their own cost (data/search_backends.json). A run recorded before
+    per-backend counters prices every billable search at web_search_per_call, as before."""
+    counters = counters or {}
+    calls = {k.split(":", 1)[1]: v for k, v in counters.items() if str(k).startswith("search_calls:")}
+    total = int(search_api_calls if search_api_calls is not None else counters.get("search_api_calls", 0) or 0)
+    if not calls:
+        return total, 0.0
+    extra = sum(float(v or 0) for k, v in counters.items()
+                if str(k).startswith("search_usd:") and str(k).split(":", 1)[1] != "glm")
+    return int(calls.get("glm", 0) or 0), round(extra, 6)
+
+
+def search_by_backend(counters: dict | None) -> tuple[dict, dict]:
+    """({backend: provider calls}, {backend: USD}) of a run's counters (search_calls_by_backend /
+    search_usd_by_backend)."""
+    counters = counters or {}
+    calls = {str(k).split(":", 1)[1]: int(v) for k, v in counters.items() if str(k).startswith("search_calls:")}
+    usd = {str(k).split(":", 1)[1]: round(float(v), 6) for k, v in counters.items()
+           if str(k).startswith("search_usd:")}
+    return dict(sorted(calls.items())), dict(sorted(usd.items()))
+
+
+def compute_cost(usage: dict, search_api_calls: int, pricing: dict | None, extra_search_usd: float = 0.0) -> dict:
     """Cost breakdown in USD. Token cost is None when no token prices are known.
 
     Cached prompt tokens are billed at the full input price here, because no
@@ -62,7 +87,7 @@ def compute_cost(usage: dict, search_api_calls: int, pricing: dict | None) -> di
     if p_in is not None and p_out is not None:
         tokens = round((usage.get("prompt_tokens", 0) * p_in + usage.get("completion_tokens", 0) * p_out) / 1e6, 6)
     per_call = pricing.get("web_search_per_call")
-    search = round(search_api_calls * per_call, 6) if per_call is not None else None
+    search = round(search_api_calls * per_call + (extra_search_usd or 0.0), 6) if per_call is not None else None
     parts = [x for x in (tokens, search) if x is not None]
     return {"tokens_usd": tokens, "web_search_usd": search, "total_usd": round(sum(parts), 6) if parts else None}
 
@@ -73,14 +98,14 @@ UNKNOWN_USAGE_NOTE = ("Recorded API cost from returned usage; provider billing m
 
 def run_cost(usage_research: dict | None, usage_finalizer: dict | None, search_api_calls: int,
              pricing: dict | None, pricing_finalizer: dict | None = None,
-             unknown_usage_attempts: int = 0) -> tuple[dict, dict]:
+             unknown_usage_attempts: int = 0, extra_search_usd: float = 0.0) -> tuple[dict, dict]:
     """(cost, details). `cost` keeps the {tokens_usd, web_search_usd, total_usd} shape.
 
     Only usage returned by successful responses is priced. Attempts whose outcome
     at the provider is unknown (timeouts, dropped connections) cannot be priced, so
     the figure is then a lower bound, flagged in `details`.
     """
-    research = compute_cost(usage_research or {}, search_api_calls, pricing)
+    research = compute_cost(usage_research or {}, search_api_calls, pricing, extra_search_usd)
     final_usage = usage_finalizer or {}
     finalizer = compute_cost(final_usage, 0, pricing_finalizer or pricing)
     has_final = bool(final_usage.get("prompt_tokens") or final_usage.get("completion_tokens"))
@@ -106,7 +131,7 @@ def run_cost(usage_research: dict | None, usage_finalizer: dict | None, search_a
 def phase_run_cost(*, usage_research: dict | None, usage_sweep: dict | None, usage_recovery: dict | None,
                    usage_finalizer: dict | None, search_api_calls: int, pricing: dict | None,
                    pricing_finalizer: dict | None = None, unknown_usage_attempts: int = 0,
-                   phase_models: dict[str, str] | None = None) -> tuple[dict, dict]:
+                   phase_models: dict[str, str] | None = None, extra_search_usd: float = 0.0) -> tuple[dict, dict]:
     """run_cost with per-phase models (src/phase_settings.py): a document_sweep / field_recovery phase that ran on its
     own model (`phase_models` = {group: model}) is priced with that model's prices; every other phase as before. A
     phase that used no tokens is never priced separately (an unpriced model it never called cannot null the cost)."""
@@ -122,7 +147,7 @@ def phase_run_cost(*, usage_research: dict | None, usage_sweep: dict | None, usa
             if isinstance(value, (int, float)):
                 total[key] = total.get(key, 0) + value
     cost, details = run_cost(total, usage_finalizer, search_api_calls, pricing, pricing_finalizer,
-                             unknown_usage_attempts)
+                             unknown_usage_attempts, extra_search_usd)
     for group, (usage, model) in own.items():
         part = compute_cost(usage, 0, default_pricing(model))["tokens_usd"]
         details[f"{group}_tokens_usd"] = part

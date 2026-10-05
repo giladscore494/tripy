@@ -202,6 +202,8 @@ class VehicleLive:
         self.unknown_usage = 0
         self.usage_by_model: dict[str, dict] = {}
         self.search_api_calls = 0
+        self.glm_search_calls = 0          # priced at the run's web_search_per_call
+        self.backend_search_usd = 0.0      # serper / gemini searches: their own cost (data/search_backends.json)
         self.status: str | None = None
         self.started = None
         self.finished = None
@@ -288,6 +290,13 @@ class VehicleLive:
     def _on_api_call(self, e: dict) -> None:
         if e.get("request_kind") == "search":
             self.search_api_calls += 1
+            self.glm_search_calls += 1
+
+    def _on_search_backend_call(self, e: dict) -> None:
+        # PR #46: a serper / gemini provider search (the GLM client reports its own searches as api_call events)
+        if e.get("backend") in ("serper", "gemini") and not e.get("cache_hit"):
+            self.search_api_calls += 1
+            self.backend_search_usd += float(e.get("usd") or 0.0)
 
     def _on_api_error(self, e: dict) -> None:
         if e.get("status") == 429:
@@ -515,7 +524,7 @@ class VehicleLive:
             if cost is None and (usage["prompt_tokens"] or usage["completion_tokens"]):
                 return None
             total += cost or 0.0
-        search = compute_cost({}, self.search_api_calls, self.pricing)["web_search_usd"] or 0.0
+        search = compute_cost({}, self.glm_search_calls, self.pricing, self.backend_search_usd)["web_search_usd"] or 0.0
         return round(total + search, 6)
 
     def card(self) -> dict:

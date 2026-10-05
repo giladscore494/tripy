@@ -65,6 +65,7 @@ class UISettings:
     extra_error: str = ""
     notes: list = field(default_factory=list)
     env_overrides: list = field(default_factory=list)   # env values differing from the code defaults (Part G)
+    search_fallback_backend: str = "none"               # PR #46: answers a search only on 0 usable primary results
 
     def glm_settings(self) -> GLMSettings:
         """A fresh settings object per run (the API key stays in memory; never persisted)."""
@@ -80,7 +81,9 @@ class UISettings:
         return build_agent_config(secret, self.agent_overrides, profile)
 
     def tool_config(self, secret: Secret):
-        return tool_config_from_env(env=secret, search_backend=self.search_backend)
+        fallback = "" if self.search_fallback_backend in ("", "none", self.search_backend) \
+            else self.search_fallback_backend
+        return tool_config_from_env(env=secret, search_backend=self.search_backend, search_fallback_backend=fallback)
 
 
 # --- defaults --------------------------------------------------------------------------------------------------------
@@ -109,7 +112,8 @@ def glm_defaults(secret: Secret) -> dict:
     return {"model_id": secret("GLM_MODEL"), "finalizer_model_id": secret("GLM_FINALIZER_MODEL"),
             "base_url": secret("GLM_BASE_URL") or DEFAULT_BASE_URL,
             "chat_path": secret("GLM_CHAT_PATH") or DEFAULT_CHAT_PATH,
-            "search_backend": "glm" if (secret("SEARCH_BACKEND") or "glm") == "glm" else "duckduckgo",
+            "search_backend": (secret("SEARCH_BACKEND") or "glm").strip().lower()
+            if (secret("SEARCH_BACKEND") or "glm").strip().lower() in SEARCH_BACKENDS else "glm",
             "search_path": secret("GLM_SEARCH_PATH") or DEFAULT_SEARCH_PATH,
             "search_engine": secret("GLM_SEARCH_ENGINE") or DEFAULT_SEARCH_ENGINE,
             "chat_attempts": _int(secret("GLM_CHAT_MAX_ATTEMPTS"), DEFAULT_CHAT_MAX_ATTEMPTS),
@@ -308,7 +312,9 @@ def _bounded(name: str, kind: str, label: str, group: str, target: Any = None, h
 
 MODEL_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}")
 SEARCH_ENGINE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-SEARCH_BACKENDS = ("glm", "duckduckgo")
+SEARCH_BACKENDS = ("glm", "serper", "gemini", "duckduckgo")       # src/tools/search_backends (PR #46)
+SEARCH_FALLBACKS = ("none", *SEARCH_BACKENDS)
+SEARCH_BACKEND_SETTINGS = ("search_backend", "search_fallback_backend")
 DATA_SOURCES = ("auto", "database", "snapshot")
 ON_OFF = ("on", "off")
 PRICE_RANGES = {"price_in": (0.0, 100.0), "price_out": (0.0, 100.0), "price_search": (0.0, 10.0)}
@@ -319,7 +325,12 @@ RUN_OVERRIDES: tuple[RunOverride, ...] = (
     RunOverride("finalizer_model_id", "model", "Finalizer model id", "Model", allow_empty=True,
                 help="GLM_FINALIZER_MODEL; empty = the research model."),
     RunOverride("search_backend", "choice", "Search backend", "Model", options=SEARCH_BACKENDS,
-                help="glm = GLM web_search API; duckduckgo = keyless HTML search."),
+                help="glm = Z.ai search-prime; serper = Google results (SERPER_API_KEY); gemini = Gemini grounding, "
+                     "URLs only (GEMINI_API_KEY); duckduckgo = keyless HTML search. A backend without its key is "
+                     "unavailable. A named profile uses its own default (Production: glm) unless you choose one here."),
+    RunOverride("search_fallback_backend", "choice", "Fallback search backend", "Model", options=SEARCH_FALLBACKS,
+                help="Answers a search only when the primary backend returned 0 usable results (logged as "
+                     "search_fallback_used). none = no fallback."),
     RunOverride("search_engine", "text", "GLM search engine", "Model", help="GLM_SEARCH_ENGINE (glm backend only)."),
     _bounded("chat_attempts", "int", "Chat max attempts (total, 1 = no retry)", "Model"),
     _bounded("search_attempts", "int", "Search max attempts (total)", "Model"),
@@ -400,6 +411,8 @@ def run_setting_defaults(secret: Secret) -> dict:
     pricing = pricing_defaults(g["model_id"], secret)
     return {
         "model_id": g["model_id"], "finalizer_model_id": g["finalizer_model_id"], "search_backend": g["search_backend"],
+        "search_fallback_backend": (secret("SEARCH_FALLBACK_BACKEND") or "none").strip().lower()
+        if (secret("SEARCH_FALLBACK_BACKEND") or "none").strip().lower() in SEARCH_FALLBACKS else "none",
         "search_engine": g["search_engine"], "chat_attempts": clamp("chat_attempts", g["chat_attempts"]),
         "search_attempts": clamp("search_attempts", g["search_attempts"]),
         "chat_timeout": clamp("chat_timeout", g["chat_timeout"]), "workers": clamp("workers", workers_default(secret)),
@@ -460,20 +473,24 @@ def validate_overrides(overrides: dict | None) -> dict:
     return out
 
 
-def settings_for_run(secret: Secret, controller, overrides: dict | None = None) -> UISettings:
+def settings_for_run(secret: Secret, controller, overrides: dict | None = None,
+                     profile: str | None = None) -> UISettings:
     """ONE run's settings: the sidebar's defaults (run_setting_defaults) with the validated per-run `overrides`, through
     the same assemble_settings the sidebar uses. Model-dependent defaults (prices, in-flight limits) follow the chosen
     model, as the sidebar's do. Server-controlled values (endpoints, credentials, extra JSON, in-flight limits) always
-    come from the server."""
+    come from the server. A named run `profile` supplies its own search backend / fallback defaults
+    (run_profiles.PROFILE_SEARCH) unless the run chooses them."""
+    from .run_profiles import profile_search
+
     chosen = validate_overrides(overrides)
     g = glm_defaults(secret)
     a = agent_defaults(secret)
-    v = {**run_setting_defaults(secret), **chosen}
+    v = {**run_setting_defaults(secret), **profile_search(profile), **chosen}
     pricing = pricing_defaults(v["model_id"], secret)
     prices = [chosen.get(name, pricing[key]) for name, key in (("price_in", "input_per_mtok"),
                                                               ("price_out", "output_per_mtok"),
                                                               ("price_search", "web_search_per_call"))]
-    return assemble_settings(
+    settings = assemble_settings(
         model_id=v["model_id"], finalizer_model_id=v["finalizer_model_id"], base_url=g["base_url"],
         chat_path=g["chat_path"], api_key=secret("GLM_API_KEY"), api_key_from_ui=False,
         search_backend=v["search_backend"], search_path=g["search_path"], search_engine=v["search_engine"],
@@ -489,6 +506,8 @@ def settings_for_run(secret: Secret, controller, overrides: dict | None = None) 
         sweep_attempts=v["sweep_attempts"], sweep_fields=v["sweep_fields"], sweep_candidates=v["sweep_candidates"],
         pricing=pricing_from(pricing, *prices), data_source=v["data_source"], dsn=dsn_default(secret),
         env_overrides=env_overrides(secret))
+    settings.search_fallback_backend = v["search_fallback_backend"]
+    return settings
 
 
 def pinned_by_named_profiles() -> set[str]:
@@ -506,8 +525,17 @@ def run_settings_contract(secret: Secret, controller) -> dict:
     profile pins it; what stays server-controlled; the process-wide in-flight limits (read-only). No secret."""
     from .run_profiles import NAMED_PROFILES, PROFILE_LABELS
 
+    from .run_profiles import PROFILE_SEARCH
+    from .tools.search_backends import backend_status
+
     defaults = run_setting_defaults(secret)
     pinned = pinned_by_named_profiles()
+    # PR #46: a backend without its key is listed as unavailable (the form disables it; a start selecting it is refused)
+    unavailable = {name: st["reason"] for name, st in backend_status(lambda n: secret(n)).items()
+                   if not st["available"] and name != "glm"}
+
+    def profile_defaults(name: str) -> dict:
+        return {p: values[name] for p, values in PROFILE_SEARCH.items()}
     model, finalizer = defaults["model_id"], defaults["finalizer_model_id"].strip()
 
     def limits(name: str) -> dict:
@@ -519,7 +547,9 @@ def run_settings_contract(secret: Secret, controller) -> dict:
         "settings": [{"name": o.name, "kind": o.kind, "label": o.label, "group": o.group, "help": o.help,
                       "default": defaults[o.name], "min": o.low, "max": o.high, "step": o.step,
                       "options": list(o.options), "nullable": o.nullable, "allow_empty": o.allow_empty,
-                      "pinned_by_named_profile": o.name in pinned} for o in RUN_OVERRIDES],
+                      "pinned_by_named_profile": o.name in pinned,
+                      **({"unavailable_options": unavailable, "profile_defaults": profile_defaults(o.name)}
+                         if o.name in SEARCH_BACKEND_SETTINGS else {})} for o in RUN_OVERRIDES],
         "groups": groups,
         "server_controlled": [{"name": n, "label": label, "reason": reason} for n, label, reason in SERVER_CONTROLLED],
         "concurrency": {
@@ -563,6 +593,8 @@ def settings_checks(settings: UISettings, secret: Secret, paths):
             return "set" if settings.api_key else ""
         if name == "SEARCH_BACKEND":
             return settings.search_backend
+        if name == "SEARCH_FALLBACK_BACKEND":
+            return settings.search_fallback_backend
         return secret(name)
 
     checks = validate_config(effective_lookup, paths)

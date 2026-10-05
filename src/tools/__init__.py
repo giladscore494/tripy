@@ -21,7 +21,8 @@ from .evidence import EvidenceStore
 
 @dataclass
 class ToolConfig:
-    search_backend: str = "glm"          # "glm" (GLM web_search API) or "duckduckgo" (keyless HTML)
+    search_backend: str = "glm"          # glm | serper | gemini | duckduckgo (src/tools/search_backends)
+    search_fallback_backend: str = ""    # answers a search only when the primary returned 0 usable results ("" = none)
     max_response_bytes: int = 15 * 1024 * 1024
     connect_timeout_s: float = 10.0
     read_timeout_s: float = 40.0

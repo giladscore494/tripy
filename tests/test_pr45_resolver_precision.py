@@ -341,7 +341,13 @@ def test_single_value_rule_in_bind():
     assert _bind_a6()["binding_level"] == "exact_technical_variant"                       # one version: unchanged
     capped = _bind_a6(multi_version={"versions": 2, "repeated": False})
     assert capped["binding_level"] == "body_powertrain" and capped["binding_flags"] == ["single_value_multi_version"]
-    assert _bind_a6(multi_version={"versions": 2, "repeated": True})["binding_level"] == "exact_technical_variant"
+    # PR #46 (P1.2): repeated in every column rises only when the target is one of the columns
+    listed = {"power": True, "year_stated": True}
+    assert _bind_a6(multi_version={"versions": 2, "repeated": True, "target_listed": listed})["binding_level"] \
+        == "exact_technical_variant"
+    unlisted = _bind_a6(multi_version={"versions": 2, "repeated": True})
+    assert unlisted["binding_level"] == "body_powertrain"
+    assert unlisted["binding_flags"] == ["repeated_without_target_version"]
     no_target = _bind_a6(multi_version={"versions": 2, "repeated": True, "inventory_without_target": True})
     assert no_target["binding_level"] == "body_powertrain"
     # the value's own clause names the version: identified per fact

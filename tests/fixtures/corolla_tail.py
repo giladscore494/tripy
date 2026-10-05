@@ -47,6 +47,9 @@ FIELDS = ["length_mm", "width_mm", "height_mm", "wheelbase_mm", "curb_weight_kg"
           "top_speed_kmh", "list_price", "warranty_years"]
 
 CARTUBE = "https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-business"
+# PR #46 (P2): the cartube fixture pages scripted runs fetch without searching first (tests mark them offered_urls)
+OFFERED_IL_SITE_PAGES = (CARTUBE, "https://www.cartube.co.il/toyota/corolla-touring-sports-2024-1-8-hybrid-premium",
+                         "https://www.cartube.co.il/toyota/corolla-touring-sports-2024-2-0-hybrid-business")
 CARTUBE_TEXT = "\n".join([
     "טויוטה קורולה טורינג ספורט 2024 1.8 היברידי Business",
     'אורך: 4,650 מ"מ',

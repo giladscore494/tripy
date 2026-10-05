@@ -4,6 +4,10 @@
 import { download, request } from "./client";
 import type {
   ActionAccepted,
+  BakeoffDetail,
+  BakeoffList,
+  BakeoffOptions,
+  BakeoffStarted,
   BenchmarkBatches,
   BenchmarkSummary,
   BindingReplay,
@@ -28,6 +32,7 @@ import type {
   SeriesList,
   SeriesStarted,
   SeriesState,
+  StartBakeoff,
   StartRun,
   StartSeries,
   Started,
@@ -90,6 +95,13 @@ export const api = {
   seriesState: (seriesId: string, o: Opts = {}) => request<SeriesState>(`/api/series/${enc(seriesId)}`, o),
   startSeries: (body: StartSeries) => request<SeriesStarted>("/api/series", { method: "POST", body }),
   cancelSeries: (seriesId: string) => request<SeriesState>(`/api/series/${enc(seriesId)}/cancel`, { method: "POST" }),
+
+  bakeoffOptions: (o: Opts = {}) => request<BakeoffOptions>("/api/bakeoffs/options", o),
+  bakeoffs: (o: Opts = {}) => request<BakeoffList>("/api/bakeoffs", o),
+  bakeoff: (bakeoffId: string, o: Opts = {}) => request<BakeoffDetail>(`/api/bakeoffs/${enc(bakeoffId)}`, o),
+  startBakeoff: (body: StartBakeoff) => request<BakeoffStarted>("/api/bakeoffs", { method: "POST", body }),
+  cancelBakeoff: (bakeoffId: string) =>
+    request<{ cancelled: boolean }>(`/api/bakeoffs/${enc(bakeoffId)}/cancel`, { method: "POST" }),
 };
 
 export type RunExport = "candidates.csv" | "per_vehicle.csv" | "benchmark.json";
@@ -100,6 +112,8 @@ export const exportsApi = {
       name === "candidates.csv" ? { record_id: recordId } : undefined),
   series: (seriesId: string, name: string) =>
     download(`/api/series/${enc(seriesId)}/export/${enc(name)}`, `${seriesId}_${name}`),
+  bakeoff: (bakeoffId: string, name: "metrics.csv" | "records.csv" | "summary.json") =>
+    download(`/api/bakeoffs/${enc(bakeoffId)}/export/${name}`, `${bakeoffId}-${name}`),
   /** The Benchmark diagnostics files over several runs (repeatable run_id; run ids are not secrets). */
   benchmark: (runIds: string[], name: BenchmarkExport) =>
     download(`/api/benchmark/export/${enc(name)}`, name === "binding_replay_items.jsonl" ? name : `tripy_${name}`,

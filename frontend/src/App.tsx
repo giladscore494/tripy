@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { WorkspaceDataProvider } from "./hooks/WorkspaceData";
 import { AppShell } from "./layouts/AppShell";
+import { BakeoffListPage, BakeoffPage } from "./pages/BakeoffPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { NewResearchPage } from "./pages/NewResearchPage";
@@ -22,6 +23,8 @@ export function WorkspaceRoutes() {
       <Route path="/runs/:runId" element={<RunPage />} />
       <Route path="/series" element={<SeriesListPage />} />
       <Route path="/series/:seriesId" element={<SeriesPage />} />
+      <Route path="/bakeoffs" element={<BakeoffListPage />} />
+      <Route path="/bakeoffs/:bakeoffId" element={<BakeoffPage />} />
       <Route path="/diagnostics" element={<DiagnosticsPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="*" element={<NotFoundPage />} />

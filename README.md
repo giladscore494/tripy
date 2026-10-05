@@ -110,7 +110,7 @@ one address); the protection is a long random token. `/health` is not gated. Out
 ### Read-only MCP for Claude (optional)
 
 One variable turns on a **read-only** MCP server in the same process and on the same port: runs, live events,
-results, diagnostics, binding replay, candidates, fetched documents and the server log (12 tools; nothing can start,
+results, diagnostics, binding replay, candidates, fetched documents, search bake-offs and the server log (14 tools; nothing can start,
 cancel, delete or write). Without the variable it does not exist at all (no route; the `mcp` SDK is not imported).
 
 1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
@@ -311,7 +311,9 @@ process environment (Railway variables in production).
 | Variable | Purpose |
 | --- | --- |
 | `GLM_FINALIZER_MODEL` | Model id for the compact finalization call only; empty = `GLM_MODEL`. |
-| `SEARCH_BACKEND` | `glm` (GLM `web_search` API, default) or `duckduckgo` (keyless HTML search). |
+| `SEARCH_BACKEND` | Default search backend of the Custom profile: `glm` (Z.ai `search-prime`, default), `serper`, `gemini` or `duckduckgo`. Named profiles use their own default (Production: `glm`); a run chooses another one in the run settings ([Search backends](#search-backends-and-the-search-bake-off-pr-46)). |
+| `SEARCH_FALLBACK_BACKEND` | Default fallback backend (`none`, default). |
+| `SERPER_API_KEY`, `GEMINI_API_KEY` | Search backend keys (secrets, set once). Without its key a backend is listed as unavailable and refused, never swapped. |
 | `DATABASE_URL` (alias `SUPABASE_DB_URL`) | Postgres URL for the Level 1.5 source (secret); without it the bundled snapshot is used. |
 | `TARGET_MARKET` | Target market (default `IL`). |
 | `TRIPY_MAX_ACTIVE_RUNS` | Research runs that may execute at once in this server (default **1**). |
@@ -1037,6 +1039,66 @@ Runs written before admission load unchanged (their evidence keeps the model's o
 - Proof gate: `python scripts/pr44_proof_gate.py` (fixtures + goldens), `--runs-dir /data/runs --run <id>` (replay) and
   `--runs-dir /data/runs --fresh <id>` (ok fields per vehicle with their source URLs).
 
+### Search backends and the search bake-off (PR #46)
+
+Production run 20261005T184853Z found 0 Israeli version pages on 7 / 7 Audi vehicles because Z.ai `search-prime`
+returns a site root with a specific article's title, and it ignores `site:` and `search_domain_filter`. Search is now
+pluggable (`src/tools/search_backends/`), with one protocol:
+`search(query, *, site=None, country="il", lang="he", count=10) -> [SearchResult{url, title, snippet, rank, backend,
+raw_url, site_native}]`.
+
+| Backend | Provider | Notes |
+| --- | --- | --- |
+| `glm` | Z.ai `search-prime` (GLM `web_search`) | the baseline, unchanged (`search_domain_filter`; off-site results counted, not dropped) |
+| `serper` | serper.dev (Google results), `SERPER_API_KEY` | `gl=il`, `hl=iw`, native `site:` in the query |
+| `gemini` | Gemini API `gemini-3.8-flash` + `google_search` tool, `GEMINI_API_KEY` | URLs only (below) |
+| `duckduckgo` | keyless HTML | unchanged |
+
+- **Every backend:** a result whose URL path is empty or `/` while its title names a specific article / model (a model
+  token, a catalog family name or a year) is dropped (`root_only_url` event, `search_root_only_urls`); with a site, a
+  result outside that registrable domain is counted (`search_off_site`) and dropped (glm: counted only). Responses are
+  cached per (backend, query, site, ...); the glm cache key is unchanged. Prices are data (`data/search_backends.json`).
+- **Gemini grounding, URLs only.** The request is a neutral instruction ("find the web pages for: {query}") with the
+  `google_search` tool and no response schema / structured output (Gemini 3.x silently disables grounding or returns
+  empty metadata with structured output). URLs are read only from `groundingMetadata.groundingChunks[].web.{uri,title}`;
+  the model's text is discarded and never parsed for URLs or values. Each `grounding-api-redirect` URI is resolved with
+  one request that does not download the body (HEAD, or GET without following redirects; the `Location` header), the
+  redirect kept as `raw_url` (`gemini_redirects_resolved` / `_failed`; a failed one is dropped). `webSearchQueries` are
+  recorded in the search event. Google's display requirements for grounded results apply where a UI shows Gemini search
+  results to a user: the engine never shows them (they only feed fetches and the resolver), and the bake-off page shows
+  metrics, not search results.
+- **Selection (run settings).** `search_backend` and `search_fallback_backend` are per-run settings (Advanced → Model);
+  a backend without its key is shown disabled and a start selecting it is refused. Named profiles default to `glm`
+  (`run_profiles.PROFILE_SEARCH`); a run's own choice wins. The fallback answers a search only when the primary returned
+  0 usable results after the sanity rules (`search_fallback_used`). The search event, the diagnostics row
+  (`search_backends_used`, `search_calls_by_backend`, `search_usd_by_backend`, `search_root_only_urls`,
+  `search_off_site`, `search_fallback_used`, `gemini_redirects_*`) and `run_diagnostics` show the backend per search.
+- **Search bake-off (web UI → Search bake-off).** Pick backends (unavailable ones disabled), records (default: all 50
+  benchmark records) and "fetch top candidate" (default on); it runs on the server as a background job of the run
+  manager (one at a time, cancellable, interrupted on restart) and writes `<TRIPY_DATA_DIR>/bakeoffs/<id>/`
+  (`status.json`, `summary.json`, `records.jsonl`, `queries.jsonl`). Per record: the resolver's queries (unchanged
+  templates) and `{make_he} {model} {year} מפרט טכני` / `{make_en} {model} {year} {engine_l} specifications`. Per backend:
+  `full_path_ratio`, `on_site_ratio`, `version_url_hit`, `first_version_rank`, `israeli_domain_share`, `unique_urls`,
+  ranked candidates (the resolver's own candidate selection, no fetch), accepted / rejected pages (the top candidate
+  fetched through the normal fetch path: robots.txt, per-domain pace, shared cache; judged by `version_page_verdict`),
+  latency p50 / p95 and cost per 1,000 queries / per record; `metrics.csv` / `records.csv` downloads. The same
+  implementation runs from the command line: `python scripts/search_bakeoff.py --backends glm,serper,gemini`. MCP:
+  `list_bakeoffs`, `bakeoff_result`. Nothing a bake-off finds enters a run's evidence.
+- **Generation precision (P1).** PDF power rows of multi-column spec tables are read, including visual-order (reversed
+  RTL) lines (`src/power_rows.py`: "הספק מרבי (כ"ס)", "הספק (כ"ס/סל"ד)", "כוח סוס"; kW only in a motor context, never
+  a charging one), one power per column with its column identity (`document_versions.powers` / `power_columns`). The
+  R4 "repeated identically in every column" exception rises to `exact_technical_variant` only when the target is one of
+  the columns: its designation, the catalog's single entry for (manufacturer, family, year, propulsion, drivetrain), or
+  its power (±3 %) **in a document that states a model year**; otherwise `body_powertrain`, gap
+  `repeated_without_target_version`. A document naming >= 2 designations with no readable power and no year never
+  identifies the version by displacement alone (`version_unproven`). The A6 2018 / 319.pdf case (a C8 catalog, 245 /
+  340 hp, no year, for a 252 hp C7) no longer binds length / width / height.
+- **Acquisition hygiene (P2).** A fetch on an `il_version_sites` domain of a URL no search result, fetched page's links,
+  site map or resolver result offered is refused (`guessed_url_refused`); in primary research a search result whose URL
+  + title + snippet names neither the target's make nor its model family is not fetched (`irrelevant_result`; PDFs and
+  official domains exempt). The refusal is the tool result; counters `acq_guessed_url_refused` /
+  `acq_irrelevant_result_refused`.
+
 ### Durable pre-finalization checkpoint
 
 `result.json`, `batch.json` and `input.json` are written through one atomic primitive
@@ -1726,8 +1788,11 @@ Observational only. Defaults (official Z.ai pricing as provided on 2026-10-01, i
 
 - **Overrides:** values can be overridden by environment variable or per run (the `price_*` per-run settings).
 - **Unknown model:** a model id with no default reports token cost as n/a.
-- **Search calls:** only billable GLM `web_search` calls count. Cache hits don't, and
-  `search_official_domains` counts one call per domain.
+- **Search calls:** only billable provider searches count (glm, serper, gemini; DuckDuckGo is free). Cache hits
+  don't, and `search_official_domains` counts one call per domain. glm searches are priced at the run's
+  `web_search_per_call`; serper / gemini searches carry their own cost from `data/search_backends.json` (Gemini: tokens +
+  billed grounding queries). `cost_details.search_calls_by_backend` / `search_usd_by_backend` and the diagnostics row
+  split it per backend.
 - **Cached tokens:** these are billed at the full input price, because no cached-input price was supplied.
 - **Reproducibility:** the prices used are stored with each run, and the Benchmark tab always uses them.
 

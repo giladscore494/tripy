@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from .concurrency import BatchCancelled
 from .agent import AgentConfig, effective_glm_config, finalizer_model_of, research_model_of, run_vehicle
 from .db import build_level15_payload
-from .pricing import default_pricing, phase_models_of, phase_run_cost, run_cost
+from .pricing import default_pricing, phase_models_of, phase_run_cost, run_cost, search_cost_inputs
 from .schemas import LEVEL3_TOPICS, has_value, iter_fields, target_field_names
 from .source_authority import OFFICIAL_CLASSES
 from .storage.run_log import RunLog, update_batch, utc_now, write_batch
@@ -119,8 +119,10 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
     sweep = result.get("document_sweep") or {}
     # a sweep / recovery phase that ran on its own model (src/phase_settings.py) keeps that model's prices
     phase_models = phase_models_of(result.get("cost_details"))
+    priced_searches, extra_search_usd = search_cost_inputs(counters, search_api_calls)
     cost, _ = phase_run_cost(usage_research=usage_research, usage_sweep=usage_sweep, usage_recovery=usage_recovery,
-                             usage_finalizer=usage_finalizer, search_api_calls=search_api_calls,
+                             usage_finalizer=usage_finalizer, search_api_calls=priced_searches,
+                             extra_search_usd=extra_search_usd,
                              pricing=pricing if pricing is not None else result.get("pricing"),
                              pricing_finalizer=pricing if pricing is not None else (result.get("pricing_finalizer")
                                                                                    or result.get("pricing")),

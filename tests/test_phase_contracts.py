@@ -28,6 +28,8 @@ from src.storage.cache import DocumentCache
 from src.storage.run_log import RunLog, read_events
 from src.tools import ToolConfig, tool_specs
 
+pytestmark = [pytest.mark.offered_urls(*tail.OFFERED_IL_SITE_PAGES)]
+
 EU = tail.EU_SPEC
 BLOG = "https://www.example-blog.net/corolla-touring-sports-review"
 BLOG_TEXT = "A long-term review of the Toyota Corolla Touring Sports. Comfortable, quiet, economical. No figures."
