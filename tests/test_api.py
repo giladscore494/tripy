@@ -181,7 +181,9 @@ def wait_status(manager, run_id, status, timeout=10.0):
 def test_health_is_public_and_cheap(data_root, monkeypatch):
     monkeypatch.setenv("TRIPY_ENV", "production")
     monkeypatch.setenv("TRIPY_ACCESS_TOKEN", ACCESS)
-    app = create_app(mount_mcp=False)           # no context and no lifespan: /health touches no TRIPY state
+    # no context and no lifespan: /health touches no TRIPY state (no React bundle either: this checks the API's route;
+    # a production app without the bundle refusing to start is tests/test_production_serving.py)
+    app = create_app(mount_mcp=False, frontend=None)
     response = TestClient(app).get("/health")
     assert (response.status_code, response.json()) == (200, {"status": "ok", "service": "tripy"})
     assert app.state.tripy is None
