@@ -2290,6 +2290,9 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     web_done = {c["cluster"]: 0 for c in clusters}
     skipped: set[str] = set()
     round_no = 0
+    recovery_t0 = time.monotonic()
+    pass_gate: dict = {"passes": 0}
+    docs_recovery = list(session.ctx.documents_opened)
     while not state["stopped"]:
         round_no += 1
         progressed = False
@@ -2324,6 +2327,19 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
                 break
         if not progressed:
             break
+        pass_gate["passes"] = round_no
+        full_pass = all(web_done[c["cluster"]] >= 1 or allowed_attempts[c["cluster"]] == 0 or c["cluster"] in skipped
+                        or not any(current[f]["retry_eligible"] for f in c["fields"]) for c in clusters)
+        if full_pass and "progress" not in pass_gate and not state["stopped"]:
+            # A5 (PR #47): after the first FULL cluster pass (every open cluster had its first web attempt; a local-only
+            # pass is free and does not complete it), no new useful document and no field state change since the
+            # recovery started stops it: further passes would spend the turn budget on the same material
+            new_docs = _usable_new(cache, session.ctx.admission,
+                                   [d for d in session.ctx.documents_opened if d not in docs_recovery])
+            verdict = recovery_pass_progress(attempts_log, new_docs)
+            pass_gate.update(verdict, full_pass_round=round_no)
+            if not verdict["progress"]:
+                state["stopped"] = "recovery_stopped_no_progress"
     final = [current[e["field"]] for e in primary]
     run_log.event("field_evaluation", stage="after_recovery", fields=final, summary=_state_counts(final))
     if memory is not None:
@@ -2347,7 +2363,15 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
     resolved_queue = [f for f in queued if not current[f]["retry_eligible"]]
     metrics = tail_metrics(primary, final, model_calls=total, search_calls=state["searches"],
                            billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before)
+    savings = recovery_savings(pass_gate, turns_used=total, turn_budget=cap,
+                               minutes_used=(time.monotonic() - recovery_t0) / 60.0)
+    if state["stopped"] == "recovery_stopped_no_progress":
+        session.ctx.counters["recovery_stopped_no_progress"] += 1
+        run_log.event("recovery_stopped_no_progress", mode="cluster", full_pass_round=pass_gate.get("full_pass_round"),
+                      attempts=len(attempts_log),
+                      **{k: v for k, v in savings.items() if k != "recovery_stopped_no_progress"})
     return {
+        **savings,
         "enabled": config.field_recovery_enabled,
         "mode": "cluster",
         "order": "breadth_first_clusters",
@@ -2400,6 +2424,28 @@ def run_cluster_recovery(*, session: ToolSession, caller: ModelCaller, specs: li
         "evaluation_primary": primary,
         "evaluation_final": final,
     }
+
+def recovery_pass_progress(attempts: list[dict], new_useful_documents: list[str]) -> dict:
+    """A5 (PR #47): did a full cluster pass make progress? {progress, new_useful_documents, fields_changed}: a new
+    usable document, or any field of the pass's attempts whose state changed (states_before -> states_after)."""
+    changed = sorted({f for a in attempts for f, before in (a.get("states_before") or {}).items()
+                      if (a.get("states_after") or {}).get(f, before) != before})
+    return {"progress": bool(new_useful_documents or changed), "new_useful_documents": len(new_useful_documents),
+            "fields_changed": len(changed)}
+
+
+def recovery_savings(gate: dict, *, turns_used: int, turn_budget: int, minutes_used: float) -> dict:
+    """A5 (PR #47): the recovery's minutes, and when the no-progress rule stopped it, the minutes it saved versus the
+    configured turn budget (the unused turns at the first pass's pace; an estimate, never a measurement)."""
+    out = {"recovery_passes": gate.get("passes", 0), "recovery_minutes": round(minutes_used, 2),
+           "recovery_stopped_no_progress": not gate.get("progress", True)}
+    if out["recovery_stopped_no_progress"] and turns_used:
+        per_turn = minutes_used / turns_used
+        unused = max(0, (turn_budget or 0) - turns_used)
+        out["recovery_minutes_saved_estimate"] = round(per_turn * unused, 2)
+        out["recovery_turns_unused"] = unused
+    return out
+
 
 REACQUIRE_TURNS = 2           # turns of one targeted acquisition episode
 REACQUIRE_FETCHES = 3         # executed fetches of one episode
@@ -2842,6 +2888,10 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
                            search_calls=state["searches"],
                            billable_search_calls=session.ctx.counters["search_api_calls"] - billable_before)
     return {
+        # A5 (PR #47): reacquire runs ONE pass over the clusters by design, so the no-progress rule never has a further
+        # pass to skip; its minutes are reported the same way
+        **recovery_savings({"passes": 1 if attempts_log else 0}, turns_used=total, turn_budget=cap,
+                           minutes_used=sum(a.get("latency_ms") or 0 for a in attempts_log) / 60000.0),
         "enabled": config.field_recovery_enabled,
         "mode": "reacquire",
         "order": "breadth_first_clusters",
@@ -4024,6 +4074,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             "api_stats": stats,
             "finalization": finalization,
             "search_api_calls": search_calls,
+            "search_credits": round(float(counters.get("search_credits", 0) or 0), 2),     # PR #47 (A6)
             "pricing": pricing,
             "pricing_finalizer": pricing_finalizer,
             "cost": cost,

@@ -3,7 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { Scope, StartRun, Vehicle } from "../api/types";
+import type { CatalogItem, Scope, StartRun, Vehicle } from "../api/types";
+import { CatalogPicker } from "../components/run/CatalogPicker";
 import { defaultsOf, overridesOf, RunSettingsForm, settingsErrors, type SettingsValues } from "../components/run/RunSettingsForm";
 import { IconSearch, IconSpark } from "../components/ui/icons";
 import { Badge, Button, Dir, Disclosure, ErrorState, Field, Mono, Notice, Panel, Segmented, Skeleton } from "../components/ui/primitives";
@@ -16,6 +17,7 @@ const SCOPES: { id: Scope; label: string; hint: string }[] = [
   { id: "one", label: "One vehicle", hint: "A single benchmark vehicle" },
   { id: "manufacturer", label: "Manufacturer", hint: "Every benchmark vehicle of one manufacturer" },
   { id: "all", label: "Whole benchmark", hint: "Every vehicle of the benchmark sample" },
+  { id: "set", label: "Live catalog", hint: "Any MILO catalog variant: one, or a filtered set of up to 50" },
 ];
 
 function matches(vehicle: Vehicle, query: string): boolean {
@@ -59,6 +61,8 @@ export function NewResearchPage() {
   const { config, activeRuns, runs } = useWorkspace();
   const vehicles = useResource("vehicles", (signal) => api.vehicles({ signal }));
   const contract = useResource("run-settings", (signal) => api.runSettings({ signal }));
+  const catalogStatus = useResource("catalog-status", (signal) => api.catalogStatus({ signal }));
+  const [catalogSet, setCatalogSet] = useState<CatalogItem[]>([]);
   const [scope, setScope] = useState<Scope>("one");
   const [recordId, setRecordId] = useState<string | null>(null);
   const [manufacturer, setManufacturer] = useState<string>("");
@@ -82,7 +86,8 @@ export function NewResearchPage() {
   }, [vehicles.data, manufacturer]);
 
   const list = vehicles.data?.vehicles ?? [];
-  const selection = scope === "one" ? list.filter((v) => v.record_id === recordId)
+  const selection: { record_id: string }[] = scope === "set" ? catalogSet
+    : scope === "one" ? list.filter((v) => v.record_id === recordId)
     : scope === "manufacturer" ? list.filter((v) => v.manufacturer === manufacturer) : list;
   const ids = new Set(selection.map((v) => v.record_id));
   const busyRun = activeRuns.find((r) => r.record_ids.some((id) => ids.has(id)));
@@ -99,6 +104,7 @@ export function NewResearchPage() {
     const body: StartRun = { scope, profile, idempotency_key: submission.current() };
     if (scope === "one" && recordId) body.record_id = recordId;
     if (scope === "manufacturer") body.manufacturer = manufacturer;
+    if (scope === "set") body.record_ids = catalogSet.map((v) => v.record_id);
     if (Object.keys(overrides).length) body.settings = overrides;
     let startedOk = false;
     try {
@@ -131,6 +137,12 @@ export function NewResearchPage() {
         <div className="mt-5">
           {vehicles.loading ? <div className="space-y-2"><Skeleton className="h-10" /><Skeleton className="h-56 rounded-card" /></div>
             : vehicles.error ? <ErrorState error={vehicles.error} onRetry={vehicles.refresh} />
+            : scope === "set" ? (
+              <CatalogPicker status={catalogStatus.data ?? (catalogStatus.error ? {
+                mode: "snapshot", browser_enabled: false, label: "snapshot (50 benchmark records)", max_set: 50,
+                max_limit: 200, derived_index: { available: false, building: false, path: "", interval_days: 7 } }
+                : undefined)} selected={catalogSet} onChange={setCatalogSet} max={catalogStatus.data?.max_set ?? 50} />
+            )
             : scope === "one" ? <VehiclePicker vehicles={list} value={recordId} onChange={setRecordId} />
             : scope === "manufacturer" ? (
               <Field label="Manufacturer" htmlFor="manufacturer"

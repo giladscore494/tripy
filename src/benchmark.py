@@ -217,6 +217,9 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
         "document_cache_misses": counters.get("cache_misses", 0),
         "search_cache_hits": counters.get("search_cache_hits", 0),
         "search_api_calls": search_api_calls,
+        # PR #47 (A6): provider search credits (as reported: serper) and searches refused at the per-vehicle cap
+        "search_credits": round(float(counters.get("search_credits", 0) or 0), 2),
+        "search_budget_exhausted": counters.get("search_budget_exhausted", 0),
         "api_errors": counters.get("api_errors", 0),
         "conflicts_reported": len(conflicts) if isinstance(conflicts, list) else 0,
         "additional_findings": len(findings) if isinstance(findings, list) else 0,
@@ -337,8 +340,8 @@ def compute_metrics(result: dict, vehicle: dict | None = None, cache=None, prici
 
 SUM_KEYS = ("target_filled", "filled_by_output", "fields_with_value", "extra_fields", "evidence_items",
             "documents_opened", "tool_calls", "tool_errors", "document_cache_hits", "document_cache_misses",
-            "search_cache_hits", "search_api_calls", "api_errors", "conflicts_reported", "additional_findings",
-            "duration_s",
+            "search_cache_hits", "search_api_calls", "search_credits", "search_budget_exhausted", "api_errors",
+            "conflicts_reported", "additional_findings", "duration_s",
             "model_latency_s", "model_calls", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
             "research_steps", "research_model_calls", "field_recovery_model_calls", "fields_failed_primary",
             "fields_retried", "fields_recovered", "fields_still_failed", "field_retry_attempts",

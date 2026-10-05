@@ -194,10 +194,11 @@ def test_an_unhelpful_site_search_is_retried_once_with_the_domain_filter(cache):
                ("cartube.co.il", "domain_filter"): [P.Q3_CARTUBE_URL]}
     web = _Web(cache, _pages(), results)
     out, _ = _resolve(cache, web)
+    # PR #47: max_searches 4 (carzone is the fourth site): icar's empty `site:` search takes its one retry
     assert [(d, m) for _, d, m in web.searches] == [("cartube.co.il", "site"), ("cartube.co.il", "domain_filter"),
-                                                    ("icar.co.il", "site")]
+                                                    ("icar.co.il", "site"), ("icar.co.il", "domain_filter")]
     assert web.searches[1][0] == "אודי Q3 2024 2.0 190"                         # no site: prefix
-    assert out["searches"] == 3 and out["found"] == 1
+    assert out["searches"] == 4 and out["found"] == 1
     off = next(r for r in out["results"] if r["url"] == "https://www.example.com/q3")
     assert off["decision"] == "dropped" and off["reason"] == "off_site"
 

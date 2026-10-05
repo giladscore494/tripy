@@ -32,7 +32,7 @@ from .auth import require_access
 from .deps import ApiContext, build_context, env_secret
 from .errors import ApiError
 from .frontend import FRONTEND_DIST, SecurityHeaders, frontend_routes
-from .routes import bakeoffs, config, documents, exports, health, runs, series, technical
+from .routes import bakeoffs, catalog, config, documents, exports, health, runs, series, technical
 
 log = get_logger("api")
 
@@ -120,7 +120,7 @@ def create_app(*, context: ApiContext | None = None, secret: Callable[[str], str
 
     app.include_router(health.router)
     protected = [Depends(require_access)]
-    for module in (runs, exports, config, series, documents, technical, bakeoffs):
+    for module in (runs, exports, config, series, documents, technical, bakeoffs, catalog):
         app.include_router(module.router, dependencies=protected)
     app.router.routes.extend(mcp_routes)
     if dist is not None:          # last: the SPA fallback never shadows /api, /health, /mcp or /assets

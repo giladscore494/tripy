@@ -23,6 +23,9 @@ from .evidence import EvidenceStore
 class ToolConfig:
     search_backend: str = "glm"          # glm | serper | gemini | duckduckgo (src/tools/search_backends)
     search_fallback_backend: str = ""    # answers a search only when the primary returned 0 usable results ("" = none)
+    # PR #47 (A6): provider search credits (as the provider reports them: serper's `credits`) per vehicle; at the cap
+    # every further uncached search is refused with search_budget_exhausted (0 = no cap)
+    search_credit_cap: int = 40
     max_response_bytes: int = 15 * 1024 * 1024
     connect_timeout_s: float = 10.0
     read_timeout_s: float = 40.0

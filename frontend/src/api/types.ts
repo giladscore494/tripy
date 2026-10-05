@@ -292,11 +292,12 @@ export type RunSettingsOverrides = Record<string, SettingValue>;
 
 // --- actions ----------------------------------------------------------------------------------------------------------
 
-export type Scope = "one" | "manufacturer" | "all";
+export type Scope = "one" | "manufacturer" | "all" | "set";
 
 export interface StartRun {
   scope: Scope;
   record_id?: string;
+  record_ids?: string[];
   manufacturer?: string;
   profile?: string;
   idempotency_key?: string;
@@ -742,4 +743,62 @@ export interface StartBakeoff {
 export interface BakeoffStarted {
   bakeoff_id: string;
   bakeoff: BakeoffJob | null;
+}
+
+// --- the live MILO catalog (PR #47, B1 / B2) ----------------------------------------------------------------------
+
+export interface DerivedIndexStatus {
+  available: boolean;
+  building: boolean;
+  path: string;
+  interval_days: number;
+  status?: string;
+  built_at?: string | null;
+  rows?: number | null;
+  entries?: number | null;
+  error?: string | null;
+  reason?: string;
+}
+
+export interface CatalogStatus {
+  mode: "live" | "snapshot";
+  browser_enabled: boolean;
+  label: string;
+  max_set: number;
+  max_limit: number;
+  derived_index: DerivedIndexStatus;
+}
+
+export interface CatalogItem {
+  record_id: string;
+  manufacturer: string;
+  model: string;
+  year: number | null;
+  trim: string | null;
+  model_code: string | null;
+  degem_cd: number | null;
+  body: string | null;
+  propulsion: string | null;
+  drivetrain: string | null;
+  power_hp: number | null;
+  engine_cc: number | null;
+  label: string;
+}
+
+export interface CatalogPage {
+  items: CatalogItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  filters: Record<string, unknown>;
+}
+
+export interface CatalogQuery {
+  manufacturer?: string;
+  model?: string;
+  year?: number;
+  trim?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
 }

@@ -190,6 +190,7 @@
  },
  "aggregator": [
   "cartube.co.il",
+  "carzone.co.il",
   "auto-data.net",
   "ultimatespecs.com",
   "cars-data.com",
@@ -404,7 +405,7 @@
  "hebrew_text_market": "IL",
  "hebrew_text_min_share": 0.3,
  "il_version_sites": {
-  "_about": "PR #44 (P2): Israeli publisher / aggregator sites that publish ONE page per technical version (title / H1 / URL slug name the version, spec rows state its engine). src/il_version_pages.py resolves the target's version page on these sites before the agentic acquisition: at most `max_searches` site-restricted searches in total (built from `search_templates`, placeholders {domain} {make_he} {make_en} {model} {year} {engine_l} {hp}; an empty placeholder is dropped), version links (`version_url_patterns`) collected from a fetched model / price-list page of the same site, at most `max_fetches` candidate URLs, robots.txt respected, at most one request per `min_interval_s` per domain. A fetched page counts only through the deterministic verdict il_version_pages.version_page_verdict (one version; year, displacement, drivetrain, propulsion, body and power match). `version_url_patterns` (PR #45, R1): regular expressions over the decoded, lower-case URL path of the site's version pages (cartube: a version slug under make / model; icar: /versionNNN/; auto.co.il: /cars/<make>/<model>/<year>/<id>/). Only a search result or a listing link matching one is a candidate, ranked by its slug overlap with the target (engine litres, power, designation, drivetrain, year); a site's home page is never fetched and any other page of the site is fetched only to collect version links. A `site:` search that yields nothing useful is retried once with the search backend's domain filter (no `site:` prefix) inside the max_searches budget. Every search result and candidate decision is logged in the il_version_pages event. Data only: adding a site is a JSON edit. `identity_row_terms`: the spec-row labels a version page's identity is read from (with the title, H1 and URL slug).",
+  "_about": "PR #44 (P2): Israeli publisher / aggregator sites that publish ONE page per technical version (title / H1 / URL slug name the version, spec rows state its engine). src/il_version_pages.py resolves the target's version page on these sites before the agentic acquisition: at most `max_searches` site-restricted searches in total (built from `search_templates`, placeholders {domain} {make_he} {make_en} {model} {year} {engine_l} {hp}; an empty placeholder is dropped), version links (`version_url_patterns`) collected from a fetched model / price-list page of the same site, at most `max_fetches` candidate URLs, robots.txt respected, at most one request per `min_interval_s` per domain. A fetched page counts only through the deterministic verdict il_version_pages.version_page_verdict (one version; year, displacement, drivetrain, propulsion, body and power match). `version_url_patterns` (PR #45, R1): regular expressions over the decoded, lower-case URL path of the site's version pages (cartube: a version slug under make / model; icar: /versionNNN/; auto.co.il: /cars/<make>/<model>/<year>/<id>/). Only a search result or a listing link matching one is a candidate, ranked by its slug overlap with the target (engine litres, power, designation, drivetrain, year); a site's home page is never fetched and any other page of the site is fetched only to collect version links. A `site:` search that yields nothing useful is retried once with the search backend's domain filter (no `site:` prefix) inside the max_searches budget. Every search result and candidate decision is logged in the il_version_pages event. Data only: adding a site is a JSON edit. `identity_row_terms`: the spec-row labels a version page's identity is read from (with the title, H1 and URL slug). PR #47 (A1 / A3): templates may name the target's Hebrew model ({model_he}), Latin model ({model_en}) and body market names ({body_he} / {body_en}, identity vocabulary `body_market_names`); a site's own `search_templates` replace the global ones for that site. carzone.co.il: `trim_url_patterns` + `trim_query_param` mark a trim page (/<Make>/<Model>/<Sub>?/<year>?trim=<slug>; the slug is read with `trim_slug`), `version_url_patterns` its compare page (/<Make>/<Model>/<Sub>?/<year>/compare, read with `compare_table`: one column per version, header row `trim_row_labels`, empty cells `empty_cells`). A trim page URL is a candidate only when a search result or a fetched carzone page offered it (never built). A site with `single_version_pages: false` (carzone) never gets the single-version page verdict: its trim and compare pages are judged by src/il_trim_pages.py.",
   "sites": [
    {
     "domain": "cartube.co.il",
@@ -423,14 +424,106 @@
     "version_url_patterns": [
      "^/cars/[^/]+/[^/]+/(?:19|20)\\d{2}/\\d+(?:/|$)"
     ]
+   },
+   {
+    "domain": "carzone.co.il",
+    "search_templates": [
+     "site:{domain} {make_en} {model_en} {body_en} {year}"
+    ],
+    "version_url_patterns": [
+     "^/[^/]+/[^/]+/(?:[^/]+/)?(?:19|20)\\d{2}/compare/?$"
+    ],
+    "trim_url_patterns": [
+     "^/[^/]+/[^/]+/(?:[^/]+/)?(?:19|20)\\d{2}/?$"
+    ],
+    "trim_query_param": "trim",
+    "compare_table": {
+     "year_row_labels": [
+      "שנתון"
+     ],
+     "trim_row_labels": [
+      "רמת גימור"
+     ],
+     "identity_row_labels": [
+      "שנתון",
+      "סוג מרכב",
+      "סוג מנוע",
+      "נפח מנוע",
+      "הנעה",
+      "כוח סוס",
+      "תיבת הילוכים"
+     ],
+     "empty_cells": [
+      "-",
+      "—",
+      "–"
+     ],
+     "trim_noise_words": [
+      "היברידי",
+      "היבריד",
+      "היברידית",
+      "הייבריד",
+      "פלאג",
+      "אין",
+      "חשמלי",
+      "בנזין",
+      "דיזל",
+      "טורבו",
+      "ליטר",
+      "דור",
+      "מעודכן",
+      "מתיחת",
+      "פנים",
+      "דלתות",
+      "מקומות",
+      "אוטומטי",
+      "ידני",
+      "\\d+(?:\\.\\d+)?"
+     ]
+    },
+    "trim_slug": {
+     "separator": "-",
+     "word_separator": "_",
+     "propulsion": {
+      "hybrid": "hybrid",
+      "hev": "hybrid",
+      "phev": "plug_in",
+      "plugin": "plug_in",
+      "plug_in": "plug_in",
+      "electric": "battery_electric",
+      "ev": "battery_electric",
+      "petrol": "conventional",
+      "gasoline": "conventional",
+      "diesel": "conventional",
+      "turbo": "conventional"
+     },
+     "drivetrain": {
+      "4x2": "two_wheel_drive",
+      "2wd": "two_wheel_drive",
+      "fwd": "two_wheel_drive",
+      "rwd": "two_wheel_drive",
+      "4x4": "awd",
+      "awd": "awd",
+      "4wd": "awd"
+     },
+     "gearbox": {
+      "at": "automatic",
+      "dct": "automatic",
+      "cvt": "automatic",
+      "mt": "manual"
+     },
+     "displacement": "^(\\d\\.\\d)l$",
+     "seats": "^(\\d)seats?$"
+    },
+    "single_version_pages": false
    }
   ],
   "search_templates": [
-   "site:{domain} {make_he} {model} {year} {engine_l} {hp}",
-   "site:{domain} {make_he} {model} {year} מפרט טכני",
-   "site:{domain} {make_en} {model} {year} {engine_l}"
+   "site:{domain} {make_he} {model_he} {body_he} {year} {engine_l} {hp}",
+   "site:{domain} {make_he} {model_he} {body_he} {year} מפרט טכני",
+   "site:{domain} {make_en} {model} {body_en} {year} {engine_l}"
   ],
-  "max_searches": 3,
+  "max_searches": 4,
   "max_fetches": 6,
   "min_interval_s": 1.0,
   "identity_row_terms": [

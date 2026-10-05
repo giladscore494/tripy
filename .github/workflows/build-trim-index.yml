@@ -1,9 +1,10 @@
 name: build-trim-index
 
 # Regenerates data/catalog_trim_index.json (the government catalog's trims per technical variant, read by the
-# single_trim_catalog binding rule) and opens a pull request with the result. Manual only. Source: the DATABASE_URL
-# secret (public.catalog_variants_current), else the data.gov.il datastore resource in the GOV_CATALOG_RESOURCE_ID
-# repository variable. With neither the script fails; it never writes the benchmark-only index here.
+# single_trim_catalog binding rule) and opens a pull request with the result. Manual only. PR #47 (B2): the server keeps
+# the index current itself (a weekly rebuild from DATABASE_URL into its data volume, src/jobs/derived_index.py), so this
+# workflow needs no database secret: its source is the data.gov.il datastore resource in the GOV_CATALOG_RESOURCE_ID
+# repository variable. Without it the script fails; it never writes the benchmark-only index here.
 
 on:
   workflow_dispatch:
@@ -26,9 +27,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Build the index
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GOV_CATALOG_RESOURCE_ID: ${{ vars.GOV_CATALOG_RESOURCE_ID }}
-        run: python scripts/build_trim_index.py
+        run: python scripts/build_trim_index.py --source ckan
       - name: Open a pull request
         uses: peter-evans/create-pull-request@v6
         with:

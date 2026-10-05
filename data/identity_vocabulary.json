@@ -338,7 +338,10 @@
    "היברידית",
    "היבריד",
    "mild hybrid",
-   "mhev"
+   "mhev",
+   "הייבריד",
+   "הייברידי",
+   "הייברידית"
   ],
   "conventional": [
    "petrol only",
@@ -437,7 +440,10 @@
   "דיזל",
   "diesel",
   "היברידית",
-  "ל'"
+  "ל'",
+  "הייבריד",
+  "הייברידי",
+  "הייברידית"
  ],
  "cc_units": [
   "cc",
@@ -679,5 +685,339 @@
    "touring": "wagon",
    "coupe": "coupe"
   }
+ },
+ "body_market_names": {
+  "_about": "PR #47 (A1): the Israeli market names of a model's body sub-model, keyed by Latin manufacturer slug | model family (identity vocabulary `manufacturers` / `model_families` keys) and Level 1.5 body_normalized, plus generic names per body. The IL version-page resolver (src/il_version_pages.py) puts the target body's first Hebrew / Latin name in its site searches ({body_he} / {body_en}) and ranks a candidate +2 when its URL / title names the target body, -3 when it names another body sub-model of the family (family names of the other bodies, generic names of the other bodies). Unknown family or body: nothing (no query word, no rank change). Data only: nothing in Python names a brand or a model.",
+  "generic": {
+   "wagon": [
+    "סטיישן",
+    "Touring",
+    "Avant",
+    "Estate",
+    "Kombi"
+   ],
+   "convertible": [
+    "קבריולט",
+    "קבריולה",
+    "Cabrio",
+    "Cabriolet",
+    "Convertible"
+   ],
+   "coupe": [
+    "קופה",
+    "Coupe"
+   ]
+  },
+  "families": {
+   "toyota|corolla": {
+    "wagon": [
+     "סטיישן",
+     "ספייס",
+     "Touring Sports",
+     "TS",
+     "Space"
+    ],
+    "hatchback": [
+     "האצ'בק",
+     "הצ'בק",
+     "Hatchback",
+     "HB"
+    ],
+    "sedan": [
+     "סדאן",
+     "Sedan",
+     "SDN"
+    ]
+   },
+   "toyota|yaris": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatchback"
+    ],
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ]
+   },
+   "toyota|camry": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ]
+   },
+   "audi|a1": {
+    "hatchback": [
+     "ספורטבק",
+     "Sportback"
+    ],
+    "suv": [
+     "סיטיקארבר",
+     "Citycarver"
+    ]
+   },
+   "audi|a3": {
+    "hatchback": [
+     "ספורטבק",
+     "Sportback"
+    ],
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "convertible": [
+     "קבריולט",
+     "Cabriolet"
+    ]
+   },
+   "audi|a4": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "אוונט",
+     "Avant",
+     "Allroad"
+    ]
+   },
+   "audi|a6": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "אוונט",
+     "Avant",
+     "Allroad"
+    ]
+   },
+   "audi|q3": {
+    "coupe": [
+     "ספורטבק",
+     "Sportback"
+    ]
+   },
+   "bmw|330e": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "טורינג",
+     "Touring"
+    ]
+   },
+   "bmw|530e": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "טורינג",
+     "Touring"
+    ]
+   },
+   "bmw|420i": {
+    "coupe": [
+     "קופה",
+     "Coupe"
+    ],
+    "sedan": [
+     "גראן קופה",
+     "Gran Coupe"
+    ],
+    "convertible": [
+     "קבריולט",
+     "Convertible"
+    ]
+   },
+   "bmw|118i": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatchback"
+    ]
+   },
+   "bmw|cooper": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatch"
+    ],
+    "convertible": [
+     "קבריולט",
+     "Convertible"
+    ]
+   },
+   "mercedes|c180": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "סטיישן",
+     "Estate"
+    ],
+    "coupe": [
+     "קופה",
+     "Coupe"
+    ]
+   },
+   "mercedes|e300e": {
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ],
+    "wagon": [
+     "סטיישן",
+     "Estate"
+    ]
+   },
+   "mercedes|a250 e": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatchback"
+    ],
+    "sedan": [
+     "סדאן",
+     "Sedan"
+    ]
+   },
+   "hyundai|i30": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatchback"
+    ],
+    "wagon": [
+     "סטיישן",
+     "Wagon",
+     "CW"
+    ],
+    "sedan": [
+     "פאסטבק",
+     "Fastback"
+    ]
+   },
+   "hyundai|i20": {
+    "hatchback": [
+     "האצ'בק",
+     "Hatchback"
+    ]
+   }
+  }
+ },
+ "trim_word_forms_he": {
+  "_about": "PR #47 (A3): Hebrew written forms of generic trim words, used to read a Hebrew version name (carzone's compare columns: \"ביזנס אדישן\") as Latin trim words before the catalog-trim rules (src/variant_map.catalog_trim_matches) compare it with the government trim (BUSINESS EDI). Generic trim vocabulary only, never a brand or model name; a Hebrew word missing here never matches (fail-closed).",
+  "business": [
+   "ביזנס",
+   "ביזנעס"
+  ],
+  "edition": [
+   "אדישן",
+   "אדישין",
+   "אדיש'ן"
+  ],
+  "comfort": [
+   "קומפורט"
+  ],
+  "style": [
+   "סטייל",
+   "סטיל"
+  ],
+  "sun": [
+   "סאן"
+  ],
+  "sense": [
+   "סנס"
+  ],
+  "limited": [
+   "לימיטד"
+  ],
+  "lounge": [
+   "לאונג'",
+   "לאונג"
+  ],
+  "dynamic": [
+   "דינמיק",
+   "דינאמיק"
+  ],
+  "luxury": [
+   "לוקסורי",
+   "לאקשרי",
+   "לקשרי"
+  ],
+  "premium": [
+   "פרימיום"
+  ],
+  "active": [
+   "אקטיב"
+  ],
+  "plus": [
+   "פלוס"
+  ],
+  "executive": [
+   "אקזקיוטיב",
+   "אקזקיוטיב"
+  ],
+  "select": [
+   "סלקט"
+  ],
+  "inspire": [
+   "אינספייר"
+  ],
+  "tech": [
+   "טק"
+  ],
+  "team": [
+   "טים"
+  ],
+  "drive": [
+   "דרייב"
+  ],
+  "sport": [
+   "ספורט"
+  ],
+  "elegance": [
+   "אלגנס"
+  ],
+  "exclusive": [
+   "אקסקלוסיב"
+  ],
+  "adventure": [
+   "אדוונצ'ר",
+   "אדבנצ'ר"
+  ],
+  "core": [
+   "קור"
+  ],
+  "max": [
+   "מקס"
+  ],
+  "pro": [
+   "פרו"
+  ],
+  "pure": [
+   "פיור"
+  ],
+  "line": [
+   "ליין"
+  ],
+  "advanced": [
+   "אדוואנסד"
+  ],
+  "design": [
+   "דיזיין",
+   "דיזיין"
+  ],
+  "launch": [
+   "לאנץ'"
+  ],
+  "gt": [
+   "GT"
+  ],
+  "excite": [
+   "אקסייט"
+  ],
+  "sky": [
+   "סקיי"
+  ]
  }
 }

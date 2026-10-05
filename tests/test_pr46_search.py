@@ -310,10 +310,10 @@ def test_query_set_is_the_resolver_queries_plus_two_generic_ones():
     from src.search_bakeoff import record_queries
 
     queries = record_queries(_g6_record()["payload"])
-    assert [q["kind"] for q in queries] == ["resolver"] * 3 + ["generic"] * 2
-    assert [q["site"] for q in queries[:3]] == ["cartube.co.il", "icar.co.il", "auto.co.il"]
-    assert all(q["query"].startswith(f"site:{q['site']} ") for q in queries[:3])
-    assert queries[3]["query"].endswith("מפרט טכני") and queries[4]["query"].endswith("specifications")
+    assert [q["kind"] for q in queries] == ["resolver"] * 4 + ["generic"] * 2       # PR #47: max_searches 4
+    assert [q["site"] for q in queries[:4]] == ["cartube.co.il", "icar.co.il", "auto.co.il", "carzone.co.il"]
+    assert all(q["query"].startswith(f"site:{q['site']} ") for q in queries[:4])
+    assert queries[4]["query"].endswith("מפרט טכני") and queries[5]["query"].endswith("specifications")
 
 
 def test_metrics_and_the_resolver_dry_run_on_a_fixture_result_set(tmp_path):
@@ -338,7 +338,7 @@ def test_metrics_and_the_resolver_dry_run_on_a_fixture_result_set(tmp_path):
     assert m["serper"]["israeli_domain_share"] == 1.0 and m["serper"]["unique_urls"] == 3
     assert m["serper"]["candidates"] == 1 and m["serper"]["fetched"] == 1 and m["serper"]["accepted"] == 0
     assert m["serper"]["rejected_by_reason"] == {"fetch_failed:HTTPError": 1}
-    assert m["serper"]["usd_per_1000_queries"] == 1.0 and m["serper"]["usd_per_record"] == 0.005
+    assert m["serper"]["usd_per_1000_queries"] == 1.0 and m["serper"]["usd_per_record"] == 0.006
     assert m["glm"]["version_url_hit"] == 0 and m["glm"]["full_path_ratio"] == 0.5 and m["glm"]["on_site_ratio"] == 0.5
     assert m["glm"]["candidates"] == 0 and m["glm"]["fetched"] == 0
     assert fetched == [R.CARTUBE_G6]                                    # only the ranked version candidate
@@ -364,7 +364,7 @@ def test_the_top_candidate_verdict_comes_from_the_normal_version_page_rules(tmp_
                           fetch=lambda u: {"document_id": put(cache, u, html, "html"), "status": 200},
                           cache=cache, records=[record])
     (m,) = summary["metrics"]
-    assert m["fetched"] == 1 and m["accepted"] == 1 and m["accepted_per_usd"] == 200.0
+    assert m["fetched"] == 1 and m["accepted"] == 1 and m["accepted_per_usd"] == 166.67
     row = json.loads((tmp_path / "b" / "records.jsonl").read_text("utf-8").splitlines()[0])
     assert row["verdict"] == "accepted" and row["candidate_url"] == url
 
@@ -379,7 +379,7 @@ def test_the_cli_entry_runs_the_same_implementation(tmp_path, capsys):
     backend = FakeBackend("serper", {"site:cartube.co.il": [(R.CARTUBE_G6, "g6")]})
     code = cli.main(["--backends", "serper", "--fetch-top", "0", "--out", str(tmp_path / "cli")],
                     make_backend=lambda name: backend, cache=DocumentCache(tmp_path / "c"), records=[record])
-    assert code == 0 and "| serper | 5 |" in capsys.readouterr().out
+    assert code == 0 and "| serper | 6 |" in capsys.readouterr().out
     assert (tmp_path / "cli" / "summary.json").is_file()
 
 

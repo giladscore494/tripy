@@ -42,6 +42,17 @@ class SerperBackend(Backend):
                                  headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
                                  timeout=self.timeout)
         resp.raise_for_status()
-        results = parse(resp.json(), site_native=bool(site or site_of_query(query)))
+        data = resp.json()
+        results = parse(data, site_native=bool(site or site_of_query(query)))
         usd = float(backend_settings(self.name).get("usd_per_query") or 0.0)
-        return results, CallInfo(backend=self.name, usd=usd, latency_ms=self.elapsed_ms(t0), queries=[body["q"]])
+        return results, CallInfo(backend=self.name, usd=usd, latency_ms=self.elapsed_ms(t0), queries=[body["q"]],
+                                 credits=credits_of(data))
+
+
+def credits_of(data: dict) -> float | None:
+    """PR #47 (A6): the credits serper.dev charged for one request (its response's `credits`), None when absent."""
+    try:
+        value = (data or {}).get("credits")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None

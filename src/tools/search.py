@@ -148,6 +148,15 @@ def _backend(ctx, name: str):
                         timeout=(ctx.config.connect_timeout_s, ctx.config.read_timeout_s))
 
 
+class SearchCreditCapReached(RuntimeError):
+    """PR #47 (A6): the vehicle's provider search credits reached the run's search_credit_cap."""
+
+
+def credit_cap_reached(ctx) -> bool:
+    cap = int(getattr(ctx.config, "search_credit_cap", 0) or 0)
+    return bool(cap) and float(ctx.counters.get("search_credits", 0) or 0) >= cap
+
+
 def _provider_search(ctx, backend: str, query: str, count: int, domain: str | None) -> tuple[list[dict], bool, dict]:
     """(usable results, cache hit, sanity) of one backend: the provider's results cached per (backend, query, site, ...)
     then the root-only / site sanity applied."""
@@ -158,6 +167,8 @@ def _provider_search(ctx, backend: str, query: str, count: int, domain: str | No
 
     def network() -> list[dict]:
         # Runs at most once per key across all concurrent workers (single flight in the cache).
+        if credit_cap_reached(ctx):
+            raise SearchCreditCapReached(f"search credit cap {ctx.config.search_credit_cap} reached")
         ctx.counters["search_cache_misses"] += 1
         try:
             results, info = _backend(ctx, backend).query(query, site=domain, count=count)
@@ -169,6 +180,9 @@ def _provider_search(ctx, backend: str, query: str, count: int, domain: str | No
         ctx.counters[f"search_calls:{backend}"] += 1
         if info.usd:
             ctx.counters[f"search_usd:{backend}"] += info.usd
+        if info.credits:
+            ctx.counters["search_credits"] += info.credits
+            ctx.counters[f"search_credits:{backend}"] += info.credits
         if backend == "gemini":
             ctx.counters["gemini_redirects_resolved"] += info.redirects_resolved
             ctx.counters["gemini_redirects_failed"] += info.redirects_failed
@@ -189,6 +203,8 @@ def _provider_search(ctx, backend: str, query: str, count: int, domain: str | No
               "raw_count": len(results)}
     if info is not None:
         sanity.update({"usd": info.usd, "latency_ms": info.latency_ms})
+        if info.credits is not None:
+            sanity["credits"] = info.credits
         if info.queries and backend == "gemini":
             sanity["web_search_queries"] = info.queries
         if backend == "gemini":
@@ -227,9 +243,21 @@ def _run_search_info(ctx, query: str, count: int, domain: str | None) -> tuple[l
     return results, hit, info
 
 
+def _credit_refusal(ctx, query: str, **extra) -> dict:
+    ctx.counters["search_budget_exhausted"] += 1
+    ctx.emit("search_budget_exhausted", query=query, reason="search_credit_cap",
+             cap=getattr(ctx.config, "search_credit_cap", None), credits=ctx.counters.get("search_credits", 0), **extra)
+    return {"query": query, "error": "search_budget_exhausted", "results": [],
+            "message": (f"search refused: this vehicle's search credits reached the cap "
+                        f"({getattr(ctx.config, 'search_credit_cap', None)}). Use fetched documents and offered links.")}
+
+
 def search_web(ctx, query: str, max_results: int = 8, domain: str | None = None) -> dict:
     count = max(1, min(int(max_results or 8), 20))
-    results, hit, info = _run_search_info(ctx, query, count, domain)
+    try:
+        results, hit, info = _run_search_info(ctx, query, count, domain)
+    except SearchCreditCapReached:
+        return {**_credit_refusal(ctx, query, domain=domain), "domain": domain}
     ctx.emit("search", query=query, domain=domain, backend=info["backend"], result_count=len(results), cache_hit=hit,
              **({"fallback_used": True, "primary_backend": info["primary"]} if info.get("fallback_used") else {}))
     out = {"query": query, "domain": domain, "backend": info["backend"], "cache_hit": hit, "results": results}
@@ -254,6 +282,10 @@ def search_official_domains(ctx, query: str, domains: list[str] | None = None) -
     for domain in chosen:
         try:
             results, hit, info = _run_search_info(ctx, query, 5, domain)
+        except SearchCreditCapReached:
+            per_domain[domain] = {"error": "search_budget_exhausted"}
+            _credit_refusal(ctx, query, domain=domain)
+            continue
         except Exception as exc:
             per_domain[domain] = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
             continue

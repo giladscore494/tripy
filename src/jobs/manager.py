@@ -225,7 +225,7 @@ class RunManager:
                  research_fn: Callable[..., dict] = research_one, level15_loader: Callable[..., Any] = load_level15,
                  client_factory: Callable[..., Callable[[], Any]] = vehicle_client_factory,
                  finalize_fn: Callable[..., dict] = finalize_existing_run, register_atexit: bool = True,
-                 shared_storage: bool = False):
+                 shared_storage: bool = False, derived_rows: Callable[[], list[dict]] | None = None):
         self.paths = paths.ensure()
         self.runs_dir = paths.runs_dir
         self.cache = cache or DocumentCache(paths.cache_dir)
@@ -255,6 +255,13 @@ class RunManager:
         from .bakeoffs import BakeoffJobs
 
         self.bakeoffs = BakeoffJobs(paths.data_dir / "bakeoffs", cache=self.cache, owner=self.owner)
+        # PR #47 (B2): the weekly catalog trim index rebuild into <data_dir>/derived (DATABASE_URL, read-only); the
+        # engine reads that copy when it is newer than the repository's (document_binding.trim_index_path)
+        from ..document_binding import set_derived_index_dir
+        from .derived_index import DerivedIndexJob
+
+        set_derived_index_dir(paths.data_dir / "derived")
+        self.derived_index = DerivedIndexJob(paths.data_dir / "derived", rows=derived_rows or _catalog_rows())
         self.reconcile()
         self.reconcile_series()
         try:
@@ -917,6 +924,10 @@ class RunManager:
             self.bakeoffs.shutdown(grace_s=min(5.0, max(0.0, grace_s)))
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self.derived_index.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
         with self._lock:
             if self._shutting_down and not self._threads:
                 return
@@ -939,6 +950,21 @@ _MANAGERS_LOCK = threading.Lock()
 
 def _manager_key(paths: DataPaths) -> tuple[str, str]:
     return str(Path(paths.runs_dir).resolve()), str(Path(paths.cache_dir).resolve())
+
+
+def _catalog_rows() -> Callable[[], list[dict]] | None:
+    """The derived index job's row source: the live catalog over DATABASE_URL (read-only), None without it."""
+    from ..db import database_url
+
+    dsn = database_url()
+    if not dsn:
+        return None
+
+    def rows() -> list[dict]:
+        from ..catalog_trim_index import rows_from_database
+
+        return rows_from_database(dsn)
+    return rows
 
 
 def get_manager(paths: DataPaths, **kwargs) -> RunManager:
