@@ -2572,7 +2572,6 @@
       "אוטומטי",
       "אוטומט",
       "tiptronic",
-      "steptronic",
       "torque converter",
       "torque-converter",
       "torque-converter automatic",
@@ -2665,7 +2664,7 @@
      ]
     }
    ],
-   "semantic_definition": "Transmission type (automatic, manual, dct, cvt, e-cvt, single-speed, amt). Dual-clutch gearboxes (S tronic, DSG, PDK, כפולת מצמד) are dct; torque-converter automatics (Tiptronic, אוטומטית פלנטרית) are automatic; amt only for a single-clutch automated manual (robotized, רובוטית). A wording that names several types is read by `outranks` (PR #45): 'רובוטית כפולת מצמדים' (robotized dual-clutch) is dct.",
+   "semantic_definition": "Transmission type (automatic, manual, dct, cvt, e-cvt, single-speed, amt). Dual-clutch gearboxes (S tronic, DSG, PDK, כפולת מצמד) are dct; torque-converter automatics (Tiptronic, אוטומטית פלנטרית) are automatic; Steptronic alone is ambiguous and does not determine gearbox type; amt only for a single-clutch automated manual (robotized, רובוטית). A wording that names several types is read by `outranks` (PR #45): 'רובוטית כפולת מצמדים' (robotized dual-clutch) is dct.",
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "technical_spec",
    "market_sensitivity": "low",
