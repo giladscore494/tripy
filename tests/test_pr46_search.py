@@ -233,7 +233,7 @@ def test_fallback_uses_serper_when_glm_has_only_off_site_results_for_a_site_sear
 
     assert out["backend"] == "serper" and out["fallback_used"] is True
     assert [r["url"] for r in out["results"]][0] == R.CARTUBE_G6
-    assert ctx.counters["search_off_site"] == 1
+    assert ctx.counters["search_off_site"] == 2  # one GLM off-site result + one Serper off-site result
     assert ctx.counters["search_fallback_used"] == 1 and ctx.counters["search_calls:serper"] == 1
     assert any(k == "search_fallback_used" for k, _ in events)
 
