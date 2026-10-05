@@ -205,12 +205,20 @@ def _run_search(ctx, query: str, count: int, domain: str | None) -> tuple[list[d
 
 def _run_search_info(ctx, query: str, count: int, domain: str | None) -> tuple[list[dict], bool, dict]:
     """The run's search: the primary backend; the fallback backend only when the primary returned 0 usable results.
-    {backend, fallback_used, ...sanity} describes what answered."""
+    For GLM, off-site results are preserved for backwards-compatible diagnostics/output, but they do not count as
+    usable for a site-restricted search because the resolver will drop them. {backend, fallback_used, ...sanity}
+    describes what answered."""
     primary = ctx.config.search_backend
     results, hit, info = _provider_search(ctx, primary, query, count, domain)
     info = {"backend": primary, **info}
+    fallback_results = results
+    if primary == "glm" and info.get("site"):
+        from .search_backends import on_site
+
+        fallback_results = [item for item in results
+                            if on_site(str(item.get("url") or ""), str(info["site"]))]
     fallback = getattr(ctx.config, "search_fallback_backend", "") or ""
-    if not results and fallback and fallback not in (primary, "none"):
+    if not fallback_results and fallback and fallback not in (primary, "none"):
         results, hit, extra = _provider_search(ctx, fallback, query, count, domain)
         ctx.counters["search_fallback_used"] += 1
         ctx.emit("search_fallback_used", primary=primary, fallback=fallback, query=query, site=domain,

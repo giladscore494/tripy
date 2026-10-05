@@ -221,6 +221,23 @@ def test_fallback_is_used_only_on_zero_usable_results(tmp_path, monkeypatch):
     assert out2["backend"] == "glm" and "fallback_used" not in out2 and session2.calls == []
 
 
+def test_fallback_uses_serper_when_glm_has_only_off_site_results_for_a_site_search(tmp_path, monkeypatch):
+    monkeypatch.setenv("SERPER_API_KEY", "k")
+    events = []
+    session = Session(posts={"serper.dev": R.SERPER_SITE_RESPONSE})
+    glm = FakeGlm([{"url": "https://velocityjournal.com/audi-q3", "title": "Audi Q3 specifications",
+                    "snippet": "technical data"}])
+    ctx = _ctx(tmp_path, backend="glm", fallback="serper", glm=glm, session=session, events=events)
+
+    out = dispatch(ctx, "search_web", {"query": "אקספנג G6 2026", "domain": "cartube.co.il"})
+
+    assert out["backend"] == "serper" and out["fallback_used"] is True
+    assert [r["url"] for r in out["results"]][0] == R.CARTUBE_G6
+    assert ctx.counters["search_off_site"] == 2  # one GLM off-site result + one Serper off-site result
+    assert ctx.counters["search_fallback_used"] == 1 and ctx.counters["search_calls:serper"] == 1
+    assert any(k == "search_fallback_used" for k, _ in events)
+
+
 def test_run_cost_prices_each_backend():
     from src.pricing import phase_run_cost, search_by_backend, search_cost_inputs
 
