@@ -38,7 +38,7 @@ from src.open_data.build import build_dataset  # noqa: E402
 
 MANIFEST_VERSION = "open-data-manifest-v1"
 ENTRY_KEYS = ("rows", "years", "files", "absent_columns", "column_units", "unit_unknown_distribution", "csv_discovery",
-              "last_file_year", "compaction", "make_spellings")
+              "last_file_year", "compaction", "make_spellings", "catalogue_date", "catalogue")
 EXPECTED_MAKES = {"epa_fueleconomy": 40, "tc_cvs": 35}      # E4: reported when lower, never a failure
 
 

@@ -139,6 +139,33 @@ def _drive_from_text(text: str, config: dict, dataset: dict) -> str | None:
     return dataset.get("drive_default")
 
 
+def drive_from_model_text(row: dict, source: str, config: dict) -> str | None:
+    """M1: awd | two_wheel_drive when the row's own model / version text names its drive (data/open_datasets.json
+    `drive_tokens_model_text`, per canonical make + `any`; a token matches at the start of a word: 'xDrive30e'),
+    None when it names neither or both."""
+    from .makes import canonical_of
+
+    table = config.get("drive_tokens_model_text") or {}
+    if source not in (table.get("sources") or []):
+        return None
+    text = " ".join(str(row.get(k) or "") for k in ("model", "version", "variant")).lower()
+    make = canonical_of(row.get("make")) or str(row.get("make") or "").strip().upper()
+    found = set()
+    for group in (table.get("any") or {}, (table.get("makes") or {}).get(make) or {}):
+        for drive, tokens in group.items():
+            if any(re.search(rf"(?<![a-z0-9]){re.escape(str(t).lower())}", text) for t in tokens):
+                found.add(drive)
+    return found.pop() if len(found) == 1 else None
+
+
+def _body_of_row(row: dict, dataset: dict) -> set[str]:
+    """M4: the target bodies a source's own body column allows (`body_map`, e.g. ADEME Carrosserie BREAK -> wagon;
+    BERLINE is a sedan or a hatchback in French usage); an unmapped value allows nothing known (unknown)."""
+    mapping = dataset.get("body_map") or {}
+    value = " ".join(str(row.get("body") or "").split()).upper()
+    return {str(b) for b in mapping.get(value) or []} if value else set()
+
+
 def _check(row: dict, source: str, keys: dict, config: dict, dataset: dict) -> dict:
     """{vetoes, matched, unknown, power_definition} of one row."""
     vetoes, matched, unknown = [], [], []
@@ -184,6 +211,8 @@ def _check(row: dict, source: str, keys: dict, config: dict, dataset: dict) -> d
         drive = found.pop() if len(found) == 1 else None
     if drive is None and (dataset.get("drive_tokens") or dataset.get("drive_default")):
         drive = _drive_from_text(model_text, config, dataset)
+    if drive is None:
+        drive = drive_from_model_text(row, source, config)          # M1: "530e xDrive", "C 300 4MATIC"
     if drive is None or keys["drivetrain"] is None:
         unknown.append("drive")
     elif drive == keys["drivetrain"]:
@@ -212,8 +241,9 @@ def _check(row: dict, source: str, keys: dict, config: dict, dataset: dict) -> d
         vetoes.append("transmission")
     # body / doors (a body word in the source's own model / class text)
     bodies = _values(config, "body_values")
-    found_bodies = {b for b, words in bodies.items()
-                    if any(re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", model_text.lower()) for w in words)}
+    found_bodies = _body_of_row(row, dataset) or {
+        b for b, words in bodies.items()
+        if any(re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", model_text.lower()) for w in words)}
     if not found_bodies or not keys["body"]:
         unknown.append("body")
     elif keys["body"] in found_bodies:
@@ -343,14 +373,44 @@ def designation(row: dict, source: str) -> str:
     return " ".join(str(p) for p in parts if p not in (None, ""))[:160]
 
 
+def catalogue_period(source: str, keys: dict, dataset: dict, rows: list[dict] | None, folder=None) -> dict | None:
+    """M4: a catalogue without a model year (ADEME, `catalogue_period`): {status in_period | out_of_period,
+    catalogue_date, basis, catalogue_year, target_year}; the rows are candidates only for a target year >= the
+    catalogue year - window_years. The date: the rows' catalogue_date, else the snapshot's (catalogue_date, else
+    built_at). None without the rule, a target year or a date."""
+    period = dataset.get("catalogue_period")
+    if not isinstance(period, dict) or not keys.get("year"):
+        return None
+    date, basis = None, None
+    if rows is not None:
+        dates = sorted({str(r.get("catalogue_date")) for r in rows if r.get("catalogue_date")})
+        date, basis = (dates[-1], "rows") if dates else (None, None)
+    else:
+        meta = ds.snapshot_meta(source, folder)
+        date, basis = (meta.get("catalogue_date"), "catalogue_date") if meta.get("catalogue_date") else \
+            (meta.get("built_at"), "built_at")
+    year = ds._int(str(date)[:4]) if date else None
+    if year is None:
+        return None
+    window = int(period.get("window_years") or 0)
+    status = "in_period" if int(keys["year"]) >= year - window else "out_of_period"
+    return {"status": status, "catalogue_date": date, "basis": basis, "catalogue_year": year,
+            "target_year": int(keys["year"]), "window_years": window}
+
+
 def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None = None) -> dict:
     """The `international_variant` of one source."""
     config = ds.config()
     dataset = ds.datasets().get(source) or {}
     out: dict[str, Any] = {"source": source, "status": "none", "candidates": 0}
+    if rows is None and not ds.available(source, folder):
+        return {**out, "status": "no_snapshot"}
+    period = catalogue_period(source, keys, dataset, rows, folder)
+    if period:
+        out["catalogue"] = period
+        if period["status"] == "out_of_period":
+            return {**out, "status": "out_of_period"}
     if rows is None:
-        if not ds.available(source, folder):
-            return {**out, "status": "no_snapshot"}
         read: dict = {}
         rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder, report=read)
         if read.get("skipped_shards"):
@@ -376,11 +436,27 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
             verdict["matched"] = verdict["matched"] + ["type_code_match"]
         entry = {"row_id": row.get("row_id"), "designation": designation(row, source), **verdict}
         (vetoed if verdict["vetoes"] else survivors).append((row, entry))
+    superseded: list[tuple[dict, dict]] = []
     if typed and keys.get("co2_wltp"):
         equal = [(r, e) for r, e in survivors if _num(r.get("co2_wltp")) == keys["co2_wltp"]]
         out["type_code"]["co2_selected"] = bool(equal)
         if equal:
+            superseded = [(r, e) for r, e in survivors if (r, e) not in equal]
             survivors = equal
+    elif keys.get("co2_wltp") and any("co2_wltp" in e["matched"] for _, e in survivors):
+        # M1: rows that do not state the co2 key never survive next to rows that match it exactly
+        superseded = [(r, e) for r, e in survivors if "co2_wltp" not in e["matched"]]
+        survivors = [(r, e) for r, e in survivors if "co2_wltp" in e["matched"]]
+    if superseded:
+        out["superseded_by_exact_key"] = {"key": "co2_wltp", "rows": len(superseded),
+                                          "row_ids": [e["row_id"] for _, e in superseded][:20]}
+    if survivors:
+        co2 = all("co2_wltp" in e["matched"] for _, e in survivors)
+        basis = "type_code+co2" if typed and co2 else "type_code" if typed else "co2" if co2 else None
+        if basis:
+            # M3: the narrowest exact subset the measured-value offers come from
+            out["exact_subset"] = {"basis": basis, "rows": len(survivors),
+                                   "row_ids": [e["row_id"] for _, e in survivors][:40]}
     out["vetoed"] = [{"row_id": e["row_id"], "designation": e["designation"], "vetoes": e["vetoes"]}
                      for _, e in vetoed][:40]
     out["veto_counts"] = {}

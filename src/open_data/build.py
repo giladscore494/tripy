@@ -1015,15 +1015,32 @@ def build_ademe(fetch: Fetcher, *, progress: Progress = _noop) -> dict:
         raise BuildStopped("schema_mismatch", missing=resolved["missing"], ambiguous=resolved["ambiguous"],
                            absent=resolved["absent"], live_header=header[:200])
     scales, units = unit_scales(columns, resolved["mapping"], schema)
+    catalogue = ademe_catalogue_date(fetch, cfg)
     rows, report = _build_file(cfg["csv_url"], fetch, columns, id_prefix="ademe-", scales=scales,
-                               decimal_comma=bool(cfg.get("decimal_comma")), body=body)
+                               decimal_comma=bool(cfg.get("decimal_comma")), body=body,
+                               extra={"catalogue_date": catalogue["date"]} if catalogue.get("date") else None)
     if report["status"] != "built":
         raise BuildStopped(report.get("reason") or report["status"], files=[report])
     unknown = {k: distribution(rows, k) for k, info in units.items() if info.get("unit") == UNKNOWN_UNIT}
     report["units"] = {k: v.get("unit") for k, v in units.items()}
     return {"rows": rows, "schema": header, "urls": [cfg["csv_url"]], "files": [report],
             "absent_columns": report.get("absent_columns") or [], "column_units": units,
-            "unit_unknown_distribution": unknown}
+            "unit_unknown_distribution": unknown, "catalogue_date": catalogue.get("date"), "catalogue": catalogue}
+
+
+def ademe_catalogue_date(fetch: Fetcher, cfg: dict) -> dict:
+    """M4: {date, basis | error} of the ADEME catalogue: the data-fair dataset metadata (`source_url`) field named by
+    catalogue_period.metadata_fields (dataUpdatedAt, else updatedAt). The catalogue has no model year: the match uses
+    this date to keep a target out of period."""
+    fields = (cfg.get("catalogue_period") or {}).get("metadata_fields") or []
+    try:
+        meta = json.loads(_decode(fetch(cfg["source_url"])))
+    except Exception as exc:  # noqa: BLE001 - the match falls back to the snapshot's built_at
+        return {"date": None, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    for field in fields:
+        if isinstance(meta, dict) and meta.get(field):
+            return {"date": str(meta[field]), "basis": field}
+    return {"date": None, "error": f"none of {fields} in the dataset metadata"}
 
 
 # --- CKAN (NRCan, CVS) -----------------------------------------------------------------------------------------------------
@@ -1066,7 +1083,8 @@ def build_ckan_groups(dataset: str, fetch: Fetcher, *, progress: Progress = _noo
             continue
         progress(f"{group['group']}: {name}")
         built, report = _build_file(resource["url"], fetch, group.get("columns"), id_prefix=f"{dataset}-{name}-",
-                                    decimal_comma=bool(cfg.get("decimal_comma")), extra={"group": group["group"]})
+                                    decimal_comma=bool(cfg.get("decimal_comma")),
+                                    extra={"group": group["group"], **(group.get("constants") or {})})
         files.append({**report, "group": group["group"]})
         rows += built
     if not any(f["status"] == "built" for f in files):
@@ -1324,7 +1342,8 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "build_duration_s": duration, "config_version": ds.config().get("version"),
                 "column_units": built.get("column_units"), "unit_unknown_distribution": built.get(
                     "unit_unknown_distribution"), "compaction": built.get("compaction"),
-                "make_spellings": built.get("make_spellings")}
+                "make_spellings": built.get("make_spellings"), "catalogue_date": built.get("catalogue_date"),
+                "catalogue": built.get("catalogue")}
         shards = None
         if ds.shard_spec(dataset):
             # S1: one shard per year; its meta holds no timestamp (an unchanged year gives the same bytes)
@@ -1346,6 +1365,8 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "column_units": built.get("column_units"),
                 "unit_unknown_distribution": built.get("unit_unknown_distribution"),
                 "compaction": built.get("compaction"), "make_spellings": built.get("make_spellings"),
+                **({"catalogue_date": built.get("catalogue_date"), "catalogue": built["catalogue"]}
+                   if built.get("catalogue") else {}),
                 **({"csv_discovery": built["csv_discovery"]} if built.get("csv_discovery") is not None else {})}
     except BuildStopped as stop:
         return {"status": "stopped", "reason": stop.reason, "report": stop.report,

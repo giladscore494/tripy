@@ -36,6 +36,7 @@ export function defaultRoutes(): Record<string, Handler> {
     "GET /api/vehicles": () => json(F.vehicles),
     "GET /api/run-settings": () => json(F.contract),
     "GET /api/series": () => json(F.seriesList()),
+    "GET /api/data/open-data/shadow-report": () => json({ report: null }),
   };
 }
 

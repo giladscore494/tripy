@@ -872,6 +872,60 @@ export interface DatasetRow {
   last_attempt?: DatasetAttempt | null;
 }
 
+// R: the open-data shadow report (src/open_data/shadow.py; POST / GET /api/data/open-data/shadow-report)
+export interface ShadowTableRow {
+  source: string;
+  field: string;
+  route: string | null;
+  agree: number;
+  disagree: number;
+  offered_agree: number;
+  offered_disagree: number;
+  no_offer: number;
+}
+
+export interface ShadowDisagreement {
+  run_id: string;
+  record_id: string;
+  source: string;
+  field: string;
+  route: string | null;
+  status: string | null;
+  offer_value: unknown;
+  run_value: unknown;
+  row_ids: unknown[];
+}
+
+export interface ShadowVehicle {
+  run_id: string;
+  record_id: string;
+  label: string | null;
+  route: string | null;
+  level: string | null;
+  designation: string | null;
+  sources: Record<string, string> | null;
+  type_code: string | null;
+  error: string | null;
+  offered: number;
+  agree: number;
+  disagree: number;
+}
+
+export interface ShadowReport {
+  version: string;
+  generated_at: string;
+  runs_dir: string;
+  min_agree: number;
+  snapshots_built_at: string | null;
+  vehicles_total: number;
+  vehicles_failed: number;
+  table: ShadowTableRow[];
+  proposed: { source: string; field: string; route: string | null; agreements: number }[];
+  disagreements: ShadowDisagreement[];
+  type_code: Record<string, { degem_nm: number; per_rule: Record<string, number>; unmatched_examples: string[] }>;
+  vehicles: ShadowVehicle[];
+}
+
 export interface DatasetsStatus {
   repo_dir: string;
   manifest_built_at: string | null;
