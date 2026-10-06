@@ -485,6 +485,9 @@ class Dictionary:
         self.rules = [r for r in (_compile_rule({**s, "name": normalize_field_name(s["name"])}) for s in specs) if r]
         v = self.vocabulary
         self.affirmative = {normalize_term(x) for x in v.get("affirmative_values") or []}
+        markers = v.get("spec_sheet_markers") if isinstance(v.get("spec_sheet_markers"), dict) else {}
+        self.sheet_present = {normalize_term(x) for x in markers.get("present") or []}
+        self.sheet_absent = {normalize_term(x) for x in markers.get("absent") or []}
         self.negative_values = {normalize_term(x) for x in v.get("negative_values") or []}
         self.optional_values = {normalize_term(x) for x in v.get("optional_values") or []}
         self.optional_terms = compile_terms(x for x in v.get("optional_values") or [] if len(x) > 2)
@@ -1149,6 +1152,20 @@ def _stated_bool(d: Dictionary, rest: str) -> tuple[Any, str] | None:
 NEGATION_BEFORE = 14
 
 
+def line_marker(d: "Dictionary", line: str) -> bool | None:
+    """B3: the spec-sheet equipment marker of a line: True for a present marker (●, ˆ, ✓, סטנדרטי), False for an
+    absent one (X, —, אופציונלי), as a whole token at the line's end (or start: a visual-order line); None otherwise
+    (no marker, or both kinds)."""
+    tokens = normalize_term(line or "").split()
+    if len(tokens) < 2:
+        return None
+    present = getattr(d, "sheet_present", set()) or set()
+    absent = getattr(d, "sheet_absent", set()) or set()
+    edges = {tokens[-1], tokens[0]}
+    found = {True for t in edges if t in present} | {False for t in edges if t in absent}
+    return found.pop() if len(found) == 1 else None
+
+
 def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[int, int]) -> Hit | None:
     """A feature in running text / a label line. Order: an explicitly stated value after the label (same line,
     or the next line for a label-only line) > a negation right before the label > the field's negative context >
@@ -1168,6 +1185,12 @@ def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[in
         value, availability = stated
         return Hit(value, availability, confidence=0.8 if availability != "optional" else 0.65, span=anchor,
                    hints={"availability": availability, "stated_value": True})
+    marker = line_marker(d, text) if seg.kind == "line" else None
+    if marker is not None:
+        # B3: a spec sheet's equipment line with its marker ("חימום מושבים קדמיים ●", "גג שמש X")
+        availability = "standard" if marker else "absent"
+        return Hit(marker, availability, confidence=0.8, span=anchor,
+                   hints={"availability": availability, "stated_value": True, "spec_sheet_marker": True})
     before = text[max(bounds[0], a - NEGATION_BEFORE):a]
     if d.negation_prefix and d.negation_prefix.search(before):
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
@@ -1417,6 +1440,8 @@ def _price(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], s
 
 def _candidate(rule: FieldRule, seg: Segment, hit: Hit, method: str, alias: str | None, wide: str) -> dict:
     quote = seg.quote if len(seg.quote) <= QUOTE_CHARS else _cut_quote(seg, hit.span)
+    if method == "label_next_line" and seg.next_quote and len(quote) + len(seg.next_quote) < QUOTE_CHARS:
+        quote = f"{quote} {seg.next_quote}"          # the label line states no value: the quote holds the value line
     block = f"table:{seg.table_index}:row:{seg.row_index}" if seg.table_index is not None else seg.quote
     origin = method if method in ("dom_pair", "unit_anchor", "spec_block") else (
         "column_identity" if seg.column_identity else "table" if seg.kind == "row" else "line")

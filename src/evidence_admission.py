@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires, takes_inches, wheel_size_number
+from .candidate_harvest import line_marker
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
                                 logical_lines, logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line,
@@ -672,6 +673,13 @@ def _stated_availability(adm: AdmissionContext, d, rule, text: str) -> list[bool
         lead = text[clause_start:start]
         if statement and statement.search(lead) and not (adm.feature_labels and adm.feature_labels.search(lead)):
             values.append(True)
+            continue
+        # B3: the spec-sheet marker of the label's own line ("חימום מושבים קדמיים ●")
+        line_start = text.rfind("\n", 0, start) + 1
+        line_end = text.find("\n", end)
+        marker = line_marker(d, text[line_start:line_end if line_end >= 0 else len(text)])
+        if marker is not None:
+            values.append(marker)
     return values
 
 
@@ -1267,6 +1275,39 @@ def multi_version_context(adm: AdmissionContext, material: DocumentMaterial, val
             "target_listed": target_among_versions(adm, material, versions)}
 
 
+SPEC_SHEET_AUTHORITIES = ("official_importer", "official_manufacturer")
+
+
+def spec_sheet_verdict(adm: AdmissionContext, material: DocumentMaterial) -> dict | None:
+    """A2 / B2: the document's version by its government codes (document_binding.version_by_codes over the codes its
+    code tables state and its type code), and whether it is an importer spec sheet of the target's version (an official
+    importer / manufacturer document, a PDF or a spec-sheet link, that states codes or the target's type code).
+    {status, basis, codes, importer_spec_sheet, hosted_by, authority} or None (no codes and no type code)."""
+    from .document_binding import version_by_codes
+
+    doc = material.doc
+    verdict = version_by_codes(doc.gov_codes or [], adm.identity, doc.logical_text or doc.text)
+    if verdict is None:
+        return None
+    authority = material.authority.get("source_authority")
+    sheet_like = (material.meta or {}).get("doc_type") == "pdf" or spec_sheet_url(doc.url)
+    return {**verdict, "authority": authority, "hosted_by": material.authority.get("source_domain"),
+            "importer_spec_sheet": verdict["status"] == "target" and authority in SPEC_SHEET_AUTHORITIES
+            and bool(sheet_like)}
+
+
+def spec_sheet_url(url: str | None) -> bool:
+    """Does a URL look like a spec sheet / price list by the link rules of data/source_rules.json
+    (`spec_sheet_discovery.url_patterns`)?"""
+    from urllib.parse import unquote
+
+    from .source_authority import rules
+
+    patterns = ((rules().get("spec_sheet_discovery") or {}).get("url_patterns") or [])
+    path = unquote(str(url or "")).lower()
+    return any(re.search(p, path) for p in patterns)
+
+
 def region_agreement_violations(binding: dict, multi_version: dict | None) -> list[str]:
     """The binding invariant R4 guarantees (asserted on every fact): on a multi-version document a fact whose DVM region
     is `unresolved / inventory_without_target` is never bound at the technical variant or above."""
@@ -1336,6 +1377,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         # rendered): the URL slug never names the document's trim
         doc_statuses = {**doc_statuses, "trim": "absent"}
         trim_named = False
+    try:
+        sheet = spec_sheet_verdict(adm, material)
+    except Exception:  # noqa: BLE001 - an additional layer; the normal binding stands without it
+        sheet = None
     binding = bind(adm.identity, doc_statuses, inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
                    trim_named_in_document=trim_named,
@@ -1347,7 +1392,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
                    powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
                    version_page=page, engine_invariant=spec.get("variant_invariance") == "engine",
-                   multi_version=multi_version, trim_column=column)
+                   multi_version=multi_version, trim_column=column, spec_sheet=sheet)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1363,6 +1408,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                                    if page.get(k) not in (None, [], {})}
     if column:
         binding["trim_column"] = dict(column)
+    if sheet and sheet.get("status") in ("target", "other_code_family"):
+        binding["spec_sheet"] = {k: sheet.get(k) for k in ("status", "basis", "codes", "family_codes", "type_codes",
+                                                           "importer_spec_sheet", "hosted_by", "authority")
+                                 if sheet.get(k) not in (None, [], {})}
     trim_page = material.trim_page if isinstance(material.trim_page, dict) else None
     if trim_page and trim_page.get("status") in ("accepted", "rejected"):
         binding["trim_page"] = {k: trim_page.get(k) for k in ("kind", "status", "reason", "site", "slug",
@@ -1572,6 +1621,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "variant_map_region": binding.get("variant_map_region"),
         "version_page": binding.get("version_page"), "document_versions": binding.get("document_versions"),
         "trim_column": binding.get("trim_column"), "trim_page": binding.get("trim_page"),
+        "spec_sheet": binding.get("spec_sheet"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,

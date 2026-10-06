@@ -123,6 +123,19 @@ binding-v8 (PR #47), deterministic and fail-closed (src/il_trim_pages.py); nothi
     single catalog entry (A2)    the il_version_page escapes count catalog entries per (manufacturer, family, year,
                                  BODY, propulsion, drivetrain); a drivetrain the page does not name is accepted when
                                  the catalog has one drivetrain for (manufacturer, family, year, body, propulsion)
+
+binding-v9 (identity anchors PR), deterministic and fail-closed; nothing here loosens an earlier rule:
+
+    other_code_family (A2)       a document whose "קוד דגם | תיאור דגם" tables (read from the logical text: A3 / C4)
+                                 name ONLY government codes whose catalog type code differs from the target's
+                                 (2423 -> 21HK for a 31AZ target) is another version: a veto at the technical-variant
+                                 cap. Codes the catalog does not know, or no codes at all, change nothing
+    importer_spec_sheet (B2)     an official importer document whose code table names the target's degem_cd, a code
+                                 of its code family (same tozeret_cd + type code: 1847 for 2276) or that states its
+                                 type code binds every value at exact_technical_variant; at exact_market_trim when it
+                                 names the target trim or the target's own degem_cd. Vetoes and mixed fact layers win
+    power anchor (A4)            every power gate reads koah_sus as PS or mechanical hp (power_anchor), max(2, 1 %),
+                                 never wider than R3 and never a power nearer to the family's neighbour catalog power
 """
 
 from __future__ import annotations
@@ -136,7 +149,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v8"
+BINDING_VERSION = "binding-v9"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -1564,7 +1577,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
          powertrain_versions: dict | None = None, stale: dict | None = None,
          version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None,
-         trim_column: dict | None = None) -> dict:
+         trim_column: dict | None = None, spec_sheet: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1590,7 +1603,12 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     PR #47 input: `trim_column` (src/il_trim_pages: an accepted carzone trim page, basis il_trim_page, or the column of
     an accepted compare table the value sits in: status `target`, basis il_compare_column, or `other_variant`), see
-    binding-v8 in the module doc."""
+    binding-v8 in the module doc.
+
+    binding-v9 input: `spec_sheet` (evidence_admission.spec_sheet_verdict: the document's government codes, A2): a
+    document naming only codes of another type code is vetoed at the technical-variant cap (`other_code_family`); an
+    official importer spec sheet of the target's version binds exact_technical_variant (basis importer_spec_sheet), its
+    market trim when it names the target trim or the target's own degem_cd."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1765,6 +1783,29 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         level, basis, raised_by = "exact_market_trim", rule, rule
     else:
         column_target = False
+    sheet = spec_sheet or {}
+    sheet_target = False
+    if sheet.get("status") == "other_code_family":
+        # A2: every government code the document states belongs to another type code (2423 -> 21HK for a 31AZ target)
+        vetoes.append("other_code_family_mismatch@document_codes")
+        rules.append("other_code_family")
+    elif sheet.get("status") == "target" and sheet.get("importer_spec_sheet") and not vetoes \
+            and not model_declared_different and s["model"] == "match" and not fact_mixed \
+            and s["year"] != "mismatch" and level_index(level) >= level_index("generation"):
+        # B2: the importer's own spec sheet of the target's version (its code table names the target's code or its
+        # code family): every value binds the technical variant; the market trim when the sheet names the target trim
+        # or the target's own degem_cd
+        sheet_target = True
+        rules.append("importer_spec_sheet")
+        if level_index(level) < level_index("exact_technical_variant"):
+            level, basis, raised_by = "exact_technical_variant", "importer_spec_sheet", "importer_spec_sheet"
+        names_trim = s["trim"] == "match" or (trim_named_in_document and other_trims_named is not None
+                                               and not other_trims_named)
+        if (names_trim or sheet.get("basis") == "degem_cd") and s["trim"] != "mismatch" \
+                and market and market == identity.target_market:
+            effective["trim"] = {"status": "match", "basis": "importer_spec_sheet"}
+            s["trim"] = "match"
+            level, basis, raised_by = "exact_market_trim", "importer_spec_sheet", "importer_spec_sheet"
     not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
     if not_offered and level == "exact_market_trim":
         # F5: the document's complete model-code table sells the target's technical variant under other codes only
@@ -1802,7 +1843,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     # proves it (or the value repeated identically for every version). A fact whose DVM region says the inventory does
     # not contain the target at all never binds the technical variant of a multi-version document
     mv = multi_version or {}
-    if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target \
+    if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target and not sheet_target \
             and level_index(level) >= level_index("exact_technical_variant"):
         technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
         target_region = bool(region and region.get("allowed") and region.get("status") == "target")
@@ -1866,7 +1907,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page") \
+    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page", "importer_spec_sheet") \
             and level_index(level) >= level_index(
             "exact_technical_variant") and not vetoes and not model_declared_different:
         out["binding_basis"] = raised_by

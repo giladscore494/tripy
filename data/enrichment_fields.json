@@ -446,7 +446,24 @@
    "סיבובים לדקה",
    "סיבובים/לדקה",
    "revolutions per minute"
-  ]
+  ],
+  "spec_sheet_markers": {
+   "_about": "B3 (identity anchors PR): an importer spec sheet's equipment line ends (or, in visual order, starts) with a marker token: present = standard on this trim, absent = not on this trim (`אופציונלי`: an option, not standard). Only a whole token at the line's edge counts; a list item without a marker (icons lost in text extraction) never yields a boolean.",
+   "present": [
+    "●",
+    "ˆ",
+    "✓",
+    "✔",
+    "סטנדרטי"
+   ],
+   "absent": [
+    "X",
+    "✗",
+    "✘",
+    "—",
+    "אופציונלי"
+   ]
+  }
  },
  "fields": [
   {
