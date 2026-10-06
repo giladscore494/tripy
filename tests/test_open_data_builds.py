@@ -55,7 +55,7 @@ def test_the_identity_keys_are_the_required_ones():
                                                                    "displacement_l", "drive", "transmission"])
     conventional = next(g for g in _cfg("nrcan_fuel_ratings")["resource_groups"] if g["group"] == "conventional")
     assert required(conventional["columns"]) == sorted(["year", "make", "model", "displacement_l", "transmission"])
-    assert required(_cfg("tc_cvs")["columns"]) == sorted(["year", "make", "model"])
+    assert required(_cfg("tc_cvs")["columns"]) == sorted(["measured_year", "make", "model"])   # year: the file year
 
 
 def test_spellings_match_case_insensitively_and_an_absent_optional_key_is_recorded_not_fatal():
@@ -89,50 +89,44 @@ def test_the_eea_map_resolves_the_2018_header_with_every_required_key():
 
 
 def eea_grouped(rows: list[dict], query: str) -> list[dict]:
-    """A fake DISCODATA for the grouped query: groups the per-vehicle rows by the identity keys' live columns and
-    aggregates the measurements (MIN / MAX / AVG) and R (SUM), only for the makes of the query's IN list."""
+    """A fake DISCODATA for the E1 query: the per-vehicle rows of the query's make value, grouped by the selected
+    columns, with SUM(R) as `r` (distinct configurations with a registration count)."""
     import re as _re
 
-    cfg = _cfg("eea_co2_cars")
-    assert "GROUP BY" in query and "ORDER BY" not in query and "TRY_CAST" in query
-    makes = set(_re.findall(r"'([^']+)'", query.split(" IN (", 1)[1]))
-    header = list(rows[0].keys()) if rows else H.EEA_2018_HEADER
-    mapping = resolve_map(header, cfg["columns"])["mapping"]
-    keys = [k for k in cfg["group_by_keys"] if k in mapping]
-    measures = [k for k in cfg["measure_keys"] if k in mapping]
+    assert "GROUP BY" in query and "ORDER BY" not in query and " AS r " in query + " "
+    assert not any(f in query for f in ("MIN(", "MAX(", "AVG(")) and query.count(") AS ") == 1 and query.count(" AS ") == 2
+    select = query[len("SELECT "):query.index(" FROM ")]
+    columns = [c[1:-1].replace("]]", "]") for c in select.split(",") if c.startswith("[")]
+    assert query.split("GROUP BY ", 1)[1] == ",".join(f"[{c}]" for c in columns)
+    make = _re.search(r"\[Mk\]=N?'((?:[^']|'')*)'", query).group(1).replace("''", "'")
     groups: dict = {}
     for row in rows:
-        if str(row.get(mapping["make"]) or "").upper() not in makes:
+        if str(row.get("Mk")) != make:
             continue
-        groups.setdefault(tuple(row.get(mapping[k]) for k in keys), []).append(row)
-    out = []
-    for key, members in groups.items():
-        item = dict(zip(keys, key))
-        for m in measures:
-            values = [float(r[mapping[m]]) for r in members if r.get(mapping[m]) is not None]
-            item[f"{m}_min"], item[f"{m}_max"] = (min(values), max(values)) if values else (None, None)
-            item[f"{m}_avg"] = sum(values) / len(values) if values else None
-        item["registrations"] = sum(int(r.get("R") or 0) for r in members)
-        out.append(item)
-    return out
+        key = tuple(row.get(c) for c in columns)
+        groups[key] = groups.get(key, 0) + int(row.get("R") or 0)
+    return [{**dict(zip(columns, key)), "r": r} for key, r in groups.items()]
 
 
 def _eea_fetch(pairs, per_year_rows, queries, header=H.EEA_2018_HEADER, grouped=None):
     def fetch(url):
         query = parse_qs(urlparse(url).query)["query"][0]
         queries.append(query)
-        if query.startswith("SELECT DISTINCT"):
+        assert len(url.split("query=", 1)[1].split("&", 1)[0]) <= 1800
+        if query.startswith("SELECT DISTINCT") and "WHERE" not in query:
             return json.dumps({"results": [{"Year": y, "Status": s} for y, s in pairs]}).encode()
         if query.startswith("SELECT TOP 1") and "WHERE" not in query:
             return json.dumps({"results": [H.eea_row(header)]}).encode()
         year = int(query.split("[Year] = ")[1].split()[0])
         status = query.split("[Status] = '")[1][0]
+        rows = per_year_rows.get((year, status)) or []
         if query.startswith("SELECT TOP 1"):
-            rows = per_year_rows.get((year, status)) or []
             return json.dumps({"results": rows[:1]}).encode()
+        if query.startswith("SELECT DISTINCT [Mk]"):
+            return json.dumps({"results": [{"Mk": m} for m in sorted({r["Mk"] for r in rows})]}).encode()
         if grouped is not None:
             return grouped(year, status, query)
-        return json.dumps({"results": eea_grouped(per_year_rows.get((year, status)) or [], query)}).encode()
+        return json.dumps({"results": eea_grouped(rows, query)}).encode()
     return fetch
 
 

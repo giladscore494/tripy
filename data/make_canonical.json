@@ -1,0 +1,360 @@
+{
+ "_about": "Reviewed data (replaces the consonant-skeleton transliteration as the source of truth): the MILO catalog's tozar (public.catalog_variants_current, read-only, 2026-10-06: 62 values) -> the canonical Latin make(s). `makes` count by make alone; `model_gated` makes (one tozar naming several makes: ב מ וו / MINI, סיאט / CUPRA, קרייזלר / RAM, אופל / VAUXHALL, דיימלר קרייזלר) count only when the row's model also matches a catalog model family of that tozar, never by make alone. Per dataset, the spellings of each canonical make are found by `normalization` only (src/open_data/makes.normalize_make): equal after normalization is a spelling of that make, nothing else, never fuzzy. scripts/build_make_aliases.py generates data/open_data_make_aliases.json from this file and the probe's distinct makes.",
+ "version": "make-canonical-v1",
+ "reviewed_at": "2026-10-06",
+ "normalization": {
+  "_about": "upper case (accents dropped); everything from the first whitespace token that carries a digit on is an address tail (dropped; \"1OYOTA\" -> nothing); dots and apostrophes are removed inside a word (B.M.W. -> BMW, S.A. -> SA), other punctuation separates words; a `legal_forms` word ends the name (it and the address after it are dropped); a `descriptors` word is dropped; the remaining words are compared with their spaces collapsed (LANDROVER = LAND ROVER)",
+  "legal_forms": [
+   "AG",
+   "GMBH",
+   "SA",
+   "SAS",
+   "SPA",
+   "SRL",
+   "SRO",
+   "AS",
+   "LTD",
+   "LIMITED",
+   "LLC",
+   "PLC",
+   "CO",
+   "COMPANY",
+   "CORP",
+   "CORPORATION",
+   "INC",
+   "MOTOR",
+   "MOTORS"
+  ],
+  "descriptors": [
+   "CAR",
+   "CARS",
+   "AUTO",
+   "AUTOMOBILE",
+   "AUTOMOBILES"
+  ]
+ },
+ "tozar": {
+  "מרצדס": {
+   "makes": [
+    "MERCEDES-BENZ"
+   ]
+  },
+  "מרצדס בנץ": {
+   "makes": [
+    "MERCEDES-BENZ"
+   ]
+  },
+  "ב מ וו": {
+   "makes": [
+    "BMW"
+   ],
+   "model_gated": [
+    "MINI"
+   ]
+  },
+  "טויוטה": {
+   "makes": [
+    "TOYOTA"
+   ]
+  },
+  "פולקסווגן": {
+   "makes": [
+    "VOLKSWAGEN"
+   ]
+  },
+  "אאודי": {
+   "makes": [
+    "AUDI"
+   ]
+  },
+  "אודי": {
+   "makes": [
+    "AUDI"
+   ]
+  },
+  "סקודה": {
+   "makes": [
+    "SKODA"
+   ]
+  },
+  "יונדאי": {
+   "makes": [
+    "HYUNDAI"
+   ]
+  },
+  "פורד": {
+   "makes": [
+    "FORD"
+   ]
+  },
+  "סיטרואן": {
+   "makes": [
+    "CITROEN"
+   ]
+  },
+  "פיג'ו": {
+   "makes": [
+    "PEUGEOT"
+   ]
+  },
+  "וולבו": {
+   "makes": [
+    "VOLVO"
+   ]
+  },
+  "קיה": {
+   "makes": [
+    "KIA"
+   ]
+  },
+  "שברולט": {
+   "makes": [
+    "CHEVROLET"
+   ]
+  },
+  "רובר": {
+   "makes": [
+    "LAND ROVER"
+   ]
+  },
+  "לנדרובר": {
+   "makes": [
+    "LAND ROVER"
+   ]
+  },
+  "רנו": {
+   "makes": [
+    "RENAULT"
+   ]
+  },
+  "טסלה": {
+   "makes": [
+    "TESLA"
+   ]
+  },
+  "פורשה": {
+   "makes": [
+    "PORSCHE"
+   ]
+  },
+  "סובארו": {
+   "makes": [
+    "SUBARU"
+   ]
+  },
+  "סיאט": {
+   "makes": [
+    "SEAT"
+   ],
+   "model_gated": [
+    "CUPRA"
+   ]
+  },
+  "ניסאן": {
+   "makes": [
+    "NISSAN"
+   ]
+  },
+  "פיאט": {
+   "makes": [
+    "FIAT"
+   ]
+  },
+  "מיצובישי": {
+   "makes": [
+    "MITSUBISHI"
+   ]
+  },
+  "קרייזלר": {
+   "makes": [
+    "CHRYSLER"
+   ],
+   "model_gated": [
+    "RAM"
+   ]
+  },
+  "אופל": {
+   "makes": [
+    "OPEL"
+   ],
+   "model_gated": [
+    "VAUXHALL"
+   ]
+  },
+  "ג'יפ": {
+   "makes": [
+    "JEEP"
+   ]
+  },
+  "הונדה": {
+   "makes": [
+    "HONDA"
+   ]
+  },
+  "מזדה": {
+   "makes": [
+    "MAZDA"
+   ]
+  },
+  "לקסוס": {
+   "makes": [
+    "LEXUS"
+   ]
+  },
+  "סוזוקי": {
+   "makes": [
+    "SUZUKI"
+   ]
+  },
+  "אלפא רומיאו": {
+   "makes": [
+    "ALFA ROMEO"
+   ]
+  },
+  "יגואר": {
+   "makes": [
+    "JAGUAR"
+   ]
+  },
+  "קאדילאק": {
+   "makes": [
+    "CADILLAC"
+   ]
+  },
+  "איסוזו": {
+   "makes": [
+    "ISUZU"
+   ]
+  },
+  "דאצ'יה": {
+   "makes": [
+    "DACIA"
+   ]
+  },
+  "דאציה": {
+   "makes": [
+    "DACIA"
+   ]
+  },
+  "סמארט": {
+   "makes": [
+    "SMART"
+   ]
+  },
+  "מזארטי": {
+   "makes": [
+    "MASERATI"
+   ]
+  },
+  "דייהטסו": {
+   "makes": [
+    "DAIHATSU"
+   ]
+  },
+  "ג'י.אמ.סי": {
+   "makes": [
+    "GMC"
+   ]
+  },
+  "מקסוס": {
+   "makes": [
+    "MAXUS"
+   ]
+  },
+  "די אס": {
+   "makes": [
+    "DS"
+   ]
+  },
+  "דייהו": {
+   "makes": [
+    "DAEWOO"
+   ]
+  },
+  "ביואיק": {
+   "makes": [
+    "BUICK"
+   ]
+  },
+  "אקספנג": {
+   "makes": [
+    "XPENG"
+   ]
+  },
+  "דודג'": {
+   "makes": [
+    "DODGE"
+   ]
+  },
+  "גרייט וול": {
+   "makes": [
+    "GREAT WALL"
+   ]
+  },
+  "גילי": {
+   "makes": [
+    "GEELY"
+   ]
+  },
+  "דיפאל": {
+   "makes": [
+    "DEEPAL"
+   ]
+  },
+  "דונגפנג": {
+   "makes": [
+    "DONGFENG"
+   ]
+  },
+  "ואז": {
+   "makes": [
+    "LADA",
+    "VAZ"
+   ]
+  },
+  "די.אף.אס.קיי": {
+   "makes": [
+    "DFSK"
+   ]
+  },
+  "האמר": {
+   "makes": [
+    "HUMMER"
+   ]
+  },
+  "האמר ג.מ": {
+   "makes": [
+    "HUMMER"
+   ]
+  },
+  "דה טומאסו": {
+   "makes": [
+    "DE TOMASO"
+   ]
+  },
+  "דיימלר קרייזלר": {
+   "makes": [],
+   "model_gated": [
+    "CHRYSLER",
+    "DODGE",
+    "JEEP"
+   ]
+  },
+  "דימלרקריזלר": {
+   "makes": [],
+   "model_gated": [
+    "CHRYSLER",
+    "DODGE",
+    "JEEP"
+   ]
+  }
+ },
+ "unmapped": {
+  "_about": "catalog tozar left without a make: unknown brand (12 tozeret_nm variants in total); listed for review, never guessed",
+  "tozar": [
+   "גמס",
+   "דאבל יו אם איי",
+   "דאיון"
+  ]
+ }
+}

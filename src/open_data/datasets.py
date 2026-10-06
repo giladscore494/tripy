@@ -202,7 +202,7 @@ def query_rows(dataset: str, *, makes: Iterable[str], years: Iterable[int] | Non
     """Rows of the snapshot whose make is one of `makes` (upper case) and, when given, whose year is in `years`.
     Each row: the canonical columns + `row_id`. Empty without a snapshot."""
     path = snapshot_path(dataset, folder)
-    makes = sorted({str(m).strip().upper() for m in makes if str(m or "").strip()})
+    makes = sorted({" ".join(str(m).split()).upper() for m in makes if str(m or "").strip()})
     if path is None or not path.exists() or not makes:
         return []
     sql = f"SELECT row_id, data FROM rows WHERE make IN ({','.join('?' * len(makes))})"
@@ -265,7 +265,7 @@ def write_snapshot(dataset: str, rows: list[dict], meta: dict, folder: Path | No
             conn.execute("CREATE INDEX rows_make_year ON rows (make, year)")
             conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
             conn.executemany("INSERT OR REPLACE INTO rows VALUES (?, ?, ?, ?, ?)", [
-                (str(r["row_id"]), str(r.get("make") or "").strip().upper(), str(r.get("model") or ""),
+                (str(r["row_id"]), " ".join(str(r.get("make") or "").split()).upper(), str(r.get("model") or ""),
                  _int(r.get("year")), json.dumps({k: v for k, v in r.items() if k != "row_id"}, ensure_ascii=False))
                 for r in rows])
             conn.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)",

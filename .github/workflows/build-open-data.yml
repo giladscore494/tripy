@@ -8,9 +8,10 @@ name: build-open-data
 #   1. live-schema probe: per dataset / year / file the live header or field schema and its resolution against
 #      data/open_datasets.json (step summary + artifact + data/open/probe.json); a dataset whose probe fails is not
 #      built (the failure stops only that dataset)
-#   2. make aliases for every catalog manufacturer (scripts/build_make_aliases.py: the probe's distinct source makes,
-#      matched deterministically; ambiguous / unmatched makes go to the review list in the PR body), then build with
-#      src/open_data/build.py, compacted (data/open_datasets.json `compaction`)
+#   2. make aliases from data/make_canonical.json (scripts/build_make_aliases.py: the probe's distinct source makes
+#      that normalize to a canonical make; spellings per dataset and rows kept vs total go to the PR body), then build
+#      with src/open_data/build.py, compacted (data/open_datasets.json `compaction`); the build summary prints per
+#      dataset rows kept / total and the kept makes
 #   3. compress to data/open/<dataset>.sqlite.gz; a file over 50 MB fails the step with its size
 #   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
 #      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010)
@@ -58,7 +59,7 @@ jobs:
             data/open/probe.json
             open-data-probe.md
           if-no-files-found: ignore
-      - name: Make aliases for every catalog manufacturer (review list for the ambiguous / unmatched ones)
+      - name: Make aliases from the canonical make table (spellings per dataset, rows kept vs total)
         run: python scripts/build_make_aliases.py --probe data/open/probe.json --out data/open_data_make_aliases.json --review open-data-makes.md
       - name: Build and compress the snapshots (each file under 50 MB)
         run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50

@@ -208,8 +208,8 @@ def test_compaction_filters_the_years_and_the_vocabulary_makes():
 
 
 def test_eea_offers_a_value_only_when_min_equals_max():
-    """H2: an EEA configuration's value is its MIN when MIN = MAX, else an AVG: never offered (range_policy
-    equal_only), even with one configuration."""
+    """H2 / E1: an EEA configuration's value is its registration-weighted median; when MIN != MAX it is never offered
+    (range_policy equal_only), even with one configuration."""
     from src.open_data.offers import field_offers
 
     entry = next(e for e in ds.config()["field_map"] if e["source"] == "eea_co2_cars" and e["field"] == "curb_weight_kg")

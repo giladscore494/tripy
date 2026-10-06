@@ -22,6 +22,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -31,7 +32,8 @@ from src.open_data.build import build_dataset  # noqa: E402
 
 MANIFEST_VERSION = "open-data-manifest-v1"
 ENTRY_KEYS = ("rows", "years", "files", "absent_columns", "column_units", "unit_unknown_distribution",
-              "last_file_year", "compaction")
+              "last_file_year", "compaction", "make_spellings")
+EXPECTED_MAKES = {"epa_fueleconomy": 40, "tc_cvs": 35}      # E4: reported when lower, never a failure
 
 
 def _utc() -> str:
@@ -47,7 +49,34 @@ def gzip_file(source: Path, target: Path) -> None:
     os.replace(tmp, target)
 
 
-def summary(results: dict, manifest: dict) -> str:
+def kept_rows(name: str, result: dict, probe: dict) -> tuple[Any, Any, str]:
+    """(rows kept, rows total, basis) of a built dataset: the compaction's rows after / before; for EEA (only the alias
+    spellings are queried) the probe's raw rows of the kept spellings / of every spelling."""
+    compaction = result.get("compaction") or {}
+    counts = ((probe.get("datasets") or {}).get(name) or {}).get("make_rows")
+    if name == "eea_co2_cars" and isinstance(counts, dict) and counts:
+        kept = {s for values in (result.get("make_spellings") or {}).values() for s in values}
+        return sum(n for s, n in counts.items() if s in kept), sum(counts.values()), "raw rows (probe)"
+    return compaction.get("rows_after"), compaction.get("rows_before"), "rows"
+
+
+def makes_table(results: dict, probe: dict) -> list[str]:
+    """E4: per dataset, rows kept / rows total and the kept canonical makes (lower than expected: reported only)."""
+    lines = ["", "Makes kept per dataset (data/make_canonical.json):", "",
+             "| dataset | rows kept / total | kept makes | expected | makes |", "|---|---|---|---|---|"]
+    for name, r in results.items():
+        if r.get("status") != "built":
+            continue
+        kept, total, basis = kept_rows(name, r, probe)
+        makes = sorted(r.get("make_spellings") or {})
+        expected = EXPECTED_MAKES.get(name)
+        flag = f">= {expected}" + (" (**lower**)" if expected and len(makes) < expected else "") if expected else "—"
+        lines.append(f"| {name} | {kept if kept is not None else '—'} / {total if total is not None else '—'} "
+                     f"({basis}) | {len(makes)} | {flag} | {', '.join(makes)} |")
+    return lines
+
+
+def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
     lines = ["## Open-data build", "", "| dataset | status | rows | file | size | build time |", "|---|---|---|---|---|---|"]
     for name, r in results.items():
         entry = (manifest.get("datasets") or {}).get(name) or {}
@@ -55,19 +84,23 @@ def summary(results: dict, manifest: dict) -> str:
         lines.append(f"| {name} | {r.get('status')}{' (' + str(r.get('reason')) + ')' if r.get('reason') else ''} | "
                      f"{r.get('rows', '—')} | {entry.get('file') if r.get('status') == 'built' else '—'} | {size} | "
                      f"{r.get('duration_s', '—')} s |")
+    lines += makes_table(results, probe or {})
     lines += ["", "Per year / file:"]
     for name, r in results.items():
         for part in r.get("years") or []:
             lines.append(f"- {name} {part.get('year')}: {part.get('status')} status={part.get('status_used')} "
                          f"rows={part.get('rows', '—')} {part.get('reason') or ''} "
-                         f"absent={part.get('absent_columns') or []}")
+                         f"queries={part.get('queries', '—')} max_query_bytes={part.get('max_query_bytes', '—')}"
+                         f"{' split' if part.get('split') else ''} absent={part.get('absent_columns') or []}"
+                         + (f" errors={len(part['make_errors'])}" if part.get("make_errors") else ""))
         for part in r.get("files") or []:
             lines.append(f"- {name} {str(part.get('url') or '').rsplit('/', 1)[-1]}: {part.get('status')} "
                          f"group={part.get('group') or '—'} rows={part.get('rows', '—')} {part.get('reason') or ''} "
                          f"absent={part.get('absent_columns') or []}")
         if r.get("compaction"):
             c = r["compaction"]
-            lines.append(f"- {name} compaction: {c.get('rows_before')} -> {c.get('rows_after')} rows")
+            lines.append(f"- {name} compaction: {c.get('rows_before')} -> {c.get('rows_after')} rows, "
+                         f"{c.get('kept_makes')} makes")
         if r.get("status") != "built" and (r.get("report") or r.get("error")):
             lines.append(f"- {name} report: {json.dumps(r.get('report') or r.get('error'), ensure_ascii=False)[:3000]}")
     return "\n".join(lines) + "\n"
@@ -135,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     run_url = os.environ.get("OPEN_DATA_RUN_URL") or None
     results, manifest, errors = run(selected(args.datasets), Path(args.out), work, probe,
                                     int(args.max_mb * 1024 * 1024), run_url)
-    text = summary(results, manifest) + ("".join(f"\n**Failed:** {e}\n" for e in errors))
+    text = summary(results, manifest, probe) + ("".join(f"\n**Failed:** {e}\n" for e in errors))
     if args.summary:
         Path(args.summary).write_text(text, "utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
