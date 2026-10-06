@@ -13,7 +13,8 @@ found is a set of identity keys the web research can use:
                         (`queries_with_open_data_identity`)
     V2 page keys        document_binding.open_data_keys_verdict: a page stating the type-approval number, the type code,
                         or kW + co2 + cc binds exact_technical_variant (basis open_data_identity_keys); a page of the same
-                        model stating only other kW values or only sibling type codes is another variant (veto)
+                        model naming only sibling type codes, or (conventional targets only) stating a sibling
+                        configuration's kW and not the target's, is another variant (veto)
     V3 corroboration    a web value equal (D1 rounding) to an `offered` open-data offer identified by every survivor
                         (unique / all_survivors_agree) of the same field is raised to exact_technical_variant (basis
                         open_data_corroborated); both sources are recorded
@@ -83,6 +84,7 @@ def research_identity(result: dict) -> dict | None:
            "co2_wltp": _number(_common(survivors, "co2_wltp")),
            "displacement_cc": _number(_common(survivors, "displacement_cc")),
            "sibling_type_codes": list(typed.get("siblings") or []),
+           "sibling_power_kw": [_number(k) for k in typed.get("sibling_power_kw") or []],
            "row_ids": [r.get("row_id") for r in survivors][:20]}
     out["terms"] = identity_terms(out)
     return out

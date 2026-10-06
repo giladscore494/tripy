@@ -15,7 +15,7 @@ from fixtures import eea_type_code as T
 from fixtures.corolla_harvest import put
 from src.candidate_harvest import harvest_document
 from src.db import build_level15_payload
-from src.document_binding import apply_fingerprint, open_data_keys_verdict
+from src.document_binding import TargetIdentity, apply_fingerprint, open_data_keys_verdict
 from src.evidence_admission import AdmissionContext, admit
 from src.fields import resolve_requested_fields
 from src.gov_registry import identity_fingerprint
@@ -88,6 +88,7 @@ def test_the_22010_research_identity_is_the_jp91_configuration():
             identity["displacement_cc"]) == ("530e xDrive iPerformance", "JP91", 135, 47, 1998)
     assert identity["terms"] == ["530e xDrive iPerformance", "JP91", "135 kW"]
     assert {"JA91", "JP92"} <= set(identity["sibling_type_codes"])
+    assert identity["sibling_power_kw"] == [135]                           # the siblings' power is the target's
     with_t = research_identity({**_result(), "sources": {"eea_co2_cars": {
         **_result()["sources"]["eea_co2_cars"],
         "survivors": [{**r, "type_approval": "e1*2007/46*1234*15"} for r in _result()["sources"]["eea_co2_cars"][
@@ -204,7 +205,7 @@ def test_the_verdict_reads_type_code_kw_co2_and_displacement():
         "status": "target", "basis": "power_co2_displacement", "power_kw": 135, "co2_wltp": 47,
         "displacement_cc": 1998}
     assert open_data_keys_verdict(PAGE_CODE, adm.identity)["basis"] == "type_code"
-    assert open_data_keys_verdict(PAGE_185, adm.identity)["contradicts"] == "power_kw"
+    assert open_data_keys_verdict(PAGE_185, adm.identity) is None           # system power of a plug-in: no veto
     assert open_data_keys_verdict("BMW 530e iPerformance JA91 sedan", adm.identity)["contradicts"] == "type_code"
     charging = "BMW 530e xDrive iPerformance 2020: charging power 3.7 kW, 47 g/km"
     assert open_data_keys_verdict(charging, adm.identity) is None           # a charging kW never contradicts
@@ -238,12 +239,65 @@ def test_a_page_stating_the_type_approval_number_binds_exact_by_the_open_data_ke
     assert plain["binding_level"] == "body_powertrain"                      # the same page without V2
 
 
-def test_a_page_stating_185_kw_of_the_same_model_is_a_veto(tmp_path):
+def test_a_530e_page_stating_only_its_185_kw_system_power_is_not_vetoed(tmp_path):
+    """EEA power_kw is the engine power of a plug-in (530e: 135 kW); the page states the system power (185 kW)."""
+    adm = _adm()
+    assert adm.identity.propulsion == "plug_in"
+    assert open_data_keys_verdict("BMW 530e xDrive iPerformance Sedan 2020\nSystem output: 185 kW\n",
+                                  adm.identity) is None
     records = _admit_page(tmp_path, PAGE_185)
+    assert records
+    for record in records.values():
+        assert "open_data_keys_mismatch@document" not in (record.get("binding_veto") or [])
+        assert "open_data_keys" not in record and record["variant_match"] != "different"
+
+
+def test_a_page_naming_only_a_sibling_type_code_of_the_same_model_is_a_veto(tmp_path):
+    page = ("BMW 530e iPerformance Sedan 2020 (JA91)\nTechnical data\nCO2 emissions combined (WLTP): 47 g/km\n"
+            "Wheelbase: 2975 mm\nTop speed: 235 km/h\n")
+    records = _admit_page(tmp_path, page)
+    assert records
     for record in records.values():
         assert record["variant_match"] == "different" and "open_data_keys_mismatch@document" in record["binding_veto"]
-        assert record["open_data_keys"]["status"] == "other_variant"
+        assert record["open_data_keys"] == {"status": "other_variant", "contradicts": "type_code", "named": ["JA91"],
+                                            "type_code": "JP91"}
         assert "open_data_corroboration" not in record                       # a vetoed value is never corroborated
+
+
+def _identity(propulsion: str, **keys) -> TargetIdentity:
+    return TargetIdentity(manufacturer="volkswagen", family="golf", year=2020, propulsion=propulsion,
+                          open_data_keys={"model": "Golf", "eea_type_code": "CD15", "power_kw": 110,
+                                          "co2_wltp": 141, "displacement_cc": 1498,
+                                          "sibling_type_codes": ["CD12", "CD17"], "sibling_power_kw": [85, 110, 180],
+                                          **keys})
+
+
+def test_a_conventional_page_stating_only_a_sibling_kw_is_a_veto():
+    verdict = open_data_keys_verdict("VW Golf 1.5 TSI 2020\nPower: 85 kW (116 PS)\n", _identity("conventional"))
+    assert verdict == {"status": "other_variant", "contradicts": "power_kw", "stated_kw": [85], "power_kw": 110}
+    # within ±max(1, 1 %) of the sibling's kW
+    assert open_data_keys_verdict("Golf 2020: 181 kW", _identity("conventional"))["stated_kw"] == [181]
+    # the target's own kW on the same page: not a veto
+    assert open_data_keys_verdict("Golf 2020: 85 kW or 110 kW", _identity("conventional")) is None
+    # a sibling kW equal to the target's is no evidence of another configuration
+    assert open_data_keys_verdict("Golf 2020: 85 kW", _identity("conventional", sibling_power_kw=[110])) is None
+
+
+def test_a_conventional_page_stating_an_unrelated_kw_is_unverified():
+    assert open_data_keys_verdict("VW Golf 1.5 TSI 2020\nPower: 96 kW (130 PS)\n", _identity("conventional")) is None
+
+
+def test_a_bev_page_stating_its_peak_kw_is_never_vetoed_on_kw():
+    """EEA power_kw of a BEV is often the 30-min rated power; pages state the peak power."""
+    bev = _identity("battery_electric", eea_type_code="E11", co2_wltp=0, displacement_cc=None,
+                    sibling_type_codes=["E12"], power_kw=70, sibling_power_kw=[150])
+    assert open_data_keys_verdict("VW ID.3 2020\nPeak power: 150 kW\n", bev) is None
+    for propulsion in ("hybrid", "plug_in"):
+        assert open_data_keys_verdict("Golf 2020: 85 kW", _identity(propulsion)) is None
+    # the type-code rules still apply to them
+    assert open_data_keys_verdict("VW ID.3 2020 (E12): 150 kW", bev)["contradicts"] == "type_code"
+    assert open_data_keys_verdict("VW ID.3 2020 (E11): 150 kW", bev) == {"status": "target", "basis": "type_code",
+                                                                        "type_code": "E11"}
 
 
 # --- V3: corroboration ----------------------------------------------------------------------------------------------------

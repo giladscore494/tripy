@@ -427,9 +427,15 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
         # V2: the other type codes (Va) of the same model in the year window: a page naming only those is another
         # variant
         own = {str(r.get("variant") or "").strip().upper() for r in by_code["rows"]}
-        out["type_code"]["siblings"] = sorted(
+        siblings = sorted(
             {v for v in (str(r.get("variant") or "").strip().upper() for r in rows if _model_matches(r, keys))
              if re.fullmatch(r"[A-Z0-9]{3,10}", v) and re.search(r"\d", v)} - own)[:40]
+        out["type_code"]["siblings"] = siblings
+        # V2: the power (kW) of those sibling configurations: a stated kW is evidence of another configuration only
+        # when it is one of these
+        out["type_code"]["sibling_power_kw"] = sorted(
+            {_num(r.get("power_kw")) for r in rows if _model_matches(r, keys)
+             and str(r.get("variant") or "").strip().upper() in set(siblings) and _num(r.get("power_kw"))})
     rows = by_code["rows"] if typed else [r for r in rows if _model_matches(r, keys)]
     out["candidates"] = len(rows)
     hard = set(rules.get("hard_vetoes") or ["power", "displacement"])

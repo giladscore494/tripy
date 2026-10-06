@@ -145,9 +145,12 @@ binding-v10 (open-data research identity), deterministic and fail-closed; nothin
                                  or its kW AND WLTP co2 (g/km) AND displacement (cc) binds every value at
                                  exact_technical_variant; every veto still applies. A type-approval number or a type
                                  code also proves the version on a multi-version document (R4)
-    open_data_other_variant (V2) a document of the target model stating kW values none of which is the configuration's
-                                 (charging kW never counts), or naming only sibling type codes of the same model, is
-                                 another variant: a veto at the technical-variant cap
+    open_data_other_variant (V2) a document of the target model naming only sibling type codes of the same model, or,
+                                 for a conventional target, stating a sibling configuration's kW (±max(1, 1 %); charging
+                                 kW never counts) and not the configuration's, is another variant: a veto at the
+                                 technical-variant cap. A kW that is neither is unverified (no veto, no bind); a hybrid /
+                                 plug-in / BEV target is never vetoed on kW (EEA states the engine / rated power, pages
+                                 the system / peak power)
     open_data_corroborated (V3)  evidence_admission: a value bound at body_powertrain or above without a veto that equals
                                  (D1) an `offered` open-data offer every survivor states is raised to
                                  exact_technical_variant; both sources are recorded
@@ -563,13 +566,20 @@ def _od_token(code: str, norm: str) -> bool:
     return len(code) >= 3 and bool(re.search(rf"(?<![a-z0-9]){re.escape(code)}(?![a-z0-9])", norm))
 
 
+def _od_kw_equal(stated: float, reference: Any) -> bool:
+    reference = float(reference)
+    return abs(float(stated) - reference) <= max(1.0, 0.01 * reference)
+
+
 def open_data_keys_verdict(text: str | None, identity: TargetIdentity) -> dict | None:
     """V2: the version a document is by the open-data identity keys it states (identity.open_data_keys, set when the
     open-data match reached exact_technical_variant). {status: target, basis: type_approval | type_code |
     power_co2_displacement} when it states the configuration's type-approval number, its type code (EEA Va / the
     government type code) or its kW AND co2 (g/km) AND displacement (cc); {status: other_variant, contradicts: power_kw |
-    type_code} when it states kW values none of which is the configuration's (charging kW never counts), or names
-    only sibling type codes of the same model; None otherwise (nothing changes). Pure text; the caller (bind) applies
+    type_code} when, for a conventional target, it states no kW of the configuration but a kW of a sibling
+    configuration of the same model (±max(1, 1 %); charging kW never counts), or names only sibling type codes of the
+    same model; None otherwise (nothing changes; a kW that is neither the target's nor a sibling's is unverified, and
+    a hybrid / plug-in / BEV target is never vetoed on kW). Pure text; the caller (bind) applies
     it only to a document of the target model."""
     keys = identity.open_data_keys or {}
     if not keys or not text:
@@ -586,10 +596,16 @@ def open_data_keys_verdict(text: str | None, identity: TargetIdentity) -> dict |
         return {"status": "target", "basis": "type_code", "type_code": named[0]}
     kws = _od_numbers(OD_KW, norm, skip_charging=True)
     target_kw = keys.get("power_kw")
-    kw_match = bool(target_kw) and any(abs(k - float(target_kw)) <= max(1.0, 0.01 * float(target_kw)) for k in kws)
-    if target_kw and kws and not kw_match:
-        return {"status": "other_variant", "contradicts": "power_kw", "stated_kw": sorted(set(kws))[:10],
-                "power_kw": target_kw}
+    kw_match = bool(target_kw) and any(_od_kw_equal(k, target_kw) for k in kws)
+    if target_kw and kws and not kw_match and identity.propulsion == "conventional":
+        # the EEA kW is the engine power of a hybrid / plug-in and often the rated power of a BEV, while pages state
+        # the system / peak power: only a conventional target is checked, and only a kW that IS a sibling
+        # configuration's power is evidence of another variant (a kW that is neither is unverified: no veto, no bind)
+        sibling_kw = [s for s in keys.get("sibling_power_kw") or [] if s and not _od_kw_equal(s, target_kw)]
+        hits = sorted({k for k in kws if any(_od_kw_equal(k, s) for s in sibling_kw)})
+        if hits:
+            return {"status": "other_variant", "contradicts": "power_kw", "stated_kw": hits[:10],
+                    "power_kw": target_kw}
     siblings = [c for c in keys.get("sibling_type_codes") or [] if _od_token(c, norm)]
     if siblings:
         return {"status": "other_variant", "contradicts": "type_code", "named": siblings[:10],
@@ -1708,8 +1724,9 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     V2 input: `open_data_keys` (open_data_keys_verdict of the fact's document): a document of the target model stating
     the open-data configuration's type-approval number, type code or kW + co2 + cc binds exact_technical_variant (basis
-    open_data_identity_keys; every veto still applies); one stating only another kW / only sibling type codes is
-    another variant (veto at the technical-variant cap)."""
+    open_data_identity_keys; every veto still applies); one naming only sibling type codes, or (conventional target)
+    stating a sibling configuration's kW and not the target's, is another variant (veto at the technical-variant
+    cap)."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
