@@ -2,34 +2,31 @@ import { useState } from "react";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { DatasetProgress, DatasetRow, PolicyEntry } from "../api/types";
+import type { DatasetRow, PolicyEntry, StorageStatus } from "../api/types";
 import {
-  Badge, Button, ErrorState, ExternalLink, Field, Mono, Notice, Panel, SkeletonRows,
+  Badge, Button, ErrorState, ExternalLink, Field, KeyValue, Mono, Notice, Panel, SkeletonRows, Stat,
 } from "../components/ui/primitives";
 import { useResource } from "../hooks/useResource";
 import type { Tone } from "../lib/status";
 import { PageHeader } from "../layouts/AppShell";
 
-// The Data page (identity anchors PR): the open-data snapshots (last build, rows, source URL, Rebuild now), the
-// licence / attribution list, and the production source policy with the operator's blocked <-> allowed switch.
-// Nothing here edits the environment: a switch is an overlay in the data volume and every change is logged.
+// The Data page: the open-data snapshots (built by the build-open-data GitHub Action, committed to data/open/ and read
+// from the deploy image; nothing is built on the server), the data volume's storage with the "Delete open-data files"
+// action, the licence / attribution list, and the production source policy with the operator's blocked <-> allowed
+// switch (an overlay in the data volume; every change logged).
 
 const POLICY_TONE: Record<string, Tone> = {
   allowed: "ok", identity_only: "warn", blocked: "danger",
 };
 
-const PROGRESS_TONE: Record<string, Tone> = {
-  queued: "neutral", building: "accent", built: "ok", stopped: "warn", failed: "danger",
-};
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
-function ProgressCell({ progress }: { progress?: DatasetProgress | null }) {
-  if (!progress) return <span className="text-ink-faint">—</span>;
-  return (
-    <span>
-      <Badge tone={PROGRESS_TONE[progress.state] ?? "neutral"}>{progress.state}</Badge>
-      {progress.detail && <span className="block text-[11px] text-ink-muted">{progress.detail}</span>}
-    </span>
-  );
+function megabytes(bytes?: number | null): string {
+  if (bytes == null) return "—";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function absentText(row: DatasetRow): string | null {
@@ -40,36 +37,97 @@ function absentText(row: DatasetRow): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-function megabytes(bytes?: number | null): string | null {
-  return bytes ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : null;
+function yearsText(row: DatasetRow): string | null {
+  const years = (row.years ?? []).filter((y) => y.status === "built").map((y) => String(y.year));
+  if (years.length) return years.join(", ");
+  const files = (row.files ?? []).filter((f) => f.status === "built").length;
+  return files ? `${files} file(s)${row.last_file_year ? `, last file year ${row.last_file_year}` : ""}` : null;
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
+function unknownUnits(row: DatasetRow): string[] {
+  return Object.entries(row.column_units ?? {}).filter(([, u]) => u.unit === "unknown" && !u.unit_of).map(([k]) => k);
+}
+
+function StoragePanel() {
+  const storage = useResource("data-storage", (signal) => api.dataStorage({ signal }));
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState<{ busy: boolean; message: string | null; error: ApiError | null }>(
+    { busy: false, message: null, error: null });
+  const [fresh, setFresh] = useState<StorageStatus | null>(null);
+  const data = fresh ?? storage.data;
+
+  const remove = async () => {
+    setState({ busy: true, message: null, error: null });
+    try {
+      const out = await api.deleteOpenData();
+      setFresh(out.storage);
+      setConfirming(false);
+      setState({ busy: false, error: null,
+                 message: out.deleted ? `Deleted ${out.path} (${megabytes(out.bytes_freed)} freed).` : "Nothing to delete." });
+    } catch (e) {
+      setState({ busy: false, message: null,
+                 error: e instanceof ApiError ? e : new ApiError(0, "client_error", "The files were not deleted.") });
+    }
+  };
+
+  return (
+    <Panel kicker="Data volume" title="Storage">
+      {storage.loading && !data ? <SkeletonRows rows={4} /> : storage.error && !data
+        ? <ErrorState error={storage.error} onRetry={storage.refresh} />
+        : data && (
+          <div className="space-y-4">
+            {data.low && (
+              <Notice tone="danger" title="The data volume is almost full">
+                Less than {megabytes(data.min_free_bytes)} free: new runs and builds are refused (insufficient_disk)
+                until space is freed.
+              </Notice>
+            )}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Stat label="Total" value={megabytes(data.volume.total)} />
+              <Stat label="Used" value={megabytes(data.volume.used)} />
+              <Stat label="Free" value={megabytes(data.volume.free)} tone={data.low ? "danger" : undefined} />
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead><tr><th>Folder</th><th>Size</th></tr></thead>
+                <tbody>
+                  {data.folders.map((f) => (
+                    <tr key={f.path}><td><Mono>{f.name}</Mono></td><td>{megabytes(f.bytes)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {data.startup_cleanup && data.startup_cleanup.removed.length > 0 && (
+              <p className="text-xs text-ink-muted">At startup {data.startup_cleanup.removed.length} partial or unbuilt
+                open-data file(s) were removed ({megabytes(data.startup_cleanup.bytes_freed)} freed).</p>
+            )}
+            <div className="flex flex-wrap items-center gap-3">
+              {!confirming ? (
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>Delete open-data files</Button>
+              ) : (
+                <>
+                  <span className="text-xs text-ink">Delete everything in <Mono>{data.open_data_dir}</Mono>? The
+                    snapshots the engine reads come from the deploy image and are not affected.</span>
+                  <Button size="sm" onClick={remove} busy={state.busy}>Confirm delete</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+                </>
+              )}
+              {state.message && <span className="text-xs text-ink-muted">{state.message}</span>}
+            </div>
+            {state.error && <ErrorState error={state.error} title="The open-data files were not deleted" />}
+          </div>
+        )}
+    </Panel>
+  );
 }
 
 export function DataPage() {
-  // polled: the progress column follows a running build
-  const datasets = useResource("data-datasets", (signal) => api.dataDatasets({ signal }), { intervalMs: 5000 });
+  const datasets = useResource("data-datasets", (signal) => api.dataDatasets({ signal }));
   const policy = useResource("data-policy", (signal) => api.dataPolicy({ signal }));
-  const [rebuild, setRebuild] = useState<{ busy: boolean; message: string | null; error: ApiError | null }>(
-    { busy: false, message: null, error: null });
   const [form, setForm] = useState({ domain: "", policy: "allowed" as "allowed" | "blocked", terms: "",
                                      checked: today() });
   const [saving, setSaving] = useState<{ busy: boolean; message: string | null; error: ApiError | null }>(
     { busy: false, message: null, error: null });
-
-  const rebuildNow = async (dataset?: string) => {
-    setRebuild({ busy: true, message: null, error: null });
-    try {
-      const out = await api.rebuildDatasets(dataset);
-      setRebuild({ busy: false, message: out.message, error: null });
-      void datasets.refresh();
-    } catch (e) {
-      setRebuild({ busy: false, message: null,
-                   error: e instanceof ApiError ? e : new ApiError(0, "client_error", "The rebuild could not start.") });
-    }
-  };
 
   const submit = async () => {
     setSaving({ busy: true, message: null, error: null });
@@ -92,68 +150,57 @@ export function DataPage() {
   return (
     <div className="space-y-6">
       <PageHeader kicker="Data" title="Open data and source policy">
-        The open structured datasets the engine reads (local snapshots in the data volume) and the production source
-        policy: a domain is fetched and used as evidence only when it is listed as allowed.
+        The open structured datasets the engine reads (snapshots built by the build-open-data GitHub Action and shipped
+        in the deploy image), the data volume, and the production source policy: a domain is fetched and used as
+        evidence only when it is listed as allowed.
       </PageHeader>
 
-      <Panel kicker="Open datasets" title="Snapshots"
-        actions={<Button size="sm" onClick={() => rebuildNow()} busy={rebuild.busy || !!datasets.data?.building}
-                         disabled={!!datasets.data?.building}>Rebuild all now</Button>}>
+      <Panel kicker="Open datasets" title="Snapshots">
         {datasets.loading ? <SkeletonRows rows={4} /> : datasets.error ? <ErrorState error={datasets.error} onRetry={datasets.refresh} />
           : datasets.data && (
             <div className="space-y-3">
+              <KeyValue columns={2} items={[
+                { label: "Built", value: <Mono>{datasets.data.manifest_built_at ?? "never (run the build-open-data Action)"}</Mono> },
+                { label: "Action run", value: datasets.data.run_url
+                  ? <ExternalLink href={datasets.data.run_url}>build-open-data</ExternalLink> : "—" },
+              ]} />
               <div className="table-wrap">
                 <table className="data-table">
-                  <thead><tr><th>Dataset</th><th>Policy</th><th>Progress</th><th>Last build</th><th>Rows</th><th>Source</th><th /></tr></thead>
+                  <thead><tr><th>Dataset</th><th>Policy</th><th>Snapshot</th><th>Rows</th><th>Years / files</th><th>Source</th></tr></thead>
                   <tbody>
                     {datasets.data.datasets.map((d) => (
                       <tr key={d.dataset}>
                         <td><span className="text-ink">{d.label ?? d.dataset}</span><Mono className="block text-[11px]">{d.dataset}</Mono></td>
                         <td><Badge tone={POLICY_TONE[d.policy ?? "blocked"] ?? "neutral"}>{d.policy ?? "blocked"}</Badge></td>
-                        <td>{d.identity_only ? <span className="text-ink-faint">identity only</span>
-                          : <ProgressCell progress={d.progress} />}</td>
                         <td>
-                          <Mono>{d.snapshot_built_at ?? "never built"}</Mono>
-                          {d.last_build?.status && d.last_build.status !== "built" && (
-                            <span className="block text-[11px] text-danger">
-                              {d.last_build.status}: {d.last_build.reason ?? d.last_build.error ?? ""}
+                          {d.identity_only ? <span className="text-ink-faint">identity only (on-demand decode)</span>
+                            : d.available ? <Badge tone="ok">available</Badge>
+                            : <Badge tone="warn">{d.problem === "no_manifest_entry" ? "not built" : d.problem ?? "not built"}</Badge>}
+                          {d.built_at && <Mono className="block text-[11px]">{d.built_at}</Mono>}
+                          {d.last_attempt?.status && d.last_attempt.status !== "built" && (
+                            <span className="block text-[11px] text-warn">
+                              last attempt: {d.last_attempt.status}{d.last_attempt.reason ? ` (${d.last_attempt.reason})` : ""}
                             </span>
                           )}
                         </td>
                         <td>
-                          {d.snapshot_rows ?? "—"}
-                          {(megabytes(d.snapshot_size_bytes) || d.build_duration_s != null) && (
-                            <span className="block text-[11px] text-ink-faint">
-                              {[megabytes(d.snapshot_size_bytes), d.build_duration_s != null ? `${d.build_duration_s} s` : null]
-                                .filter(Boolean).join(" · ")}
-                            </span>
-                          )}
+                          {d.rows ?? "—"}
+                          {d.bytes != null && <span className="block text-[11px] text-ink-faint">{megabytes(d.bytes)} compressed</span>}
                           {absentText(d) && <span className="block text-[11px] text-warn">absent: {absentText(d)}</span>}
-                        </td>
-                        <td>{d.source_url ? <ExternalLink href={d.source_url}>source</ExternalLink> : "—"}</td>
-                        <td>
-                          {!d.identity_only && (
-                            <Button size="sm" variant="ghost" onClick={() => rebuildNow(d.dataset)}
-                                    disabled={!!datasets.data?.building}>Rebuild</Button>
+                          {unknownUnits(d).length > 0 && (
+                            <span className="block text-[11px] text-warn">unit unknown (no offers): {unknownUnits(d).join(", ")}</span>
                           )}
                         </td>
+                        <td className="text-xs">{yearsText(d) ?? "—"}</td>
+                        <td>{d.source_url ? <ExternalLink href={d.source_url}>source</ExternalLink> : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {datasets.data.first_check_at && datasets.data.datasets.some((d) => !d.identity_only && !d.snapshot_built_at
-                && !d.progress) && (
-                <Notice tone="info" title="First build scheduled">
-                  The first scheduled build after this deploy starts at <Mono>{datasets.data.first_check_at}</Mono>;
-                  "Rebuild now" starts it immediately.
-                </Notice>
-              )}
-              {rebuild.message && <span className="text-xs text-ink-muted">{rebuild.message}</span>}
-              {rebuild.error && <ErrorState error={rebuild.error} title="The rebuild did not start" />}
-              <p className="text-xs text-ink-faint">Monthly schedule (every {datasets.data.interval_days} days). A build
-                reads the live header first and stops with a report when a mapped column is absent; the previous
-                snapshot stays in use.</p>
+              <p className="text-xs text-ink-faint">Rebuilt monthly (and on demand) by the build-open-data GitHub Action,
+                which opens a pull request with the new snapshots and its coverage report. The server never builds or
+                writes open data.</p>
             </div>
           )}
       </Panel>
@@ -171,6 +218,8 @@ export function DataPage() {
           </ul>
         )}
       </Panel>
+
+      <StoragePanel />
 
       <Panel kicker="Production" title="Source policy">
         {policy.loading ? <SkeletonRows rows={6} /> : policy.error ? <ErrorState error={policy.error} onRetry={policy.refresh} />

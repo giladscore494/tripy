@@ -200,9 +200,9 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
     @tool
     async def open_data_status() -> str:
-        """The open-data snapshot builds: the last build per dataset (status, reason, missing / ambiguous keys, live
-        header, per-year / per-file report) and each snapshot's meta (built_at, rows, years, absent_columns, size).
-        Read-only."""
+        """The committed open-data snapshots: the manifest the build-open-data GitHub Action wrote (build date, run URL,
+        per dataset rows / years / files / absent columns / units), whether the engine can read each one (sha256
+        verified) and the Action's last live-schema probe. Read-only."""
         return await run("open_data_status", {}, lambda: observer_factory().open_data_status())
 
     @tool

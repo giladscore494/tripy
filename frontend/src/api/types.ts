@@ -818,16 +818,26 @@ export interface CatalogQuery {
 }
 
 // --- the Data page (identity anchors PR: open datasets + production source policy; src/api/routes/data.py) ---------
-export interface DatasetBuild {
-  status?: string;
-  reason?: string;
-  rows?: number;
-  built_at?: string;
-  attempted_at?: string;
-  error?: string;
-  report?: Record<string, unknown>;
+// the last build attempt of a dataset by the build-open-data Action (data/open/manifest.json)
+export interface DatasetAttempt {
+  at?: string | null;
+  status?: string | null;
+  reason?: string | null;
+  run_url?: string | null;
 }
 
+export interface DatasetUnit {
+  unit: string;
+  basis?: string;
+  reason?: string;
+  column?: string;
+  stated?: string | null;
+  unit_of?: string;
+}
+
+export interface UnitDistribution { n: number; p5: number; p50: number; p95: number }
+
+// one committed open-data snapshot (src/open_data/datasets.status: the manifest + whether the engine can read it)
 export interface DatasetRow {
   dataset: string;
   label: string | null;
@@ -838,33 +848,40 @@ export interface DatasetRow {
   policy: string | null;
   licence: string | null;
   attribution: string | null;
-  schema_verified: boolean | string | null;
-  snapshot_built_at: string | null;
-  snapshot_rows: number | null;
-  last_build: DatasetBuild | null;
-  progress?: DatasetProgress | null;
+  available: boolean;
+  problem: string | null;
+  file?: string | null;
+  bytes?: number | null;
+  sha256?: string | null;
+  built_at?: string | null;
+  run_url?: string | null;
+  rows?: number | null;
+  years?: Array<Record<string, unknown>> | null;
+  files?: Array<Record<string, unknown>> | null;
   absent_columns?: string[] | Record<string, string[]> | null;
-  snapshot_size_bytes?: number | null;
-  build_duration_s?: number | null;
+  column_units?: Record<string, DatasetUnit> | null;
+  unit_unknown_distribution?: Record<string, UnitDistribution | null> | null;
   last_file_year?: number | null;
-}
-
-// the build state of one dataset in this server process (the open-data job)
-export interface DatasetProgress {
-  state: "queued" | "building" | "built" | "stopped" | "failed" | "skipped" | "already_running" | string;
-  detail?: string | null;
-  at?: string | null;
-  started_at?: string | null;
-  finished_at?: string | null;
+  build_status?: string | null;
+  last_attempt?: DatasetAttempt | null;
 }
 
 export interface DatasetsStatus {
-  folder: string;
-  building: string | null;
-  first_check_at?: string | null;
-  scheduled?: boolean;
-  interval_days: number;
+  repo_dir: string;
+  manifest_built_at: string | null;
+  run_url: string | null;
+  config_version: string | null;
   datasets: DatasetRow[];
+}
+
+// the data volume (src/storage/disk.usage)
+export interface StorageStatus {
+  volume: { total: number; used: number; free: number; path: string };
+  folders: { name: string; path: string; bytes: number }[];
+  min_free_bytes: number;
+  low: boolean;
+  open_data_dir: string;
+  startup_cleanup?: { removed: string[]; bytes_freed: number } | null;
 }
 
 export interface PolicyEntry {

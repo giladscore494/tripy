@@ -512,42 +512,31 @@ class Observer:
         events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
         recorded = next((e for e in events if e.get("kind") == "open_data_match"), None)
         fingerprint = fingerprint_from_events(events) or identity_fingerprint(payload)
-        folder = Path(self.paths.data_dir) / "derived" / str(open_datasets.config().get("snapshot_subdir") or "open")
         now = None
-        if folder.is_dir() and any(open_datasets.available(s, folder) for s in open_datasets.datasets()):
-            result = match(fingerprint, payload, folder=folder)
+        if any(open_datasets.available(s) for s, cfg in open_datasets.datasets().items()
+               if not cfg.get("identity_only")):
+            result = match(fingerprint, payload)
             for src in result["sources"].values():
                 src["survivors"] = (src.get("survivors") or [])[:8]
             now = {**result, "offers": field_offers(result)}
         return {"record_id": record, "run_id": vehicle.parent.name,
                 "recorded": {k: v for k, v in recorded.items() if k not in ("kind", "seq")} if recorded else None,
-                "now": now, "snapshot_dir": str(folder)}
+                "now": now, "snapshots": str(open_datasets.repo_dir())}
 
     def open_data_status(self) -> dict:
-        """The open-data snapshot builds: open_data.status.json (the last build per dataset: status, reason, the
-        missing / ambiguous keys, the live header, the per-year / per-file report) and each snapshot's meta (built_at,
-        rows, years, files, absent_columns, size). Read-only."""
+        """The committed open-data snapshots: data/open/manifest.json (built by the build-open-data GitHub Action:
+        build date, run URL, per dataset rows / years / files / absent columns / units / sha256), whether the engine
+        can read each one (sha256 verified), and the Action's last live-schema probe (data/open/probe.json). Read-only;
+        nothing is built on the server."""
         from ..open_data import datasets as open_datasets
-        from ..open_data.job import STATUS_NAME
 
-        folder = Path(self.paths.data_dir) / "derived" / str(open_datasets.config().get("snapshot_subdir") or "open")
-        try:
-            status = json.loads((folder / STATUS_NAME).read_text("utf-8"))
-        except (OSError, ValueError):
-            status = None
-        snapshots = {}
-        for name, cfg in open_datasets.datasets().items():
-            if cfg.get("identity_only"):
-                continue
-            meta = open_datasets.snapshot_meta(name, folder)
-            snapshots[name] = {k: meta.get(k) for k in ("built_at", "rows", "years", "files", "absent_columns",
-                                                       "file_years", "last_file_year", "build_duration_s",
-                                                       "size_bytes", "config_version", "urls")} if meta else None
-        return {"snapshot_dir": str(folder), "status_file": str(folder / STATUS_NAME),
-                "config_version": open_datasets.config().get("version"),
-                "last_build": safety.clip(status, 30_000) if status is not None else None,
-                "snapshots": safety.clip(snapshots, 25_000),
-                "no_snapshot": sorted(n for n, m in snapshots.items() if not m)}
+        view = open_datasets.status()
+        return {"manifest": safety.clip(open_datasets.manifest(), 30_000),
+                "datasets": [{k: d.get(k) for k in ("dataset", "available", "problem", "built_at", "rows", "bytes",
+                                                     "absent_columns", "policy")} for d in view["datasets"]],
+                "probe": safety.clip(open_datasets.probe_summary(), 20_000),
+                "no_snapshot": sorted(d["dataset"] for d in view["datasets"]
+                                      if not d["identity_only"] and not d["available"])}
 
     def open_data_coverage(self, run_id: Any) -> dict:
         """Per vehicle of a run: the approval route, the open-data level / designation, the match status per source,

@@ -293,7 +293,8 @@ def test_the_data_api_lists_datasets_and_switches_a_domain_with_a_logged_overlay
     assert {"eea_co2_cars", "ademe_car_labelling", "epa_fueleconomy", "nrcan_fuel_ratings", "tc_cvs",
             "nhtsa_vpic"} == names
     eea = next(d for d in datasets["datasets"] if d["dataset"] == "eea_co2_cars")
-    assert eea["licence"] == "CC-BY-4.0" and eea["policy"] == "allowed" and eea["snapshot_built_at"] is None
+    assert eea["licence"] == "CC-BY-4.0" and eea["policy"] == "allowed" and eea["built_at"] is None
+    assert eea["available"] is False and eea["problem"] == "no_manifest_entry"
     table = client.get("/api/data/policy").json()
     assert table["unlisted"] == "blocked" and any(e["id"] == "cartube.co.il" for e in table["entries"])
     refused = client.post("/api/data/policy", json={"domain": "bmw.co.il", "policy": "allowed"})
@@ -303,4 +304,4 @@ def test_the_data_api_lists_datasets_and_switches_a_domain_with_a_logged_overlay
     assert ok.status_code == 200 and ok.json()["change"]["to"] == "allowed"
     assert source_authority.policy_of("https://www.bmw.co.il/x")["policy"] == "allowed"
     assert client.get("/api/data/policy").json()["changes"][-1]["domain"] == "bmw.co.il"
-    assert client.post("/api/data/datasets/rebuild", params={"dataset": "nope"}).status_code == 404
+    assert client.post("/api/data/datasets/rebuild").status_code in (404, 405)       # nothing is built on the server

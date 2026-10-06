@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from ...app_config import blocking_errors
 from ...db import Level15Error
+from ...storage.disk import InsufficientDisk
 from ...diagnostics import PARSER_GAPS_FILE
 from ...glm_client import GLMError
 from ...jobs.manager import RunManager, RunRejected, SeriesRequest, series_progress
@@ -122,6 +123,8 @@ def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depend
     except RunRejected as exc:
         raise ApiError(409, "series_rejected", str(exc),
                        existing_series_id=_executing(ctx.manager, ctx.manager.list_series(limit=20))) from None
+    except InsufficientDisk as exc:
+        raise ApiError(507, "insufficient_disk", str(exc)) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the series: {exc}") from None
     except Level15Error as exc:

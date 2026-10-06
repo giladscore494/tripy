@@ -137,16 +137,23 @@ def test_eea_reads_each_years_own_schema_and_a_failing_year_stops_only_itself():
     assert stop.value.reason == "no_year_built"
 
 
-def _ademe_schema(power_unit="kW", energy_unit="Wh/km") -> list[dict]:
-    fields = [{"key": name.lower().replace(" ", "_"), "x-originalName": name, "type": "string"}
-              for name in H.ADEME_ORIGINAL_NAMES]
-    for field in fields:
-        if field["x-originalName"] == "Puissance maximale" and power_unit:
-            field["x-unit"] = {"id": power_unit, "name": power_unit}
-        if field["x-originalName"].startswith("Conso elec") and energy_unit:
-            field["description"] = f"Consommation électrique ({energy_unit})"
-        if field["x-originalName"] == "Puissance nominale électrique":
-            field["description"] = "Puissance nominale électrique en kW"
+# the field descriptions the live ADEME schema states (the reviewer's brief, 2026-10-06); the other fields state no unit
+ADEME_DESCRIPTIONS = {"Puissance maximale": "Puissance en kW",
+                      "Puissance nominale électrique": "Puissance nominale électrique en kW",
+                      "Poids à vide": "En Kg", "Masse OM Min": "Masse en ordre de marche mini (en Kg)"}
+
+
+def _ademe_schema(descriptions=None, **extra) -> list[dict]:
+    """The field schema (original names of the brief); descriptions only where the live schema states a unit."""
+    descriptions = ADEME_DESCRIPTIONS if descriptions is None else descriptions
+    fields = []
+    for name in H.ADEME_ORIGINAL_NAMES:
+        field = {"key": name.lower().replace(" ", "_"), "x-originalName": name, "type": "string"}
+        if name in descriptions:
+            field["description"] = descriptions[name]
+        if name in extra:
+            field["description"] = extra[name]
+        fields.append(field)
     return fields
 
 
@@ -175,36 +182,73 @@ def _ademe_rows(*overrides) -> list[list]:
     return rows
 
 
-def test_ademe_builds_from_the_original_names_with_units_checked_against_the_schema():
+def test_ademe_builds_from_the_original_names_with_the_units_its_descriptions_state():
     body = H.csv_text(H.ADEME_ORIGINAL_NAMES, _ademe_rows({}, {"Description Commerciale": "EV6 RWD"},
                                                            {"Nombre rapports": 1}, {"Marque": "RENAULT"},
                                                            {"Conso elec Min": 170}), delimiter=";")
     built = build_ademe(_ademe_fetch(_ademe_schema(), body))
-    assert len(built["rows"]) == 5 and built["files"][0]["units"]["power_kw"] == 1.0
+    assert len(built["rows"]) == 5
+    units = built["column_units"]
+    assert {k: units[k]["unit"] for k in ("power_kw", "electric_power_kw", "mass_empty_kg", "mass_running_order_kg",
+                                          "mass_running_order_kg_max")} == \
+        {"power_kw": "kW", "electric_power_kw": "kW", "mass_empty_kg": "kg", "mass_running_order_kg": "kg",
+         "mass_running_order_kg_max": "kg"}
+    assert units["mass_running_order_kg"]["stated"] == "Masse en ordre de marche mini (en Kg)"
+    for key in ("energy_wh_km", "fuel_consumption_l_100km", "electric_range_km", "co2_wltp", "displacement_cc"):
+        assert units[key]["unit"] == "unknown" and units[key]["reason"] == "unit_unstated", key
+    assert built["unit_unknown_distribution"]["energy_wh_km"] == {"n": 5, "p5": 170.0, "p50": 180.0, "p95": 180.0}
     row = built["rows"][0]
     assert (row["make"], row["model"], row["power_kw"], row["gear_count"]) == ("KIA", "EV6", "239", "1")
     assert (row["mass_running_order_kg"], row["mass_running_order_kg_max"]) == ("2090", "2180")
-    assert row["energy_wh_km"] == "180" and row["electric_range_km_max"] == "528"
+    assert row["energy_wh_km"] == "180" and row["electric_range_km_max"] == "528"     # raw: unit unknown
     assert built["absent_columns"] == []
 
 
-def test_ademe_falls_back_to_the_libelle_and_scales_kwh_per_100km():
+def test_ademe_scales_a_stated_kwh_per_100km_and_falls_back_to_the_libelle():
     header = [c for c in H.ADEME_ORIGINAL_NAMES if c != "Modèle"]
     rows = [[v for c, v in zip(H.ADEME_ORIGINAL_NAMES, ADEME_ROW) if c != "Modèle"]]
     rows[0][header.index("Conso elec Min")] = 18
     rows[0][header.index("Conso elec Max")] = 19.5
-    built = build_ademe(_ademe_fetch(_ademe_schema(energy_unit="kWh/100km"), H.csv_text(header, rows)))
+    schema = _ademe_schema(**{"Conso elec Min": "Consommation électrique (kWh/100 km)"})
+    built = build_ademe(_ademe_fetch(schema, H.csv_text(header, rows)))
     assert built["rows"][0]["model"] == "EV6" and built["rows"][0]["energy_wh_km"] == 180.0
-    assert built["rows"][0]["energy_wh_km_max"] == 195.0
+    assert built["rows"][0]["energy_wh_km_max"] == 195.0 and built["column_units"]["energy_wh_km"]["unit"] == "kWh/100km"
 
 
-@pytest.mark.parametrize("power_unit, reason", [(None, "unit_unstated"), ("ch", "unit_mismatch")])
-def test_ademe_stops_when_the_schema_does_not_state_kw(power_unit, reason):
+def test_ademe_power_without_a_stated_unit_is_kept_raw_and_never_a_match_key(snapshots):
     body = H.csv_text(H.ADEME_ORIGINAL_NAMES, _ademe_rows())
-    with pytest.raises(BuildStopped) as stop:
-        build_ademe(_ademe_fetch(_ademe_schema(power_unit=power_unit), body))
-    assert stop.value.reason == "unit_check"
-    assert stop.value.report["problems"][0]["key"] == "power_kw" and stop.value.report["problems"][0]["reason"] == reason
+    schema = _ademe_schema(**{"Puissance maximale": "Puissance maximale (ch)"})
+    built = build_dataset("ademe_car_labelling", fetch=_ademe_fetch(schema, body))
+    assert built["status"] == "built" and built["column_units"]["power_kw"]["unit"] == "unknown"
+    row = ds.query_rows("ademe_car_labelling", makes=["KIA"])[0]
+    assert "power_kw" not in row and "energy_wh_km" not in row and row["mass_running_order_kg"] == "2090"
+
+
+def test_a_unit_in_the_description_yields_offers_and_one_without_yields_none_until_an_override(snapshots,
+                                                                                               monkeypatch):
+    from src.open_data.offers import field_offers
+
+    body = H.csv_text(H.ADEME_ORIGINAL_NAMES, _ademe_rows())
+    assert build_dataset("ademe_car_labelling", fetch=_ademe_fetch(_ademe_schema(), body))["status"] == "built"
+    row = ds.query_rows("ademe_car_labelling", makes=["KIA"])[0]
+    entries = [e for e in ds.config()["field_map"] if e["source"] == "ademe_car_labelling"
+               and e["field"] in ("curb_weight_kg", "energy_consumption_kwh_100km")]
+
+    def offers(survivor):
+        result = {"route": "european", "level": "exact_technical_variant",
+                  "sources": {"ademe_car_labelling": {"status": "unique", "survivors": [survivor],
+                                                      "configurations": ["EV6"]}}}
+        return {o["field"]: o for o in field_offers(result, entries)}
+    first = offers(row)
+    assert first["curb_weight_kg"]["value"] == 2090 and first["curb_weight_kg"]["range"] == [2090, 2180]
+    assert "energy_consumption_kwh_100km" not in first                       # unit unknown: no offer
+    cfg = json.loads(json.dumps(ds.config()))
+    cfg["datasets"]["ademe_car_labelling"]["unit_overrides"]["energy_wh_km"] = {
+        "unit": "Wh/km", "scale": 1, "evidence": "probe p5 / p50 / p95"}
+    monkeypatch.setattr(ds, "config", lambda path=None: cfg)
+    confirmed = ds.query_rows("ademe_car_labelling", makes=["KIA"])[0]
+    assert confirmed["energy_wh_km"] == 180.0 and confirmed["energy_wh_km_max"] == 195.0
+    assert offers(confirmed)["energy_consumption_kwh_100km"]["range"] == [18, 19.5]
 
 
 def test_a_decimal_comma_is_never_guessed():
@@ -216,9 +260,10 @@ def test_a_decimal_comma_is_never_guessed():
                                                          "fuel_consumption_l_100km_max": 1}
 
 
-def test_unit_scales_reports_a_column_missing_from_the_schema():
-    scales, problems = unit_scales(_cfg("ademe_car_labelling")["columns"], {"power_kw": "Puissance maximale"}, [])
-    assert scales == {} and problems[0]["reason"] == "not_in_schema"
+def test_unit_scales_records_a_column_missing_from_the_schema_as_unknown():
+    scales, units = unit_scales(_cfg("ademe_car_labelling")["columns"], {"power_kw": "Puissance maximale"}, [])
+    assert scales == {} and units["power_kw"] == {"unit": "unknown", "reason": "not_in_schema",
+                                                  "column": "Puissance maximale"}
 
 
 def test_epa_reads_the_luggage_and_passenger_columns_and_absent_optional_ones_are_recorded(snapshots):
@@ -359,32 +404,7 @@ def test_min_max_identifies_a_value_only_with_one_configuration():
     assert field_offers(result("unique", [{"row_id": "a1", "gear_count": "8"}]), [gears])[0]["value"] == 8
 
 
-# --- F3: progress, status, run start --------------------------------------------------------------------------------------
-
-def test_the_job_records_each_datasets_progress(tmp_path):
-    from src.open_data.job import OpenDataJob
-
-    seen = []
-    body = H.csv_text(H.EPA_HEADER, [[38704, 2018, "Cadillac", "CTS", "CTS", "2.0", 4, "Automatic (S8)",
-                                      "Rear-Wheel Drive", "Midsize Cars", "Premium Gasoline", 25] + [None] * 9])
-
-    def fetch(url):
-        seen.append(dict(job.status()["datasets"][2]["progress"] or {}))
-        return body
-    job = OpenDataJob(tmp_path / "open", fetcher=fetch)
-    try:
-        job.build("epa_fueleconomy")
-        epa = next(d for d in job.status()["datasets"] if d["dataset"] == "epa_fueleconomy")
-        assert seen[0]["state"] == "building" and seen[0]["detail"].startswith("file 1/1")
-        assert epa["progress"]["state"] == "built" and epa["progress"]["detail"] == "1 rows"
-        assert epa["snapshot_rows"] == 1 and epa["snapshot_size_bytes"] > 0
-        assert job.status()["first_check_at"] is None
-        job.start()
-        assert job.status()["first_check_at"] and job.status()["scheduled"]
-    finally:
-        job.shutdown()
-        ds.set_snapshot_dir(None)
-
+# --- F3: run start --------------------------------------------------------------------------------------
 
 def test_a_run_start_records_the_datasets_without_a_snapshot_and_the_run_view_says_so(snapshots):
     from src.open_data.engine import missing_snapshots
@@ -395,25 +415,6 @@ def test_a_run_start_records_the_datasets_without_a_snapshot_and_the_run_view_sa
     view = identity_anchors_view([{"kind": "run_started", "open_data_no_snapshot": ["tc_cvs"]}])
     assert view == {"open_data_not_built": ["tc_cvs"]}
     assert identity_anchors_view([{"kind": "run_started", "open_data_no_snapshot": []}]) is None
-
-
-def test_mcp_open_data_status_returns_the_last_build_report_and_the_snapshot_meta(tmp_path, monkeypatch):
-    from src.mcp_server.tools import Observer
-    from src.open_data.job import STATUS_NAME
-    from src.storage.paths import resolve_paths
-
-    monkeypatch.setenv("TRIPY_DATA_DIR", str(tmp_path))
-    folder = tmp_path / "derived" / "open"
-    ds.write_snapshot("epa_fueleconomy", [{"row_id": "1", "make": "CADILLAC", "model": "CTS", "year": 2018}],
-                      {"built_at": "2026-10-06T09:00:00+00:00", "absent_columns": ["ev_range_alt_mi"]}, folder=folder)
-    (folder / STATUS_NAME).write_text(json.dumps({"eea_co2_cars": {
-        "status": "stopped", "reason": "schema_mismatch", "report": {"missing": [{"key": "year"}],
-                                                                     "live_header": H.EEA_2018_HEADER}}}), "utf-8")
-    out = Observer(resolve_paths()).open_data_status()
-    assert out["last_build"]["eea_co2_cars"]["report"]["missing"] == [{"key": "year"}]
-    assert out["snapshots"]["epa_fueleconomy"]["rows"] == 1
-    assert out["snapshots"]["epa_fueleconomy"]["absent_columns"] == ["ev_range_alt_mi"]
-    assert out["no_snapshot"] == ["ademe_car_labelling", "eea_co2_cars", "nrcan_fuel_ratings", "tc_cvs"]
 
 
 def test_build_dataset_reports_a_stopped_build_with_its_report(snapshots):

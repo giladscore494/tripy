@@ -1,4 +1,6 @@
-"""D-1: the snapshot builders. One dataset at a time, into <TRIPY_DATA_DIR>/derived/open/<dataset>.sqlite.
+"""D-1: the snapshot builders. One dataset at a time, into a work folder's <dataset>.sqlite; they run in the
+build-open-data GitHub Action (scripts/build_open_data.py compresses each snapshot into data/open/<dataset>.sqlite.gz
+and records it in data/open/manifest.json), never on the server.
 
 Every build reads the LIVE header first and resolves the column map of data/open_datasets.json against it
 (`resolve_map`): spellings are matched case-insensitively, whitespace trimmed; a `required` key (the identity keys) whose
@@ -12,8 +14,10 @@ agent. Each dataset's `builder`:
                  year (final rows preferred, provisional rows only for a year without final ones) the year's own
                  schema (`TOP 1` of that year) and one grouped query (distinct configurations + sum of registrations),
                  only for the makes of identity_vocabulary `open_data_make_aliases`; a year that fails stops only itself
-    data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_check` is read from the
-                 schema's x-unit / description / title (accepted -> its scale; another unit or none stated -> stop)
+    data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_from_description` rule
+                 is read from the schema field's description ("Puissance en kW"); a column without a stated unit is
+                 stored raw with unit `unknown` (its p5 / p50 / p95 recorded) and yields nothing until a
+                 `unit_overrides` entry confirms its unit
     csv          EPA: the CSV files of `download_urls` (one zip)
     ckan_groups  NRCan: the package's CSV resources in the dataset's language, each assigned to the first
                  `resource_groups` entry whose pattern its file name contains (excluded patterns are never read); each
@@ -22,7 +26,11 @@ agent. Each dataset's `builder`:
     ckan_files   CVS: the package's resources matching `resource_pattern`; the data dictionary must state every mapped
                  code and its unit (`dictionary_check`), else the build stops with the dictionary's rows
 
-`progress(text)` (optional) is called with the current stage (the Data page shows it).
+After the build, `compact` keeps only what matching and offers use (the dataset's `compaction` rules): the
+vocabulary's makes, the year window, and for EEA one row per configuration with the median / min / max of each
+measure (weighted by the registrations).
+
+`progress(text)` (optional) is called with the current stage.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ Fetcher = Callable[[str], bytes]
 Progress = Callable[[str], None]
 MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024
 EEA_PAGE = 50_000
+MAX_EEA_PAGES = 200
 PLAIN_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
 COMMA_NUMBER = re.compile(r"^-?\d+,\d+$")
 
@@ -282,10 +291,20 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     base, table = cfg["source_url"], cfg["table"]
     columns = cfg["columns"]
 
-    def sql(query: str) -> list[dict]:
-        body = fetch(f"{base}?query={quote(query)}&p=1&nrOfHits={EEA_PAGE}")
+    def sql(query: str, page: int = 1) -> list[dict]:
+        body = fetch(f"{base}?query={quote(query)}&p={page}&nrOfHits={EEA_PAGE}")
         data = json.loads(_decode(body))
         return data.get("results") or data.get("Results") or []
+
+    def sql_all(query: str) -> list[dict]:
+        """Every page of a query (DISCODATA pages by p / nrOfHits): a full page asks for the next one."""
+        out, page = [], 1
+        while True:
+            chunk = sql(query, page)
+            out += chunk
+            if len(chunk) < EEA_PAGE or page >= MAX_EEA_PAGES:
+                return out
+            page += 1
 
     def q(column: str) -> str:
         return "[" + column.replace("]", "]]") + "]"
@@ -297,7 +316,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     year_col, status_col = head["year"], head["status"]
     progress("year discovery")
     statuses: dict[int, set[str]] = {}
-    for pair in sql(f"SELECT DISTINCT {q(year_col)}, {q(status_col)} FROM {table}"):
+    for pair in sql_all(f"SELECT DISTINCT {q(year_col)}, {q(status_col)} FROM {table}"):
         year = ds._int(pair.get(year_col))
         if year is not None:
             statuses.setdefault(year, set()).add(str(pair.get(status_col) or "").strip())
@@ -337,8 +356,8 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         group = ", ".join(q(c) for c in mapping.values())
         total = f", SUM({q(registrations)}) AS registrations" if registrations else ""
         try:
-            chunk = sql(f"SELECT {group}{total} FROM {table} WHERE {where} AND UPPER({q(mapping['make'])}) "
-                        f"IN ({in_makes}) GROUP BY {group}")
+            chunk = sql_all(f"SELECT {group}{total} FROM {table} WHERE {where} AND UPPER({q(mapping['make'])}) "
+                            f"IN ({in_makes}) GROUP BY {group} ORDER BY {group}")
         except Exception as exc:  # noqa: BLE001 - one year never costs the others
             reports.append({"year": year, "status": "failed", "status_used": status,
                             "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
@@ -370,40 +389,66 @@ def _tokens_in(text: str, tokens: list[str]) -> bool:
     return any(re.search(rf"(?<![a-z0-9]){re.escape(t.lower())}(?![a-z0-9])", text) for t in tokens)
 
 
-def unit_scales(columns: dict, mapping: dict[str, str], schema: Any) -> tuple[dict[str, float], list[dict]]:
-    """({key: scale}, problems) of every mapped column with a `unit_check`, read from the schema field whose original
-    name is the live column (x-unit, description, title). A unit is accepted only when exactly one accepted unit and no
-    rejected unit is stated; anything else is a problem (the build stops: never assumed)."""
+def unit_scales(columns: dict, mapping: dict[str, str], schema: Any) -> tuple[dict[str, float], dict[str, dict]]:
+    """({key: scale}, {key: unit info}) of every mapped column with a `unit_from_description` rule, read from the
+    schema field whose original name is the live column (its description, x-unit and title: "Puissance en kW",
+    "En Kg"). Exactly one accepted unit stated -> that unit and its scale; anything else (no unit stated, another unit,
+    several) -> unit `unknown`: the raw values are stored, and the column yields no match key and no offer until the
+    operator confirms its unit with a `unit_overrides` entry of data/open_datasets.json. Never assumed, never fatal."""
+    from .datasets import UNKNOWN_UNIT
+
     fields = _schema_fields(schema)
-    scales, problems = {}, []
+    scales: dict[str, float] = {}
+    units: dict[str, dict] = {}
     for key, spec in columns.items():
-        check = spec.get("unit_check") if isinstance(spec, dict) else None
-        if not check or key not in mapping:
+        rule = spec.get("unit_from_description") if isinstance(spec, dict) else None
+        if not rule or key not in mapping:
             continue
         live = _norm(mapping[key])
         field = next((f for f in fields if _norm(f.get("x-originalName") or f.get("title") or f.get("key")) == live),
                      None)
         if field is None:
-            problems.append({"key": key, "column": mapping[key], "reason": "not_in_schema"})
+            units[key] = {"unit": UNKNOWN_UNIT, "reason": "not_in_schema", "column": mapping[key]}
             continue
-        stated = " ".join(json.dumps(field.get(k), ensure_ascii=False) for k in ("x-unit", "description", "title")
+        stated = " ".join(json.dumps(field.get(k), ensure_ascii=False) for k in ("description", "x-unit", "title")
                           if field.get(k)).lower()
-        accepted = [u for u, rule in (check.get("accept") or {}).items() if _tokens_in(stated, rule.get("tokens") or [])]
-        rejected = [u for u, tokens in (check.get("reject") or {}).items() if _tokens_in(stated, tokens)]
-        if len(accepted) == 1 and not rejected:
-            scales[key] = float(check["accept"][accepted[0]].get("scale") or 1)
+        accepted = [u for u, r in (rule.get("accept") or {}).items() if _tokens_in(stated, r.get("tokens") or [])]
+        if len(accepted) == 1:
+            scales[key] = float(rule["accept"][accepted[0]].get("scale") or 1)
+            units[key] = {"unit": accepted[0], "basis": "schema_description", "column": mapping[key],
+                          "stated": field.get("description")}
         else:
-            problems.append({"key": key, "column": mapping[key], "accepted": accepted, "rejected": rejected,
-                             "reason": "unit_mismatch" if rejected else "unit_unstated" if not accepted
-                             else "unit_ambiguous", "schema_field": {k: field.get(k) for k in (
-                                 "key", "x-originalName", "title", "description", "x-unit", "type") if k in field}})
-    for key, spec in columns.items():               # a Max column takes its Min column's scale
-        if isinstance(spec, dict) and spec.get("unit_of") in scales and key in mapping:
-            scales[key] = scales[spec["unit_of"]]
-    return scales, problems
+            units[key] = {"unit": UNKNOWN_UNIT, "reason": "unit_unstated" if not accepted else "unit_ambiguous",
+                          "accepted": accepted, "column": mapping[key],
+                          "schema_field": {k: field.get(k) for k in ("key", "x-originalName", "title", "description",
+                                                                     "x-unit", "type") if k in field}}
+    for key, spec in columns.items():               # a Max column takes its Min column's unit
+        if isinstance(spec, dict) and spec.get("unit_of") in units and key in mapping:
+            units[key] = {**units[spec["unit_of"]], "unit_of": spec["unit_of"], "column": mapping[key]}
+            if spec["unit_of"] in scales:
+                scales[key] = scales[spec["unit_of"]]
+    return scales, units
+
+
+def distribution(rows: list[dict], key: str) -> dict | None:
+    """{n, p5, p50, p95} of a column's numeric values (the evidence an operator reads before confirming a unit)."""
+    values = []
+    for row in rows:
+        text = str(row.get(key) if row.get(key) is not None else "").strip().replace(",", ".")
+        if PLAIN_NUMBER.match(text):
+            values.append(float(text))
+    if not values:
+        return None
+    values.sort()
+
+    def pct(p: float) -> float:
+        return values[min(len(values) - 1, max(0, int(round(p / 100 * (len(values) - 1)))))]
+    return {"n": len(values), "p5": pct(5), "p50": pct(50), "p95": pct(95)}
 
 
 def build_ademe(fetch: Fetcher, *, progress: Progress = _noop) -> dict:
+    from .datasets import UNKNOWN_UNIT
+
     cfg = ds.datasets()["ademe_car_labelling"]
     columns = cfg["columns"]
     progress("schema")
@@ -416,16 +461,16 @@ def build_ademe(fetch: Fetcher, *, progress: Progress = _noop) -> dict:
     if resolved["missing"] or resolved["ambiguous"]:
         raise BuildStopped("schema_mismatch", missing=resolved["missing"], ambiguous=resolved["ambiguous"],
                            absent=resolved["absent"], live_header=header[:200])
-    scales, problems = unit_scales(columns, resolved["mapping"], schema)
-    if problems:
-        raise BuildStopped("unit_check", problems=problems)
+    scales, units = unit_scales(columns, resolved["mapping"], schema)
     rows, report = _build_file(cfg["csv_url"], fetch, columns, id_prefix="ademe-", scales=scales,
                                decimal_comma=bool(cfg.get("decimal_comma")), body=body)
     if report["status"] != "built":
         raise BuildStopped(report.get("reason") or report["status"], files=[report])
-    report["units"] = {k: v for k, v in scales.items()}
+    unknown = {k: distribution(rows, k) for k, info in units.items() if info.get("unit") == UNKNOWN_UNIT}
+    report["units"] = {k: v.get("unit") for k, v in units.items()}
     return {"rows": rows, "schema": header, "urls": [cfg["csv_url"]], "files": [report],
-            "absent_columns": report.get("absent_columns") or []}
+            "absent_columns": report.get("absent_columns") or [], "column_units": units,
+            "unit_unknown_distribution": unknown}
 
 
 # --- CKAN (NRCan, CVS) -----------------------------------------------------------------------------------------------------
@@ -549,6 +594,82 @@ def build_ckan_files(dataset: str, fetch: Fetcher, *, progress: Progress = _noop
                                if f["status"] == "built"}}
 
 
+# --- compaction (G2): keep only what matching and offers use -----------------------------------------------------------
+
+def _weighted_median(pairs: list[tuple[float, float]]) -> float:
+    pairs = sorted(pairs)
+    half, total = sum(w for _, w in pairs) / 2, 0.0
+    for value, weight in pairs:
+        total += weight
+        if total >= half:
+            return value
+    return pairs[-1][0]
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(str(value).strip()) if value not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def group_configurations(rows: list[dict], group_by: list[str], measures: list[str], weight: str | None,
+                         keep: list[str] | None = None) -> list[dict]:
+    """One row per configuration (the `group_by` keys): every measure as its median (weighted by `weight`, e.g. the
+    registrations) plus `<measure>_min` / `<measure>_max`, the weights summed. Never a per-vehicle row."""
+    groups: dict[tuple, dict] = {}
+    for row in rows:
+        key = tuple(row.get(k) for k in group_by)
+        group = groups.setdefault(key, {"row": {k: row.get(k) for k in group_by + list(keep or [])},
+                                        "measures": {m: [] for m in measures}, "weight": 0.0, "weighted": False})
+        w = _as_float(row.get(weight)) if weight else None
+        if w is not None:
+            group["weighted"] = True
+        w = w if w is not None and w > 0 else 1.0
+        group["weight"] += w
+        for m in measures:
+            value = _as_float(row.get(m))
+            if value is not None:
+                group["measures"][m].append((value, w))
+    out = []
+    for n, (key, group) in enumerate(sorted(groups.items(), key=lambda kv: tuple(str(x) for x in kv[0]))):
+        item = dict(group["row"])
+        for m, pairs in group["measures"].items():
+            if pairs:
+                values = [v for v, _ in pairs]
+                item[m], item[f"{m}_min"], item[f"{m}_max"] = _weighted_median(pairs), min(values), max(values)
+        if weight:
+            item[weight] = group["weight"] if group["weighted"] else None
+        out.append(item)
+    return out
+
+
+def compact(dataset: str, built: dict) -> dict:
+    """Apply the dataset's `compaction` rules (data/open_datasets.json) to a built dataset: the make filter (the
+    identity vocabulary's makes), the year window, and the EEA grouping. Row ids are reassigned when grouping."""
+    rules = (ds.datasets().get(dataset) or {}).get("compaction") or {}
+    rows = built["rows"]
+    before = len(rows)
+    if rules.get("makes") == "vocabulary":
+        makes = known_makes()
+        rows = [r for r in rows if str(r.get("make") or "").strip().upper() in makes]
+    year_key = rules.get("year_key") or "year"
+    lo, hi = rules.get("min_year"), rules.get("max_year")
+    if lo is not None or hi is not None:
+        def in_window(row: dict) -> bool:
+            year = ds._int(row.get(year_key))
+            return year is not None and (lo is None or year >= lo) and (hi is None or year <= hi)
+        rows = [r for r in rows if in_window(r)]
+    if rules.get("group_by"):
+        rows = group_configurations(rows, rules["group_by"], rules.get("measures") or [], rules.get("weight"),
+                                    rules.get("keep"))
+        prefix = rules.get("row_prefix") or dataset
+        for n, row in enumerate(rows):
+            row["row_id"] = f"{prefix}-{row.get(year_key)}-{n + 1}"
+    return {**built, "rows": rows, "compaction": {"rows_before": before, "rows_after": len(rows),
+                                                  "rules": {k: v for k, v in rules.items() if not k.startswith("_")}}}
+
+
 # --- one dataset -----------------------------------------------------------------------------------------------------------
 
 def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress | None = None) -> dict:
@@ -581,6 +702,7 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
             if not urls:
                 raise BuildStopped("no_download_url", note=f"data/open_datasets.json {dataset}.download_urls is empty")
             built = build_csv_dataset(dataset, urls, fetch, progress=progress)
+        built = compact(dataset, built)
         progress("writing snapshot")
         duration = round(time.monotonic() - started, 1)
         meta = {"built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataset": dataset,
@@ -588,12 +710,17 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "licence": policy.get("licence"), "attribution": policy.get("attribution"),
                 "years": built.get("years"), "files": built.get("files"), "absent_columns": built.get("absent_columns"),
                 "file_years": built.get("file_years"), "last_file_year": built.get("last_file_year"),
-                "build_duration_s": duration, "config_version": ds.config().get("version")}
+                "build_duration_s": duration, "config_version": ds.config().get("version"),
+                "column_units": built.get("column_units"), "unit_unknown_distribution": built.get(
+                    "unit_unknown_distribution"), "compaction": built.get("compaction")}
         path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
         size = path.stat().st_size if path and path.exists() else None
         return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"], "duration_s": duration,
                 "size_bytes": size, "years": built.get("years"), "files": built.get("files"),
-                "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year")}
+                "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year"),
+                "column_units": built.get("column_units"),
+                "unit_unknown_distribution": built.get("unit_unknown_distribution"),
+                "compaction": built.get("compaction")}
     except BuildStopped as stop:
         return {"status": "stopped", "reason": stop.reason, "report": stop.report,
                 "duration_s": round(time.monotonic() - started, 1)}

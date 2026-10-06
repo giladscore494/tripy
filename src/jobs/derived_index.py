@@ -78,6 +78,12 @@ class DerivedIndexJob:
 
         if not self.available:
             return {"status": "unavailable", "error": "DATABASE_URL is not set"}
+        from ..storage.disk import InsufficientDisk, check_free
+
+        try:
+            check_free(self.folder, "catalog trim index build")
+        except InsufficientDisk as exc:
+            return {"status": "insufficient_disk", "error": str(exc), "reason": reason}
         with self._lock:
             if self._building:
                 return {"status": "already_running"}
