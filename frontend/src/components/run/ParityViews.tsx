@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 
 import { api } from "../../api/endpoints";
 import type {
+  IdentityAnchors,
   BriefPairs, CacheDocuments, DetailedDiagnostics, FieldRecoveryView, JsonObject, LiveView, Notice, Row, RunBenchmark,
   RunResults, VehicleState, VehicleTechnical,
 } from "../../api/types";
@@ -242,6 +243,32 @@ function Human({ human }: { human: NonNullable<VehicleTechnical["human"]> }) {
   );
 }
 
+function IdentityAnchorsView({ anchors }: { anchors: IdentityAnchors }) {
+  const fp = anchors.fingerprint;
+  const od = anchors.open_data;
+  return (
+    <Section title="Identity anchors and open data">
+      <Caption>The government identity fingerprint, the approval route and the international variant per open dataset.
+        Offers are admitted only in admit mode and only for allowlisted (source, field, route) triples; shadow offers
+        are recorded, never evidence.</Caption>
+      <KeyValue columns={4} items={[
+        { label: "Approval route", value: fp?.approval_route?.route ?? od?.route ?? "—" },
+        { label: "Type code", value: <Mono>{fp?.type_code ?? "—"}</Mono> },
+        { label: "Code family", value: <Mono className="break-all">{(fp?.code_family ?? []).join(", ") || "—"}</Mono> },
+        { label: "Equivalent codes", value: <Mono>{(fp?.equivalent_codes ?? []).join(", ") || "—"}</Mono> },
+        { label: "Open data mode", value: od?.mode ?? "—" },
+        { label: "Match level", value: od?.level ?? "—" },
+        { label: "International variant", value: <Dir>{od?.designation ?? "—"}</Dir> },
+        { label: "Lead source", value: od?.lead_source ?? "—" },
+      ]} />
+      {od?.error && <NoticeBox tone="danger">{od.error}</NoticeBox>}
+      {od && od.sources.length > 0 && <><p className="kicker">International variant per source</p><DataTable rows={od.sources} /></>}
+      {od && od.offers.length > 0 && <><p className="kicker">Offers per field</p><DataTable rows={od.offers} /></>}
+      {anchors.spec_sheets && <Disclosure title="Importer spec-sheet discovery"><JsonBlock value={anchors.spec_sheets} /></Disclosure>}
+    </Section>
+  );
+}
+
 export function VehicleTechnicalView({ runId, recordId, active }: { runId: string; recordId: string; active: boolean }) {
   const tech = useResource(`tech:${runId}:${recordId}:${active}`, (signal) => api.technical(runId, recordId, { signal }));
   const t = tech.data;
@@ -256,6 +283,7 @@ export function VehicleTechnicalView({ runId, recordId, active }: { runId: strin
       <NoticeList notices={t.notices} />
       {t.no_output_message && <NoticeBox tone="warn" title="Final structured result">{t.no_output_message}{t.has_research && " See Partial research for everything the research collected."}</NoticeBox>}
       {t.error ? <NoticeBox tone="danger"><Dir>{formatValue(t.error)}</Dir></NoticeBox> : null}
+      {t.identity_anchors && <IdentityAnchorsView anchors={t.identity_anchors} />}
       {t.diagnostics && <Section title="Detailed diagnostics"><DetailedDiagnosticsView diag={t.diagnostics} /></Section>}
       {t.human && <Section title="Human view (model output beyond the fields)"><Human human={t.human} /></Section>}
       {t.raw && (

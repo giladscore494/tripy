@@ -841,6 +841,55 @@ def parser_gap_summary(events: list[dict]) -> dict:
             "fields": fields, "rows": rows}
 
 
+def identity_anchors_summary(events: list[dict]) -> dict:
+    """Identity anchors PR telemetry: the approval route and code family (identity_fingerprint), the open-data match
+    per source, its offers / admitted offers and the fields the research plan skipped, the importer spec sheets found,
+    the run's documents by source policy and the URLs the policy blocked (per domain)."""
+    from collections import Counter
+
+    from .source_authority import policy_of
+
+    fp = next((e for e in events if e.get("kind") == "identity_fingerprint"), {}) or {}
+    od = next((e for e in events if e.get("kind") == "open_data_match"), {}) or {}
+    sheets = next((e for e in events if e.get("kind") == "spec_sheet_discovery"), {}) or {}
+    skipped = sorted({f for e in events if e.get("kind") == "research_plan"
+                      for f in e.get("skipped_open_data_resolved") or []})
+    documents: dict[str, str] = {}
+    for event in events:
+        doc = event.get("document") if event.get("kind") == "document" else None
+        if isinstance(doc, dict) and doc.get("document_id"):
+            documents[str(doc["document_id"])] = policy_of(doc.get("final_url") or doc.get("url"))["policy"]
+    blocked: Counter = Counter()
+    for event in events:
+        if event.get("kind") != "policy_blocked":
+            continue
+        if isinstance(event.get("domains"), dict):
+            for domain, n in event["domains"].items():
+                blocked[domain] += int(n or 0)
+        elif event.get("domain"):
+            blocked[str(event["domain"])] += 1
+    offers = od.get("offers") or []
+    final = final_field_states(events)
+    ok = set(final.get("ok_fields") or [])
+    attributions = sorted({str((e.get("evidence") or {}).get("attribution")) for e in events
+                           if e.get("kind") == "evidence" and (e.get("evidence") or {}).get("attribution")
+                           and _norm_field((e.get("evidence") or {}).get("field")) in ok})
+    return {"approval_route": (fp.get("approval_route") or {}).get("route"),
+            "licence_attributions": attributions,
+            "code_family_size": len(fp.get("code_family") or []) if fp else None,
+            "equivalent_codes": fp.get("equivalent_codes") if fp else None,
+            "open_data_mode": od.get("mode"), "open_data_route": od.get("route"),
+            "open_data_level": od.get("level"), "open_data_designation": od.get("designation"),
+            "open_data_match_status": {s: (v or {}).get("status") for s, v in (od.get("sources") or {}).items()},
+            "open_data_offers": len([o for o in offers if o.get("status") == "offered"]),
+            "open_data_offers_total": len(offers),
+            "open_data_admitted": len(od.get("admitted") or []),
+            "fields_skipped_open_data": skipped,
+            "spec_sheets_found": len(sheets.get("sheets") or []),
+            "documents_by_policy": dict(Counter(documents.values())),
+            "policy_blocked": dict(blocked)}
+
+
 def run_configuration(events: list[dict]) -> dict:
     """The configuration a run used, as recorded at run start (runs before ACQUISITION_MODE are legacy)."""
     started = next((e for e in events if e.get("kind") == "run_started"), {}) or {}
@@ -880,6 +929,8 @@ def run_configuration(events: list[dict]) -> dict:
             # of the A/B arms outside a series, src/run_profiles.isolate_single_run)
             "research_memory": bool(agent.get("research_memory_enabled", True)),
             "negative_route_blocking": bool(agent.get("negative_route_blocking", True)),
+            # identity anchors PR: the open-data layer's mode (runs before it: off)
+            "open_data_mode": agent.get("open_data_mode") or "off",
             # informational (env values differing from the code defaults; a named profile ignores them): not part of
             # config_key, whose other entries already hold the effective values
             "env_overrides": [o.get("text") for o in started.get("env_overrides") or [] if isinstance(o, dict)]}
@@ -1016,6 +1067,7 @@ def vehicle_diagnostics(events: list[dict], *, run_id: str | None = None, record
         "binding_year": binding_year_summary(events),
         "operations": operations_summary(events),
         "parser_gaps": parser_gap_summary(events),
+        "identity_anchors": identity_anchors_summary(events),
         "totals": run_totals(events, result),
         "summary_text": summary_text(acq, sweep),
         "note": "observational telemetry; nothing here changes research behaviour",
@@ -1264,7 +1316,22 @@ def vehicle_row(diag: dict) -> dict:
             "rec_reacquire_admitted": rec.get("reacquire_admitted"),
             "research_tokens": (research.get("input_tokens") or 0) + (research.get("output_tokens") or 0)
             if research else None,
+            **anchor_columns(diag.get("identity_anchors") or {}),
             "cost_usd": totals.get("cost_usd"), "wall_time_s": totals.get("wall_time_s")}
+
+
+def anchor_columns(anchors: dict) -> dict:
+    """The diagnostics row's identity-anchor columns (flat strings / numbers for the CSV)."""
+    status = anchors.get("open_data_match_status") or {}
+    return {"open_data_route": anchors.get("open_data_route"),
+            "open_data_match_status": ", ".join(f"{k}:{v}" for k, v in sorted(status.items())) or None,
+            "open_data_offers": anchors.get("open_data_offers"),
+            "open_data_admitted": anchors.get("open_data_admitted"),
+            "fields_skipped_open_data": len(anchors.get("fields_skipped_open_data") or []) if anchors else None,
+            "documents_by_policy": ", ".join(f"{k}:{v}" for k, v in sorted(
+                (anchors.get("documents_by_policy") or {}).items())) or None,
+            "policy_blocked": sum((anchors.get("policy_blocked") or {}).values()) if anchors else None,
+            "licence_attributions": " | ".join(anchors.get("licence_attributions") or []) or None}
 
 
 E2E_KEYS = ("final_ok", "final_conflicting", "final_unresolved_or_missing", "final_foreign_market_only",
@@ -1289,6 +1356,9 @@ def aggregate(diagnostics: list[dict]) -> dict:
                         for key, items in sorted(groups.items())}
     out["per_vehicle"] = [vehicle_row(d) for d in diagnostics]
     out["parser_gaps_by_field"] = parser_gaps_by_field(diagnostics)
+    # identity anchors PR: every licence attribution a value of these runs carries (EEA, ADEME, OGL-Canada)
+    out["licence_attributions"] = sorted({a for d in diagnostics for a in (d.get("identity_anchors") or {})
+                                          .get("licence_attributions") or []})
     return out
 
 

@@ -238,6 +238,8 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
         "fields": fields,
         "conflicts": conflicts,
         "provenance_summary": {
+            # identity anchors PR: the exact attribution string of every licence that requires one and carries a value
+            "licence_attributions": licence_attributions(fields, evidence),
             "israeli_market_values": [n for n, e in fields.items() if e["provenance"] == "israel_direct"],
             "foreign_market_values": [n for n, e in fields.items() if e["provenance"] == "foreign_direct"],
             "inferred_variant_mappings": [],
@@ -258,6 +260,18 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
     output["summary"] = code_summary(report)
     output["research_trace"] = code_trace(events, report)
     return output, report
+
+
+def licence_attributions(fields: dict, evidence: list[dict]) -> list[str]:
+    """The attribution strings (open datasets: EEA CC-BY-4.0, ADEME Licence Ouverte, OGL-Canada) of the evidence that
+    carries a final value, in first-use order."""
+    used = {i for e in fields.values() if e.get("value") is not None for i in e.get("evidence_ids") or []}
+    out: list[str] = []
+    for item in evidence:
+        text = item.get("attribution")
+        if text and str(item.get("evidence_id")) in used and text not in out:
+            out.append(text)
+    return out
 
 
 def _sources(fields: dict, evidence: list[dict]) -> list[str]:

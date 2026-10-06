@@ -636,3 +636,42 @@ def batch_rows(runs_dir: Path, vehicles_by_id: dict[str, dict], cache) -> list[d
             "tokens_total": agg["total_tokens_total"], "cost_usd_recorded": agg["cost_usd_total"],
         })
     return rows
+
+
+def identity_anchors_view(events: list[dict]) -> dict | None:
+    """The run view's identity anchors (identity anchors PR): the approval route and code family (identity_fingerprint),
+    the international variant per open-data source and the offers per field (admitted / shadow / vetoed / reference),
+    the importer spec sheets found. None for a run before them."""
+    from ..gov_registry import fingerprint_event
+
+    fp = next((e for e in events if e.get("kind") == "identity_fingerprint"), None)
+    od = next((e for e in events if e.get("kind") == "open_data_match"), None)
+    sheets = next((e for e in events if e.get("kind") == "spec_sheet_discovery"), None)
+    if not (fp or od or sheets):
+        return None
+    out: dict = {}
+    if fp:
+        view = fingerprint_event({k: v for k, v in fp.items() if k not in ("kind", "seq", "ts", "t")})
+        out["fingerprint"] = {k: view.get(k) for k in ("tozeret_cd", "degem_cd", "type_code", "year", "code_family",
+                                                       "code_years", "approval_route", "homologation",
+                                                       "equivalent_codes", "catalog", "other_codes_known")}
+    if od:
+        out["open_data"] = {
+            **{k: od.get(k) for k in ("mode", "route", "route_detail", "level", "level_basis", "designation",
+                                      "lead_source", "error")},
+            "sources": [{"source": name, "status": (src or {}).get("status"), "candidates": (src or {}).get("candidates"),
+                         "designation": (src or {}).get("designation"),
+                         "keys_matched": ", ".join((src or {}).get("keys_matched") or []),
+                         "keys_unknown": ", ".join((src or {}).get("keys_unknown") or []),
+                         "vetoes": ", ".join(f"{k} {v}" for k, v in sorted(((src or {}).get("veto_counts") or {})
+                                                                            .items()))}
+                        for name, src in (od.get("sources") or {}).items()],
+            "offers": [{"field": o.get("field"), "source": o.get("source"), "value": o.get("value"),
+                        "status": "admitted" if o.get("admitted") else (
+                            "shadow" if o.get("status") == "offered" else o.get("status")),
+                        "definition": o.get("definition"), "identified_by": o.get("identified_by"),
+                        "reason": o.get("reason")} for o in od.get("offers") or []]}
+    if sheets:
+        out["spec_sheets"] = {k: sheets.get(k) for k in ("domains", "allowed", "searches", "fetches", "sheets",
+                                                         "candidates", "skipped")}
+    return out

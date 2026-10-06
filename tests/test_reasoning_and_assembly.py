@@ -322,6 +322,7 @@ def test_each_field_state_produces_its_code_written_entry():
                                    "alternatives": [], "valid_as_of": None, "notes": "missing", "evidence_ids": [],
                                    "state": "missing"}
     assert output["provenance_summary"] == {
+        "licence_attributions": [],                            # no open-dataset value: nothing to attribute
         "israeli_market_values": ["list_price"], "foreign_market_values": ["fuel_tank_l"],
         "inferred_variant_mappings": [], "conflicts": ["torque_nm"],
         "unresolved_fields": ["torque_nm", "wheelbase_mm", "length_mm", "local_trim_name"]}
