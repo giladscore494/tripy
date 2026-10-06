@@ -88,7 +88,9 @@ def _carriers(spec: dict, items: list[dict], state: dict, declared: dict | None,
     from .field_recovery import _has_value, field_requirement, in_server_scope, is_target_market
 
     requirement = field_requirement(spec)
-    scoped = [i for i in items if _has_value(i.get("value")) and in_server_scope(i, target_market, requirement)]
+    superseded = {str(i) for i in state.get("superseded_evidence_ids") or []}     # B2: alternatives, never carriers
+    scoped = [i for i in items if _has_value(i.get("value")) and in_server_scope(i, target_market, requirement)
+              and str(i.get("evidence_id")) not in superseded]
     if "conflict_resolved_by_model" in (state.get("info") or []):
         cited = {str(i) for i in (declared or {}).get("evidence_ids") or []}
         narrowed = [i for i in scoped if str(i.get("evidence_id")) in cited]
@@ -152,6 +154,9 @@ def _ok_entry(spec: dict, items: list[dict], state: dict, declared: dict | None,
         notes = f"portable foreign-market fact ({rep.get('portability_basis') or 'portability policy'})"
     if normalized:
         notes = "; ".join(n for n in (notes, f"values not in conflict: {normalized}") if n)
+    if state.get("superseded_evidence_ids"):
+        notes = "; ".join(n for n in (notes, "other values superseded by the importer spec sheet "
+                                      f"(superseded_by_spec_sheet: {len(state['superseded_evidence_ids'])})") if n)
     return _entry("ok", value=rep.get("value"), unit=rep.get("unit"), market=rep.get("market"),
                   provenance="israel_direct" if target else "foreign_direct", alternatives=_alternative(others),
                   valid_as_of=rep.get("valid_as_of"), notes=notes, evidence_ids=ids)

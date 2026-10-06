@@ -416,6 +416,10 @@ class Observer:
             cache = ReadOnlyCache(self.cache_dir, vehicle)
             events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
             adm = AdmissionContext.for_run(payload, vehicle_meta, specs, market)
+            from ..document_binding import apply_fingerprint
+            from ..gov_registry import fingerprint_from_events
+
+            apply_fingerprint(adm.identity, fingerprint_from_events(events))
         else:
             vehicle, adm = None, AdmissionContext.default(None)
         is_html = meta.get("doc_type") == "html" or meta.get("kind") == "rendered"
@@ -468,8 +472,17 @@ class Observer:
             vehicle = safety.vehicle_dir(self.runs_dir, runs[0], record)
         events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
         identity = build_identity(payload, vehicle_meta, market)
+        from ..document_binding import apply_fingerprint
+        from ..gov_registry import fingerprint_event, fingerprint_from_events
+
+        fingerprint = fingerprint_from_events(events)
+        apply_fingerprint(identity, fingerprint)
+        match = next((e for e in events if e.get("kind") == "open_data_match"), None)
         return {"record_id": record, "run_id": vehicle.parent.name, "runs_with_record": runs[:50],
                 "target_market": market, "level15_payload": safety.clip(payload, 2_000),
+                "identity_fingerprint": fingerprint_event(fingerprint) if fingerprint else None,
+                "open_data_match": safety.clip({k: v for k, v in match.items() if k not in ("kind", "seq")}, 20_000)
+                if match else None,
                 "vehicle_label": vehicle_meta, "target_identity": identity.as_dict(),
                 "single_catalog_trim": single_catalog_trim(identity),
                 "catalog_entries": catalog_family_entries(identity)}

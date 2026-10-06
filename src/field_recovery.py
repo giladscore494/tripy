@@ -125,6 +125,30 @@ def same_scope_conflict(evidence: list[dict], target_market: str) -> list[dict]:
     return scope if len({material_key(e.get("value")) for e in scope}) > 1 else []
 
 
+SPEC_SHEET_BASIS = "importer_spec_sheet"
+
+
+def spec_sheet_precedence(evidence: list[dict], target_market: str, requirement: str | None = None) -> list[str]:
+    """B2: the evidence ids a target spec sheet supersedes. When the field's admitted items bound to the target by the
+    importer's own spec sheet (binding_basis importer_spec_sheet, in the server scope) state ONE value, every
+    target-scope item of a NON-official source stating another value is superseded: it stays an alternative
+    (`superseded_by_spec_sheet`), never a conflict. Several target sheets that disagree supersede nothing (the field
+    is conflicting); an official item that disagrees is never superseded."""
+    from .source_authority import OFFICIAL_CLASSES
+
+    with_value = [e for e in evidence if _has_value(e.get("value"))]
+    sheets = [e for e in with_value if e.get("binding_basis") == SPEC_SHEET_BASIS
+              and in_server_scope(e, target_market, requirement)]
+    values = {material_key(e.get("value")) for e in sheets}
+    if len(values) != 1:
+        return []
+    key = values.pop()
+    return [str(e.get("evidence_id")) for e in with_value
+            if e not in sheets and in_target_scope(e, target_market)
+            and str(e.get("variant_match") or "").lower() not in NON_TARGET_VARIANTS
+            and e.get("source_authority") not in OFFICIAL_CLASSES and material_key(e.get("value")) != key]
+
+
 def primary_output(events: Iterable[dict], with_seq: bool = False) -> Any:
     """The research model's own final JSON (a research turn with no tool calls), if it gave one.
     With `with_seq`, returns (output, seq of that model_response)."""
@@ -310,7 +334,10 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
     target_items = [e for e in with_value if in_target_scope(e, target_market)]
     if len({material_key(e.get("value")) for e in (target_items or with_value)}) > 1:
         info.append("multiple_values")
-    conflict = same_scope_conflict(evidence, target_market)
+    superseded = spec_sheet_precedence(evidence, target_market, requirement)
+    if superseded:
+        info.append(f"superseded_by_spec_sheet:{len(superseded)}")
+    conflict = same_scope_conflict([e for e in evidence if str(e.get("evidence_id")) not in superseded], target_market)
     conflict_class = classify_conflict(spec, conflict, target_market) if conflict else None
     if conflict_class and conflict_class["normalized"]:
         info.append(f"conflict_normalized:{conflict_class['class']}")
@@ -378,6 +405,7 @@ def evaluate_field(spec: dict, evidence: list[dict], declared: dict | None, outp
         "conflict_class": conflict_class,
         "portable_evidence_ids": portable_ids,
         "portability": portability,
+        "superseded_evidence_ids": superseded,
     }
 
 

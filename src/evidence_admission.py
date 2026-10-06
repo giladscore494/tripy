@@ -1333,6 +1333,11 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         from .gov_registry import registry_binding
 
         return registry_binding(material.meta, adm.identity, spec.get("binding_requirement"), name), inputs
+    if material.meta.get("kind") == "open_dataset":
+        # D-5: an open-dataset offer binds at its recorded match level, never by its text
+        from .open_data.engine import open_data_binding
+
+        return open_data_binding(material.meta, adm.identity, spec.get("binding_requirement")), inputs
     profile = material.profile
     region = None
     offer = None

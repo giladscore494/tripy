@@ -1,0 +1,5 @@
+{
+  "_about": "Admit mode's allowlist (src/open_data/engine.py): the (source, field, route) triples whose `offered` open-data offers may enter a run's evidence. Starts empty: a triple is added only after the shadow report (scripts/open_data_report.py) shows >= 5 agreements and 0 disagreements with values earlier runs recorded as ok (the proof gate).",
+  "version": "open-data-admission-v1",
+  "triples": []
+}

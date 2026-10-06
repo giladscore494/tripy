@@ -37,6 +37,7 @@ BOUNDS = {"chat_attempts": (1, 6), "search_attempts": (1, 6), "chat_timeout": (3
 SEARCH_CREDIT_CAP_DEFAULT = 40
 ACQUISITION_MODES = ["contract", "legacy"]
 RECOVERY_MODES = ["reacquire", "cluster", "legacy"]
+OPEN_DATA_MODES = ["shadow", "off", "admit"]          # src/open_data (identity anchors PR); shadow is the default
 EFFORT_PHASES = (("research", "Research"), ("document_sweep", "Document sweep"), ("recovery", "Recovery"),
                  ("finalizer", "Finalizer"))
 EFFORT_OPTIONS = ["provider default"] + list(REASONING_EFFORTS)
@@ -162,6 +163,8 @@ def agent_defaults(secret: Secret) -> dict:
                                             or PHASE_DEFAULTS["document_sweep"]["max_attempts"]))),
         "sweep_fields": int(env_agent.document_sweep_max_fields),
         "sweep_candidates": int(env_agent.document_sweep_max_candidates),
+        "open_data_mode": env_agent.open_data_mode if env_agent.open_data_mode in OPEN_DATA_MODES
+        else OPEN_DATA_MODES[0],
     }
 
 
@@ -227,7 +230,7 @@ def assemble_settings(*, model_id: str, finalizer_model_id: str, base_url: str, 
                       extra_raw: str, acquisition_mode: str, card_choice: str, site_map_choice: str,
                       grounded_choice: str, recovery_mode: str, sweep_attempts: int, sweep_fields: int,
                       sweep_candidates: int, pricing: dict, data_source: str, dsn: str,
-                      env_overrides: list) -> UISettings:
+                      env_overrides: list, open_data_mode: str = OPEN_DATA_MODES[0]) -> UISettings:
     extra_body: dict = {}
     extra_error = ""
     if extra_raw.strip():
@@ -245,7 +248,7 @@ def assemble_settings(*, model_id: str, finalizer_model_id: str, base_url: str, 
                      include_level3=include_level3, extra_body=extra_body,
                      acquisition_mode=acquisition_mode, acquisition_document_card=card_choice == "on",
                      site_map=site_map_choice == "on", grounded_candidates=grounded_choice == "on",
-                     recovery_mode=recovery_mode,
+                     recovery_mode=recovery_mode, open_data_mode=open_data_mode,
                      document_sweep_max_fields=int(sweep_fields), document_sweep_max_candidates=int(sweep_candidates),
                      # merged per phase / key over the env phase settings (None removes the env value)
                      phase_settings=merge_effort_settings(
@@ -379,6 +382,11 @@ RUN_OVERRIDES: tuple[RunOverride, ...] = (
                                                    "decide)."),
     RunOverride("recovery_mode", "choice", "Recovery mode", "Experiment", options=tuple(RECOVERY_MODES),
                 target="recovery_mode", help="RECOVERY_MODE. reacquire / cluster / legacy."),
+    RunOverride("open_data_mode", "choice", "Open data mode", "Experiment", options=tuple(OPEN_DATA_MODES),
+                target="open_data_mode",
+                help="Open structured data (EEA, ADEME, EPA, NRCan, CVS snapshots). shadow = match and offers are "
+                     "recorded, nothing admitted (default, every profile); admit = offers of the (source, field, "
+                     "route) triples in data/open_data_admission.json are evidence; off = not run."),
     _bounded("sweep_attempts", "int", "Document sweep max attempts", "Experiment",
              ("phase", "document_sweep", "max_attempts"), "GLM_DOCUMENT_SWEEP_MAX_ATTEMPTS"),
     _bounded("sweep_fields", "int", "Document sweep max fields per chunk", "Experiment", "document_sweep_max_fields",
@@ -436,7 +444,7 @@ def run_setting_defaults(secret: Secret) -> dict:
         "sweep_candidates": clamp("sweep_candidates", a["sweep_candidates"]),
         "price_in": pricing["input_per_mtok"], "price_out": pricing["output_per_mtok"],
         "price_search": pricing["web_search_per_call"], "data_source": "auto",
-        "search_credit_cap": SEARCH_CREDIT_CAP_DEFAULT}
+        "search_credit_cap": SEARCH_CREDIT_CAP_DEFAULT, "open_data_mode": a["open_data_mode"]}
 
 
 def _number(spec: RunOverride, value: Any) -> Any:
@@ -512,7 +520,7 @@ def settings_for_run(secret: Secret, controller, overrides: dict | None = None,
         site_map_choice=v["site_map_choice"], grounded_choice=v["grounded_choice"], recovery_mode=v["recovery_mode"],
         sweep_attempts=v["sweep_attempts"], sweep_fields=v["sweep_fields"], sweep_candidates=v["sweep_candidates"],
         pricing=pricing_from(pricing, *prices), data_source=v["data_source"], dsn=dsn_default(secret),
-        env_overrides=env_overrides(secret))
+        env_overrides=env_overrides(secret), open_data_mode=v["open_data_mode"])
     settings.search_fallback_backend = v["search_fallback_backend"]
     settings.search_credit_cap = int(v["search_credit_cap"])
     return settings
@@ -557,7 +565,9 @@ def run_settings_contract(secret: Secret, controller) -> dict:
                       "options": list(o.options), "nullable": o.nullable, "allow_empty": o.allow_empty,
                       "pinned_by_named_profile": o.name in pinned,
                       **({"unavailable_options": unavailable, "profile_defaults": profile_defaults(o.name)}
-                         if o.name in SEARCH_BACKEND_SETTINGS else {})} for o in RUN_OVERRIDES],
+                         if o.name in SEARCH_BACKEND_SETTINGS else {}),
+                      **({"profile_defaults": {p: OPEN_DATA_MODES[0] for p in NAMED_PROFILES}}
+                         if o.name == "open_data_mode" else {})} for o in RUN_OVERRIDES],
         "groups": groups,
         "server_controlled": [{"name": n, "label": label, "reason": reason} for n, label, reason in SERVER_CONTROLLED],
         "concurrency": {

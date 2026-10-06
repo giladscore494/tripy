@@ -629,6 +629,12 @@ def fingerprint_event(fingerprint: dict) -> dict:
             "other_codes_known": len(fingerprint.get("other_code_types") or {})}
 
 
+def fingerprint_from_events(events: list[dict]) -> dict | None:
+    """The run's recorded identity fingerprint (its `identity_fingerprint` event), None for a run before it."""
+    found = next((e for e in events if e.get("kind") == "identity_fingerprint"), None)
+    return {k: v for k, v in found.items() if k not in ("kind", "seq", "ts", "t")} if found else None
+
+
 def run_fingerprint(payload: dict | None, dsn: str | None = None, query=None) -> dict:
     """The run's fingerprint: the live catalog through DATABASE_URL (read-only) when it is configured, else the
     payload alone. Never raises (a catalog failure is recorded on the fingerprint)."""

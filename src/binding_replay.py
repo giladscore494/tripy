@@ -297,6 +297,10 @@ def replay_run(run_dir: Path | str, cache_dir: Path | str | None = None, *, writ
     events, payload, vehicle, specs, market = _run_inputs(run_dir)
     cache = ReadOnlyCache(cache_dir if cache_dir is not None else default_cache_dir(run_dir.parent.parent), run_dir)
     adm = AdmissionContext.for_run(payload, vehicle, specs, market)
+    from .document_binding import apply_fingerprint
+    from .gov_registry import fingerprint_from_events
+
+    apply_fingerprint(adm.identity, fingerprint_from_events(events))     # A1: the run's own code family
     run_documents = trace.document_ids(events)
     candidates = _candidates_by_document(events)
     recorded_eval = current_evaluation(events, specs, market)

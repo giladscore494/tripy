@@ -1,0 +1,110 @@
+"""D-4: the field offers of a match (data/open_datasets.json `field_map`).
+
+Each offer is a fact: {field, source, row_ids, raw (value, unit), value (the field's unit), definition, routes it is
+valid for, identified_by (unique | all_survivors_agree), status}. Status:
+
+    offered                  valid for the target's route, its definition is the route's, the match level reaches the
+                             entry's min_level and every required key / corroboration holds: admit mode MAY admit it
+                             (only for a (source, field, route) triple of data/open_data_admission.json)
+    alternative_definition   another definition of the field (CVS curb weight `na_curb` on the european route): an
+                             alternative, never a conflict
+    reference_only           never portable (another test cycle: EPA / NRCan consumption; SAE luggage volume)
+    below_level              the match level is below the entry's min_level
+    missing_key              a required key did not match (co2_wltp for WLTP consumption)
+    uncorroborated           CVS dimensions without a second source agreeing on the wheelbase
+    survivors_disagree       the surviving configurations state different values (no offer value)
+
+A value is identified without a unique candidate when every surviving candidate states the same value (the PR #45 R4
+rule applied to dataset rows). Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from . import datasets as ds
+from .match import LEVEL_EXACT, transmission_of
+
+LEVELS = ("unknown", "model_family", "generation", "body_powertrain", "exact_technical_variant", "exact_market_trim")
+
+
+def _level(value: str | None) -> int:
+    return LEVELS.index(value) if value in LEVELS else -1
+
+
+def _value(row: dict, entry: dict) -> Any:
+    raw = row.get(entry["column"])
+    if raw in (None, ""):
+        return None
+    transform = entry.get("transform")
+    if transform in ("gearbox_type", "gear_count"):
+        trans = transmission_of(raw)
+        if not trans:
+            return None
+        return trans.get("gearbox_type") if transform == "gearbox_type" else trans.get("gears")
+    try:
+        number = float(str(raw).replace(",", ""))
+    except ValueError:
+        return None
+    if number <= 0:
+        return None
+    number *= float(entry.get("scale") or 1)
+    return int(round(number)) if float(number).is_integer() or entry.get("unit") in ("mm", "cm", "kg") \
+        else round(number, 1)
+
+
+def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict]:
+    """Every field offer of a match result (module docstring)."""
+    field_map = ds.config().get("field_map") if field_map is None else field_map
+    route = result.get("route") or "unknown"
+    level = result.get("level")
+    sources = result.get("sources") or {}
+    out: list[dict] = []
+    for entry in field_map or []:
+        src = sources.get(entry.get("source")) or {}
+        survivors = src.get("survivors") or []
+        if src.get("status") not in ("unique", "ambiguous") or not survivors:
+            continue
+        values = [(_value(r, entry), r) for r in survivors]
+        stated = [(v, r) for v, r in values if v is not None]
+        if not stated:
+            continue
+        offer = {"field": entry["field"], "source": entry["source"], "column": entry["column"],
+                 "definition": entry.get("definition"), "routes": entry.get("routes") or [],
+                 "row_ids": [r.get("row_id") for _, r in stated][:20],
+                 "raw": {"value": stated[0][1].get(entry["column"]), "unit": entry.get("unit")}}
+        distinct = {v for v, _ in stated}
+        if len(distinct) != 1 or len(stated) != len(survivors):
+            out.append({**offer, "status": "survivors_disagree", "values": sorted(map(str, distinct))[:10]})
+            continue
+        value = distinct.pop()
+        offer.update(value=value, identified_by="unique" if src.get("status") == "unique" and len(survivors) == 1
+                     else "all_survivors_agree")
+        if entry.get("companion"):
+            offer["companion"] = entry["companion"]
+        if entry.get("reference_only") or not entry.get("routes"):
+            offer.update(status="reference_only", reason=entry.get("reference_only") or "no route")
+        elif route not in entry["routes"]:
+            same_field = [e for e in field_map if e["field"] == entry["field"] and route in (e.get("routes") or [])]
+            offer.update(status="alternative_definition" if same_field else "route_mismatch",
+                         reason=f"{entry.get('definition')} is not the {route} route's definition")
+        elif _level(level) < _level(entry.get("min_level") or LEVEL_EXACT):
+            offer.update(status="below_level", reason=f"match level {level}")
+        elif entry.get("requires_key") and entry["requires_key"] not in (src.get("keys_matched") or []):
+            offer.update(status="missing_key", reason=f"{entry['requires_key']} not matched")
+        else:
+            offer["status"] = "offered"
+        offer["portability_scope"] = entry.get("portability_scope")
+        out.append(offer)
+    # CVS dimensions only with a second source agreeing on the wheelbase
+    wheelbases = {o["source"]: o.get("value") for o in out if o["field"] == "wheelbase_mm" and o.get("value")}
+    for offer in out:
+        entry = next((e for e in field_map if e["field"] == offer["field"] and e["source"] == offer["source"]
+                      and e["column"] == offer["column"]), {})
+        corroborate = entry.get("requires_corroboration")
+        if corroborate and offer.get("status") == "offered":
+            own = wheelbases.get(offer["source"])
+            others = {v for s, v in wheelbases.items() if s != offer["source"]}
+            if own is None or own not in others:
+                offer.update(status="uncorroborated", reason=f"no second source states the same {corroborate}")
+    return out
