@@ -53,6 +53,9 @@ class RunSummary(BaseModel):
     legacy: bool = Field(False, description="a run folder without run_state.json (CLI or an older version)")
     elapsed_s: float | None = None
     resolved_fields_text: str | None = Field(None, description="'26 / 37' from the final report, summed over vehicles")
+    size_bytes: int | None = Field(None, description="the run folder's size on disk (retention)")
+    pinned: bool = Field(False, description="marked keep: never compacted, never deleted by the age rule")
+    compacted_at: str | None = Field(None, description="when retention compacted the run (heavy artefacts deleted)")
 
 
 class RunList(BaseModel):

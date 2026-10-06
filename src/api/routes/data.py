@@ -6,6 +6,14 @@
     GET  /api/data/storage                  the data volume: total / used / free and the size per top-level folder
     POST /api/data/storage/delete-open-data delete <data>/derived/open/ (what server-side builds left there) only;
                                             {confirm: true}; logged
+    GET  /api/data/retention                retention: settings (keep the newest N, pinned runs), what "Compact old runs"
+                                            would free, the document cache (size, documents no kept run uses), logs/
+    PUT  /api/data/retention                {keep_newest}
+    POST /api/data/retention/compact        compact the runs outside the newest N / pinned / executing {confirm: true}
+    GET  /api/data/retention/older-than     ?days=N: the runs "Delete runs older than N days" would delete, and bytes
+    POST /api/data/retention/delete-older   {days, confirm: true}
+    POST /api/data/retention/clean-cache    delete the cached documents no kept run (or the research memory) uses
+                                            {confirm: true}
     GET  /api/data/policy                   the effective source policy (repository file + operator overlay) and its
                                             change log
     POST /api/data/policy                   switch ONE domain between blocked and allowed: {domain, policy,
@@ -38,6 +46,76 @@ class PolicyChange(BaseModel):
 
 class DeleteOpenData(BaseModel):
     confirm: bool = False
+
+
+class Confirm(BaseModel):
+    confirm: bool = False
+
+
+class RetentionSettings(BaseModel):
+    keep_newest: int = Field(..., ge=0, le=10_000)
+
+
+class DeleteOlder(BaseModel):
+    days: int = Field(..., ge=1, le=36_500)
+    confirm: bool = False
+
+
+def _retention(ctx: ApiContext):
+    retention = getattr(ctx.manager, "retention", None)
+    if retention is None:
+        raise ApiError(503, "not_ready", "Retention is not available.")
+    return retention
+
+
+def _confirmed(body) -> None:
+    if not body.confirm:
+        raise ApiError(422, "confirmation_required", "Confirm the action first.")
+
+
+def _retention_call(fn, *args, **kwargs):
+    from ...storage.retention import RetentionError
+
+    try:
+        return fn(*args, **kwargs)
+    except RetentionError as exc:
+        raise ApiError(exc.status, exc.code, str(exc)) from None
+
+
+@router.get("/retention")
+def data_retention(ctx: ApiContext = Depends(get_context)) -> dict:
+    return _retention(ctx).overview()
+
+
+@router.put("/retention")
+def data_retention_settings(body: RetentionSettings, ctx: ApiContext = Depends(get_context)) -> dict:
+    return _retention_call(_retention(ctx).set_keep_newest, body.keep_newest, by="operator (Data page)")
+
+
+@router.post("/retention/compact")
+def data_retention_compact(body: Confirm, ctx: ApiContext = Depends(get_context)) -> dict:
+    _confirmed(body)
+    out = _retention_call(_retention(ctx).compact_old, by="operator (Data page)")
+    return {**out, "storage": usage(ctx.paths.data_dir, _folders(ctx))}
+
+
+@router.get("/retention/older-than")
+def data_retention_older_than(days: int, ctx: ApiContext = Depends(get_context)) -> dict:
+    return _retention_call(_retention(ctx).older_than_plan, days)
+
+
+@router.post("/retention/delete-older")
+def data_retention_delete_older(body: DeleteOlder, ctx: ApiContext = Depends(get_context)) -> dict:
+    _confirmed(body)
+    out = _retention_call(_retention(ctx).delete_older_than, body.days, by="operator (Data page)")
+    return {**out, "storage": usage(ctx.paths.data_dir, _folders(ctx))}
+
+
+@router.post("/retention/clean-cache")
+def data_retention_clean_cache(body: Confirm, ctx: ApiContext = Depends(get_context)) -> dict:
+    _confirmed(body)
+    out = _retention_call(_retention(ctx).clean_cache, by="operator (Data page)")
+    return {**out, "storage": usage(ctx.paths.data_dir, _folders(ctx))}
 
 
 @router.get("/datasets")

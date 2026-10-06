@@ -19,7 +19,7 @@ from .app_config import redact
 _CONFIGURED = False
 LOG_FILE_NAME = "tripy.log"
 LOG_FILE_MAX_BYTES = 5 * 1024 * 1024
-LOG_FILE_BACKUPS = 4          # tripy.log + tripy.log.1 .. .4 = 5 files x 5 MB
+LOG_FILE_BACKUPS = 3          # tripy.log + tripy.log.1 .. .3 = 4 files x 5 MB = the 20 MB cap of logs/ (retention)
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 

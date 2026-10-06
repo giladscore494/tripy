@@ -133,7 +133,9 @@ export function RunPage() {
 
   return (
     <div className="space-y-6">
-      <RunHeader run={run} active={active} now={now} profiles={config.data?.profiles} onCancel={cancel} cancelling={cancelling} />
+      <RunHeader run={run} active={active} now={now} profiles={config.data?.profiles} onCancel={cancel} cancelling={cancelling}
+                 onChanged={() => { void detail.refresh(); void runs.refresh(); }}
+                 onDeleted={() => { void runs.refresh(); navigate("/runs"); }} />
       {actionError && <ErrorState error={actionError} title="The action was not accepted" />}
       {detail.error && <ErrorState error={detail.error} title="Live updates are retrying" onRetry={detail.refresh} />}
 

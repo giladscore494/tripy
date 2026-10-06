@@ -120,7 +120,7 @@ cancel, delete or write). Without the variable it does not exist at all (no rout
 3. To revoke: change or delete the variable, then redeploy.
 
 The URL path is the password: keep it secret. Any other `/mcp/...` path answers 404. The token is never logged; every
-tool call writes one audit line (tool, ids, size, ms) to the server log (`/data/logs/tripy.log`, rotating 5 × 5 MB).
+tool call writes one audit line (tool, ids, size, ms) to the server log (`/data/logs/tripy.log`, rotating 4 × 5 MB: `logs/` is capped at 20 MB).
 
 **MCP לקריאה בלבד עבור Claude (אופציונלי).** משתנה אחד מפעיל שרת MCP לקריאה בלבד באותו תהליך ובאותו פורט: ריצות,
 אירועים חיים, תוצאות, דיאגנוסטיקה, binding replay, מועמדים, מסמכים שנשלפו ולוג השרת. אף כלי לא מתחיל, מבטל, מוחק או
@@ -1194,6 +1194,18 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
   temp files, unbuilt snapshots) is deleted and the bytes freed are logged. A run, a series and the trim index build
   are refused with `insufficient_disk` (HTTP 507 for a run) when less than 200 MB is free, instead of failing
   mid-write.
+
+- **Retention (`src/storage/retention.py`).** The runs list and the run view show each run's size on disk. The run view
+  has "Keep" (a kept run is never compacted and never deleted by the age rule) and "Delete run" (inline confirm;
+  `DELETE /api/runs/{run_id}`, refused with 409 while the run executes; deletes only `<data>/runs/<run_id>/`; logged
+  with run id, bytes and time in the server log and `<data>/derived/retention.jsonl`). The Data page's Storage section
+  keeps the newest N runs whole (default 15, stored in `<data>/derived/retention.json`) and offers "Compact old runs
+  now" (shows the bytes first), "Delete runs older than N days" (never the newest N, kept or running runs) and "Delete
+  cached documents not used by a kept run" (documents the research memory names are kept too). Compaction deletes a
+  vehicle's `documents/` copies, `finalizer_request.json`, `recovery/` and any other file over 1 MB, and keeps
+  `run_state.json`, `batch.json`, `diagnostics/`, and per vehicle `result.json`, `events.jsonl`, `input.json`,
+  `diagnostics.json(l)` and `binding_replay*.json(l)`, so the run view and binding replay still open it. A run refused
+  for disk says how many MB compaction would free and links to Data → Storage. `logs/` is capped at 20 MB.
 
 Proof: `python scripts/pr48_proof_gate.py` replays production run 20261005T214857Z (record 23678) under the source
 policy and the 2023 importer sheet of the M4 (no network).

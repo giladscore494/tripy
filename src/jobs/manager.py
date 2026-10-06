@@ -272,6 +272,12 @@ class RunManager:
         set_policy_overlay_dir(paths.data_dir / "derived")
         self.open_data_dir = paths.data_dir / "derived" / "open"
         self.open_data_cleanup = cleanup_open_data(self.open_data_dir)
+        # retention: run sizes / deletion / compaction, the document-cache cleanup (operator actions only) and the
+        # logs/ cap (20 MB, applied at startup; the rotating handler keeps 4 x 5 MB)
+        from ..storage.retention import Retention, cap_logs
+
+        self.retention = Retention(self, paths.data_dir, paths.runs_dir, paths.cache_dir)
+        self.logs_cap = cap_logs(paths.data_dir / "logs")
         self.reconcile()
         self.reconcile_series()
         try:
