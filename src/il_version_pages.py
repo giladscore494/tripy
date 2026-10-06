@@ -313,7 +313,9 @@ def _power_match(found: Iterable[float], target: float | None) -> str:
     powers = list(found or [])
     if not powers or target is None:
         return "absent"
-    hits = [p for p in powers if abs(p - target) <= max(0.051, POWER_TOLERANCE * target)]
+    from .document_binding import power_gate
+
+    hits = [p for p in powers if power_gate(p, target, POWER_TOLERANCE)]           # A4: both definitions
     return "match" if hits and len(hits) == len(powers) else "mixed" if hits else "mismatch"
 
 
@@ -752,10 +754,20 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
         _offer(ctx, search_result=result)
         return triage(_search_items(result), domain, query, mode)
 
+    from .source_authority import fetch_allowed
+
+    blocked_sites: set[str] = set()
     try:
         for domain, query in search_queries(terms, limit=10 ** 6):
             if out["searches"] >= max_searches:
                 break
+            if not fetch_allowed(f"https://{domain}/"):
+                # the production source policy: a site that is not allowed is never searched or fetched (its resolver
+                # code stays; a future licence turns it back on through data/source_policy.json alone)
+                if domain not in blocked_sites:
+                    blocked_sites.add(domain)
+                    out["skipped"].append({"domain": domain, "reason": "policy_blocked"})
+                continue
             if not run_search(query, domain, "site") and out["searches"] < max_searches:
                 # nothing useful from the `site:` query: once more with the backend's domain filter, no `site:` prefix
                 run_search(_strip_site(query), domain, "domain_filter")
@@ -903,3 +915,128 @@ def _default_robots(ctx, url: str) -> bool:
         with _ROBOTS_LOCK:
             _ROBOTS[host] = check
     return bool(check(url))
+
+
+# --- B1 (identity anchors PR): importer spec sheets first ---------------------------------------------------------------
+#
+# The target's importer domain (data/source_rules.json brands.<brand>.importer_slugs x importer_tlds), and only when
+# data/source_policy.json lists it as `allowed`: ONE search per run (`spec_sheet_discovery.search_templates`, the
+# first template whose search returns a result on the importer host ends the search), then the spec-sheet / price-list
+# links of the fetched importer pages are followed (link text terms or URL patterns: data, never guessed). A link on a
+# host the policy does not allow (a cartube-hosted importer PDF) is never fetched (`policy_blocked_host`). Every
+# fetched document is harvested like any research fetch; its identity and binding are B2's (evidence_admission).
+
+SPEC_SHEET_VERSION = "spec-sheets-v1"
+
+
+def spec_sheet_settings() -> dict:
+    from .source_authority import rules
+
+    return dict(rules().get("spec_sheet_discovery") or {})
+
+
+def _is_sheet_link(link: dict, cfg: dict) -> bool:
+    text = normalize_text(str(link.get("text") or ""))
+    url = unquote(str(link.get("url") or "")).lower()
+    terms = [normalize_text(t) for t in cfg.get("link_text_terms") or [] if t]
+    return any(t and t in text for t in terms) or any(re.search(p, url) for p in cfg.get("url_patterns") or [])
+
+
+def resolve_spec_sheets(ctx, run_log=None, *, payload: dict | None = None, search=None, fetch=None) -> dict:
+    """B1: the importer's spec sheets / price lists of the target (module comment). Returns the decision log
+    {version, domains, allowed, searches, fetches, sheets, links, skipped}; never raises."""
+    from .source_authority import fetch_allowed, host_of, policy_of
+    from .tools.search import importer_domains
+
+    cfg = spec_sheet_settings()
+    out: dict[str, Any] = {"version": SPEC_SHEET_VERSION, "domains": [], "allowed": [], "searches": 0, "fetches": 0,
+                           "queries": [], "candidates": [], "sheets": [], "skipped": []}
+    try:
+        payload = payload or {}
+        ident = payload.get("identity") or {}
+        manufacturer = ident.get("manufacturer") or (getattr(ctx, "vehicle", None) or {}).get("manufacturer")
+        domains = importer_domains(manufacturer)
+        out["domains"] = domains
+        allowed = [d for d in domains if policy_of(d)["policy"] == "allowed"]
+        out["allowed"] = allowed
+        if not allowed:
+            out["skipped"].append({"reason": "no_allowed_importer_domain",
+                                   "policies": {d: policy_of(d)["policy"] for d in domains}})
+            return out
+        model = str(ident.get("commercial_name") or "").strip()
+        year = str(ident.get("year") or "").strip()
+        max_searches, max_fetches = int(cfg.get("max_searches") or 1), int(cfg.get("max_fetches") or 4)
+        search = search or (lambda q, d: _default_search(ctx, q, d))
+        fetch = fetch or (lambda u: _default_fetch_any(ctx, u))
+        pages: list[str] = []
+        sheets: list[str] = []
+        seen: set[str] = set()
+
+        def consider(url: str, source: str, text: str = "") -> None:
+            url = str(url or "").split("#")[0]
+            if not url or url in seen:
+                return
+            seen.add(url)
+            host = host_of(url)
+            row = {"url": url, "source": source, "text": text[:120]}
+            sheet = _is_sheet_link({"url": url, "text": text}, cfg)
+            if not fetch_allowed(url):
+                if sheet:
+                    row.update(decision="policy_blocked_host", host=host)
+                    out["candidates"].append(row)
+                return
+            if not any(host == d or host.endswith("." + d) for d in allowed):
+                return
+            row["decision"] = "sheet" if sheet else "importer_page"
+            out["candidates"].append(row)
+            (sheets if sheet else pages).append(url)
+
+        for domain in allowed:
+            for template in cfg.get("search_templates") or []:
+                if out["searches"] >= max_searches:
+                    break
+                query = " ".join(template.replace("{host}", domain).replace("{model}", model)
+                                 .replace("{year}", year).split())
+                out["searches"] += 1
+                out["queries"].append(query)
+                try:
+                    result = search(query, domain)
+                except Exception as exc:  # noqa: BLE001
+                    out["skipped"].append({"query": query, "error": type(exc).__name__})
+                    continue
+                _offer(ctx, search_result=result)
+                for item in _search_items(result):
+                    consider(item.get("url"), "search", str(item.get("title") or ""))
+                if sheets or pages:
+                    break
+        while out["fetches"] < max_fetches and (sheets or pages):
+            url, role = (sheets.pop(0), "sheet") if sheets else (pages.pop(0), "page")
+            out["fetches"] += 1
+            try:
+                result = fetch(url) or {}
+            except Exception as exc:  # noqa: BLE001
+                out["skipped"].append({"url": url, "error": type(exc).__name__})
+                continue
+            doc = result.get("document_id")
+            if not doc or result.get("error"):
+                out["skipped"].append({"url": url, "reason": result.get("error") or "no_document"})
+                continue
+            if role == "sheet":
+                out["sheets"].append({"url": url, "document_id": doc})
+                continue
+            links = _links(ctx, doc)
+            _offer(ctx, urls=[url, result.get("final_url")], links=links)
+            for link in links:
+                if _is_sheet_link(link, cfg):
+                    consider(link.get("url"), f"link:{url}", str(link.get("text") or ""))
+    except Exception as exc:  # noqa: BLE001 - discovery never costs the run
+        out["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+    if run_log is not None:
+        run_log.event("spec_sheet_discovery", **out)
+    return out
+
+
+def _default_fetch_any(ctx, url: str) -> dict:
+    from .tools.fetch import fetch_pdf, fetch_url
+
+    return fetch_pdf(ctx, url) if re.search(r"\.pdf(?:$|\?)", url.lower()) else fetch_url(ctx, url)

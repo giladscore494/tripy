@@ -632,6 +632,9 @@ class AgentConfig:
     # refuse (without executing) a web route an earlier run already found unproductive for the attempt's open fields;
     # never skips research as such: any other route still runs
     negative_route_blocking: bool = True
+    # OPEN_DATA_MODE (identity anchors PR, src/open_data): off | shadow (default: match + offers recorded, nothing
+    # admitted) | admit (offers of the (source, field, route) triples in data/open_data_admission.json are evidence)
+    open_data_mode: str = "shadow"
 
 
 AGENT_ENV = {
@@ -3933,6 +3936,21 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                 "exact variant; their evidence ids are in the store): " + ", ".join(fact_reuse["fields_ok"])
                 + ". Do not research these fields again.")
 
+    # A1 (identity anchors): the government identity fingerprint (Level 1.5 record + the live catalog, read-only):
+    # code family, approval route, homologation keys; the target identity carries it for A2 / B2. Never blocks the run.
+    from .db import database_url
+    from .document_binding import apply_fingerprint
+    from .gov_registry import run_fingerprint
+
+    fingerprint = run_fingerprint(payload, database_url())
+    apply_fingerprint(ctx.admission.identity, fingerprint)
+    run_log.event("identity_fingerprint", **fingerprint)
+    # D (identity anchors): the open structured data layer on the local snapshots (route by approval type, match,
+    # offers; shadow records, admit admits only allowlisted triples). Never blocks the run.
+    from .open_data.engine import research_note, run_open_data
+
+    open_data_state = run_open_data(ctx, run_log, payload, fingerprint, config.open_data_mode)
+
     # PR #44 (P1): the government registry's tyre sizes of the target's own registered vehicles (offline index,
     # data/gov_registry_index.json), admitted as government evidence before research. Never blocks the run.
     from .gov_registry import emit as emit_gov_registry
@@ -3940,6 +3958,15 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     gov_registry = emit_gov_registry(ctx, payload)
     if gov_registry.get("reason") != "index_not_complete":      # the shipped index is empty until the workflow runs
         run_log.event("gov_registry", **gov_registry)
+
+    if open_data_state.get("designation") or open_data_state.get("admitted"):
+        ok_now = {e["field"] for e in current_evaluation(trace_events(run_log), specs, config.target_market)
+                  if e["state"] == "ok"}
+        note, skipped = research_note(open_data_state, ok_now)
+        if note:
+            messages[1]["content"] += "\n\n" + note
+        if skipped:
+            run_log.event("research_plan", skipped_open_data_resolved=skipped)
 
     # Part D: real URLs of the official sites (contract acquisition only), before research turn 1. Bounded, never
     # blocks the run: a failure logs site_map_failed and the task goes out without the section.
@@ -3968,6 +3995,14 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             messages[1]["content"] += ("\n\nAlready acquired (deterministic, before research): the target's Israeli "
                                        "version page " + ", ".join(accepted) + ". It is harvested for every field; "
                                        "acquire sources for what it does not state.")
+        # B1 (identity anchors): the importer's own spec sheets / price lists first (allowed importer domains only)
+        from .il_version_pages import resolve_spec_sheets
+
+        sheet_state = resolve_spec_sheets(ctx, run_log, payload=payload)
+        fetched_sheets = [s["url"] for s in sheet_state.get("sheets") or []]
+        if fetched_sheets:
+            messages[1]["content"] += ("\n\nAlready acquired (deterministic, before research): the importer's spec "
+                                       "sheet(s) " + ", ".join(fetched_sheets) + ". They are harvested for every field.")
 
     status: str | None = None
     stop_reason: str | None = None

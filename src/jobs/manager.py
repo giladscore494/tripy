@@ -262,6 +262,16 @@ class RunManager:
 
         set_derived_index_dir(paths.data_dir / "derived")
         self.derived_index = DerivedIndexJob(paths.data_dir / "derived", rows=derived_rows or _catalog_rows())
+        # identity anchors PR: the operator's source-policy overlay (the Data page) and the open-data snapshots with
+        # their monthly rebuild, both in <data_dir>/derived
+        from ..open_data import datasets as open_datasets
+        from ..open_data.job import OpenDataJob
+        from ..source_authority import set_policy_overlay_dir
+
+        set_policy_overlay_dir(paths.data_dir / "derived")
+        snapshot = paths.data_dir / "derived" / str(open_datasets.config().get("snapshot_subdir") or "open")
+        open_datasets.set_snapshot_dir(snapshot)
+        self.open_data = OpenDataJob(snapshot)
         self.reconcile()
         self.reconcile_series()
         try:
@@ -926,6 +936,7 @@ class RunManager:
             pass
         try:
             self.derived_index.shutdown()
+            self.open_data.shutdown()
         except Exception:  # noqa: BLE001
             pass
         with self._lock:

@@ -71,10 +71,14 @@ def vehicle_technical(run_id: str, record_id: str, ctx: ApiContext = Depends(get
     view = service._pipeline(ctx, record, record_id, title).view()
     diag = _diagnostics(run_dir)
     brief = rv.brief_pairs(view, diag)
+    from ...storage.run_log import read_events
+
+    anchors = rv.identity_anchors_view(read_events(run_dir / "events.jsonl")) \
+        if (run_dir / "events.jsonl").is_file() else None
     if record.active:
         return service.redacted({"run_id": record.run_id, "record_id": record_id, "title": title, "available": False,
                                  "reason": "The run is still active; the live view shows its progress.",
-                                 "brief": brief})
+                                 "brief": brief, "identity_anchors": service.safety.clip(anchors, CLIP)})
     result = load_run(ctx.runs_dir, record.run_id, record_id, cache=ctx.manager.cache)
     if not result:
         return service.redacted({"run_id": record.run_id, "record_id": record_id, "title": title, "available": False,
@@ -105,6 +109,7 @@ def vehicle_technical(run_id: str, record_id: str, ctx: ApiContext = Depends(get
         "candidates": rv.candidates_layered(result),
         "brief": brief,
         "diagnostics": rv.detailed_diagnostics(diag),
+        "identity_anchors": anchors,
     }
     payload = {**service.safety.clip({k: v for k, v in payload.items() if k not in ("raw", "model_responses")}, CLIP),
                "raw": service.safety.clip(payload["raw"], LONG_CLIP),

@@ -5,6 +5,7 @@ import { WorkspaceDataProvider } from "./hooks/WorkspaceData";
 import { AppShell } from "./layouts/AppShell";
 import { BakeoffListPage, BakeoffPage } from "./pages/BakeoffPages";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DataPage } from "./pages/DataPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { NewResearchPage } from "./pages/NewResearchPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -26,6 +27,7 @@ export function WorkspaceRoutes() {
       <Route path="/bakeoffs" element={<BakeoffListPage />} />
       <Route path="/bakeoffs/:bakeoffId" element={<BakeoffPage />} />
       <Route path="/diagnostics" element={<DiagnosticsPage />} />
+      <Route path="/data" element={<DataPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

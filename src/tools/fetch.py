@@ -134,6 +134,13 @@ def _store(ctx, kind: str, url: str, fetched: dict) -> tuple[dict, str]:
 
 def _fetch(ctx, kind: str, url: str) -> dict:
     url = check_url(url)
+    from ..source_authority import fetch_allowed, note_policy_block, policy_refusal
+
+    if not fetch_allowed(url):
+        # the production source policy (data/source_policy.json): refused as a tool result, cached copy or not
+        note_policy_block(ctx, url, "fetch")
+        ctx.emit("policy_blocked", url=url, stage="fetch", domain=policy_refusal(url, "fetch")["domain"])
+        return policy_refusal(url, "fetch")
     # Single flight per (kind, URL): one worker downloads, concurrent workers wait and reuse the stored
     # document. Other URLs are not blocked.
     with ctx.cache.hold(f"doc:{kind}:{url}") as waited:

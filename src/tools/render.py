@@ -100,7 +100,13 @@ def render_page(ctx, url: str, wait_ms: int = 2500, timeout_s: float | None = No
                 challenge: bool = True) -> dict:
     """`challenge=False`: the caller (fetch.render_fallback) judges the rendered page itself."""
     url = check_url(url)
+    from ..source_authority import fetch_allowed, note_policy_block, policy_refusal
     from .fetch import challenge_check, unreadable_result
+
+    if not fetch_allowed(url):
+        note_policy_block(ctx, url, "render")
+        ctx.emit("policy_blocked", url=url, stage="render", domain=policy_refusal(url, "render")["domain"])
+        return policy_refusal(url, "render")
 
     skipped = unreadable_result(ctx, url)
     if skipped is not None:

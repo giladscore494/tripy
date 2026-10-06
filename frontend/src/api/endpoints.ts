@@ -15,6 +15,7 @@ import type {
   CatalogPage,
   CatalogQuery,
   CatalogStatus,
+  DatasetsStatus,
   DerivedIndexStatus,
   LiveView,
   Reachability,
@@ -32,6 +33,9 @@ import type {
   RunList,
   RunProgress,
   RunResults,
+  PolicyChange,
+  PolicyChangeLog,
+  PolicyTable,
   RunSettingsContract,
   SeriesList,
   SeriesStarted,
@@ -124,6 +128,15 @@ export const api = {
   rebuildCatalogIndex: () =>
     request<{ started: boolean; status: DerivedIndexStatus; message: string }>("/api/catalog/index/rebuild",
       { method: "POST" }),
+
+  // the Data page: open datasets and the production source policy (src/api/routes/data.py)
+  dataDatasets: (o: Opts = {}) => request<DatasetsStatus>("/api/data/datasets", o),
+  rebuildDatasets: (dataset?: string) =>
+    request<{ started: boolean; message: string }>("/api/data/datasets/rebuild",
+      { method: "POST", query: dataset ? { dataset } : undefined }),
+  dataPolicy: (o: Opts = {}) => request<PolicyTable>("/api/data/policy", o),
+  changePolicy: (body: PolicyChange) =>
+    request<{ change: PolicyChangeLog; policy: PolicyTable }>("/api/data/policy", { method: "POST", body }),
 };
 
 export type RunExport = "candidates.csv" | "per_vehicle.csv" | "benchmark.json";

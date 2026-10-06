@@ -13,6 +13,8 @@ from fixtures import admission_records
 # excluded as the spec allows) and the year telemetry binding-v3 adds to a record (Part D; never read by binding,
 # evaluation or Final Assembly). Every other key, the binding fields included, must be identical.
 NEW_TELEMETRY = ("binding_version", "year_context",
+                 # D1: the number as the source states it (its rounding tolerance; read only by the conflict normalizer)
+                 "stated_number",
                  # binding-v4 (PR #40) proof telemetry: the Document Variant Map decision and the rules applied
                  "variant_map_region", "binding_rules", "binding_policy",
                  # PR #43 binding flags (system_power_unmapped, ...): recorded whenever their condition holds; a flag
@@ -274,7 +276,7 @@ def test_binding_v3_and_memory_ignores_facts_of_binding_v2(tmp_path, monkeypatch
     # PR #40: catalog rules + DVM; PR #43: hybrid / relative / stale; PR #44: Israeli version pages, engine invariance;
     # PR #45: body sub-variants, single values on multi-version documents, inconsistent pages; PR #47: compare-table
     # columns / trim pages, the body in the single-catalog-entry key
-    assert BINDING_VERSION == "binding-v8"
+    assert BINDING_VERSION == "binding-v9"
     hev = resolve_requested_fields(None, propulsion="hybrid")
     identity = target_identity(COROLLA, COROLLA_VEHICLE)
     fact = {"evidence_id": "e1", "field": "fuel_tank_l", "value": 43, "unit": "l", "document_id": "d1",

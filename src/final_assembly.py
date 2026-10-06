@@ -88,7 +88,9 @@ def _carriers(spec: dict, items: list[dict], state: dict, declared: dict | None,
     from .field_recovery import _has_value, field_requirement, in_server_scope, is_target_market
 
     requirement = field_requirement(spec)
-    scoped = [i for i in items if _has_value(i.get("value")) and in_server_scope(i, target_market, requirement)]
+    superseded = {str(i) for i in state.get("superseded_evidence_ids") or []}     # B2: alternatives, never carriers
+    scoped = [i for i in items if _has_value(i.get("value")) and in_server_scope(i, target_market, requirement)
+              and str(i.get("evidence_id")) not in superseded]
     if "conflict_resolved_by_model" in (state.get("info") or []):
         cited = {str(i) for i in (declared or {}).get("evidence_ids") or []}
         narrowed = [i for i in scoped if str(i.get("evidence_id")) in cited]
@@ -111,6 +113,13 @@ def _value_identity(spec: dict, carriers: list[dict], state: dict) -> tuple[list
         return None
     if cls.get("class") == "unit_equivalent":
         return carriers, "unit_equivalent"
+    if cls.get("class") == "rounding_equivalent":
+        # D1: one value; the most precise statement carries it, every carrier stays its evidence
+        rep = str(cls.get("representative") or "")
+        lead = [i for i in carriers if str(i.get("evidence_id")) == rep]
+        if lead:
+            return lead + [i for i in carriers if i is not lead[0]], "rounding_equivalent"
+        return None
     if cls.get("class") == "scalar_inside_range":
         spec = with_dictionary(spec)
         spans = [(i, interval(i, spec)) for i in carriers]
@@ -145,6 +154,9 @@ def _ok_entry(spec: dict, items: list[dict], state: dict, declared: dict | None,
         notes = f"portable foreign-market fact ({rep.get('portability_basis') or 'portability policy'})"
     if normalized:
         notes = "; ".join(n for n in (notes, f"values not in conflict: {normalized}") if n)
+    if state.get("superseded_evidence_ids"):
+        notes = "; ".join(n for n in (notes, "other values superseded by the importer spec sheet "
+                                      f"(superseded_by_spec_sheet: {len(state['superseded_evidence_ids'])})") if n)
     return _entry("ok", value=rep.get("value"), unit=rep.get("unit"), market=rep.get("market"),
                   provenance="israel_direct" if target else "foreign_direct", alternatives=_alternative(others),
                   valid_as_of=rep.get("valid_as_of"), notes=notes, evidence_ids=ids)
@@ -202,7 +214,9 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
             info = [i for i in state.get("info") or [] if i == "market_not_established"]
             entry = _entry(kind, alternatives=_alternative(items), notes=", ".join([kind] + info))
         elif kind == "not_applicable":
-            entry = _entry(kind, notes="not_applicable")
+            staggered = next((i for i in state.get("info") or [] if str(i).startswith("staggered_axles:")), None)
+            entry = _entry(kind, notes="not_applicable" + (
+                f" (staggered set {staggered.split(':', 1)[1]}: see the per-axle fields)" if staggered else ""))
         else:                                       # missing / unresolved
             entry = _entry(kind, alternatives=_alternative(items), notes=kind)
         fields[name] = entry
@@ -224,6 +238,8 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
         "fields": fields,
         "conflicts": conflicts,
         "provenance_summary": {
+            # identity anchors PR: the exact attribution string of every licence that requires one and carries a value
+            "licence_attributions": licence_attributions(fields, evidence),
             "israeli_market_values": [n for n, e in fields.items() if e["provenance"] == "israel_direct"],
             "foreign_market_values": [n for n, e in fields.items() if e["provenance"] == "foreign_direct"],
             "inferred_variant_mappings": [],
@@ -244,6 +260,18 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
     output["summary"] = code_summary(report)
     output["research_trace"] = code_trace(events, report)
     return output, report
+
+
+def licence_attributions(fields: dict, evidence: list[dict]) -> list[str]:
+    """The attribution strings (open datasets: EEA CC-BY-4.0, ADEME Licence Ouverte, OGL-Canada) of the evidence that
+    carries a final value, in first-use order."""
+    used = {i for e in fields.values() if e.get("value") is not None for i in e.get("evidence_ids") or []}
+    out: list[str] = []
+    for item in evidence:
+        text = item.get("attribution")
+        if text and str(item.get("evidence_id")) in used and text not in out:
+            out.append(text)
+    return out
 
 
 def _sources(fields: dict, evidence: list[dict]) -> list[str]:

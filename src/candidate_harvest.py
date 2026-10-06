@@ -46,7 +46,10 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v8 (PR #42): visually ordered right-to-left PDF lines / cells are detected by dictionary hit rate and reordered
 # v10 (PR #44): rpm_guard (an engine speed is never a torque), a unit named in the row label converts a bare value
 # (kgf·m -> Nm, rounded to whole Nm)
-HARVESTER_VERSION = "harvest-v10"
+# v11 (identity anchors PR): a PDF entirely in visual order is put in logical order as a whole (A3), per-axle rims
+# from tyre sizes (D2), imperial conversions with exact factors and km/l -> l/100km to one decimal (D3 / D4), spec-sheet
+# equipment markers (B3)
+HARVESTER_VERSION = "harvest-v11"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -185,6 +188,87 @@ def visual_to_logical(line: str) -> str:
     return " ".join(out)
 
 
+def visual_to_logical_map(line: str) -> tuple[str, list[tuple[int, int, int, int]]]:
+    """visual_to_logical with offsets: (logical line, [(logical start, logical end, original start, original end)] per
+    token). The same reordering as visual_to_logical (runs reversed, a Hebrew run's words reversed and read backwards),
+    so a quote found in the logical line maps back to the characters of the original (visual) line."""
+    spans = [(m.group(0), m.start(), m.end()) for m in re.finditer(r"\S+", line or "")]
+    tokens = [t for t, _, _ in spans]
+    kinds = ["H" if HEBREW.search(t) else "L" if LATIN.search(t) else "N" for t in tokens]
+    for i, kind in enumerate(kinds):
+        if kind == "N":
+            left = next((k for k in reversed(kinds[:i]) if k != "N"), None)
+            right = next((k for k in kinds[i + 1:] if k != "N"), None)
+            if left == right and left is not None:
+                kinds[i] = left.lower()
+    runs: list[tuple[str, list[int]]] = []
+    for i, kind in enumerate(kinds):
+        base = kind.upper()
+        if runs and base in ("H", "L") and runs[-1][0] == base:
+            runs[-1][1].append(i)
+        else:
+            runs.append((base, [i]))
+    pieces: list[tuple[str, int]] = []
+    for base, items in reversed(runs):
+        order = list(reversed(items)) if base == "H" else items
+        pieces += [(_backwards(tokens[i]) if base == "H" else tokens[i], i) for i in order]
+    out, mapping, pos = [], [], 0
+    for text, i in pieces:
+        if out:
+            pos += 1
+        mapping.append((pos, pos + len(text), spans[i][1], spans[i][2]))
+        out.append(text)
+        pos += len(text)
+    return " ".join(out), mapping
+
+
+def map_logical_span(mapping: list[tuple[int, int, int, int]], start: int, end: int) -> tuple[int, int] | None:
+    """The original (visual) character span of a logical span: the union of the tokens it overlaps."""
+    hit = [(os, oe) for ls, le, os, oe in mapping if ls < end and le > start]
+    return (min(s for s, _ in hit), max(e for _, e in hit)) if hit else None
+
+
+DOCUMENT_REVERSAL_MIN_WORDS = 6
+PAGE_MARKER = re.compile(r"\[page \d+\]")        # the fetch tool's own page separator (never PDF content)
+
+
+def document_reversal(lines: Iterable[str], words: frozenset) -> dict:
+    """A3: is the WHOLE document in visual order? The dictionary hit rate of every Hebrew line read backwards against
+    as read (PR #42 F4, summed over the document): {reversed, as_read, backwards, hebrew_lines}. A document with
+    fewer than DOCUMENT_REVERSAL_MIN_WORDS Hebrew words is never judged as a whole."""
+    as_read = backwards = n = count = 0
+    for line in lines:
+        if not HEBREW.search(line or ""):
+            continue
+        score = rtl_reversal_score(line, words)
+        as_read, backwards, n, count = as_read + score["as_read"], backwards + score["reversed"], n + 1, \
+            count + score["words"]
+    return {"reversed": count >= DOCUMENT_REVERSAL_MIN_WORDS and backwards > as_read and backwards > 0,
+            "as_read": as_read, "backwards": backwards, "hebrew_lines": n}
+
+
+def logical_lines(text: str, *, is_pdf: bool, words: frozenset,
+                  hebrew_aliases: Iterable[str] = ()) -> tuple[list[tuple[str, str, bool]], dict]:
+    """([(logical line, original line, reversed)], document verdict) of a document's non-empty lines. A PDF whose
+    whole text is in visual order (document_reversal) has EVERY line put in logical order, Latin / number lines with
+    several runs included ("BMW M4 2423" -> "2423 BMW M4": the code cell is the first cell of a right-to-left row);
+    otherwise each line is judged on its own (F4)."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    verdict = document_reversal(lines, words) if is_pdf else {"reversed": False}
+    out = []
+    for line in lines:
+        logical = None
+        if verdict["reversed"] and not PAGE_MARKER.fullmatch(line):
+            converted = visual_to_logical(line)
+            logical = converted if converted != line else None
+        elif is_pdf:
+            logical = logical_rtl_line(line, words)
+            if logical is None and HEBREW.search(line) and looks_reversed(line, hebrew_aliases):
+                logical = reverse_hebrew_line(line)
+        out.append((logical if logical is not None else line, line, logical is not None))
+    return out, verdict
+
+
 def logical_rtl_line(line: str, words: frozenset) -> str | None:
     """The logical form of a line detected as visually ordered right-to-left text, else None."""
     if not HEBREW.search(line or ""):
@@ -238,7 +322,22 @@ OPERATIONS: dict[str, Callable[[float], float]] = {
     "multiply_by_10": lambda v: v * 10,
     "divide_by_1000": lambda v: v / 1000,
     "multiply_by_1000": lambda v: v * 1000,
-    "reciprocal_times_100": lambda v: round(100 / v, 2) if v else v,
+    # D3: km/l -> l/100km = 100 / x, one decimal
+    "reciprocal_times_100": lambda v: round(100 / v, 1) if v else v,
+    # D4: exact imperial factors (never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h)
+    "multiply_by_1_35582": lambda v: float(round(v * 1.35582)),          # lb-ft -> Nm
+    "multiply_by_25_4": lambda v: float(round(v * 25.4)),                # in -> mm
+    "multiply_by_3_785411784": lambda v: round(v * 3.785411784, 1),     # US gal -> l
+    "multiply_by_28_316846592": lambda v: float(round(v * 28.316846592)),  # ft3 -> l
+    "multiply_by_0_45359237": lambda v: float(round(v * 0.45359237)),    # lb -> kg
+}
+# D1: the exact factor of each conversion (the rounding tolerance of a converted value is the source unit's last stated
+# digit times this factor; src/conflict_normalizer.py)
+OPERATION_FACTORS: dict[str, float] = {
+    "identity": 1.0, "multiply_by_9_80665": 9.80665, "divide_by_10": 0.1, "multiply_by_10": 10.0,
+    "divide_by_1000": 0.001, "multiply_by_1000": 1000.0, "multiply_by_1_35582": 1.35582, "multiply_by_25_4": 25.4,
+    "multiply_by_3_785411784": 3.785411784, "multiply_by_28_316846592": 28.316846592,
+    "multiply_by_0_45359237": 0.45359237,
 }
 GENERIC_UNITS = ["hp", "ps", "bhp", 'כ"ס', "כוח סוס", "rpm", "סל\"ד", "mph", "lb-ft", "cc", 'סמ"ק', "volt", "v",
                  "mpg", "mpge", "miles", "mi", "seats", "מושבים", "doors", "דלתות", "cylinders", "צילינדרים",
@@ -386,6 +485,9 @@ class Dictionary:
         self.rules = [r for r in (_compile_rule({**s, "name": normalize_field_name(s["name"])}) for s in specs) if r]
         v = self.vocabulary
         self.affirmative = {normalize_term(x) for x in v.get("affirmative_values") or []}
+        markers = v.get("spec_sheet_markers") if isinstance(v.get("spec_sheet_markers"), dict) else {}
+        self.sheet_present = {normalize_term(x) for x in markers.get("present") or []}
+        self.sheet_absent = {normalize_term(x) for x in markers.get("absent") or []}
         self.negative_values = {normalize_term(x) for x in v.get("negative_values") or []}
         self.optional_values = {normalize_term(x) for x in v.get("optional_values") or []}
         self.optional_terms = compile_terms(x for x in v.get("optional_values") or [] if len(x) > 2)
@@ -564,16 +666,12 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
                       dictionary: Dictionary) -> list[Segment]:
     """Every searchable unit of one document, built ONCE and then read by all field matchers."""
     segments: list[Segment] = []
-    lines = [ln.strip() for ln in (text or "").splitlines()]
-    lines = [ln for ln in lines if ln]
     norms: list[tuple[str, str, bool]] = []
     words = rtl_dictionary(dictionary.hebrew_aliases) if is_pdf else frozenset()
-    for line in lines:
-        logical = logical_rtl_line(line, words) if is_pdf else None
-        if logical is None and is_pdf and HEBREW.search(line) and looks_reversed(line, dictionary.hebrew_aliases):
-            logical = reverse_hebrew_line(line)
-        reversed_ = logical is not None
-        norms.append((normalize_text(logical if reversed_ else line), logical if reversed_ else line, reversed_))
+    # A3: a document entirely in visual order is put in logical order line by line before any field rule reads it
+    for logical, _, reversed_ in logical_lines(text, is_pdf=is_pdf, words=words,
+                                               hebrew_aliases=dictionary.hebrew_aliases)[0]:
+        norms.append((normalize_text(logical), logical, reversed_))
     descriptions: set[int] = set()
     blocks = [] if is_pdf else spec_block_segments(norms, descriptions)
     for i, (norm, quote, reversed_) in enumerate(norms):
@@ -1054,6 +1152,20 @@ def _stated_bool(d: Dictionary, rest: str) -> tuple[Any, str] | None:
 NEGATION_BEFORE = 14
 
 
+def line_marker(d: "Dictionary", line: str) -> bool | None:
+    """B3: the spec-sheet equipment marker of a line: True for a present marker (●, ˆ, ✓, סטנדרטי), False for an
+    absent one (X, —, אופציונלי), as a whole token at the line's end (or start: a visual-order line); None otherwise
+    (no marker, or both kinds)."""
+    tokens = normalize_term(line or "").split()
+    if len(tokens) < 2:
+        return None
+    present = getattr(d, "sheet_present", set()) or set()
+    absent = getattr(d, "sheet_absent", set()) or set()
+    edges = {tokens[-1], tokens[0]}
+    found = {True for t in edges if t in present} | {False for t in edges if t in absent}
+    return found.pop() if len(found) == 1 else None
+
+
 def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[int, int]) -> Hit | None:
     """A feature in running text / a label line. Order: an explicitly stated value after the label (same line,
     or the next line for a label-only line) > a negation right before the label > the field's negative context >
@@ -1073,6 +1185,12 @@ def _boolean_line(rule: FieldRule, d: Dictionary, seg: Segment, anchor: tuple[in
         value, availability = stated
         return Hit(value, availability, confidence=0.8 if availability != "optional" else 0.65, span=anchor,
                    hints={"availability": availability, "stated_value": True})
+    marker = line_marker(d, text) if seg.kind == "line" else None
+    if marker is not None:
+        # B3: a spec sheet's equipment line with its marker ("חימום מושבים קדמיים ●", "גג שמש X")
+        availability = "standard" if marker else "absent"
+        return Hit(marker, availability, confidence=0.8, span=anchor,
+                   hints={"availability": availability, "stated_value": True, "spec_sheet_marker": True})
     before = text[max(bounds[0], a - NEGATION_BEFORE):a]
     if d.negation_prefix and d.negation_prefix.search(before):
         return Hit(False, "absent", confidence=0.75, span=anchor, hints={"availability": "absent"})
@@ -1322,6 +1440,8 @@ def _price(rule: FieldRule, d: Dictionary, text: str, anchor: tuple[int, int], s
 
 def _candidate(rule: FieldRule, seg: Segment, hit: Hit, method: str, alias: str | None, wide: str) -> dict:
     quote = seg.quote if len(seg.quote) <= QUOTE_CHARS else _cut_quote(seg, hit.span)
+    if method == "label_next_line" and seg.next_quote and len(quote) + len(seg.next_quote) < QUOTE_CHARS:
+        quote = f"{quote} {seg.next_quote}"          # the label line states no value: the quote holds the value line
     block = f"table:{seg.table_index}:row:{seg.row_index}" if seg.table_index is not None else seg.quote
     origin = method if method in ("dom_pair", "unit_anchor", "spec_block") else (
         "column_identity" if seg.column_identity else "table" if seg.kind == "row" else "line")
@@ -1497,6 +1617,31 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
                 continue
             hints["position"] = position or "unspecified"
             out.append((Hit(size, raw, confidence=confidence, span=span, hints=hints),
+                        base if structured else "tire_size_form", None, text))
+    elif m == "rim_axle":
+        # D2: the rim diameter of ONE axle, read from that axle's tyre size ("ק' 275/35R19 , א' 285/30R20" -> front
+        # 19 / rear 20); a size stated for both axles, or the only size of a tyre statement, counts for each axle
+        source = seg.value if structured else text
+        has_tire_word = bool(anchors) or _contains(d.tire_terms, text)
+        label_position = None
+        if structured:
+            for name, pattern in (("front", d.front), ("rear", d.rear)):
+                if _contains(pattern, seg.label):
+                    label_position = name
+        sizes = _tires(d, source)
+        for size, raw, span, position in sizes:
+            position = position or label_position
+            if position in (rule.component, "both"):
+                confidence = 0.9 if structured else 0.8
+            elif position is None and has_tire_word and len({s for s, _, _, _ in sizes}) == 1:
+                confidence = 0.6
+            else:
+                continue
+            rim = int(size.rsplit("R", 1)[1])
+            if not _plausible(rule, float(rim)):
+                continue
+            out.append((Hit(rim, raw, rule.normalized_unit, None, confidence, span,
+                            hints={"position": position or "unspecified", "tire_size": size}),
                         base if structured else "tire_size_form", None, text))
     elif m in ("charging_time", "charging_window"):
         if not _contains(d.charging, text):

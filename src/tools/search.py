@@ -148,6 +148,25 @@ def _backend(ctx, name: str):
                         timeout=(ctx.config.connect_timeout_s, ctx.config.read_timeout_s))
 
 
+def policy_filter(ctx, results: list[dict], *, query: str = "", backend: str = "") -> list[dict]:
+    """Search results on a domain the production source policy does not allow are dropped before any ranking or fetch
+    (counters policy_blocked / policy_blocked:<domain>, one `policy_blocked` event per search with the domains)."""
+    from ..source_authority import fetch_allowed, host_of, note_policy_block
+
+    kept, dropped = [], {}
+    for item in results or []:
+        url = str((item or {}).get("url") or "")
+        if fetch_allowed(url):
+            kept.append(item)
+            continue
+        note_policy_block(ctx, url, "search")
+        dropped[host_of(url)] = dropped.get(host_of(url), 0) + 1
+    if dropped:
+        ctx.emit("policy_blocked", stage="search", query=query, backend=backend, domains=dropped,
+                 dropped=sum(dropped.values()))
+    return kept
+
+
 class SearchCreditCapReached(RuntimeError):
     """PR #47 (A6): the vehicle's provider search credits reached the run's search_credit_cap."""
 
@@ -193,6 +212,7 @@ def _provider_search(ctx, backend: str, query: str, count: int, domain: str | No
     if hit:
         ctx.counters["search_cache_hits"] += 1
     usable, sanity = sanitize(results, backend=backend, site=domain, query=query)
+    usable = policy_filter(ctx, usable, query=query, backend=backend)
     if sanity["root_only"]:
         ctx.counters["search_root_only_urls"] += len(sanity["root_only"])
         ctx.emit("root_only_url", backend=backend, query=query, site=sanity["site"], results=sanity["root_only"])

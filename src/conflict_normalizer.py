@@ -4,6 +4,11 @@ When target-scope evidence for one field carries materially different values, th
 paid recovery is spent on it:
 
     unit_equivalent                the values are the same quantity in different units ("146 cm" vs 1460 mm)
+    rounding_equivalent            (D1) the values differ only by unit-conversion rounding (66 / 66.2 / 66.3 kgm and
+                                   650 Nm: 647 / 649 / 650 / 650): every item's interval, the source number +- one unit
+                                   of its last stated digit converted to the field's unit, shares a common point, and
+                                   the values stated in the field's own unit are identical; the most precise value is
+                                   reported (`representative`)
     scalar_inside_range            a scalar lies inside another item's range (179990 vs 179990-183990)
     market_difference              each value comes from its own market (target market vs a portable foreign fact)
     variant_scope_difference       each value is bound to its own variant scope (binding level / variant wording)
@@ -23,6 +28,7 @@ counts sources, ranks authorities, removes an evidence item or picks a value.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 from .candidate_harvest import OPERATIONS, normalize_term
@@ -30,9 +36,9 @@ from .fields import with_dictionary
 from .typed_values import typed_value
 
 NORMALIZER_VERSION = "conflict-normalizer-v1"
-CLASSES = ("unit_equivalent", "scalar_inside_range", "market_difference", "variant_scope_difference",
+CLASSES = ("unit_equivalent", "rounding_equivalent", "scalar_inside_range", "market_difference", "variant_scope_difference",
            "internal_source_inconsistency", "true_conflict")
-NORMALIZING = ("unit_equivalent", "scalar_inside_range")
+NORMALIZING = ("unit_equivalent", "rounding_equivalent", "scalar_inside_range")
 REL_TOLERANCE = 1e-6
 
 
@@ -103,6 +109,74 @@ def _classes(items: list[dict], spec: dict) -> list[list[dict]] | None:
     return [members for _, members in groups]
 
 
+def _last_digit(raw: str) -> float | None:
+    """One unit of the last stated digit of a number as written ("66.3" -> 0.1, "650" -> 1, "1,816" -> 1)."""
+    from .candidate_harvest import parse_number
+
+    text = str(raw or "").strip()
+    if parse_number(text) is None:
+        return None
+    if re.fullmatch(r"\d+[.,]\d{1,2}", text) or re.fullmatch(r"\d+\.\d+", text):
+        return 10.0 ** -len(re.split(r"[.,]", text)[1])
+    return 1.0
+
+
+def stated_interval(item: dict, spec: dict) -> dict | None:
+    """{center, tolerance, converted, precision} of one scalar item in the field's normalized unit: the source number
+    (`stated_number` recorded at admission, else the stored value) +- one unit of its last stated digit, through the
+    conversion it went through. None for a range, text or an unknown conversion."""
+    from .candidate_harvest import OPERATION_FACTORS, parse_number
+
+    span = interval(item, spec)
+    if span is None or span[0] != span[1]:
+        return None
+    stated = item.get("stated_number") if isinstance(item.get("stated_number"), dict) else {}
+    raw = str(stated.get("raw") or "").strip()
+    operation = str(stated.get("operation") or "identity")
+    if not raw:
+        typed = item.get("typed_value") if isinstance(item.get("typed_value"), dict) else {}
+        number = typed.get("value") if typed.get("type") == "scalar" else None
+        if not isinstance(number, (int, float)):
+            return None
+        raw, operation = (str(int(number)) if float(number).is_integer() else repr(float(number))), "identity"
+    q, step = parse_number(raw), _last_digit(raw)
+    if q is None or step is None:
+        return None
+    if operation == "reciprocal_times_100":
+        if not q:
+            return None
+        center, tolerance = 100.0 / q, 100.0 * step / (q * q)
+    elif operation in OPERATION_FACTORS:
+        center, tolerance = q * OPERATION_FACTORS[operation], step * OPERATION_FACTORS[operation]
+    else:
+        return None
+    converted = operation != "identity"
+    stored_step = _last_digit(str(item.get("value"))) if converted else None
+    precision = max(tolerance, stored_step or 0.0)       # a converted value stored rounded is no more precise than that
+    return {"center": center, "tolerance": tolerance, "converted": converted, "precision": precision,
+            "value": span[0]}
+
+
+def rounding_equivalence(items: list[dict], spec: dict) -> dict | None:
+    """D1: {representative, interval} when the items' values differ only by conversion rounding, else None."""
+    stated = [stated_interval(i, spec) for i in items]
+    if not items or any(s is None for s in stated):
+        return None
+    direct = {round(s["value"], 6) for s in stated if not s["converted"]}
+    if len(direct) > 1 or not any(s["converted"] for s in stated):
+        return None                    # two different values stated in the field's own unit are two values
+    low = max(s["center"] - s["tolerance"] for s in stated)
+    high = min(s["center"] + s["tolerance"] for s in stated)
+    if low > high + 1e-9:
+        return None
+    middle = (low + high) / 2
+    ranked = sorted(range(len(items)), key=lambda n: (stated[n]["precision"], stated[n]["converted"],
+                                                      abs(stated[n]["value"] - middle), stated[n]["value"], n))
+    rep = ranked[0]
+    return {"representative": str(items[rep].get("evidence_id")), "value": items[rep].get("value"),
+            "interval": [round(low, 4), round(high, 4)]}
+
+
 def _partition_by(groups: list[list[dict]], key) -> bool:
     """Every value group has ONE key value and the groups' keys all differ (each value lives in its own scope)."""
     keys = []
@@ -142,6 +216,14 @@ def classify_conflict(spec: dict, items: Iterable[dict], target_market: str | No
                                     "the values do not disagree" if trim_bound else
                                     "the scalar's exact-trim scope is not established, so the field stays "
                                     "conflicting"))}
+    if groups is not None:
+        rounding = rounding_equivalence(items, spec)
+        if rounding is not None:
+            return {**out, "class": "rounding_equivalent", "normalized": True,
+                    "representative": rounding["representative"],
+                    "detail": f"the values differ only by unit-conversion rounding (common interval "
+                              f"{rounding['interval'][0]:g}-{rounding['interval'][1]:g} {spec.get('normalized_unit')}); "
+                              f"the most precise is {rounding['value']}"}
     groups = groups or [[i] for i in items]
     from .field_recovery import DEFAULT_TARGET_MARKET, is_target_market
 

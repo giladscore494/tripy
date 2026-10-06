@@ -590,6 +590,19 @@ export interface VehicleTechnical {
   api_attempts?: { api_stats: JsonObject; api_errors: Row[] };
   field_recovery?: FieldRecoveryView;
   candidates?: { candidate_summary: JsonObject; primary_research: unknown; document_sweep: unknown };
+  identity_anchors?: IdentityAnchors | null;
+}
+
+// identity anchors PR: the approval route / code family, the open-data match per source and the offers per field
+export interface IdentityAnchors {
+  fingerprint?: JsonObject & { approval_route?: { route?: string | null } | null; code_family?: number[];
+                               equivalent_codes?: number[]; type_code?: string | null };
+  open_data?: {
+    mode?: string | null; route?: string | null; route_detail?: string | null; level?: string | null;
+    designation?: string | null; lead_source?: string | null; error?: string | null;
+    sources: Row[]; offers: Row[];
+  };
+  spec_sheets?: JsonObject;
 }
 
 export interface LiveView {
@@ -801,4 +814,80 @@ export interface CatalogQuery {
   q?: string;
   limit?: number;
   offset?: number;
+}
+
+// --- the Data page (identity anchors PR: open datasets + production source policy; src/api/routes/data.py) ---------
+export interface DatasetBuild {
+  status?: string;
+  reason?: string;
+  rows?: number;
+  built_at?: string;
+  attempted_at?: string;
+  error?: string;
+  report?: Record<string, unknown>;
+}
+
+export interface DatasetRow {
+  dataset: string;
+  label: string | null;
+  source_url: string | null;
+  market: string | null;
+  routes: string[] | null;
+  identity_only: boolean;
+  policy: string | null;
+  licence: string | null;
+  attribution: string | null;
+  schema_verified: boolean | null;
+  snapshot_built_at: string | null;
+  snapshot_rows: number | null;
+  last_build: DatasetBuild | null;
+}
+
+export interface DatasetsStatus {
+  folder: string;
+  building: string | null;
+  interval_days: number;
+  datasets: DatasetRow[];
+}
+
+export interface PolicyEntry {
+  id: string;
+  kind: string;
+  domains: string[];
+  policy: "allowed" | "identity_only" | "blocked";
+  licence: string | null;
+  attribution: string | null;
+  bulk_store: boolean | null;
+  terms_clause: string | null;
+  terms_clause_source: string | null;
+  checked_at: string | null;
+  changed_at?: string | null;
+  changed_by?: string | null;
+  overlay?: boolean | null;
+  note?: string | null;
+}
+
+export interface PolicyChangeLog {
+  at: string;
+  domain: string;
+  from: string;
+  to: string;
+  terms_clause: string | null;
+  checked_at: string | null;
+  changed_by: string;
+}
+
+export interface PolicyTable {
+  version: string;
+  unlisted: string;
+  overlay_path: string | null;
+  entries: PolicyEntry[];
+  changes: PolicyChangeLog[];
+}
+
+export interface PolicyChange {
+  domain: string;
+  policy: "allowed" | "blocked";
+  terms_clause?: string | null;
+  checked_at?: string | null;
 }

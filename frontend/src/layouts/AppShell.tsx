@@ -3,7 +3,8 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthProvider";
 import {
-  IconClose, IconDashboard, IconList, IconLogout, IconMenu, IconPulse, IconSearch, IconSliders, IconSpark, IconSplit,
+  IconClose, IconDashboard, IconList, IconLogout, IconMenu, IconPulse, IconSearch, IconServer, IconSliders, IconSpark,
+  IconSplit,
 } from "../components/ui/icons";
 import { Badge, cx } from "../components/ui/primitives";
 import { useWorkspace } from "../hooks/WorkspaceData";
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/series", label: "A/B Series", icon: IconSplit },
   { to: "/bakeoffs", label: "Search bake-off", icon: IconSearch },
   { to: "/diagnostics", label: "Diagnostics", icon: IconPulse },
+  { to: "/data", label: "Data", icon: IconServer },
   { to: "/settings", label: "Settings", icon: IconSliders },
 ];
 

@@ -110,7 +110,7 @@ one address); the protection is a long random token. `/health` is not gated. Out
 ### Read-only MCP for Claude (optional)
 
 One variable turns on a **read-only** MCP server in the same process and on the same port: runs, live events,
-results, diagnostics, binding replay, candidates, fetched documents, search bake-offs, the live catalog (`catalog_search`) and the server log (15 tools; nothing can start,
+results, diagnostics, binding replay, candidates, fetched documents, the target's identity and its open-data match (`target_identity`, `open_data_match`, `open_data_coverage`), search bake-offs, the live catalog (`catalog_search`) and the server log (17 tools; nothing can start,
 cancel, delete or write). Without the variable it does not exist at all (no route; the `mcp` SDK is not imported).
 
 1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
@@ -1139,6 +1139,50 @@ Deterministic and fail-closed; vocabularies and site rules are data (`data/ident
 
 Proof: `python scripts/pr47_proof_gate.py` replays the resolver and admission on record 38626 from the run's search
 results and pages (no network).
+
+### Identity anchors, importer spec sheets, source policy and open data
+
+Deterministic and fail-closed; the model is never the source of a value or a URL. Vocabularies, site rules, column maps
+and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.json`, `data/enrichment_fields.json`,
+`data/open_datasets.json`); nothing in Python names a brand.
+
+- **Production source policy (`data/source_policy.json`).** A domain or dataset is fetched only when it is listed
+  `allowed` (or `identity_only`, for identity keys such as vPIC) and its documents are evidence only when `allowed`.
+  Unlisted = blocked; there is no research mode. Search results on a blocked domain are dropped before ranking or fetch
+  (`policy_blocked`, `policy_blocked:<domain>`), the fetch / render tools refuse them, and cached documents of a blocked
+  domain stay on disk but are never evidence (`source_policy_blocked`). Each entry records its licence, attribution,
+  bulk-store permission, the terms clause the decision rests on and when it was checked. The operator switches a
+  domain on the **Data** page: the change is an overlay in the data volume (`<TRIPY_DATA_DIR>/derived/
+  source_policy_overlay.json`), allowing needs a terms clause and a date, and every change is logged
+  (`source_policy_changes.jsonl`). `python scripts/terms_review.py` lists the importer / manufacturer domains of the last
+  20 runs with their policy and the terms page their own cached pages link to (report only). Exports carry the
+  attribution string of every licence that contributed a value.
+- **Identity fingerprint.** The government record's code family (type codes sharing the target's type approval), code
+  year window, approval route, homologation keys, equipment bitmask and equivalent codes (event
+  `identity_fingerprint`; MCP `target_identity`). A document's government code table (also read from visually reversed
+  PDFs: the whole document is normalized to logical order before harvest, and quotes map back to the stored text) binds
+  it to the target's version or vetoes it (`other_code_family`, capped at body/powertrain). Power is anchored on both
+  definitions of koah sus (hp and PS; max(2, 1%)).
+- **Importer spec sheets.** On an `allowed` importer domain only: one search, then the links of the importer's own pages
+  (`spec_sheet_discovery` in `data/source_rules.json`); never a guessed URL. A sheet whose codes are the target's binds
+  `exact_technical_variant` / `exact_market_trim` (basis `importer_spec_sheet`, authority `official_importer`) and takes
+  precedence over non-official documents (their value stays as `superseded_by_spec_sheet`); disagreeing sheets are
+  `conflicting`. Equipment markers (●, ✓, "סטנדרטי" present; X, —, "אופציונלי" absent) are data.
+- **Decision fixes.** Values that differ only by unit-conversion rounding are one value (the most precise stated value
+  is reported); front / rear rims are `rim_diameter_front_in` / `rim_diameter_rear_in` (the single rim field is not
+  applicable for a staggered set); km/l -> l/100km; exact imperial factors; never across test cycles.
+- **Open structured data (`src/open_data/`).** Local SQLite snapshots in `<TRIPY_DATA_DIR>/derived/open` of EEA CO2
+  cars, ADEME Car Labelling, EPA fueleconomy.gov, NRCan fuel ratings and Transport Canada CVS, rebuilt monthly and on
+  "Rebuild now" (Data page; `python scripts/build_open_data.py`). A build reads the live header first and stops with a
+  report when a mapped column is absent (the previous snapshot stays). The match is routed by the approval type, keyed
+  and vetoed deterministically; a value is identified by a unique row or when every surviving row agrees. Run setting
+  `open_data_mode`: `off`, `shadow` (default: match and offers recorded, nothing admitted) or `admit` (only the
+  (source, field, route) triples of `data/open_data_admission.json`, which starts empty). vPIC is identity only.
+  `python scripts/open_data_report.py` is the shadow report and proposes the admission triples (>= 5 agreements with
+  earlier ok values, 0 disagreements).
+
+Proof: `python scripts/pr48_proof_gate.py` replays production run 20261005T214857Z (record 23678) under the source
+policy and the 2023 importer sheet of the M4 (no network).
 
 ### Durable pre-finalization checkpoint
 

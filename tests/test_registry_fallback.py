@@ -147,9 +147,10 @@ def test_level_b_confirmed_by_the_target_trim_binds_the_market_trim_and_fills_th
     from src.binding_replay import replay_fact
 
     out, ctx = _emit(cache, _model_year(10))                 # the target trim: 10 vehicles (no level A), same majority
-    assert out["level"] == "B" and out["stored"] == 3 and "reason" not in out
+    assert out["level"] == "B" and out["stored"] == 5 and "reason" not in out
     items = {e["field"]: e for e in ctx.evidence.items}
-    assert set(items) == {"tire_size_front", "tire_size_rear", "rim_diameter_in"}
+    assert set(items) == {"tire_size_front", "tire_size_rear", "rim_diameter_in", "rim_diameter_front_in",
+                          "rim_diameter_rear_in"}                                  # D2: each axle's rim too
     assert items["tire_size_front"]["value"] == "285/45 R21" and items["rim_diameter_in"]["value"] == 21
     for item in items.values():
         assert item["registry_level"] == "B" and item["variant_match"] == "exact"
@@ -186,7 +187,7 @@ def test_level_b_without_the_target_trim_stays_at_the_technical_variant(cache, t
     from src.field_recovery import binding_satisfies
 
     out, ctx = _emit(cache, _model_year(target_n))
-    assert out["level"] == "B" and out["stored"] == 3
+    assert out["level"] == "B" and out["stored"] == 5
     items = {e["field"]: e for e in ctx.evidence.items}
     for item in items.values():
         assert item["registry_level"] == "B" and item["variant_match"] == "unclear"
@@ -222,7 +223,7 @@ def test_level_b_rim_needs_both_axles_of_the_target_trim():
 def test_level_a_items_carry_their_level(cache):
     data = _index(_vehicles(25, "285/45R21", trim="SLINE SUPER"))
     out, ctx = _emit(cache, data)
-    assert out["level"] == "A" and out["stored"] == 3
+    assert out["level"] == "A" and out["stored"] == 5
     assert {e["registry_level"] for e in ctx.evidence.items} == {"A"}
     assert {e["binding_level"] for e in ctx.evidence.items} == {"exact_market_trim"}
 
@@ -312,24 +313,27 @@ def test_coverage_reasons_per_benchmark_record(tmp_path, capsys):
     by = {m["record"]: m for m in bench["missing"]}
     assert set(by) == {"2", "3", "4", "5", "6", "7"} and bench["with_entry"] == 1 and bench["with_level_b"] == 2
     assert (by["2"]["reason"], by["2"]["under"], by["2"]["n"], by["2"]["level"]) == ("level_b", "small", 5, "B")
-    assert by["2"]["fields"] == ["rim_diameter_in", "tire_size_front", "tire_size_rear"]
+    assert by["2"]["fields"] == ["rim_diameter_front_in", "rim_diameter_in", "rim_diameter_rear_in", "tire_size_front",
+                                 "tire_size_rear"]
     assert (by["3"]["reason"], by["3"]["trims"]) == ("no_key", [])                # other years are never looked at
     assert (by["7"]["reason"], by["7"]["under"], by["7"]["trims"]) == ("level_b", "no_key", ["DESIGN"])
     assert (by["4"]["reason"], by["4"]["n"]) == ("small", 6)
     assert by["4"]["level_b"] == {"used": True, "refusal": "level_b_trims_disagree",
                                   "fields": ["alternative_tire_sizes"], "market_trim": []}
-    assert by["2"]["level_b"]["market_trim"] == ["rim_diameter_in", "tire_size_front", "tire_size_rear"]
+    assert by["2"]["level_b"]["market_trim"] == ["rim_diameter_front_in", "rim_diameter_in", "rim_diameter_rear_in",
+                                                "tire_size_front", "tire_size_rear"]
     assert by["7"]["level_b"]["market_trim"] == []                               # the target trim is not in the pool
     assert (by["5"]["reason"], by["5"]["n"], by["5"]["unparsed"]) == ("unparsed", 8, [15, 15])
     assert by["6"]["reason"] == "no_government_codes"
     assert bench["reasons"] == {"level_b": 2, "no_government_codes": 1, "no_key": 1, "small": 1, "unparsed": 1}
     assert C.main(args) == 0
     text = capsys.readouterr().out
-    assert "no entry: 2 אאודי Q8 2025 key=21|261|2025|BASE: level B used: rim_diameter_in, tire_size_front, " \
-           "tire_size_rear (trim n=5); confirmed by the trim (exact_market_trim): rim_diameter_in, tire_size_front, " \
-           "tire_size_rear" in text
+    assert "no entry: 2 אאודי Q8 2025 key=21|261|2025|BASE: level B used: rim_diameter_front_in, rim_diameter_in, " \
+           "rim_diameter_rear_in, tire_size_front, tire_size_rear (trim n=5); confirmed by the trim (exact_market_trim): " \
+           "rim_diameter_front_in, rim_diameter_in, rim_diameter_rear_in, tire_size_front, tire_size_rear" in text
     assert "key=21|262|2025|BASE: no key at all (model year trims: none); level B refused: no_pool" in text
-    assert "key=21|265|2025|BASE: level B used: rim_diameter_in, tire_size_front, tire_size_rear (trim: no_key); " \
+    assert "key=21|265|2025|BASE: level B used: rim_diameter_front_in, rim_diameter_in, rim_diameter_rear_in, " \
+           "tire_size_front, tire_size_rear (trim: no_key); " \
            "not confirmed by the trim (exact_technical_variant, fields stay unfilled)" in text
     assert "key=21|263|2025|BASE: n<20 (n=6); level B refused: trims_disagree (evidence: alternative_tire_sizes)" \
         in text

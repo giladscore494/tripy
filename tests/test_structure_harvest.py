@@ -156,7 +156,7 @@ def test_harvester_version_bumped():
     # PR #40: R8 candidate hygiene invalidated cached harvests (v7); PR #42: right-to-left PDF text repair (v8);
     # PR #43: label | value dimension triples and wheel-size numbers (v9); PR #44: rpm_guard, label-unit conversion,
     # label / description / value blocks (v10)
-    assert HARVESTER_VERSION == "harvest-v10"
+    assert HARVESTER_VERSION == "harvest-v11"
 
 
 # --- Part B -------------------------------------------------------------------------------------------------------
@@ -250,10 +250,11 @@ def test_corolla_coverage_table_before_vs_after(tmp_path):
     """The PR table: fields with >= 1 candidate before vs after Parts A-C (deterministic)."""
     table = corolla_harvest.coverage_table(DocumentCache(tmp_path))
     rows = table["rows"]
-    assert table["applicable_fields"] == 37
+    assert table["applicable_fields"] == 39
     assert all(not row["lost"] for row in rows.values())                  # nothing disappears anywhere
     assert rows["existing Corolla fixtures"]["after"] >= rows["existing Corolla fixtures"]["before"]
     structural = rows["structural fixtures (PR #31)"]
-    assert (structural["before"], structural["after"]) == (12, 19)
-    assert structural["gained"] == ["list_price", "local_trim_name", "tire_size_front", "tire_size_rear",
-                                    "vehicle_warranty", "warranty_km", "warranty_years"]
+    assert (structural["before"], structural["after"]) == (12, 21)      # D2: + the per-axle rims
+    assert structural["gained"] == ["list_price", "local_trim_name", "rim_diameter_front_in", "rim_diameter_rear_in",
+                                    "tire_size_front", "tire_size_rear", "vehicle_warranty", "warranty_km",
+                                    "warranty_years"]

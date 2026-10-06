@@ -29,6 +29,11 @@ def _session_guards():
 
     patch = pytest.MonkeyPatch()
     patch.setattr(render_module, "_render", _no_browser)
+    # the production source policy blocks every unlisted domain: tests written before it (module fixtures included)
+    # run with every domain allowed; a test of the policy is marked `real_source_policy` (see _source_policy)
+    from src import source_authority
+
+    patch.setattr(source_authority, "_TEST_OVERRIDE", "allowed")
     original = agent.AgentConfig.__init__
 
     def init(self, *args, **kwargs):
@@ -38,6 +43,19 @@ def _session_guards():
     patch.setattr(agent.AgentConfig, "__init__", init)
     yield
     patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def _source_policy(request, monkeypatch):
+    """The production source policy (data/source_policy.json) blocks every unlisted domain. Tests written before it use
+    fixture domains the policy does not list, so they run with every domain allowed; a test of the policy itself is
+    marked `real_source_policy` and runs with the real file (and no overlay unless it sets one)."""
+    from src import source_authority
+
+    if request.node.get_closest_marker("real_source_policy"):
+        monkeypatch.setattr(source_authority, "_TEST_OVERRIDE", None)
+        monkeypatch.setitem(source_authority._POLICY_STATE, "overlay_dir", None)
+        source_authority._POLICY_CACHE.clear()
 
 
 @pytest.fixture(autouse=True)

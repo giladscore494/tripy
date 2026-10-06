@@ -169,7 +169,7 @@ def test_cadillac_fixture_harvests_all_documents_across_all_fields(tmp_path):
     harvester = RunHarvester(cache, BEV, log)
     harvester.observe(ids, "research")
     matrix = candidate_matrix(read_events(log.events_path), BEV, {**VEHICLE, **PAYLOAD["identity"]})
-    assert matrix["applicable_fields"] == 43 and matrix["documents"] >= 6
+    assert matrix["applicable_fields"] == 45 and matrix["documents"] >= 6
     assert len(matrix["fields_with_candidates"]) >= 35 and matrix["candidate_count"] >= 50
     # conflicts preserved, nothing merged: Israeli 610 Nm and US 650 Nm stay separate candidates
     assert {610, 650} <= {c["value"] for c in matrix["fields"]["torque_nm"]}

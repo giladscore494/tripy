@@ -184,6 +184,21 @@ def build(observer_factory: Callable[[], Observer] = Observer):
         return await run("target_identity", args, lambda: observer_factory().target_identity(record_id, run_id))
 
     @tool
+    async def open_data_match(record_id: str, run_id: str | None = None) -> str:
+        """The open structured data match of a record (identity anchors PR): the approval route, the per-source
+        candidates and vetoes, the international variant and the field offers its newest run (or run_id) recorded,
+        plus the match recomputed now from the local snapshots when they exist. Read-only."""
+        args = {"record_id": record_id, "run_id": run_id}
+        return await run("open_data_match", args, lambda: observer_factory().open_data_match(record_id, run_id))
+
+    @tool
+    async def open_data_coverage(run_id: str) -> str:
+        """Open-data coverage of a run, per vehicle: route, level, designation, match status and vetoes per source,
+        offers per field (offered / admitted / reference_only / alternative_definition ...), skipped fields."""
+        return await run("open_data_coverage", {"run_id": run_id},
+                         lambda: observer_factory().open_data_coverage(run_id))
+
+    @tool
     async def list_bakeoffs(limit: int = 20, offset: int = 0) -> str:
         """Search bake-offs newest first (the web UI's "Search bake-off" jobs): id, status, backends, progress and
         each backend's version_url_hit / accepted pages / USD per record."""
@@ -220,5 +235,5 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
-              "candidates", "documents", "document_text", "document_structure", "target_identity", "list_bakeoffs",
-              "bakeoff_result", "catalog_search", "server_log_tail")
+              "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
+              "open_data_coverage", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")

@@ -416,6 +416,10 @@ class Observer:
             cache = ReadOnlyCache(self.cache_dir, vehicle)
             events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
             adm = AdmissionContext.for_run(payload, vehicle_meta, specs, market)
+            from ..document_binding import apply_fingerprint
+            from ..gov_registry import fingerprint_from_events
+
+            apply_fingerprint(adm.identity, fingerprint_from_events(events))
         else:
             vehicle, adm = None, AdmissionContext.default(None)
         is_html = meta.get("doc_type") == "html" or meta.get("kind") == "rendered"
@@ -468,11 +472,82 @@ class Observer:
             vehicle = safety.vehicle_dir(self.runs_dir, runs[0], record)
         events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
         identity = build_identity(payload, vehicle_meta, market)
+        from ..document_binding import apply_fingerprint
+        from ..gov_registry import fingerprint_event, fingerprint_from_events
+
+        fingerprint = fingerprint_from_events(events)
+        apply_fingerprint(identity, fingerprint)
+        match = next((e for e in events if e.get("kind") == "open_data_match"), None)
         return {"record_id": record, "run_id": vehicle.parent.name, "runs_with_record": runs[:50],
                 "target_market": market, "level15_payload": safety.clip(payload, 2_000),
+                "identity_fingerprint": fingerprint_event(fingerprint) if fingerprint else None,
+                "open_data_match": safety.clip({k: v for k, v in match.items() if k not in ("kind", "seq")}, 20_000)
+                if match else None,
                 "vehicle_label": vehicle_meta, "target_identity": identity.as_dict(),
                 "single_catalog_trim": single_catalog_trim(identity),
                 "catalog_entries": catalog_family_entries(identity)}
+
+    # -- open data (identity anchors PR) -------------------------------------------------------------------------
+    def _vehicle_of(self, record: str, run_id: Any = None) -> Path:
+        if run_id:
+            return safety.vehicle_dir(self.runs_dir, run_id, record)
+        found = [p for p in self.runs_dir.glob(f"*/{record}") if p.is_dir() and not p.parent.name.startswith(
+            ("_", ".")) and safety.inside(p, self.runs_dir)] if self.runs_dir.is_dir() else []
+        if not found:
+            raise ToolInputError(f"unknown record_id: {record!r}")
+        found.sort(key=lambda p: p.parent.name, reverse=True)
+        return safety.vehicle_dir(self.runs_dir, found[0].parent.name, record)
+
+    def open_data_match(self, record_id: Any, run_id: Any = None) -> dict:
+        """The open-data match of a record: what its newest run (or `run_id`) recorded (route, candidates, vetoes,
+        offers) and, when the local snapshots exist, the match recomputed now from them (read-only SQLite)."""
+        from ..gov_registry import fingerprint_from_events, identity_fingerprint
+        from ..open_data import datasets as open_datasets
+        from ..open_data.match import match
+        from ..open_data.offers import field_offers
+
+        record = safety._check_id(record_id, "record_id")
+        vehicle = self._vehicle_of(record, run_id)
+        events, payload, vehicle_meta, specs, market = _run_inputs(vehicle)
+        recorded = next((e for e in events if e.get("kind") == "open_data_match"), None)
+        fingerprint = fingerprint_from_events(events) or identity_fingerprint(payload)
+        folder = Path(self.paths.data_dir) / "derived" / str(open_datasets.config().get("snapshot_subdir") or "open")
+        now = None
+        if folder.is_dir() and any(open_datasets.available(s, folder) for s in open_datasets.datasets()):
+            result = match(fingerprint, payload, folder=folder)
+            for src in result["sources"].values():
+                src["survivors"] = (src.get("survivors") or [])[:8]
+            now = {**result, "offers": field_offers(result)}
+        return {"record_id": record, "run_id": vehicle.parent.name,
+                "recorded": {k: v for k, v in recorded.items() if k not in ("kind", "seq")} if recorded else None,
+                "now": now, "snapshot_dir": str(folder)}
+
+    def open_data_coverage(self, run_id: Any) -> dict:
+        """Per vehicle of a run: the approval route, the open-data level / designation, the match status per source,
+        the offers per field (offered / admitted / reference / vetoed ...) and the fields the research plan skipped."""
+        record = self._record(run_id)
+        folder = safety.run_dir(self.runs_dir, record.run_id)
+        rows = []
+        for vehicle in self._vehicle_dirs(folder, record.record_ids):
+            events = read_events(vehicle / "events.jsonl")
+            od = next((e for e in events if e.get("kind") == "open_data_match"), {}) or {}
+            fp = next((e for e in events if e.get("kind") == "identity_fingerprint"), {}) or {}
+            offers: dict[str, list] = {}
+            for offer in od.get("offers") or []:
+                offers.setdefault(offer.get("field"), []).append(
+                    {k: offer.get(k) for k in ("source", "value", "status", "definition", "identified_by", "admitted",
+                                               "reason") if offer.get(k) not in (None, "")})
+            rows.append({"record_id": vehicle.name, "approval_route": (fp.get("approval_route") or {}).get("route"),
+                         "code_family": fp.get("code_family"), "equivalent_codes": fp.get("equivalent_codes"),
+                         "mode": od.get("mode"), "route": od.get("route"), "level": od.get("level"),
+                         "designation": od.get("designation"),
+                         "match_status": {s: (v or {}).get("status") for s, v in (od.get("sources") or {}).items()},
+                         "vetoes": {s: (v or {}).get("veto_counts") for s, v in (od.get("sources") or {}).items()
+                                    if (v or {}).get("veto_counts")},
+                         "offers": offers, "admitted": od.get("admitted") or [],
+                         "fields_skipped_open_data": sorted({f for e in events if e.get("kind") == "research_plan"
+                                                             for f in e.get("skipped_open_data_resolved") or []})})
+        return {"run_id": record.run_id, "vehicles": rows}
 
     # -- server log ----------------------------------------------------------------------------------------------
     def server_log_tail(self, lines: Any = 200, grep: str | None = None) -> dict:

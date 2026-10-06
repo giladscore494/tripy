@@ -98,8 +98,9 @@ def test_a6_319_dimensions_are_not_ok_for_the_2018_252_hp_target(cache):
         assert row["binding_level_now"] == "body_powertrain"
         assert row["binding_gap_now"] == ["repeated_without_target_version"]
         listed = row["document_versions_now"]["target_listed"]
-        # 245 hp is within 3 % of 252 hp, but the catalog states no model year: the near power alone proves nothing
-        assert listed == {"designation": False, "power": True, "catalog_single_entry": False, "year_stated": False}
+        # A4 (identity anchors PR): 245 hp is no longer the 252 hp target's power (|252 - 245 x 1.01387| > max(2, 1 %));
+        # the +-3 % proximity is discovery ranking only, never a gate
+        assert listed == {"designation": False, "power": False, "catalog_single_entry": False, "year_stated": False}
 
 
 def test_torque_and_top_speed_stay_as_the_binding_decides(cache):
@@ -110,12 +111,15 @@ def test_torque_and_top_speed_stay_as_the_binding_decides(cache):
     assert speed["variant_match_now"] != "exact"
 
 
-def test_the_same_document_with_a_stated_matching_year_stays_exact(cache):
+def test_the_same_document_with_a_stated_matching_year_is_still_not_the_252_hp_target(cache):
+    """Before A4 a stated matching year let the 245 hp column stand for the 252 hp target (+-3 %). A4: the power
+    anchor is max(2, 1 %) on either definition of koah_sus, so 245 hp is another version, year or not."""
     text = FIXTURE["text"].replace("[page 3]\n", "[page 3]\nA6 2018\n", 1)
     doc = _doc(cache, text=text, url="https://static.auto.co.il/media/fixture/319-2018.pdf")
     row = _replay(cache, doc, *DIMENSIONS[0], url="https://static.auto.co.il/media/fixture/319-2018.pdf")
     assert row["document_versions_now"]["target_listed"]["year_stated"] is True
-    assert row["binding_level_now"] == "exact_technical_variant" and row["variant_match_now"] == "exact", row
+    assert row["document_versions_now"]["target_listed"]["power"] is False
+    assert row["binding_level_now"] == "body_powertrain" and row["variant_match_now"] != "exact", row
 
 
 def test_a_no_year_document_naming_the_target_designation_stays_exact(cache):

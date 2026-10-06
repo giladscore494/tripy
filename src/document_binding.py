@@ -123,6 +123,19 @@ binding-v8 (PR #47), deterministic and fail-closed (src/il_trim_pages.py); nothi
     single catalog entry (A2)    the il_version_page escapes count catalog entries per (manufacturer, family, year,
                                  BODY, propulsion, drivetrain); a drivetrain the page does not name is accepted when
                                  the catalog has one drivetrain for (manufacturer, family, year, body, propulsion)
+
+binding-v9 (identity anchors PR), deterministic and fail-closed; nothing here loosens an earlier rule:
+
+    other_code_family (A2)       a document whose "קוד דגם | תיאור דגם" tables (read from the logical text: A3 / C4)
+                                 name ONLY government codes whose catalog type code differs from the target's
+                                 (2423 -> 21HK for a 31AZ target) is another version: a veto at the technical-variant
+                                 cap. Codes the catalog does not know, or no codes at all, change nothing
+    importer_spec_sheet (B2)     an official importer document whose code table names the target's degem_cd, a code
+                                 of its code family (same tozeret_cd + type code: 1847 for 2276) or that states its
+                                 type code binds every value at exact_technical_variant; at exact_market_trim when it
+                                 names the target trim or the target's own degem_cd. Vetoes and mixed fact layers win
+    power anchor (A4)            every power gate reads koah_sus as PS or mechanical hp (power_anchor), max(2, 1 %),
+                                 never wider than R3 and never a power nearer to the family's neighbour catalog power
 """
 
 from __future__ import annotations
@@ -136,7 +149,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v8"
+BINDING_VERSION = "binding-v9"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -144,7 +157,9 @@ LEVELS = ("unknown", "model_family", "generation", "body_powertrain", "exact_tec
 DEFAULT_REQUIREMENT = "exact_technical_variant"
 # Level a veto on this dimension caps the binding at.
 VETO_CAP = {"model": "unknown", "body": "generation", "propulsion": "generation", "displacement": "body_powertrain",
-            "drivetrain": "body_powertrain", "power": "body_powertrain", "trim": "exact_technical_variant"}
+            "drivetrain": "body_powertrain", "power": "body_powertrain", "trim": "exact_technical_variant",
+            # A2: a document whose government codes are all of another type code is another version
+            "other_code_family": "body_powertrain"}
 NON_TARGET_MATCHES = ("different", "unbound")
 _VOCAB: dict[str, tuple[float, dict]] = {}
 _TRIM_INDEX: dict[str, tuple[float, dict]] = {}
@@ -246,9 +261,16 @@ class TargetIdentity:
     # PR #45 (R3): the body sub-variant words (identity vocabulary `body_subvariants`) the target's commercial name /
     # government model name contains ("sportback" for an A1 SPORTBACK); identity-only, never a scope key
     body_subvariants: list[str] = field(default_factory=list)
+    # A1 (identity anchors): the government identity fingerprint (src/gov_registry.identity_fingerprint), identity-only:
+    # the type code (degem_nm), the code family (every degem_cd of the same tozeret_cd + type code), the approval route,
+    # and the manufacturer's other codes with their type codes (A2: a document naming only those is another version)
+    type_code: str | None = None
+    code_family: list[int] = field(default_factory=list)
+    approval_route: str | None = None
+    other_code_types: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in asdict(self).items() if v not in (None, [], "")}
+        return {k: v for k, v in asdict(self).items() if v not in (None, [], "", {}) and k != "other_code_types"}
 
     def scope_key(self, level: str = "exact_technical_variant") -> str:
         """Stable identity key of the target at a binding level (used for scoped reuse)."""
@@ -406,6 +428,86 @@ def target_identity(payload: dict | None, vehicle: dict | None = None, target_ma
             vocab)))
 
 
+def apply_fingerprint(identity: TargetIdentity, fingerprint: dict | None) -> TargetIdentity:
+    """Copy a run's identity fingerprint (A1) onto its target identity (in place; returned for chaining)."""
+    fp = fingerprint or {}
+    if fp.get("type_code"):
+        identity.type_code = str(fp["type_code"])
+    identity.code_family = sorted({int(c) for c in fp.get("code_family") or [] if str(c).strip().isdigit()}
+                                  | ({identity.gov_model_code} if identity.gov_model_code else set()))
+    identity.approval_route = (fp.get("approval_route") or {}).get("route") or identity.approval_route
+    identity.other_code_types = {int(k): list(v) for k, v in (fp.get("other_code_types") or {}).items()
+                                 if str(k).strip().isdigit()}
+    return identity
+
+
+# --- A2 / C4: the government model codes a document states ------------------------------------------------------------
+
+CODE_TABLE_LOOKAHEAD = 12        # lines after a "קוד דגם | תיאור דגם" header that may hold its rows
+CODE_ROW = re.compile(r"^(?P<codes>\d{1,4}(?:\s*[/,]\s*\d{1,4})*)\s+(?P<desc>.*[a-zא-ת]{2,}.*)$")
+CODE_ROW_TRAILING = re.compile(r"^(?P<desc>.*[a-zא-ת]{2,}.*?)\s+(?P<codes>\d{1,4}(?:\s*[/,]\s*\d{1,4})*)$")
+
+
+def gov_code_table_codes(text: str | None, vocab: dict | None = None) -> list[int]:
+    """The government model codes (degem_cd) of the regulatory "קוד דגם | תיאור דגם" tables written in a document's
+    LOGICAL text (a PDF's text, put in logical order first: A3): a line naming a code header and a description header
+    (identity vocabulary `model_code_table`), then rows "<code>[/<code>] <description>" (or the description first)
+    within CODE_TABLE_LOOKAHEAD lines; the table ends at the first line that is not a row after a row. A description
+    must hold a word (a row of bare numbers is a rating scale, never a code). Deterministic; [] without such a table."""
+    vocab = vocabulary() if vocab is None else vocab
+    terms = vocab.get("model_code_table") or {}
+    heads = [normalize_text(h) for h in terms.get("code_headers") or [] if h]
+    descs = [normalize_text(h) for h in terms.get("description_headers") or [] if h]
+    lines = [normalize_text(line).strip() for line in (text or "").splitlines() if line.strip()]
+    found: list[int] = []
+    for i, line in enumerate(lines):
+        if not (any(h in line for h in heads) and any(d in line for d in descs)):
+            continue
+        rows = 0
+        for row in lines[i + 1:i + 1 + CODE_TABLE_LOOKAHEAD]:
+            m = CODE_ROW.match(row) or CODE_ROW_TRAILING.match(row)
+            if m is None:
+                if rows:
+                    break
+                continue
+            rows += 1
+            found += [int(c) for c in re.findall(r"\d{1,4}", m.group("codes"))]
+    return sorted(set(found))
+
+
+def type_code_named(text: str | None, identity: TargetIdentity) -> bool:
+    """Does a text state the target's government type code (degem_nm, "31AZ") as a whole token?"""
+    code = normalize_text(identity.type_code or "").strip()
+    if len(code) < 3:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(code)}(?![a-z0-9])", normalize_text(text or "")))
+
+
+def version_by_codes(codes: Iterable[int] | None, identity: TargetIdentity, text: str | None = None) -> dict | None:
+    """A2: which version a document is by the government codes it states. {status: target, basis: degem_cd |
+    code_family | type_code} when it names the target's degem_cd, a degem_cd of its code family, or its type code;
+    {status: other_code_family} when it names ONLY codes whose type code (the catalog's) differs from the target's;
+    {status: unknown} for codes the catalog does not know; None without codes or a type code (nothing changes)."""
+    codes = sorted({int(c) for c in codes or []})
+    named_type = type_code_named(text, identity) if text is not None else False
+    if identity.gov_model_code is not None and identity.gov_model_code in codes:
+        return {"status": "target", "basis": "degem_cd", "codes": codes}
+    family = set(identity.code_family or [])
+    if family & set(codes):
+        return {"status": "target", "basis": "code_family", "codes": codes,
+                "family_codes": sorted(family & set(codes))}
+    if named_type:
+        return {"status": "target", "basis": "type_code", "codes": codes, "type_code": identity.type_code}
+    if not codes:
+        return None
+    known = identity.other_code_types or {}
+    if identity.type_code and all(c in known for c in codes) and all(
+            identity.type_code not in known[c] for c in codes):
+        return {"status": "other_code_family", "basis": "other_type_code", "codes": codes,
+                "type_codes": {str(c): known[c] for c in codes}}
+    return {"status": "unknown", "basis": "codes_not_in_catalog", "codes": codes}
+
+
 def _gov_code(value: Any) -> int | None:
     try:
         code = int(str(value).strip())
@@ -525,6 +627,61 @@ def distinct_powers(powers: Iterable[float], rel: float = 0.03) -> list[float]:
 
 
 KW_TO_PS = 1.35962
+KW_TO_HP = 1.34102          # mechanical (SAE) horsepower per kW
+HP_TO_PS = 1.01387          # metric horsepower (PS) per mechanical hp
+POWER_ANCHOR_MIN = 2.0      # A4: |koah - P| <= max(2, 1 % of koah)
+POWER_ANCHOR_REL = 0.01
+
+
+class StatedPower(float):
+    """A power a text states, in the unit the government's koah_sus is compared in (PS-scaled), remembering the unit
+    the source wrote it in (`kw` or `hp`: hp / PS / כ"ס): A4 reads both definitions of the government number."""
+    source_unit: str = "hp"
+    source_value: float | None = None
+
+    def __new__(cls, value: float, source_unit: str = "hp", source_value: float | None = None):
+        obj = super().__new__(cls, value)
+        obj.source_unit = source_unit
+        obj.source_value = float(source_value) if source_value is not None else float(value)
+        return obj
+
+
+def power_anchor(koah: float | None, value: float | None, unit: str = "hp") -> dict | None:
+    """A4: does the government power `koah` (koah_sus, PS in some records and mechanical hp in others) match a source
+    power? kW source: koah vs P_kW x 1.35962 (PS) or x 1.34102 (mechanical hp); hp source (SAE, US; also PS / כ"ס):
+    koah vs P_hp (same definition) or P_hp x 1.01387 (koah in PS). Tolerance max(2, 1 % of koah). {match, definition,
+    candidates, tolerance}; None without both numbers."""
+    if koah in (None, 0) or value in (None, 0):
+        return None
+    koah, value = float(koah), float(value)
+    tolerance = max(POWER_ANCHOR_MIN, POWER_ANCHOR_REL * koah)
+    if str(unit).lower() in ("kw", "kilowatt", "קילוואט"):
+        candidates = {"ps_from_kw": value * KW_TO_PS, "hp_from_kw": value * KW_TO_HP}
+    else:
+        candidates = {"hp": value, "ps_from_hp": value * HP_TO_PS}
+    hits = sorted((abs(koah - c), name) for name, c in candidates.items() if abs(koah - c) <= tolerance)
+    return {"match": bool(hits), "definition": hits[0][1] if hits else None, "tolerance": round(tolerance, 3),
+            "candidates": {k: round(v, 1) for k, v in candidates.items()}}
+
+
+def power_gate(stated: float, koah: float | None, rel: float | None = None, neighbour: float | None = None) -> bool:
+    """The power gate of every identity decision (binding, variant map, version pages): A4 on the stated power's own
+    unit, never wider than the R3 discriminating tolerance `rel` (which only tightens), and never a power that is
+    nearer to the nearest OTHER catalog power of the target's family (`neighbour`, R3) than to the target's. The +-3 %
+    stays for discovery ranking only."""
+    if koah is None:
+        return False
+    unit = getattr(stated, "source_unit", "hp")
+    value = getattr(stated, "source_value", None) if unit == "kw" else float(stated)
+    anchor = power_anchor(koah, value if value is not None else float(stated) / KW_TO_PS, unit)
+    if not anchor or not anchor["match"]:
+        return False
+    if rel is None:
+        return True
+    best = min(abs(float(koah) - c) for c in anchor["candidates"].values())
+    if neighbour is not None and min(abs(float(neighbour) - c) for c in anchor["candidates"].values()) < best:
+        return False
+    return best <= max(0.051, float(rel) * abs(float(koah)))
 
 
 # where the clause of a power statement starts: a line / cell / list break, a sentence end, a comma
@@ -554,16 +711,18 @@ def _powers(text: str, vocab: dict) -> set[float]:
     if units:
         for m in re.finditer(rf"(?<![\d.,])(\d{{2,4}})\s*(?:{units})(?![a-z])", text):
             value = float(m.group(1))
-            # PS is metric horsepower, the unit of the government's כ"ס: taken as is (never x0.986)
-            found.add(value)
+            # PS is metric horsepower, the unit of the government's כ"ס: taken as is (never x0.986); A4 also reads it
+            # as mechanical hp (StatedPower: the gate compares both definitions)
+            found.add(StatedPower(value, "hp"))
     words = _alternation(vocab.get("power_words") or [])
     if words:
         for m in re.finditer(rf"(?:{words})[^\d;|\n]{{0,25}}?(?<![\d.,])(\d{{2,4}})\s*(?:kw|קילוואט|קוט\"ס)(?![a-z])",
                              text):
             if charging_context(text, m.start(), m.end(), vocab):
                 continue
-            # government power (כ"ס) is metric horsepower: 1 kW = 1.35962 PS (357 kW is the catalog's 486 כ"ס)
-            found.add(round(float(m.group(1)) * KW_TO_PS, 1))
+            # government power (כ"ס) is metric horsepower: 1 kW = 1.35962 PS (357 kW is the catalog's 486 כ"ס); A4 also
+            # reads koah as mechanical hp (1 kW = 1.34102 hp: 203 kW is the CTS's 272)
+            found.add(StatedPower(round(float(m.group(1)) * KW_TO_PS, 1), "kw", float(m.group(1))))
     return {v for v in found if 40 <= v <= 2000}
 
 
@@ -857,7 +1016,11 @@ def dimension_status(dim: str, found: Any, identity: TargetIdentity) -> str:
         return "mismatch"
     if target is None:
         return "absent"
-    hits = {v for v in found if _close(v, target, rel)}
+    if dim == "power":
+        neighbour = power_tolerance(identity)["neighbour_hp"]
+        hits = {v for v in found if power_gate(v, target, rel, neighbour)}          # A4: both definitions of koah_sus
+    else:
+        hits = {v for v in found if _close(v, target, rel)}
     if not hits:
         return "mismatch"
     return "match" if hits == found else "mixed"
@@ -1414,7 +1577,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
          powertrain_versions: dict | None = None, stale: dict | None = None,
          version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None,
-         trim_column: dict | None = None) -> dict:
+         trim_column: dict | None = None, spec_sheet: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1440,7 +1603,12 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
 
     PR #47 input: `trim_column` (src/il_trim_pages: an accepted carzone trim page, basis il_trim_page, or the column of
     an accepted compare table the value sits in: status `target`, basis il_compare_column, or `other_variant`), see
-    binding-v8 in the module doc."""
+    binding-v8 in the module doc.
+
+    binding-v9 input: `spec_sheet` (evidence_admission.spec_sheet_verdict: the document's government codes, A2): a
+    document naming only codes of another type code is vetoed at the technical-variant cap (`other_code_family`); an
+    official importer spec sheet of the target's version binds exact_technical_variant (basis importer_spec_sheet), its
+    market trim when it names the target trim or the target's own degem_cd."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1615,6 +1783,29 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         level, basis, raised_by = "exact_market_trim", rule, rule
     else:
         column_target = False
+    sheet = spec_sheet or {}
+    sheet_target = False
+    if sheet.get("status") == "other_code_family":
+        # A2: every government code the document states belongs to another type code (2423 -> 21HK for a 31AZ target)
+        vetoes.append("other_code_family_mismatch@document_codes")
+        rules.append("other_code_family")
+    elif sheet.get("status") == "target" and sheet.get("importer_spec_sheet") and not vetoes \
+            and not model_declared_different and s["model"] == "match" and not fact_mixed \
+            and s["year"] != "mismatch" and level_index(level) >= level_index("generation"):
+        # B2: the importer's own spec sheet of the target's version (its code table names the target's code or its
+        # code family): every value binds the technical variant; the market trim when the sheet names the target trim
+        # or the target's own degem_cd
+        sheet_target = True
+        rules.append("importer_spec_sheet")
+        if level_index(level) < level_index("exact_technical_variant"):
+            level, basis, raised_by = "exact_technical_variant", "importer_spec_sheet", "importer_spec_sheet"
+        names_trim = s["trim"] == "match" or (trim_named_in_document and other_trims_named is not None
+                                               and not other_trims_named)
+        if (names_trim or sheet.get("basis") == "degem_cd") and s["trim"] != "mismatch" \
+                and market and market == identity.target_market:
+            effective["trim"] = {"status": "match", "basis": "importer_spec_sheet"}
+            s["trim"] = "match"
+            level, basis, raised_by = "exact_market_trim", "importer_spec_sheet", "importer_spec_sheet"
     not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
     if not_offered and level == "exact_market_trim":
         # F5: the document's complete model-code table sells the target's technical variant under other codes only
@@ -1652,7 +1843,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     # proves it (or the value repeated identically for every version). A fact whose DVM region says the inventory does
     # not contain the target at all never binds the technical variant of a multi-version document
     mv = multi_version or {}
-    if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target \
+    if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target and not sheet_target \
             and level_index(level) >= level_index("exact_technical_variant"):
         technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
         target_region = bool(region and region.get("allowed") and region.get("status") == "target")
@@ -1716,7 +1907,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page") \
+    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page", "importer_spec_sheet") \
             and level_index(level) >= level_index(
             "exact_technical_variant") and not vetoes and not model_declared_different:
         out["binding_basis"] = raised_by

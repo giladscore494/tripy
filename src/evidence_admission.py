@@ -44,12 +44,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires, takes_inches, wheel_size_number
+from .candidate_harvest import line_marker
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
-                                logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
+                                logical_lines, logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line,
+                                rtl_dictionary)
 from .document_binding import (OFFICIAL_AUTHORITIES, STALE_PUBLICATION_YEARS, TargetIdentity, about_target, bind,
-                               designations, document_profile, identity_zone, level_index, normalize_catalog_trim,
-                               target_identity)
+                               designations, document_profile, gov_code_table_codes, identity_zone, level_index,
+                               normalize_catalog_trim, target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
@@ -68,6 +70,8 @@ REASON_TEXT = {
     "field_not_applicable_for_vehicle": "This field does not apply to this vehicle's propulsion; report "
                                         "not_applicable instead.",
     "quote_missing": "Give a short verbatim quote from the document that states the value.",
+    "source_policy_blocked": "This document's domain is not allowed by the production source policy: it is never "
+                             "evidence. Use documents of allowed domains.",
     "quote_too_short": "The quote is too short to identify what it states; quote the label with the value.",
     "quote_not_in_source": "The quote does not occur in the cited document (fragments joined with … must be in "
                            "order and close together). Quote the document verbatim.",
@@ -148,6 +152,13 @@ class DocumentText:
     publication_date: str | None = None
     publication_basis: str | None = None
     article_date: str | None = None
+    # A3: a PDF entirely in visual order: `logical_text` is its logical form (the harvest, the code-table and the
+    # spec-sheet identity / equipment parsers read it; the binding profile keeps the stored text it was tuned on), and
+    # logical_quote_span maps a quote of it back to the stored (visual) lines
+    reversed_document: bool = False
+    logical_text: str | None = None
+    # A2 / C4: the government model codes the document's "קוד דגם | תיאור דגם" tables state (text and tables)
+    gov_codes: list | None = None
 
 
 @dataclass
@@ -278,12 +289,19 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
             parts.append(json.dumps(structured, ensure_ascii=False))
         except Exception:  # structured data is a convenience; the text is enough
             structured = None
+    logical_text, reversed_document = None, False
     if meta.get("doc_type") == "pdf":
         parts.append("\n".join(reverse_hebrew_line(line) for line in text.splitlines()))
         # the harvest's logical form of visually ordered right-to-left lines (F4): line for line, so a quote of the
         # logical text is checked against the same source line
-        words = rtl_dictionary(dictionary_for(load_schema()).hebrew_aliases)
+        dictionary = dictionary_for(load_schema())
+        words = rtl_dictionary(dictionary.hebrew_aliases)
         parts.append("\n".join(logical_rtl_line(line, words) or "" for line in text.splitlines()))
+        logical, verdict = logical_lines(text, is_pdf=True, words=words, hebrew_aliases=dictionary.hebrew_aliases)
+        if verdict["reversed"]:
+            # A3: the whole document is visual: its logical form for the code-table / identity / equipment parsers
+            logical_text, reversed_document = "\n".join(line for line, _, _ in logical), True
+            parts.append(logical_text)
     market, basis = source_market(url, text)
     source_date, date_basis = _document_date(meta, structured)
     publication, publication_basis = _publication_date(meta, structured, url)
@@ -294,7 +312,9 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
                             subheadings=subheadings, body_text=body_text,
                             market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis,
                             publication_date=publication, publication_basis=publication_basis,
-                            article_date=article_date(body_text if body_text is not None else text))
+                            article_date=article_date(body_text if body_text is not None else text),
+                            reversed_document=reversed_document, logical_text=logical_text,
+                            gov_codes=gov_code_table_codes(logical_text or text))
     if not remember:
         return material
     with _TEXTS_LOCK:
@@ -653,6 +673,13 @@ def _stated_availability(adm: AdmissionContext, d, rule, text: str) -> list[bool
         lead = text[clause_start:start]
         if statement and statement.search(lead) and not (adm.feature_labels and adm.feature_labels.search(lead)):
             values.append(True)
+            continue
+        # B3: the spec-sheet marker of the label's own line ("חימום מושבים קדמיים ●")
+        line_start = text.rfind("\n", 0, start) + 1
+        line_end = text.find("\n", end)
+        marker = line_marker(d, text[line_start:line_end if line_end >= 0 else len(text)])
+        if marker is not None:
+            values.append(marker)
     return values
 
 
@@ -684,9 +711,13 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
                         continue
                 elif nearest is not None and nearest != spec["name"]:
                     continue
+            converted = cand.get("converted_from") if isinstance(cand.get("converted_from"), dict) else {}
             return Entailment(True, f"deterministic_parse:{cand.get('extraction_method')}",
                               position=hit if hit >= 0 else None, fragment=parse_text,
-                              details={"unit": cand.get("unit")})
+                              details={"unit": cand.get("unit"),
+                                       "stated": {"raw": str(cand.get("raw_value") or ""),
+                                                  "operation": converted.get("operation") or "identity"}
+                                       if matcher in NUMERIC_MATCHERS and cand.get("raw_value") else None})
     if matcher == "tire_size":
         sizes = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(text)}
         claimed = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(normalize_text(str(value)))}
@@ -698,6 +729,18 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             m = next((m for m in TIRE.finditer(text) if f"{m.group(1)}/{m.group(2)} R{m.group(4)}" in claimed), None)
             return Entailment(True, "tire_size_literal", position=m.start() if m else None, fragment=text)
         return Entailment(False, reason="value_not_in_quote" if sizes else "unsupported_inference")
+    if matcher == "rim_axle":
+        # D2: a stated tyre size of this axle (or of both / the only size) whose R number is the value
+        component = spec.get("component")
+        parsed_sizes = _tires(d, text)
+        distinct = {size for size, _, _, _ in parsed_sizes}
+        claimed = numbers_in(value)
+        for size, raw, span, position in parsed_sizes:
+            if position in (component, "both") or (position is None and len(distinct) == 1):
+                if claimed and int(size.rsplit("R", 1)[1]) == int(claimed[0]):
+                    return Entailment(True, "tire_size_rim", position=span[0], fragment=text,
+                                      details={"stated": {"raw": str(int(claimed[0])), "operation": "identity"}})
+        return Entailment(False, reason="value_not_in_quote" if parsed_sizes else "unsupported_inference")
     if matcher == "enum" and rule is not None:
         entry = next((p for v, p in rule.enum if normalize_term(v) == normalize_term(str(value))), None)
         hit = entry.search(text) if entry else None
@@ -716,7 +759,7 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             return Entailment(True, "text_literal", fragment=text)
         return Entailment(False, reason="value_not_in_quote")
     quote_numbers = _quote_numbers(text, adm.number_words, d, rule)
-    first_position, methods, units = None, [], []
+    first_position, methods, units, stated = None, [], [], []
     for number in claimed_numbers:
         found = None
         for q, start, end in quote_numbers:
@@ -729,10 +772,10 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
                 if kind in ("other", "convert"):
                     found = found or ("unit", kind)
                     continue
-                found = ("literal", start, unit)
+                found = ("literal", start, unit, {"raw": text[start:end], "operation": "identity"})
                 break
             if kind == "convert" and operation and _close(OPERATIONS[operation](q), number, 0.005):
-                found = ("conversion:" + operation, start, None)
+                found = ("conversion:" + operation, start, None, {"raw": text[start:end], "operation": operation})
                 break
         if found is None:
             return Entailment(False, reason="value_not_in_quote" if quote_numbers else "unsupported_inference")
@@ -740,6 +783,7 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             return Entailment(False, reason="unit_mismatch" if found[1] == "other" else "unit_not_normalized")
         methods.append(found[0])
         units.append(found[2])
+        stated.append(found[3])
         first_position = found[1] if first_position is None else first_position
     # the number must be stated FOR THIS FIELD: its label in the value's clause, or the parser's own pairing of this
     # field and value in this document; and not a number the quote's own parse gives to another field
@@ -784,7 +828,9 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
         next(f"approved_{m}" for m in methods if m != "literal")
     currency = next((d.currencies.get(u) for u in units if u and matcher == "price" and d.currencies.get(u)), None)
     return Entailment(True, method + ("" if labelled else "+candidate_backed"), position=first_position,
-                      fragment=text, details={"unit": currency})
+                      fragment=text, details={"unit": currency,
+                                              "stated": stated[0] if len(stated) == 1 and matcher in NUMERIC_MATCHERS
+                                              else None})
 
 
 def entail(adm: AdmissionContext, spec: dict, value: Any, quote: str,
@@ -1181,8 +1227,9 @@ def target_among_versions(adm: AdmissionContext, material: DocumentMaterial, ver
 
     identity = adm.identity
     target = identity.power_hp
-    power = bool(target) and any(abs(float(p) - target) <= REPEATED_POWER_TOLERANCE * target
-                                 for p in versions.get("powers") or [])
+    from .document_binding import power_gate
+
+    power = bool(target) and any(power_gate(p, target, REPEATED_POWER_TOLERANCE) for p in versions.get("powers") or [])
     profile = material.profile or {}
     year_stated = any((profile.get(k) or {}).get("year", "absent") != "absent"
                       for k in ("zone_statuses", "full_statuses"))
@@ -1228,6 +1275,39 @@ def multi_version_context(adm: AdmissionContext, material: DocumentMaterial, val
             "target_listed": target_among_versions(adm, material, versions)}
 
 
+SPEC_SHEET_AUTHORITIES = ("official_importer", "official_manufacturer")
+
+
+def spec_sheet_verdict(adm: AdmissionContext, material: DocumentMaterial) -> dict | None:
+    """A2 / B2: the document's version by its government codes (document_binding.version_by_codes over the codes its
+    code tables state and its type code), and whether it is an importer spec sheet of the target's version (an official
+    importer / manufacturer document, a PDF or a spec-sheet link, that states codes or the target's type code).
+    {status, basis, codes, importer_spec_sheet, hosted_by, authority} or None (no codes and no type code)."""
+    from .document_binding import version_by_codes
+
+    doc = material.doc
+    verdict = version_by_codes(doc.gov_codes or [], adm.identity, doc.logical_text or doc.text)
+    if verdict is None:
+        return None
+    authority = material.authority.get("source_authority")
+    sheet_like = (material.meta or {}).get("doc_type") == "pdf" or spec_sheet_url(doc.url)
+    return {**verdict, "authority": authority, "hosted_by": material.authority.get("source_domain"),
+            "importer_spec_sheet": verdict["status"] == "target" and authority in SPEC_SHEET_AUTHORITIES
+            and bool(sheet_like)}
+
+
+def spec_sheet_url(url: str | None) -> bool:
+    """Does a URL look like a spec sheet / price list by the link rules of data/source_rules.json
+    (`spec_sheet_discovery.url_patterns`)?"""
+    from urllib.parse import unquote
+
+    from .source_authority import rules
+
+    patterns = ((rules().get("spec_sheet_discovery") or {}).get("url_patterns") or [])
+    path = unquote(str(url or "")).lower()
+    return any(re.search(p, path) for p in patterns)
+
+
 def region_agreement_violations(binding: dict, multi_version: dict | None) -> list[str]:
     """The binding invariant R4 guarantees (asserted on every fact): on a multi-version document a fact whose DVM region
     is `unresolved / inventory_without_target` is never bound at the technical variant or above."""
@@ -1253,6 +1333,11 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         from .gov_registry import registry_binding
 
         return registry_binding(material.meta, adm.identity, spec.get("binding_requirement"), name), inputs
+    if material.meta.get("kind") == "open_dataset":
+        # D-5: an open-dataset offer binds at its recorded match level, never by its text
+        from .open_data.engine import open_data_binding
+
+        return open_data_binding(material.meta, adm.identity, spec.get("binding_requirement")), inputs
     profile = material.profile
     region = None
     offer = None
@@ -1297,6 +1382,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         # rendered): the URL slug never names the document's trim
         doc_statuses = {**doc_statuses, "trim": "absent"}
         trim_named = False
+    try:
+        sheet = spec_sheet_verdict(adm, material)
+    except Exception:  # noqa: BLE001 - an additional layer; the normal binding stands without it
+        sheet = None
     binding = bind(adm.identity, doc_statuses, inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
                    trim_named_in_document=trim_named,
@@ -1308,7 +1397,7 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
                    powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
                    version_page=page, engine_invariant=spec.get("variant_invariance") == "engine",
-                   multi_version=multi_version, trim_column=column)
+                   multi_version=multi_version, trim_column=column, spec_sheet=sheet)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1324,6 +1413,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                                    if page.get(k) not in (None, [], {})}
     if column:
         binding["trim_column"] = dict(column)
+    if sheet and sheet.get("status") in ("target", "other_code_family"):
+        binding["spec_sheet"] = {k: sheet.get(k) for k in ("status", "basis", "codes", "family_codes", "type_codes",
+                                                           "importer_spec_sheet", "hosted_by", "authority")
+                                 if sheet.get(k) not in (None, [], {})}
     trim_page = material.trim_page if isinstance(material.trim_page, dict) else None
     if trim_page and trim_page.get("status") in ("accepted", "rejected"):
         binding["trim_page"] = {k: trim_page.get(k) for k in ("kind", "status", "reason", "site", "slug",
@@ -1376,6 +1469,40 @@ def sanity_rejection(adm: AdmissionContext, material: DocumentMaterial, spec: di
     return None
 
 
+def logical_quote_span(material, quote: str) -> dict | None:
+    """A3: where a quote of a reversed document's logical text sits in the STORED (visual) text: {line, start, end} of
+    the original line (offsets mapped token by token), None when the quote is in no logical line."""
+    from .candidate_harvest import visual_to_logical_map
+
+    doc = getattr(material, "doc", material)
+    if not getattr(doc, "reversed_document", False):
+        return None
+    target = squash(quote)
+    for index, line in enumerate(ln.strip() for ln in (doc.text or "").splitlines() if ln.strip()):
+        logical, mapping = visual_to_logical_map(line)
+        position = logical.find(quote)
+        if position < 0 and target and target in squash(logical):
+            words = quote.split()
+            position = logical.find(words[0]) if words else -1
+        if position < 0:
+            continue
+        from .candidate_harvest import map_logical_span
+
+        span = map_logical_span(mapping, position, position + len(quote))
+        if span is not None:
+            return {"line": index, "original_line": line, "start": span[0], "end": span[1],
+                    "original": line[span[0]:span[1]]}
+    return None
+
+
+def document_policy(material) -> dict:
+    """The production source policy of a cached document (its final URL, else its requested URL)."""
+    from .source_authority import policy_of
+
+    meta = getattr(material, "meta", None) or {}
+    return policy_of(meta.get("final_url") or getattr(material, "url", None) or meta.get("url"))
+
+
 def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | tuple = ()) -> dict:
     """{'accepted': True, 'record': {...}} or {'accepted': False, 'reasons': [...], 'message': ...}."""
     name = normalize_field_name(args.get("field"))
@@ -1387,6 +1514,11 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if material is None:
         return _reject(["source_not_retrieved"])
     reject = lambda reasons, **extra: _reject(reasons, document_id=material.document_id, **extra)  # noqa: E731
+    policy = document_policy(material)
+    if policy["policy"] != "allowed":
+        # the production source policy: a document of a domain that is not `allowed` (blocked, unlisted, or
+        # identity_only) is never evidence; the cached copy stays on disk
+        return reject(["source_policy_blocked"], source_policy=policy["policy"], policy_domain=policy["domain"])
     if spec.get("applicable") is False:
         return reject(["field_not_applicable_for_vehicle"])
     if isinstance(value, dict) or (isinstance(value, (list, tuple)) and spec.get("value_type") != "text"):
@@ -1483,6 +1615,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "note": _text_arg(args.get("note")) or None, "condition": condition, "typed_value": typed,
         "admission_status": "accepted", "admission_version": ADMISSION_VERSION, "admission_checks": checks,
         "entailment": entailment.method,
+        # D1: the number as the source states it and the conversion it went through (its rounding tolerance)
+        "stated_number": (entailment.details or {}).get("stated"),
         "binding_level": binding["binding_level"], "binding_requirement": binding["binding_requirement"],
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
         "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),
@@ -1492,6 +1626,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "variant_map_region": binding.get("variant_map_region"),
         "version_page": binding.get("version_page"), "document_versions": binding.get("document_versions"),
         "trim_column": binding.get("trim_column"), "trim_page": binding.get("trim_page"),
+        "spec_sheet": binding.get("spec_sheet"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
         "model_variant_claim": claim,
         "market_basis": market_basis,

@@ -13,6 +13,11 @@ foreign-market evidence item is portable ONLY when all of these hold:
     5. no credible target-market evidence for the field (admitted, not bound to another variant) states a
        different value. Any such contradiction vetoes portability for every foreign item.
 
+An open-dataset offer admitted by the open-data layer (source_authority `open_dataset`, src/open_data/engine.py) is
+official evidence of its own market (EU / FR / US / CA); its `portability_scope_override` (the D-4 table entry of its
+(source, field, route) triple, data/open_datasets.json) replaces the field's portability_scope for that item only.
+Rules 2-5 apply unchanged.
+
 The item keeps its source market (a UK fact stays UK: `market` is never rewritten); the evaluator only reads the
 derived `portable_to_target_market`, `portability_basis` and `portability_policy`. This is a policy decision about
 applicability, never a truth score, and it never removes or reorders evidence.
@@ -65,6 +70,40 @@ def _value_key(item: dict, spec: dict):
     return ("txt", str(item.get("value")).strip().lower())
 
 
+OPEN_DATASET = "open_dataset"
+
+
+def _assess_datasets(spec: dict, items: list[dict], with_value: list[dict], target_market: str, is_target,
+                     policy: str) -> dict[str, dict]:
+    """Rules 2-5 for open-dataset offers, each at its own portability_scope_override."""
+    out: dict[str, dict] = {}
+    eligible = [e for e in items if str(e.get("variant_match") or "").lower() == "exact"
+                and _level(e.get("binding_level")) >= _level(e.get("portability_scope_override"))]
+    for e in items:
+        if e not in eligible:
+            out[str(e.get("evidence_id"))] = {"portable_to_target_market": False,
+                                              "portability_basis": "binding_below_portability_scope",
+                                              "portability_policy": f"open_dataset:{e.get('portability_scope_override')}"}
+    if not eligible:
+        return out
+    target = [e for e in with_value if is_target(e.get("market"), target_market)
+              and str(e.get("variant_match") or "").lower() not in NON_TARGET]
+    values = {_value_key(e, spec) for e in eligible}
+    contradiction = next((e for e in target if _value_key(e, spec) not in values), None) if len(values) == 1 else None
+    if contradiction is not None:
+        basis, ok = f"vetoed_by_target_market_evidence:{contradiction.get('evidence_id')}", False
+    elif len(values) > 1:
+        basis, ok = "foreign_markets_disagree", False
+    else:
+        lead = eligible[0]
+        basis, ok = (f"official open dataset ({lead.get('market')}) binds at {lead.get('binding_level')}; D-4 scope "
+                     f"{lead.get('portability_scope_override')}; no target-market contradiction"), True
+    for e in eligible:
+        out[str(e.get("evidence_id"))] = {"portable_to_target_market": ok, "portability_basis": basis,
+                                          "portability_policy": f"open_dataset:{e.get('portability_scope_override')}"}
+    return out
+
+
 def assess(spec: dict, evidence: list[dict], target_market: str, is_target) -> dict[str, dict]:
     """{evidence_id: {portable_to_target_market, portability_basis, portability_policy}} for every item with a value
     that is not from the target market: a known foreign market, or a market the source does not establish
@@ -85,9 +124,19 @@ def assess(spec: dict, evidence: list[dict], target_market: str, is_target) -> d
         return out
 
     scope = spec.get("portability_scope") or "none"
-    if scope == "none" or scope not in LEVELS or spec.get("market_sensitivity") == "high":
-        return {str(e.get("evidence_id")): verdict(False, "field_policy_not_portable", e) for e in foreign + unknown}
     out: dict[str, dict] = {}
+    # open-dataset offers: their own D-4 scope (src/open_data); everything else: the field's policy
+    datasets = [e for e in foreign if e.get("source_authority") == OPEN_DATASET
+                and e.get("portability_scope_override") in LEVELS]
+    if datasets:
+        out.update(_assess_datasets(spec, datasets, with_value, target_market, is_target, policy))
+        foreign = [e for e in foreign if e not in datasets]
+        if not foreign and not unknown:
+            return out
+    if scope == "none" or scope not in LEVELS or spec.get("market_sensitivity") == "high":
+        out.update({str(e.get("evidence_id")): verdict(False, "field_policy_not_portable", e)
+                    for e in foreign + unknown})
+        return out
     if unknown_market_policy(spec) != "portable":
         out.update({str(e.get("evidence_id")): verdict(False, "unknown_market_not_target", e) for e in unknown})
         unknown = []

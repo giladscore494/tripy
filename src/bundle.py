@@ -272,7 +272,8 @@ def current_field_states(events: list[dict], specs: list[dict], target_market: s
     from .field_recovery import current_evaluation
 
     return {f["field"]: {k: f.get(k) for k in ("state", "info", "evidence_ids", "markets", "conflict_evidence_ids",
-                                               "conflict_class", "portable_evidence_ids", "portability")
+                                               "conflict_class", "portable_evidence_ids", "portability",
+                                               "superseded_evidence_ids")
                          if f.get(k) not in (None, [], {})}
             for f in current_evaluation(events, specs, target_market)}
 

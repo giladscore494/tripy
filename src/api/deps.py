@@ -52,6 +52,7 @@ def build_context(secret: Callable[[str], str] = env_secret) -> ApiContext:
     dsn = (secret("DATABASE_URL") or secret("SUPABASE_DB_URL") or "").strip()
     browser = CatalogBrowser(database_query(dsn) if dsn else None)
     manager.derived_index.start()          # PR #47 (B2): the weekly derived catalog trim index (no-op without a DSN)
+    manager.open_data.start()              # identity anchors PR: the monthly open-data snapshots (first check after 5 min)
     return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True,
                       catalog_browser=browser)
 
