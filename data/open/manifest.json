@@ -1,0 +1,2487 @@
+{
+ "version": "open-data-manifest-v1",
+ "built_at": "2026-10-06T18:23:24+00:00",
+ "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+ "config_version": "open-datasets-v4",
+ "datasets": {
+  "eea_co2_cars": {
+   "sharded": true,
+   "shards": [
+    {
+     "file": "eea_co2_cars/2017.sqlite.gz",
+     "year": 2017,
+     "part": null,
+     "status_used": "F",
+     "rows": 104310,
+     "bytes": 1898598,
+     "sha256": "b6d610155c9f0f059f6d9d9adb0fadcf79a9b2da65b53c1012a38962a2fe7852"
+    },
+    {
+     "file": "eea_co2_cars/2018.sqlite.gz",
+     "year": 2018,
+     "part": null,
+     "status_used": "F",
+     "rows": 159561,
+     "bytes": 2717105,
+     "sha256": "b40a7ea3af9100502a2a32c65e74d3f92704e0b42ceb656e6f7fefa8715a1a05"
+    },
+    {
+     "file": "eea_co2_cars/2019.sqlite.gz",
+     "year": 2019,
+     "part": null,
+     "status_used": "F",
+     "rows": 227199,
+     "bytes": 3489876,
+     "sha256": "3a9edd3ca8d63aea3ba99a224069148ee52e8ddd27aba05e7f476e84e9e1cf10"
+    },
+    {
+     "file": "eea_co2_cars/2020.sqlite.gz",
+     "year": 2020,
+     "part": null,
+     "status_used": "F",
+     "rows": 220512,
+     "bytes": 3343480,
+     "sha256": "0aeee28bcd6af40d079c39663a9da6e8943d3eb1c80e650277e8a7151118a1db"
+    },
+    {
+     "file": "eea_co2_cars/2021.sqlite.gz",
+     "year": 2021,
+     "part": null,
+     "status_used": "F",
+     "rows": 181125,
+     "bytes": 3300362,
+     "sha256": "d69a3e9545f81341fbf7857c4a61d4939b9eaec9b4c01efeff40a460e19ea77f"
+    },
+    {
+     "file": "eea_co2_cars/2022.sqlite.gz",
+     "year": 2022,
+     "part": null,
+     "status_used": "P",
+     "rows": 171002,
+     "bytes": 3319234,
+     "sha256": "9d98fdf14a3d0e8d34be79cc59f99b02fabf600d39220e3793653337428132e5"
+    }
+   ],
+   "rows": 1063709,
+   "bytes": 18068655,
+   "built_at": "2026-10-06T18:22:29+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+   "build_status": "built",
+   "years": [
+    {
+     "year": 2017,
+     "status_used": "F",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 54,
+     "spellings": 54,
+     "max_query_bytes": 732,
+     "status": "built",
+     "rows": 104310,
+     "by_make": {
+      "ALFA ROMEO": 478,
+      "AUDI": 11455,
+      "BMW": 12152,
+      "BMW I": 97,
+      "CADILLAC": 52,
+      "CHEVROLET": 75,
+      "CHRYSLER": 47,
+      "CITROEN": 2107,
+      "CITROËN": 165,
+      "DACIA": 447,
+      "DAIHATSU": 4,
+      "DODGE": 7,
+      "DS": 538,
+      "FIAT": 2515,
+      "FORD": 6715,
+      "GREAT WALL": 16,
+      "GREAT WALL MOTOR COMPANY": 1,
+      "HONDA": 641,
+      "HYUNDAI": 1935,
+      "JAGUAR": 833,
+      "JEEP": 481,
+      "KIA": 1714,
+      "LADA": 37,
+      "LADA AUTOMOBILE GMBH": 1,
+      "LAND ROVER": 1506,
+      "LEXUS": 699,
+      "MASERATI": 108,
+      "MAZDA": 1052,
+      "MERCEDES BENZ": 2311,
+      "MERCEDES-AMG": 388,
+      "MERCEDES-BENZ": 10865,
+      "MINI": 2117,
+      "MITSUBISHI": 463,
+      "NISSAN": 1471,
+      "OPEL": 9918,
+      "OPEL AUTOMOBILE GMBH": 4,
+      "PEUGEOT": 2545,
+      "PORSCHE": 864,
+      "RENAULT": 1137,
+      "SEAT": 1848,
+      "SKODA": 4810,
+      "SKODA AUTO S.A.": 3,
+      "SMART": 527,
+      "SUBARU": 339,
+      "SUZUKI": 392,
+      "SUZUKI MOTOR": 2,
+      "TESLA": 430,
+      "TESLA MOTORS": 352,
+      "TOYOTA": 3691,
+      "VAUXHALL": 2322,
+      "VAZ": 1,
+      "VOLKSWAGEN": 9595,
+      "VOLKSWAGEN AG": 1,
+      "VOLVO": 2036
+     }
+    },
+    {
+     "year": 2018,
+     "status_used": "F",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 57,
+     "spellings": 57,
+     "max_query_bytes": 732,
+     "status": "built",
+     "rows": 159561,
+     "by_make": {
+      "ALFA ROMEO": 1574,
+      "AUDI": 9507,
+      "BMW": 28632,
+      "BMW I": 236,
+      "BUICK": 2,
+      "CADILLAC": 41,
+      "CHEVROLET": 80,
+      "CHRYSLER": 318,
+      "CITROEN": 4118,
+      "CITROËN": 6,
+      "DACIA": 570,
+      "DAEWOO": 2,
+      "DAIHATSU": 2,
+      "DFSK": 2,
+      "DODGE": 15,
+      "DS": 605,
+      "FIAT": 2887,
+      "FORD": 13115,
+      "GREAT WALL": 17,
+      "GREAT WALL MOTOR COMPANY": 1,
+      "HONDA": 902,
+      "HUMMER": 1,
+      "HYUNDAI": 2409,
+      "ISUZU": 1,
+      "JAGUAR": 3239,
+      "JEEP": 766,
+      "KIA": 2542,
+      "LADA": 136,
+      "LADA AUTOMOBILE GMBH": 2,
+      "LAND ROVER": 3441,
+      "LEXUS": 430,
+      "MASERATI": 309,
+      "MAZDA": 1356,
+      "MERCEDES BENZ": 3601,
+      "MERCEDES-AMG": 141,
+      "MERCEDES-BENZ": 18648,
+      "MINI": 4441,
+      "MITSUBISHI": 505,
+      "NISSAN": 1257,
+      "OPEL": 12698,
+      "OPEL AUTOMOBILE GMBH": 13,
+      "PEUGEOT": 5810,
+      "PORSCHE": 950,
+      "RENAULT": 1409,
+      "SEAT": 2817,
+      "SKODA": 7663,
+      "SMART": 867,
+      "SUBARU": 288,
+      "SUZUKI": 548,
+      "TESLA": 255,
+      "TESLA MOTORS": 62,
+      "TOYOTA": 2029,
+      "VAUXHALL": 2221,
+      "VOLKSWAGEN": 7141,
+      "VOLKSWAGEN AG": 1,
+      "VOLVO": 8932
+     }
+    },
+    {
+     "year": 2019,
+     "status_used": "F",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 61,
+     "spellings": 61,
+     "max_query_bytes": 732,
+     "status": "built",
+     "rows": 227199,
+     "by_make": {
+      "ALFA ROMEO": 1188,
+      "AUDI": 21739,
+      "BMW": 24125,
+      "BMW AG": 1,
+      "BMW I": 74,
+      "BUICK": 24,
+      "CADILLAC": 78,
+      "CHEVROLET": 90,
+      "CHRYSLER": 20,
+      "CITROEN": 4729,
+      "DACIA": 3202,
+      "DAEWOO": 1,
+      "DFSK": 5,
+      "DODGE": 140,
+      "DS": 831,
+      "FIAT": 7876,
+      "FORD": 17362,
+      "GMC": 4,
+      "GREAT WALL": 9,
+      "GREAT WALL MOTOR COMPANY": 2,
+      "HONDA": 1024,
+      "HYUNDAI": 2922,
+      "HYUNDAI MOTOR": 10,
+      "HYUNDAI MOTOR (CZ)": 1,
+      "ISUZU": 1,
+      "JAGUAR": 5406,
+      "JEEP": 2250,
+      "KIA": 2798,
+      "KIA MOTORS (SK)": 1,
+      "LADA": 86,
+      "LADA AUTOMOBILE GMBH": 11,
+      "LAND ROVER": 7472,
+      "LANDROVER": 4,
+      "LEXUS": 1462,
+      "MASERATI": 626,
+      "MAZDA": 1456,
+      "MERCEDES BENZ": 5206,
+      "MERCEDES-AMG": 774,
+      "MERCEDES-BENZ": 34229,
+      "MERCEDESBENZ": 2815,
+      "MINI": 3764,
+      "MITSUBISHI": 518,
+      "NISSAN": 2071,
+      "OPEL": 9125,
+      "PEUGEOT": 6485,
+      "PORSCHE": 3304,
+      "RENAULT": 7801,
+      "SEAT": 4294,
+      "SKODA": 8889,
+      "SMART": 688,
+      "SUBARU": 207,
+      "SUZUKI": 665,
+      "TESLA": 617,
+      "TESLA MOTORS": 3,
+      "TOYOTA": 6006,
+      "VAUXHALL": 1785,
+      "VAZ": 1,
+      "VOLKSWAGEN": 11463,
+      "VOLKSWAGEN AG": 1,
+      "VOLVO": 7511,
+      "ŠKODA": 1947
+     }
+    },
+    {
+     "year": 2020,
+     "status_used": "F",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 68,
+     "spellings": 68,
+     "max_query_bytes": 728,
+     "status": "built",
+     "rows": 220512,
+     "by_make": {
+      "ALFA ROMEO": 2191,
+      "AUDI": 30247,
+      "BMW": 26967,
+      "BMW I": 43,
+      "BUICK": 1,
+      "CADILLAC": 16,
+      "CHEVROLET": 63,
+      "CHRYSLER": 30,
+      "CHRYSLER LLC JEEP": 1,
+      "CITROEN": 3982,
+      "CITROËN": 299,
+      "CUPRA": 74,
+      "DACIA": 818,
+      "DFSK": 88,
+      "DFSK MOTOR": 2,
+      "DODGE": 231,
+      "DS": 822,
+      "FIAT": 5147,
+      "FIAT AUTO SPA": 1,
+      "FORD": 18674,
+      "GMC": 5,
+      "GREAT WALL": 6,
+      "HONDA": 869,
+      "HYUNDAI": 3146,
+      "HYUNDAI MOTOR": 15,
+      "ISUZU": 1,
+      "JAGUAR": 3132,
+      "JEEP": 1795,
+      "KIA": 2602,
+      "LADA": 60,
+      "LADA AUTOMOBILE GMBH": 3,
+      "LAND ROVER": 6499,
+      "LANDROVER": 11,
+      "LEXUS": 1043,
+      "MASERATI": 553,
+      "MAXUS": 6,
+      "MAZDA": 1134,
+      "MERCEDES BENZ": 5,
+      "MERCEDES-AMG": 29,
+      "MERCEDES-BENZ": 31604,
+      "MERCEDES-BENZ 906 BB50": 1,
+      "MINI": 3632,
+      "MITSUBISHI": 348,
+      "NISSAN": 2380,
+      "OPEL": 7091,
+      "PEUGEOT": 5286,
+      "PORSCHE": 3537,
+      "PORSCHE 2220549": 1,
+      "PORSCHE 2220944": 9,
+      "PORSCHE 2229411": 1,
+      "PORSCHE 2229422": 8,
+      "RENAULT": 3817,
+      "SEAT": 6007,
+      "SKODA": 12451,
+      "SMART": 141,
+      "SUBARU": 114,
+      "SUZUKI": 513,
+      "TESLA": 506,
+      "TESLA MOTORS": 3,
+      "TOYOTA": 4713,
+      "VAUXHALL": 874,
+      "VOLKSWAGEN": 16366,
+      "VOLKSWAGEN AG": 2,
+      "VOLKSWAGEN`": 17,
+      "VOLVO": 6367,
+      "ŠKODA": 4112
+     }
+    },
+    {
+     "year": 2021,
+     "status_used": "F",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 70,
+     "spellings": 70,
+     "max_query_bytes": 742,
+     "status": "built",
+     "rows": 181125,
+     "by_make": {
+      "ALFA ROMEO": 706,
+      "AUDI": 25039,
+      "BMW": 17967,
+      "BMW I": 18,
+      "CADILLAC": 20,
+      "CHEVROLET": 157,
+      "CHRYSLER": 47,
+      "CHRYSLER LLC JEEP": 1,
+      "CITROEN": 4507,
+      "CUPRA": 307,
+      "DACIA": 640,
+      "DFSK": 134,
+      "DFSK MOTOR": 2,
+      "DODGE": 183,
+      "DONGFENG": 1,
+      "DS": 856,
+      "DS AUTOMOBILES": 170,
+      "FIAT": 3045,
+      "FORD": 14733,
+      "FORD MOTOR COMPANY MEXIKO": 1,
+      "GMC": 4,
+      "GREAT WALL": 6,
+      "GREAT WALL MOTOR COMPANY": 1,
+      "HONDA": 440,
+      "HYUNDAI": 4711,
+      "ISUZU": 1,
+      "JAGUAR": 1975,
+      "JEEP": 907,
+      "KIA": 2562,
+      "LADA": 53,
+      "LADA AUTOMOBILE GMBH": 5,
+      "LAND ROVER": 9455,
+      "LANDROVER": 3,
+      "LANDROVER LTD": 1,
+      "LEXUS": 623,
+      "MASERATI": 449,
+      "MAXUS": 4,
+      "MAZDA": 1351,
+      "MERCEDES - BENZ": 4,
+      "MERCEDES BENZ": 10,
+      "MERCEDES-AMG": 34,
+      "MERCEDES-BENZ": 24916,
+      "MINI": 2165,
+      "MITSUBISHI": 211,
+      "MITSUBISHI MOTORS (THAILAND) C": 6,
+      "MITSUBISHI MOTORS CORPORATION": 26,
+      "MITSUBISHI MOTORS THAILAND LTD.": 6,
+      "MITSUBISHI MOTORS(THAILAND) CO": 2,
+      "NISSAN": 1191,
+      "OPEL": 6277,
+      "PEUGEOT": 6000,
+      "PORSCHE": 2366,
+      "RENAULT": 3755,
+      "SEAT": 4903,
+      "SKODA": 13907,
+      "SMART": 68,
+      "SUBARU": 89,
+      "SUZUKI": 391,
+      "TESLA": 580,
+      "TESLA MOTORS": 3,
+      "TOYOTA": 3631,
+      "VAUXHALL": 2,
+      "VAZ": 1,
+      "VOLKSWAGEN": 12512,
+      "VOLKSWAGEN AG": 2,
+      "VOLVO": 4321,
+      "XPENG": 10,
+      "ŠKODA": 2651
+     }
+    },
+    {
+     "year": 2022,
+     "status_used": "P",
+     "absent_columns": [
+      "electric_range_km"
+     ],
+     "registrations_column": "R",
+     "mode": "per_make",
+     "spelling_source": "year_distinct",
+     "queries": 320,
+     "spellings": 320,
+     "max_query_bytes": 828,
+     "status": "built",
+     "rows": 171002,
+     "by_make": {
+      "ALFA ROMEO": 861,
+      "ALFA ROMEO S.P.A. C.SO G. AGNELLI 200 - 10135 - TURIN - ITALIA": 5,
+      "AUDI": 18427,
+      "AUDI AG": 1,
+      "AUTOMOBILE PEUGEOT": 1,
+      "AUTOMOBILES CITROEN": 6,
+      "AUTOMOBILES PEUGEOT": 16,
+      "BMW": 24458,
+      "BMW I": 35,
+      "BUICK": 1,
+      "CADILLAC": 42,
+      "CHEVROLET": 54,
+      "CHRYSLER": 34,
+      "CHRYSLER LLC. 100 CHRYSLER DRIVEAUBURN HILLS. MICHAGAN. U.S.A. 48326-2766": 1,
+      "CITROEN": 2002,
+      "CUPRA": 689,
+      "DACIA": 925,
+      "DFSK": 104,
+      "DODGE": 124,
+      "DONGFENG": 1,
+      "DS": 783,
+      "DS AUTOMOBILES": 168,
+      "FIAT": 2884,
+      "FORD": 13240,
+      "GEELY": 1,
+      "GMC": 9,
+      "GREAT WALL": 2,
+      "GREAT WALL MOTOR COMPANY": 3,
+      "GREAT WALL MOTOR COMPANY LIMITED": 2,
+      "HONDA": 278,
+      "HONDA MOTOR": 1,
+      "HYUNDAI": 4130,
+      "HYUNDAI MOTOR": 9,
+      "HYUNDAI MOTOR COMPANY": 1,
+      "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO SEOCHO-GU SEOUL KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO SEOCHO-GU. SEOUL KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA": 5,
+      "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA": 3,
+      "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL.KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU.SEOUL. KOREA": 2,
+      "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU.SEOUL.KOREA": 2,
+      "HYUNDAI MOTOR COMPANY 12. HEOOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO SEOCHO-GU. SEOUL. KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO. SEOCHO-GU. SEOUL.KOREA": 2,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU. SEOUL KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU.SEOUL KOREA": 1,
+      "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU.SEOUL. KOREA": 1,
+      "HYUNDAI MOTOR COMPANY SEOCHO-GU. SEOUL KOREA": 2,
+      "HYUNDAI MOTOR COMPANY. 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA": 2,
+      "HYUNDAI MOTOR COMPANY. 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA": 4,
+      "HYUNDAI MOTOR COMPANY.12 HEOLLEUNG-RO. SEOCHO-GU SEOUL KOREA": 1,
+      "HYUNDAI MOTOR CORPORATION": 1,
+      "HYUNDAI MOTOR MANUFACTURING": 1,
+      "HYUNDAI MOTOR MANUFACTURING CHECH": 1,
+      "HYUNDAI MOTOR MANUFACTURING CHECH S.R.O": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH": 7,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.0": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O": 8,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.": 2,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O. PRUMYSLOVA ZONA NOSOVICE.HYUNDAI 700/1.73951NIZNI LHOTY.CZ": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O..": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMUYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951": 4,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY": 6,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.": 10,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NKIZNI LHOTY": 2,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/73951 NIZNI LHOTY. C": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNSAI 700/1.73951 NIZNI LHOTY.": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE.HYUNDAI 700/1.73951 NIZNI LHOTY.C": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.CZ": 1,
+      "HYUNDAI MOTOR MANUFACTURING CZECH. S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY": 1,
+      "HYUNDAI MOTOR MANUFACTURINGCZECH S.R.O PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.CZ": 1,
+      "ISUZU": 4,
+      "JAGUAR": 1292,
+      "JEEP": 928,
+      "KIA": 3033,
+      "KIA MOTORS CORPORATION.12.HEOLLEUNG-ROSEOCHO-GU. SEOUL. KOREA": 1,
+      "LADA": 29,
+      "LAND ROVER": 4121,
+      "LEXUS": 1082,
+      "MASERATI": 614,
+      "MASERATI SPA MODENA ITALIA": 3,
+      "MAXUS": 45,
+      "MAZDA": 1246,
+      "MAZDA MOTOR CORPORATION HIROSIMA JAPAN": 39,
+      "MAZDA MOTOR LOGISTICS EUROPE 2830 BELGIUM": 1,
+      "MAZDA MOTOR LOGISTICS EUROPE 2830 WILLBROEK BELGIUM": 1,
+      "MAZDA MOTOR LOGISTICS EUROPE 2830 WILLEBROEK BELGIUM": 3,
+      "MERCEDES - BENZ": 235,
+      "MERCEDES -BENZ": 1,
+      "MERCEDES BENZ": 2750,
+      "MERCEDES- BENZ": 1,
+      "MERCEDES-AMG": 361,
+      "MERCEDES-BENZ": 28492,
+      "MERCEDES-BENZ AG DE-70372 STUTTGART GERMANY": 42,
+      "MERCEDES-BENZ~": 1,
+      "MINI": 1910,
+      "MITSUBISHI": 157,
+      "MITSUBISHI MOTORS (THAILAND)CO..LTD FYI CENTRE TOWER 1. KLONG TOWEI BANGKOK 10110. THAILAND": 1,
+      "NISSAN": 1107,
+      "OPEL": 3209,
+      "OPEL AUTOMOBILE GMBH": 2,
+      "OPEL AUTOMOBILES": 1,
+      "OPEL AUTOMOBILES GMBH": 1,
+      "PEUGEOT": 2918,
+      "PORSCHE": 2232,
+      "PORSCHE 718 CAYMAN GTS": 1,
+      "RENAULT": 4723,
+      "SEAT": 4638,
+      "SKODA": 12682,
+      "SMART": 82,
+      "SUBARU": 147,
+      "SUBARU CORPORATION": 1,
+      "SUBARU CORPORATION TOKYO JAPAN": 1,
+      "SUZUKI": 558,
+      "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO MINAMI-KU. HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611": 1,
+      "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU. HAMAMATSU CITY. JAPAN 432-8611": 1,
+      "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU. HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611": 3,
+      "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU.HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611": 1,
+      "TESLA": 327,
+      "TESLA INC.3500 DEER CREEK RD UNITED STATE OF AMERICA": 1,
+      "TESLA MOTORS": 5,
+      "TOYOTA": 9154,
+      "VOLKSWAGEN": 9842,
+      "VOLKSWAGEN AG": 1,
+      "VOLKSWAGEN AG BERLINER RI NG 2 D-38440": 1,
+      "VOLVO": 2776,
+      "VOLVO CAR CORPORATION ASSAR GABRIELSONS VAG 405 31 GOTHENBURG SWEDEN": 1,
+      "VOLVO CAR CORPORATION ASSAR GABRIELSSONS VAG 404 31 GOTHENBURG SWEDEN": 1,
+      "VOLVO CAR CORPORATION ASSAR GABRIELSSONS VAG 405 31 GOTHENBURG SWEDEN": 72,
+      "XPENG": 9,
+      "ŠKODA": 726
+     }
+    }
+   ],
+   "absent_columns": {
+    "2017": [
+     "electric_range_km"
+    ],
+    "2018": [
+     "electric_range_km"
+    ],
+    "2019": [
+     "electric_range_km"
+    ],
+    "2020": [
+     "electric_range_km"
+    ],
+    "2021": [
+     "electric_range_km"
+    ],
+    "2022": [
+     "electric_range_km"
+    ]
+   },
+   "compaction": {
+    "rows_before": 1063709,
+    "rows_after": 1063709,
+    "kept_makes": 54,
+    "make_rows": {
+     "ALFA ROMEO": 7003,
+     "AUDI": 116415,
+     "BMW": 134302,
+     "BUICK": 28,
+     "CADILLAC": 249,
+     "CHEVROLET": 519,
+     "CHRYSLER": 499,
+     "CITROEN": 21921,
+     "CUPRA": 1070,
+     "DACIA": 6602,
+     "DAEWOO": 3,
+     "DAIHATSU": 6,
+     "DFSK": 337,
+     "DODGE": 700,
+     "DONGFENG": 2,
+     "DS": 4773,
+     "FIAT": 24355,
+     "FORD": 83840,
+     "GEELY": 1,
+     "GMC": 22,
+     "GREAT WALL": 66,
+     "HONDA": 4155,
+     "HUMMER": 1,
+     "HYUNDAI": 19375,
+     "ISUZU": 8,
+     "JAGUAR": 15877,
+     "JEEP": 7127,
+     "KIA": 15253,
+     "LADA": 423,
+     "LAND ROVER": 32513,
+     "LEXUS": 5339,
+     "MASERATI": 2662,
+     "MAXUS": 55,
+     "MAZDA": 7639,
+     "MERCEDES-BENZ": 165737,
+     "MINI": 18029,
+     "MITSUBISHI": 2243,
+     "NISSAN": 9477,
+     "OPEL": 48339,
+     "PEUGEOT": 29061,
+     "PORSCHE": 13273,
+     "RENAULT": 22642,
+     "SEAT": 24507,
+     "SKODA": 69841,
+     "SMART": 2373,
+     "SUBARU": 1186,
+     "SUZUKI": 3075,
+     "TESLA": 3144,
+     "TOYOTA": 29224,
+     "VAUXHALL": 7204,
+     "VAZ": 3,
+     "VOLKSWAGEN": 66945,
+     "VOLVO": 32017,
+     "XPENG": 19,
+     "_unmapped": 2230
+    },
+    "rules": {}
+   },
+   "make_spellings": {
+    "ALFA ROMEO": [
+     "ALFA ROMEO",
+     "ALFA ROMEO S.P.A. C.SO G. AGNELLI 200 - 10135 - TURIN - ITALIA"
+    ],
+    "AUDI": [
+     "AUDI",
+     "AUDI AG"
+    ],
+    "BMW": [
+     "BMW",
+     "BMW AG"
+    ],
+    "BUICK": [
+     "BUICK"
+    ],
+    "CADILLAC": [
+     "CADILLAC"
+    ],
+    "CHEVROLET": [
+     "CHEVROLET"
+    ],
+    "CHRYSLER": [
+     "CHRYSLER",
+     "CHRYSLER LLC JEEP",
+     "CHRYSLER LLC. 100 CHRYSLER DRIVEAUBURN HILLS. MICHAGAN. U.S.A. 48326-2766"
+    ],
+    "CITROEN": [
+     "AUTOMOBILES CITROEN",
+     "CITROEN",
+     "CITROËN"
+    ],
+    "CUPRA": [
+     "CUPRA"
+    ],
+    "DACIA": [
+     "DACIA"
+    ],
+    "DAEWOO": [
+     "DAEWOO"
+    ],
+    "DAIHATSU": [
+     "DAIHATSU"
+    ],
+    "DFSK": [
+     "DFSK",
+     "DFSK MOTOR"
+    ],
+    "DODGE": [
+     "DODGE"
+    ],
+    "DONGFENG": [
+     "DONGFENG"
+    ],
+    "DS": [
+     "DS",
+     "DS AUTOMOBILES"
+    ],
+    "FIAT": [
+     "FIAT",
+     "FIAT AUTO SPA"
+    ],
+    "FORD": [
+     "FORD",
+     "FORD MOTOR COMPANY MEXIKO"
+    ],
+    "GEELY": [
+     "GEELY"
+    ],
+    "GMC": [
+     "GMC"
+    ],
+    "GREAT WALL": [
+     "GREAT WALL",
+     "GREAT WALL MOTOR COMPANY",
+     "GREAT WALL MOTOR COMPANY LIMITED"
+    ],
+    "HONDA": [
+     "HONDA",
+     "HONDA MOTOR"
+    ],
+    "HUMMER": [
+     "HUMMER"
+    ],
+    "HYUNDAI": [
+     "HYUNDAI",
+     "HYUNDAI MOTOR",
+     "HYUNDAI MOTOR (CZ)",
+     "HYUNDAI MOTOR COMPANY",
+     "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO SEOCHO-GU SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU. SEOUL.KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU.SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOLLEUNG-RO. SEOCHO-GU.SEOUL.KOREA",
+     "HYUNDAI MOTOR COMPANY 12. HEOOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO SEOCHO-GU. SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO. SEOCHO-GU. SEOUL.KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU.SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY 12.HEOLLEUNG-RO.SEOCHO-GU.SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY. 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL KOREA",
+     "HYUNDAI MOTOR COMPANY. 12 HEOLLEUNG-RO. SEOCHO-GU. SEOUL. KOREA",
+     "HYUNDAI MOTOR COMPANY.12 HEOLLEUNG-RO. SEOCHO-GU SEOUL KOREA",
+     "HYUNDAI MOTOR CORPORATION",
+     "HYUNDAI MOTOR MANUFACTURING",
+     "HYUNDAI MOTOR MANUFACTURING CHECH",
+     "HYUNDAI MOTOR MANUFACTURING CHECH S.R.O",
+     "HYUNDAI MOTOR MANUFACTURING CZECH",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.0",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O. PRUMYSLOVA ZONA NOSOVICE.HYUNDAI 700/1.73951NIZNI LHOTY.CZ",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O..",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMUYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NKIZNI LHOTY",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/73951 NIZNI LHOTY. C",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNSAI 700/1.73951 NIZNI LHOTY.",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.. PRUMYSLOVA ZONA NOSOVICE.HYUNDAI 700/1.73951 NIZNI LHOTY.C",
+     "HYUNDAI MOTOR MANUFACTURING CZECH S.R.O.PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.CZ",
+     "HYUNDAI MOTOR MANUFACTURING CZECH. S.R.O.. PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY",
+     "HYUNDAI MOTOR MANUFACTURINGCZECH S.R.O PRUMYSLOVA ZONA NOSOVICE. HYUNDAI 700/1.73951 NIZNI LHOTY.CZ"
+    ],
+    "ISUZU": [
+     "ISUZU"
+    ],
+    "JAGUAR": [
+     "JAGUAR"
+    ],
+    "JEEP": [
+     "JEEP"
+    ],
+    "KIA": [
+     "KIA",
+     "KIA MOTORS (SK)",
+     "KIA MOTORS CORPORATION.12.HEOLLEUNG-ROSEOCHO-GU. SEOUL. KOREA"
+    ],
+    "LADA": [
+     "LADA",
+     "LADA AUTOMOBILE GMBH"
+    ],
+    "LAND ROVER": [
+     "LAND ROVER",
+     "LANDROVER",
+     "LANDROVER LTD"
+    ],
+    "LEXUS": [
+     "LEXUS"
+    ],
+    "MASERATI": [
+     "MASERATI",
+     "MASERATI SPA MODENA ITALIA"
+    ],
+    "MAXUS": [
+     "MAXUS"
+    ],
+    "MAZDA": [
+     "MAZDA",
+     "MAZDA MOTOR CORPORATION HIROSIMA JAPAN",
+     "MAZDA MOTOR LOGISTICS EUROPE 2830 BELGIUM",
+     "MAZDA MOTOR LOGISTICS EUROPE 2830 WILLBROEK BELGIUM",
+     "MAZDA MOTOR LOGISTICS EUROPE 2830 WILLEBROEK BELGIUM"
+    ],
+    "MERCEDES-BENZ": [
+     "MERCEDES - BENZ",
+     "MERCEDES -BENZ",
+     "MERCEDES BENZ",
+     "MERCEDES- BENZ",
+     "MERCEDES-BENZ",
+     "MERCEDES-BENZ 906 BB50",
+     "MERCEDES-BENZ AG DE-70372 STUTTGART GERMANY",
+     "MERCEDES-BENZ~",
+     "MERCEDESBENZ"
+    ],
+    "MINI": [
+     "MINI"
+    ],
+    "MITSUBISHI": [
+     "MITSUBISHI",
+     "MITSUBISHI MOTORS (THAILAND) C",
+     "MITSUBISHI MOTORS (THAILAND)CO..LTD FYI CENTRE TOWER 1. KLONG TOWEI BANGKOK 10110. THAILAND",
+     "MITSUBISHI MOTORS CORPORATION",
+     "MITSUBISHI MOTORS THAILAND LTD.",
+     "MITSUBISHI MOTORS(THAILAND) CO"
+    ],
+    "NISSAN": [
+     "NISSAN"
+    ],
+    "OPEL": [
+     "OPEL",
+     "OPEL AUTOMOBILE GMBH",
+     "OPEL AUTOMOBILES",
+     "OPEL AUTOMOBILES GMBH"
+    ],
+    "PEUGEOT": [
+     "AUTOMOBILE PEUGEOT",
+     "AUTOMOBILES PEUGEOT",
+     "PEUGEOT"
+    ],
+    "PORSCHE": [
+     "PORSCHE",
+     "PORSCHE 2220549",
+     "PORSCHE 2220944",
+     "PORSCHE 2229411",
+     "PORSCHE 2229422",
+     "PORSCHE 718 CAYMAN GTS"
+    ],
+    "RENAULT": [
+     "RENAULT"
+    ],
+    "SEAT": [
+     "SEAT"
+    ],
+    "SKODA": [
+     "SKODA",
+     "SKODA AUTO S.A.",
+     "ŠKODA"
+    ],
+    "SMART": [
+     "SMART"
+    ],
+    "SUBARU": [
+     "SUBARU",
+     "SUBARU CORPORATION",
+     "SUBARU CORPORATION TOKYO JAPAN"
+    ],
+    "SUZUKI": [
+     "SUZUKI",
+     "SUZUKI MOTOR",
+     "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO MINAMI-KU. HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611",
+     "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU. HAMAMATSU CITY. JAPAN 432-8611",
+     "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU. HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611",
+     "SUZUKI MOTOR CORPORATION 300 TAKATSUKA-CHO. MINAMI-KU.HAMAMATSU-SHI. SHIZUOKA-KEN. JAPAN 432-8611"
+    ],
+    "TESLA": [
+     "TESLA",
+     "TESLA INC.3500 DEER CREEK RD UNITED STATE OF AMERICA",
+     "TESLA MOTORS"
+    ],
+    "TOYOTA": [
+     "TOYOTA"
+    ],
+    "VAUXHALL": [
+     "VAUXHALL"
+    ],
+    "VAZ": [
+     "VAZ"
+    ],
+    "VOLKSWAGEN": [
+     "VOLKSWAGEN",
+     "VOLKSWAGEN AG",
+     "VOLKSWAGEN AG BERLINER RI NG 2 D-38440",
+     "VOLKSWAGEN`"
+    ],
+    "VOLVO": [
+     "VOLVO",
+     "VOLVO CAR CORPORATION ASSAR GABRIELSONS VAG 405 31 GOTHENBURG SWEDEN",
+     "VOLVO CAR CORPORATION ASSAR GABRIELSSONS VAG 404 31 GOTHENBURG SWEDEN",
+     "VOLVO CAR CORPORATION ASSAR GABRIELSSONS VAG 405 31 GOTHENBURG SWEDEN"
+    ],
+    "XPENG": [
+     "XPENG"
+    ]
+   },
+   "last_attempt": {
+    "at": "2026-10-06T18:22:58+00:00",
+    "status": "built",
+    "reason": null,
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679"
+   }
+  },
+  "ademe_car_labelling": {
+   "file": "ademe_car_labelling.sqlite.gz",
+   "sha256": "2de74f739e4fb3c15326dce9ca1047ac9efad3a4c3822cbf0d3de5aa6cee44b1",
+   "bytes": 230699,
+   "built_at": "2026-10-06T18:23:12+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+   "build_status": "built",
+   "rows": 3604,
+   "files": [
+    {
+     "url": "https://data.ademe.fr/data-fair/api/v1/datasets/ademe-car-labelling/raw",
+     "live_header": [
+      "Marque",
+      "Libellé modèle",
+      "Modèle",
+      "Groupe",
+      "Description Commerciale",
+      "Energie",
+      "Carrosserie",
+      "Cylindrée",
+      "Gamme",
+      "Puissance fiscale",
+      "Puissance maximale",
+      "Puissance nominale électrique",
+      "Poids à vide",
+      "Rapport poids-puissance",
+      "Type de boite",
+      "Nombre rapports",
+      "Conso basse vitesse Min",
+      "Conso basse vitesse Max",
+      "Conso moyenne vitesse Min",
+      "Conso moyenne vitesse Max",
+      "Conso haute vitesse Min",
+      "Conso haute vitesse Max",
+      "Conso T-haute vitesse Min",
+      "Conso T-haute vitesse Max",
+      "Conso vitesse mixte Min",
+      "Conso vitesse mixte Max",
+      "Conso elec Min",
+      "Conso elec Max",
+      "Autonomie elec Min",
+      "Autonomie elec Max",
+      "Autonomie elec urbain Min",
+      "Autonomie elec urbain Max",
+      "CO2 basse vitesse Min",
+      "CO2 basse vitesse Max",
+      "CO2 moyenne vitesse Min",
+      "CO2 moyenne vitesse Max",
+      "CO2 haute vitesse Min",
+      "CO2 haute vitesse Max",
+      "CO2 T-haute vitesse Min",
+      "CO2 T-haute vitesse Max",
+      "CO2 vitesse mixte Min",
+      "CO2 vitesse mixte Max",
+      "Essai CO2 type 1",
+      "Essai HC",
+      "Essai Nox",
+      "Essai HCNox",
+      "Essai particules",
+      "Masse OM Min",
+      "Masse OM Max",
+      "Bonus-Malus",
+      "Barème Bonus-Malus",
+      "Prix véhicule"
+     ],
+     "status": "built",
+     "rows": 3604,
+     "absent_columns": [],
+     "decimal_comma_values": {
+      "power_kw": 3470,
+      "co2_wltp": 3406,
+      "co2_wltp_max": 3470,
+      "fuel_consumption_l_100km": 3406,
+      "fuel_consumption_l_100km_max": 3470,
+      "electric_power_kw": 788,
+      "energy_wh_km_max": 309,
+      "electric_range_km_max": 309,
+      "energy_wh_km": 262,
+      "electric_range_km": 262
+     },
+     "units": {
+      "displacement_cc": "unknown",
+      "power_kw": "kW",
+      "electric_power_kw": "kW",
+      "mass_empty_kg": "kg",
+      "mass_running_order_kg": "kg",
+      "co2_wltp": "unknown",
+      "fuel_consumption_l_100km": "unknown",
+      "energy_wh_km": "unknown",
+      "electric_range_km": "unknown",
+      "mass_running_order_kg_max": "kg",
+      "co2_wltp_max": "unknown",
+      "fuel_consumption_l_100km_max": "unknown",
+      "energy_wh_km_max": "unknown",
+      "electric_range_km_max": "unknown"
+     }
+    }
+   ],
+   "absent_columns": [],
+   "column_units": {
+    "displacement_cc": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Cylindrée",
+     "schema_field": {
+      "key": "Cylindrée",
+      "x-originalName": "Cylindrée",
+      "description": "Cylindrée du véhicule",
+      "type": "integer"
+     }
+    },
+    "power_kw": {
+     "unit": "kW",
+     "basis": "schema_description",
+     "column": "Puissance maximale",
+     "stated": "Puissance en kW"
+    },
+    "electric_power_kw": {
+     "unit": "kW",
+     "basis": "schema_description",
+     "column": "Puissance nominale électrique",
+     "stated": "Puissance nominale du moteur électrique, exprimée en kW"
+    },
+    "mass_empty_kg": {
+     "unit": "kg",
+     "basis": "schema_description",
+     "column": "Poids à vide",
+     "stated": "En Kg"
+    },
+    "mass_running_order_kg": {
+     "unit": "kg",
+     "basis": "schema_description",
+     "column": "Masse OM Min",
+     "stated": "Masse en ordre de marche mini (en Kg)"
+    },
+    "co2_wltp": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "CO2 vitesse mixte Min",
+     "schema_field": {
+      "key": "CO2_vitesse_mixte_Min",
+      "x-originalName": "CO2 vitesse mixte Min",
+      "description": "CO2 mixte combiné - minimum",
+      "type": "number"
+     }
+    },
+    "fuel_consumption_l_100km": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Conso vitesse mixte Min",
+     "schema_field": {
+      "key": "Conso_vitesse_mixte_Min",
+      "x-originalName": "Conso vitesse mixte Min",
+      "description": "Consommation mixte combinée - minimum",
+      "type": "number"
+     }
+    },
+    "energy_wh_km": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Conso elec Min",
+     "schema_field": {
+      "key": "Conso_elec_Min",
+      "x-originalName": "Conso elec Min",
+      "description": "Consommation énergie électrique - minimum ",
+      "type": "number"
+     }
+    },
+    "electric_range_km": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Autonomie elec Min",
+     "schema_field": {
+      "key": "Autonomie_elec_Min",
+      "x-originalName": "Autonomie elec Min",
+      "description": "Autonomie en mode électrique - minimum",
+      "type": "number"
+     }
+    },
+    "mass_running_order_kg_max": {
+     "unit": "kg",
+     "basis": "schema_description",
+     "column": "Masse OM Max",
+     "stated": "Masse en ordre de marche mini (en Kg)",
+     "unit_of": "mass_running_order_kg"
+    },
+    "co2_wltp_max": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "CO2 vitesse mixte Max",
+     "schema_field": {
+      "key": "CO2_vitesse_mixte_Min",
+      "x-originalName": "CO2 vitesse mixte Min",
+      "description": "CO2 mixte combiné - minimum",
+      "type": "number"
+     },
+     "unit_of": "co2_wltp"
+    },
+    "fuel_consumption_l_100km_max": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Conso vitesse mixte Max",
+     "schema_field": {
+      "key": "Conso_vitesse_mixte_Min",
+      "x-originalName": "Conso vitesse mixte Min",
+      "description": "Consommation mixte combinée - minimum",
+      "type": "number"
+     },
+     "unit_of": "fuel_consumption_l_100km"
+    },
+    "energy_wh_km_max": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Conso elec Max",
+     "schema_field": {
+      "key": "Conso_elec_Min",
+      "x-originalName": "Conso elec Min",
+      "description": "Consommation énergie électrique - minimum ",
+      "type": "number"
+     },
+     "unit_of": "energy_wh_km"
+    },
+    "electric_range_km_max": {
+     "unit": "unknown",
+     "reason": "unit_unstated",
+     "accepted": [],
+     "column": "Autonomie elec Max",
+     "schema_field": {
+      "key": "Autonomie_elec_Min",
+      "x-originalName": "Autonomie elec Min",
+      "description": "Autonomie en mode électrique - minimum",
+      "type": "number"
+     },
+     "unit_of": "electric_range_km"
+    }
+   },
+   "unit_unknown_distribution": {
+    "displacement_cc": {
+     "n": 3604,
+     "p5": 998.0,
+     "p50": 1598.0,
+     "p95": 2993.0
+    },
+    "co2_wltp": null,
+    "fuel_consumption_l_100km": null,
+    "energy_wh_km": null,
+    "electric_range_km": null,
+    "co2_wltp_max": null,
+    "fuel_consumption_l_100km_max": null,
+    "energy_wh_km_max": null,
+    "electric_range_km_max": null
+   },
+   "compaction": {
+    "rows_before": 3604,
+    "rows_after": 3604,
+    "kept_makes": 31,
+    "make_rows": {
+     "ALFA ROMEO": 88,
+     "AUDI": 23,
+     "BMW": 1343,
+     "CITROEN": 61,
+     "CUPRA": 7,
+     "DACIA": 43,
+     "DS": 28,
+     "FIAT": 80,
+     "FORD": 198,
+     "HONDA": 18,
+     "HYUNDAI": 68,
+     "JEEP": 26,
+     "KIA": 202,
+     "LAND ROVER": 5,
+     "LEXUS": 8,
+     "MASERATI": 7,
+     "MAZDA": 7,
+     "MINI": 373,
+     "MITSUBISHI": 5,
+     "NISSAN": 49,
+     "OPEL": 27,
+     "PEUGEOT": 100,
+     "PORSCHE": 117,
+     "RENAULT": 330,
+     "SKODA": 110,
+     "SUBARU": 2,
+     "SUZUKI": 24,
+     "TESLA": 3,
+     "TOYOTA": 51,
+     "VOLKSWAGEN": 126,
+     "VOLVO": 18,
+     "_unmapped": 57
+    },
+    "rules": {}
+   },
+   "make_spellings": {
+    "ALFA ROMEO": [
+     "ALFA ROMEO"
+    ],
+    "AUDI": [
+     "AUDI"
+    ],
+    "BMW": [
+     "B.M.W."
+    ],
+    "CITROEN": [
+     "CITROEN"
+    ],
+    "CUPRA": [
+     "CUPRA"
+    ],
+    "DACIA": [
+     "DACIA"
+    ],
+    "DS": [
+     "DS"
+    ],
+    "FIAT": [
+     "FIAT"
+    ],
+    "FORD": [
+     "FORD"
+    ],
+    "HONDA": [
+     "HONDA"
+    ],
+    "HYUNDAI": [
+     "HYUNDAI"
+    ],
+    "JEEP": [
+     "JEEP"
+    ],
+    "KIA": [
+     "KIA"
+    ],
+    "LAND ROVER": [
+     "LAND ROVER"
+    ],
+    "LEXUS": [
+     "LEXUS"
+    ],
+    "MASERATI": [
+     "MASERATI"
+    ],
+    "MAZDA": [
+     "MAZDA"
+    ],
+    "MINI": [
+     "MINI"
+    ],
+    "MITSUBISHI": [
+     "MITSUBISHI"
+    ],
+    "NISSAN": [
+     "NISSAN"
+    ],
+    "OPEL": [
+     "OPEL"
+    ],
+    "PEUGEOT": [
+     "PEUGEOT"
+    ],
+    "PORSCHE": [
+     "PORSCHE"
+    ],
+    "RENAULT": [
+     "RENAULT"
+    ],
+    "SKODA": [
+     "SKODA"
+    ],
+    "SUBARU": [
+     "SUBARU"
+    ],
+    "SUZUKI": [
+     "SUZUKI"
+    ],
+    "TESLA": [
+     "TESLA"
+    ],
+    "TOYOTA": [
+     "TOYOTA"
+    ],
+    "VOLKSWAGEN": [
+     "VOLKSWAGEN"
+    ],
+    "VOLVO": [
+     "VOLVO"
+    ]
+   },
+   "last_attempt": {
+    "at": "2026-10-06T18:23:12+00:00",
+    "status": "built",
+    "reason": null,
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679"
+   }
+  },
+  "epa_fueleconomy": {
+   "file": "epa_fueleconomy.sqlite.gz",
+   "sha256": "b6bc4fb7ad54ec8110e1ca539e35dc235090b8e649f48be839b2c233c290c70f",
+   "bytes": 1225416,
+   "built_at": "2026-10-06T18:23:16+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+   "build_status": "built",
+   "rows": 24159,
+   "files": [
+    {
+     "url": "https://www.fueleconomy.gov/feg/epadata/vehicles.csv.zip",
+     "live_header": [
+      "barrels08",
+      "barrelsA08",
+      "charge120",
+      "charge240",
+      "city08",
+      "city08U",
+      "cityA08",
+      "cityA08U",
+      "cityCD",
+      "cityE",
+      "cityUF",
+      "co2",
+      "co2A",
+      "co2TailpipeAGpm",
+      "co2TailpipeGpm",
+      "comb08",
+      "comb08U",
+      "combA08",
+      "combA08U",
+      "combE",
+      "combinedCD",
+      "combinedUF",
+      "cylinders",
+      "displ",
+      "drive",
+      "engId",
+      "eng_dscr",
+      "feScore",
+      "fuelCost08",
+      "fuelCostA08",
+      "fuelType",
+      "fuelType1",
+      "ghgScore",
+      "ghgScoreA",
+      "highway08",
+      "highway08U",
+      "highwayA08",
+      "highwayA08U",
+      "highwayCD",
+      "highwayE",
+      "highwayUF",
+      "hlv",
+      "hpv",
+      "id",
+      "lv2",
+      "lv4",
+      "make",
+      "model",
+      "mpgData",
+      "phevBlended",
+      "pv2",
+      "pv4",
+      "range",
+      "rangeCity",
+      "rangeCityA",
+      "rangeHwy",
+      "rangeHwyA",
+      "trany",
+      "UCity",
+      "UCityA",
+      "UHighway",
+      "UHighwayA",
+      "VClass",
+      "year",
+      "youSaveSpend",
+      "baseModel",
+      "guzzler",
+      "trans_dscr",
+      "tCharger",
+      "sCharger",
+      "atvType",
+      "fuelType2",
+      "rangeA",
+      "evMotor",
+      "mfrCode",
+      "c240Dscr",
+      "charge240b",
+      "c240bDscr",
+      "createdOn",
+      "modifiedOn",
+      "startStop",
+      "phevCity",
+      "phevHwy",
+      "phevComb"
+     ],
+     "status": "built",
+     "rows": 50407,
+     "absent_columns": []
+    }
+   ],
+   "absent_columns": [],
+   "compaction": {
+    "rows_before": 50407,
+    "rows_after": 24159,
+    "kept_makes": 34,
+    "make_rows": {
+     "ALFA ROMEO": 61,
+     "AUDI": 1006,
+     "BMW": 2130,
+     "BUICK": 280,
+     "CADILLAC": 657,
+     "CHEVROLET": 2014,
+     "CHRYSLER": 323,
+     "DODGE": 729,
+     "FIAT": 84,
+     "FORD": 1748,
+     "GMC": 1232,
+     "HONDA": 715,
+     "HUMMER": 19,
+     "HYUNDAI": 896,
+     "ISUZU": 31,
+     "JAGUAR": 405,
+     "JEEP": 707,
+     "KIA": 803,
+     "LAND ROVER": 356,
+     "LEXUS": 655,
+     "MASERATI": 183,
+     "MAZDA": 552,
+     "MERCEDES-BENZ": 1585,
+     "MINI": 553,
+     "MITSUBISHI": 419,
+     "NISSAN": 988,
+     "PORSCHE": 1366,
+     "SMART": 38,
+     "SUBARU": 535,
+     "SUZUKI": 191,
+     "TESLA": 187,
+     "TOYOTA": 1418,
+     "VOLKSWAGEN": 733,
+     "VOLVO": 560
+    },
+    "rules": {
+     "makes": "vocabulary",
+     "min_year": 2005
+    }
+   },
+   "make_spellings": {
+    "ALFA ROMEO": [
+     "ALFA ROMEO"
+    ],
+    "AUDI": [
+     "AUDI"
+    ],
+    "BMW": [
+     "BMW"
+    ],
+    "BUICK": [
+     "BUICK"
+    ],
+    "CADILLAC": [
+     "CADILLAC"
+    ],
+    "CHEVROLET": [
+     "CHEVROLET"
+    ],
+    "CHRYSLER": [
+     "CHRYSLER"
+    ],
+    "DODGE": [
+     "DODGE"
+    ],
+    "FIAT": [
+     "FIAT"
+    ],
+    "FORD": [
+     "FORD"
+    ],
+    "GMC": [
+     "GMC"
+    ],
+    "HONDA": [
+     "HONDA"
+    ],
+    "HUMMER": [
+     "HUMMER"
+    ],
+    "HYUNDAI": [
+     "HYUNDAI"
+    ],
+    "ISUZU": [
+     "ISUZU"
+    ],
+    "JAGUAR": [
+     "JAGUAR"
+    ],
+    "JEEP": [
+     "JEEP"
+    ],
+    "KIA": [
+     "KIA"
+    ],
+    "LAND ROVER": [
+     "LAND ROVER"
+    ],
+    "LEXUS": [
+     "LEXUS"
+    ],
+    "MASERATI": [
+     "MASERATI"
+    ],
+    "MAZDA": [
+     "MAZDA"
+    ],
+    "MERCEDES-BENZ": [
+     "MERCEDES-BENZ"
+    ],
+    "MINI": [
+     "MINI"
+    ],
+    "MITSUBISHI": [
+     "MITSUBISHI"
+    ],
+    "NISSAN": [
+     "NISSAN"
+    ],
+    "PORSCHE": [
+     "PORSCHE"
+    ],
+    "SMART": [
+     "SMART"
+    ],
+    "SUBARU": [
+     "SUBARU"
+    ],
+    "SUZUKI": [
+     "SUZUKI"
+    ],
+    "TESLA": [
+     "TESLA"
+    ],
+    "TOYOTA": [
+     "TOYOTA"
+    ],
+    "VOLKSWAGEN": [
+     "VOLKSWAGEN"
+    ],
+    "VOLVO": [
+     "VOLVO"
+    ]
+   },
+   "last_attempt": {
+    "at": "2026-10-06T18:23:16+00:00",
+    "status": "built",
+    "reason": null,
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679"
+   }
+  },
+  "nrcan_fuel_ratings": {
+   "file": "nrcan_fuel_ratings.sqlite.gz",
+   "sha256": "1ef171ed697a4d560b0920678edff8e48acb16caddd67fa9cf06326093b68407",
+   "bytes": 859539,
+   "built_at": "2026-10-06T18:23:19+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+   "build_status": "built",
+   "rows": 21935,
+   "files": [
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/026e45b4-eb63-451f-b34f-d9308ea3a3d9/download/my2012-2026-battery-electric-vehicles.csv",
+     "status": "map_pending",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Motor (kW)",
+      "Transmission",
+      "Fuel type",
+      "City (kWh/100 km)",
+      "Highway (kWh/100 km)",
+      "Combined (kWh/100 km)",
+      "City (Le/100 km)",
+      "Highway (Le/100 km)",
+      "Combined (Le/100 km)",
+      "Range (km)",
+      "CO2 emissions (g/km)",
+      "CO2 rating ",
+      "Smog rating",
+      "Recharge time (h)"
+     ],
+     "reason": "no map for this file's group: write it from this live header",
+     "group": "bev"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/8812228b-a6aa-4303-b3d0-66489225120d/download/my2012-2026-plug-in-hybrid-electric-vehicles.csv",
+     "status": "map_pending",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Motor (kW)",
+      "Engine size (L)",
+      "Cylinders",
+      "Transmission",
+      "Fuel type 1",
+      "Combined Le/100 km",
+      "Range 1 (km)",
+      "Recharge time (h)",
+      "Fuel type 2",
+      "City (L/100 km)",
+      "Highway (L/100 km)",
+      "Combined (L/100 km)",
+      "Range 2 (km)",
+      "CO2 emissions (g/km)",
+      "CO2 rating",
+      "Smog rating"
+     ],
+     "reason": "no map for this file's group: write it from this live header",
+     "group": "phev"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/9df1b18d-d036-4783-a61c-99f1f75b3ac5/download/my2026-fuel-consumption-ratings.csv",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Engine size (L)",
+      "Cylinders",
+      "Transmission",
+      "Fuel type",
+      "City (L/100 km)",
+      "Highway (L/100 km)",
+      "Combined (L/100 km)",
+      "Combined (mpg)",
+      "CO2 emissions (g/km)",
+      "CO2 rating",
+      "Smog rating"
+     ],
+     "status": "built",
+     "rows": 613,
+     "absent_columns": [],
+     "group": "conventional"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/d589f2bc-9a85-4f65-be2f-20f17debfcb1/download/my2025-fuel-consumption-ratings.csv",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Engine size (L)",
+      "Cylinders",
+      "Transmission",
+      "Fuel type",
+      "City (L/100 km)",
+      "Highway (L/100 km)",
+      "Combined (L/100 km)",
+      "Combined (mpg)",
+      "CO2 emissions (g/km)",
+      "CO2 rating",
+      "Smog rating"
+     ],
+     "status": "built",
+     "rows": 701,
+     "absent_columns": [],
+     "group": "conventional"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/c98b9dc8-b23f-4cd8-8b19-e892da1e4688/download/my2015-2024-fuel-consumption-ratings.csv",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Engine size (L)",
+      "Cylinders",
+      "Transmission",
+      "Fuel type",
+      "City (L/100 km)",
+      "Highway (L/100 km)",
+      "Combined (L/100 km)",
+      "Combined (mpg)",
+      "CO2 emissions (g/km)",
+      "CO2 rating",
+      "Smog rating"
+     ],
+     "status": "built",
+     "rows": 10060,
+     "absent_columns": [],
+     "group": "conventional"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/42495676-28b7-40f3-b0e0-3d7fe005ca56/download/my1995-2014-fuel-consumption-ratings-5-cycle.csv",
+     "live_header": [
+      "Model year",
+      "Make",
+      "Model",
+      "Vehicle class",
+      "Engine size (L)",
+      "Cylinders",
+      "Transmission",
+      "Fuel type",
+      "City (L/100 km)",
+      "Highway (L/100 km)",
+      "Combined (L/100 km)",
+      "Combined (mpg)",
+      "CO2 emissions (g/km)",
+      "CO2 rating",
+      "Smog rating"
+     ],
+     "status": "built",
+     "rows": 17853,
+     "absent_columns": [],
+     "group": "conventional"
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/29bcf157-9297-4d6a-9695-dfd816bc32ca/download/original-my1995-2014-fuel-consumption-ratings-2-cycle.csv",
+     "status": "excluded",
+     "reason": "the original 2-cycle ratings are another test cycle"
+    }
+   ],
+   "absent_columns": {
+    "my2026-fuel-consumption-ratings.csv": [],
+    "my2025-fuel-consumption-ratings.csv": [],
+    "my2015-2024-fuel-consumption-ratings.csv": [],
+    "my1995-2014-fuel-consumption-ratings-5-cycle.csv": []
+   },
+   "compaction": {
+    "rows_before": 29227,
+    "rows_after": 21935,
+    "kept_makes": 33,
+    "make_rows": {
+     "ALFA ROMEO": 64,
+     "AUDI": 840,
+     "BMW": 1456,
+     "BUICK": 253,
+     "CADILLAC": 498,
+     "CHEVROLET": 1975,
+     "CHRYSLER": 330,
+     "DODGE": 753,
+     "FIAT": 86,
+     "FORD": 1632,
+     "GMC": 1243,
+     "HONDA": 568,
+     "HUMMER": 21,
+     "HYUNDAI": 589,
+     "JAGUAR": 345,
+     "JEEP": 577,
+     "KIA": 567,
+     "LAND ROVER": 293,
+     "LEXUS": 510,
+     "MASERATI": 160,
+     "MAZDA": 564,
+     "MERCEDES-BENZ": 1301,
+     "MINI": 463,
+     "MITSUBISHI": 302,
+     "NISSAN": 726,
+     "PORSCHE": 1150,
+     "RAM": 179,
+     "SMART": 22,
+     "SUBARU": 488,
+     "SUZUKI": 127,
+     "TOYOTA": 1010,
+     "VOLKSWAGEN": 610,
+     "VOLVO": 431,
+     "_unmapped": 1802
+    },
+    "rules": {
+     "min_year": 2005
+    }
+   },
+   "make_spellings": {
+    "ALFA ROMEO": [
+     "ALFA ROMEO"
+    ],
+    "AUDI": [
+     "AUDI"
+    ],
+    "BMW": [
+     "BMW"
+    ],
+    "BUICK": [
+     "BUICK"
+    ],
+    "CADILLAC": [
+     "CADILLAC"
+    ],
+    "CHEVROLET": [
+     "CHEVROLET"
+    ],
+    "CHRYSLER": [
+     "CHRYSLER"
+    ],
+    "DODGE": [
+     "DODGE"
+    ],
+    "FIAT": [
+     "FIAT"
+    ],
+    "FORD": [
+     "FORD"
+    ],
+    "GMC": [
+     "GMC"
+    ],
+    "HONDA": [
+     "HONDA"
+    ],
+    "HUMMER": [
+     "HUMMER"
+    ],
+    "HYUNDAI": [
+     "HYUNDAI"
+    ],
+    "JAGUAR": [
+     "JAGUAR"
+    ],
+    "JEEP": [
+     "JEEP"
+    ],
+    "KIA": [
+     "KIA"
+    ],
+    "LAND ROVER": [
+     "LAND ROVER"
+    ],
+    "LEXUS": [
+     "LEXUS"
+    ],
+    "MASERATI": [
+     "MASERATI"
+    ],
+    "MAZDA": [
+     "MAZDA"
+    ],
+    "MERCEDES-BENZ": [
+     "MERCEDES-BENZ"
+    ],
+    "MINI": [
+     "MINI"
+    ],
+    "MITSUBISHI": [
+     "MITSUBISHI"
+    ],
+    "NISSAN": [
+     "NISSAN"
+    ],
+    "PORSCHE": [
+     "PORSCHE"
+    ],
+    "RAM": [
+     "RAM"
+    ],
+    "SMART": [
+     "SMART"
+    ],
+    "SUBARU": [
+     "SUBARU"
+    ],
+    "SUZUKI": [
+     "SUZUKI"
+    ],
+    "TOYOTA": [
+     "TOYOTA"
+    ],
+    "VOLKSWAGEN": [
+     "VOLKSWAGEN"
+    ],
+    "VOLVO": [
+     "VOLVO"
+    ]
+   },
+   "last_attempt": {
+    "at": "2026-10-06T18:23:19+00:00",
+    "status": "built",
+    "reason": null,
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679"
+   }
+  },
+  "tc_cvs": {
+   "file": "tc_cvs.sqlite.gz",
+   "sha256": "88679ff6f2b49f2d347501c11ced41677ba08548ffb8c282c8796edfe832e84a",
+   "bytes": 487638,
+   "built_at": "2026-10-06T18:23:24+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679",
+   "build_status": "built",
+   "rows": 10251,
+   "files": [
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/76ae33f3-da9e-48f0-9c00-227e61f9431c/download/2011_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 854,
+     "absent_columns": [],
+     "file_year": 2011
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/83c88aee-388a-4994-9865-547a2cfe0014/download/2012_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 890,
+     "absent_columns": [],
+     "file_year": 2012
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/6fe824d9-8ea6-4a69-9d21-86f2f973025f/download/2013_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 910,
+     "absent_columns": [],
+     "file_year": 2013
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/58a57d56-477a-4309-8118-33fb4c0fe5ed/download/2014_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 889,
+     "absent_columns": [],
+     "file_year": 2014
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/e53470a9-dbf8-49b7-816a-f64128ca8cee/download/2015_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 972,
+     "absent_columns": [],
+     "file_year": 2015
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/207088e2-d5e3-4d18-9cc4-7cb9b2b8a907/download/2016_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 959,
+     "absent_columns": [],
+     "file_year": 2016
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/fbe686a5-c6ab-4e9e-b64f-06386cc4c76e/download/2017_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 982,
+     "absent_columns": [],
+     "file_year": 2017
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/7f380b87-a79d-48ee-9429-2ca02a9e70cd/download/2018_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 1002,
+     "absent_columns": [],
+     "file_year": 2018
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/0f4988f0-a0bc-41fb-b94a-798607ca7240/download/2019_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 1031,
+     "absent_columns": [],
+     "file_year": 2019
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/1445673a-904e-4947-afdc-74bf3d60e32a/download/2020_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 1043,
+     "absent_columns": [],
+     "file_year": 2020
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/c31eccaf-643c-484f-810a-5c085f6b87bf/download/2021_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 1024,
+     "absent_columns": [],
+     "file_year": 2021
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/2b7d2ab2-c50a-4c92-b83c-e9bc05f8b758/download/2022_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 1043,
+     "absent_columns": [],
+     "file_year": 2022
+    },
+    {
+     "url": "https://open.canada.ca/data/dataset/913f8940-036a-45f2-a5f2-19bde76c1252/resource/d96bb679-2e2e-4d91-b620-c319a7d4fe25/download/2023_en.csv",
+     "live_header": [
+      "MAKE",
+      "MODEL",
+      "MYR",
+      "OL",
+      "OW",
+      "OH ",
+      "WB",
+      "CW ",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "TWF",
+      "TWR ",
+      "WDIST"
+     ],
+     "status": "built",
+     "rows": 109,
+     "absent_columns": [],
+     "file_year": 2023
+    }
+   ],
+   "absent_columns": {
+    "2011_en.csv": [],
+    "2012_en.csv": [],
+    "2013_en.csv": [],
+    "2014_en.csv": [],
+    "2015_en.csv": [],
+    "2016_en.csv": [],
+    "2017_en.csv": [],
+    "2018_en.csv": [],
+    "2019_en.csv": [],
+    "2020_en.csv": [],
+    "2021_en.csv": [],
+    "2022_en.csv": [],
+    "2023_en.csv": []
+   },
+   "last_file_year": 2023,
+   "compaction": {
+    "rows_before": 11708,
+    "rows_after": 10251,
+    "kept_makes": 32,
+    "make_rows": {
+     "ALFA ROMEO": 41,
+     "AUDI": 466,
+     "BMW": 722,
+     "BUICK": 115,
+     "CADILLAC": 263,
+     "CHEVROLET": 971,
+     "CHRYSLER": 83,
+     "DODGE": 188,
+     "FIAT": 57,
+     "FORD": 1099,
+     "GMC": 731,
+     "HONDA": 280,
+     "HYUNDAI": 306,
+     "JAGUAR": 157,
+     "JEEP": 270,
+     "KIA": 325,
+     "LAND ROVER": 128,
+     "LEXUS": 247,
+     "MASERATI": 66,
+     "MAZDA": 193,
+     "MERCEDES-BENZ": 1008,
+     "MINI": 176,
+     "MITSUBISHI": 129,
+     "NISSAN": 615,
+     "PORSCHE": 373,
+     "SMART": 16,
+     "SUBARU": 192,
+     "SUZUKI": 29,
+     "TESLA": 48,
+     "TOYOTA": 530,
+     "VOLKSWAGEN": 236,
+     "VOLVO": 176,
+     "_unmapped": 15
+    },
+    "rules": {
+     "makes": "vocabulary",
+     "year_key": "file_year",
+     "min_year": 2011,
+     "max_year": 2023
+    }
+   },
+   "make_spellings": {
+    "ALFA ROMEO": [
+     "ALFA ROMEO"
+    ],
+    "AUDI": [
+     "AUDI"
+    ],
+    "BMW": [
+     "BMW"
+    ],
+    "BUICK": [
+     "BUICK"
+    ],
+    "CADILLAC": [
+     "CADILLAC"
+    ],
+    "CHEVROLET": [
+     "CHEVROLET"
+    ],
+    "CHRYSLER": [
+     "CHRYSLER"
+    ],
+    "DODGE": [
+     "DODGE"
+    ],
+    "FIAT": [
+     "FIAT"
+    ],
+    "FORD": [
+     "FORD"
+    ],
+    "GMC": [
+     "GMC"
+    ],
+    "HONDA": [
+     "HONDA"
+    ],
+    "HYUNDAI": [
+     "HYUNDAI"
+    ],
+    "JAGUAR": [
+     "JAGUAR"
+    ],
+    "JEEP": [
+     "JEEP"
+    ],
+    "KIA": [
+     "KIA"
+    ],
+    "LAND ROVER": [
+     "LAND ROVER"
+    ],
+    "LEXUS": [
+     "LEXUS"
+    ],
+    "MASERATI": [
+     "MASERATI"
+    ],
+    "MAZDA": [
+     "MAZDA"
+    ],
+    "MERCEDES-BENZ": [
+     "MERCEDES-BENZ"
+    ],
+    "MINI": [
+     "MINI"
+    ],
+    "MITSUBISHI": [
+     "MITSUBISHI"
+    ],
+    "NISSAN": [
+     "NISSAN"
+    ],
+    "PORSCHE": [
+     "PORSCHE"
+    ],
+    "SMART": [
+     "SMART"
+    ],
+    "SUBARU": [
+     "SUBARU"
+    ],
+    "SUZUKI": [
+     "SUZUKI"
+    ],
+    "TESLA": [
+     "TESLA"
+    ],
+    "TOYOTA": [
+     "TOYOTA"
+    ],
+    "VOLKSWAGEN": [
+     "VOLKSWAGEN"
+    ],
+    "VOLVO": [
+     "VOLVO"
+    ]
+   },
+   "last_attempt": {
+    "at": "2026-10-06T18:23:24+00:00",
+    "status": "built",
+    "reason": null,
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37509576679"
+   }
+  }
+ }
+}
