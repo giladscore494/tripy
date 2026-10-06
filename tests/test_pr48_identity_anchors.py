@@ -484,3 +484,52 @@ def test_c_exports_carry_the_attribution_of_every_licence_that_contributed_a_val
     specs = resolve_requested_fields(["wheelbase_mm", "length_mm"])
     output, _ = assemble_output(events, payload("85095"), specs)
     assert output["provenance_summary"]["licence_attributions"] == [attribution]
+
+
+# --- proof gate and report scripts ---------------------------------------------------------------------------------------
+
+def _script(name: str):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.real_source_policy
+def test_proof_gate_m4_replay_under_the_policy_and_the_2023_sheet_replay():
+    gate = _script("pr48_proof_gate")
+    replay = gate.policy_replay()
+    assert replay["evidence"] == 43 and replay["kept"] == 0 and replay["wrong"] == 0
+    rows = {r["field"]: r for r in replay["rows"]}
+    assert rows["curb_weight_kg"]["recorded_value"] == 1800 and rows["curb_weight_kg"]["replay_state"] == "missing"
+    assert rows["screen_size_in"]["recorded_value"] == 14.9 and rows["screen_size_in"]["replay_state"] == "missing"
+    sheet = gate.sheet_replay()["fields"]
+    assert {f: sheet[f]["value"] for f in ("curb_weight_kg", "screen_size_in", "torque_nm", "rim_diameter_front_in",
+                                           "rim_diameter_rear_in")} == \
+        {"curb_weight_kg": "1816", "screen_size_in": "10.25", "torque_nm": "650", "rim_diameter_front_in": "19",
+         "rim_diameter_rear_in": "20"}
+    assert sheet["rim_diameter_in"]["state"] == "not_applicable"
+
+
+def test_terms_review_reports_only_a_terms_link_of_the_domains_own_page():
+    review = _script("terms_review")
+    html = ('<a href="/legal/terms">תנאי שימוש</a><a href="https://other.example/terms">terms</a>'
+            '<a href="/models/m4">M4</a><a href="/takanon-site">תקנון האתר</a>')
+    rules = {"link_text_terms": ["תנאי שימוש", "תקנון", "terms"], "url_patterns": ["terms", "takanon"]}
+    assert review.terms_links(html, "https://www.bmw.co.il/he/index.html", rules) == \
+        ["https://www.bmw.co.il/legal/terms", "https://www.bmw.co.il/takanon-site"]
+
+
+def test_open_data_report_proposes_a_triple_only_with_enough_agreements_and_no_disagreement():
+    report = _script("open_data_report")
+
+    def row(route, comparisons):
+        return {"route": route, "offers": [{"source": "eea_co2_cars", "field": "curb_weight_kg", "status": "offered",
+                                            "comparison": c} for c in comparisons]}
+    agreeing = [row("european_co2", ["agree"]) for _ in range(5)]
+    assert report.proposal(agreeing, 5) == [{"source": "eea_co2_cars", "field": "curb_weight_kg",
+                                             "route": "european_co2", "agreements": 5}]
+    assert report.proposal(agreeing + [row("european_co2", ["disagree"])], 5) == []
+    assert report.proposal(agreeing[:4], 5) == []

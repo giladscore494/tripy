@@ -1,0 +1,791 @@
+{
+ "_note": "Production run 20261005T214857Z-glm-5.3-flash-one, record 23678 (BMW M4 Competition 2024, 31AZ): the 43 evidence records the run stored (tripy MCP run_events, kind evidence; the fields the policy replay needs, quotes shortened to the value clause for e30/e31) and the field states it recorded (run_result). Read-only copy for scripts/pr48_proof_gate.py.",
+ "run_id": "20261005T214857Z-glm-5.3-flash-one",
+ "record_id": "23678",
+ "evidence": [
+  {
+   "evidence_id": "e1",
+   "field": "torque_nm",
+   "value": 650,
+   "unit": "Nm",
+   "source_url": "https://www.bmw.co.il/he/All-Models/m-series/m4-series/bmw-m4-coupe.html",
+   "quote": "מומנט | 66.3 קג\"מ",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "official_importer",
+   "source_domain": "bmw.co.il"
+  },
+  {
+   "evidence_id": "e2",
+   "field": "torque_nm",
+   "value": 647,
+   "unit": "Nm",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "מומנט | 66 קג״מ",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e3",
+   "field": "torque_nm",
+   "value": 649,
+   "unit": "Nm",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "מומנט מרבי (קג\"מ) | 66.2",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e4",
+   "field": "torque_nm",
+   "value": 650,
+   "unit": "Nm",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "מומנט מירבי / בסל\"ד סל\"ד / קג\"מ 2,750-5,500 / 66.3",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e5",
+   "field": "acceleration_0_100_s",
+   "value": 3.9,
+   "unit": "s",
+   "source_url": "https://www.bmw.co.il/he/All-Models/m-series/m4-series/bmw-m4-coupe.html",
+   "quote": "0‏-100 קמ\"ש | 3.9 שנ'",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "official_importer",
+   "source_domain": "bmw.co.il"
+  },
+  {
+   "evidence_id": "e6",
+   "field": "acceleration_0_100_s",
+   "value": 3.9,
+   "unit": "s",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "תאוצה 0-100 | 3.9 שנ'",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e7",
+   "field": "top_speed_kmh",
+   "value": 250,
+   "unit": "km/h",
+   "source_url": "https://www.bmw.co.il/he/All-Models/m-series/m4-series/bmw-m4-coupe.html",
+   "quote": "מהירות מרבית | 250 קמ\"ש",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "official_importer",
+   "source_domain": "bmw.co.il"
+  },
+  {
+   "evidence_id": "e8",
+   "field": "top_speed_kmh",
+   "value": 250,
+   "unit": "km/h",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "מהירות מרבית | 250 קמ״ש",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e9",
+   "field": "length_mm",
+   "value": 4794,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "אורך | 479.4 ס״מ",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e10",
+   "field": "length_mm",
+   "value": 4794,
+   "unit": "mm",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "אורך (ס\"מ) | 479.4",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e11",
+   "field": "width_mm",
+   "value": 1887,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "רוחב | 188.7 ס״מ",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e12",
+   "field": "width_mm",
+   "value": 1903,
+   "unit": "mm",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "רוחב (ס\"מ) מצד לצד וללא מראות | 190.3",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e13",
+   "field": "height_mm",
+   "value": 1393,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "גובה | 139.3 ס״מ",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e14",
+   "field": "height_mm",
+   "value": 1433,
+   "unit": "mm",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "גובה (ס\"מ) | 143.3",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e15",
+   "field": "wheelbase_mm",
+   "value": 2857,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "בסיס גלגלים | 285.7 ס״מ",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e16",
+   "field": "wheelbase_mm",
+   "value": 2857,
+   "unit": "mm",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "בסיס גלגלים (ס\"מ) | 285.7",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e17",
+   "field": "curb_weight_kg",
+   "value": 1800,
+   "unit": "kg",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "משקל עצמי | 1,800 ק״ג",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e18",
+   "field": "curb_weight_kg",
+   "value": 1817,
+   "unit": "kg",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "משקל עצמי (ק\"ג) | 1817",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e19",
+   "field": "ground_clearance_mm",
+   "value": 120,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "מרווח גחון מ\"מ 120",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e20",
+   "field": "ground_clearance_mm",
+   "value": 120,
+   "unit": "mm",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m3-mifrat-2025-4.pdf",
+   "quote": "מרווח גחון מ\"מ 120",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e21",
+   "field": "cargo_volume_l",
+   "value": 440,
+   "unit": "l",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "נפח תא מטען אחורי | 440 ליטר",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e22",
+   "field": "cargo_volume_l",
+   "value": 440,
+   "unit": "l",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "נפח תא מטען ליטר 440",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e23",
+   "field": "fuel_tank_l",
+   "value": 59,
+   "unit": "l",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "נפח מיכל דלק ליטר 59",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e24",
+   "field": "fuel_tank_l",
+   "value": 59,
+   "unit": "l",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "קיבולת מיכל דלק (ליטרים) | 59",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e25",
+   "field": "gearbox_type",
+   "value": "automatic",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "תיבת הילוכים | אוטומטית",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e26",
+   "field": "gearbox_type",
+   "value": "automatic",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "סוג תיבת ההילוכים אוטומטית, פלאנטרית, 8 הילוכים",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e27",
+   "field": "gear_count",
+   "value": 8,
+   "unit": null,
+   "source_url": "https://www.bmw.co.il/he/All-Models/m-series/m4-series/bmw-m4-coupe.html",
+   "quote": "כל ההילוכים עומדים לרשותכם עם תיבת הילוכים אוטומטית M Steptronic Sport בעלת 8 הילוכים ו-Drivelogic.",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "official_importer",
+   "source_domain": "bmw.co.il"
+  },
+  {
+   "evidence_id": "e28",
+   "field": "gear_count",
+   "value": 8,
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "מספר הילוכים | 8",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_technical_variant",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e29",
+   "field": "screen_size_in",
+   "value": 14.9,
+   "unit": "in",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "גודל מסך | 14.90 אינץ׳",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e30",
+   "field": "screen_size_in",
+   "value": 14.9,
+   "unit": "in",
+   "source_url": "https://www.cartube.co.il/%D7%97%D7%93%D7%A9%D7%95%D7%AA-%D7%A8%D7%9B%D7%91/%D7%91-%D7%9E-%D7%95%D7%95-%D7%A1%D7%93%D7%A8%D7%94-4-%D7%94%D7%97%D7%93%D7%A9%D7%94-2024-%D7%91%D7%99%D7%A9%D7%A8%D7%90%D7%9C-%D7%9E%D7%97%D7%99%D7%A8-399000-%D7%A9%D7%A7%D7%9C",
+   "quote": "מסך פנורמי רחב המשלב מסך \"14.9 עבור המולטימדיה",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e31",
+   "field": "climate_zones",
+   "value": 3,
+   "unit": "zones",
+   "source_url": "https://www.icar.co.il/%D7%91.%D7%9E.%D7%95%D7%95/%D7%91.%D7%9E.%D7%95%D7%95_M3/%D7%91.%D7%9E.%D7%95%D7%95_M3_%D7%99%D7%93_%D7%A9%D7%A0%D7%99%D7%94_%D7%9311/version28497/",
+   "quote": "בקרת אקלים עם 3 איזורים",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "publisher",
+   "source_domain": "icar.co.il"
+  },
+  {
+   "evidence_id": "e32",
+   "field": "climate_zones",
+   "value": 2,
+   "unit": "zones",
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m3-mifrat-2025-4.pdf",
+   "quote": "בקרת אקלים מפוצלת עם פתחי אוורור למושב האחורי ˆ",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e33",
+   "field": "rim_diameter_in",
+   "value": 19,
+   "unit": "in",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "ק' 275/35R19 , א' 285/30R20",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e34",
+   "field": "rim_diameter_in",
+   "value": 20,
+   "unit": "in",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "ק' 275/35R19 , א' 285/30R20",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e35",
+   "field": "tire_size_front",
+   "value": "275/35 R19",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "צמיגים קדמיים במידה 275/35R19 ˆ",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e36",
+   "field": "tire_size_front",
+   "value": "275/35 R19",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m3-mifrat-2025-4.pdf",
+   "quote": "צמיגים קדמיים במידה 275/35R19 ˆ",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e37",
+   "field": "tire_size_rear",
+   "value": "285/30 R20",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "צמיגים אחוריים במידה 285/30R20",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e38",
+   "field": "tire_size_rear",
+   "value": "285/30 R20",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m3-mifrat-2025-4.pdf",
+   "quote": "צמיגים אחוריים במידה 285/30R20",
+   "market": "IL",
+   "variant_match": "unbound",
+   "binding_level": "unknown",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e39",
+   "field": "local_trim_name",
+   "value": "COMPETITION",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/images/mifrat/bmw/bmw-m4-coupe-mifrat-2024-05.pdf",
+   "quote": "רמת אבזור | COMPETITION",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e40",
+   "field": "list_price",
+   "value": 815000,
+   "unit": "ILS",
+   "source_url": "https://www.cartube.co.il/%D7%97%D7%93%D7%A9%D7%95%D7%AA-%D7%A8%D7%9B%D7%91/%D7%91-%D7%9E-%D7%95%D7%95-%D7%A1%D7%93%D7%A8%D7%94-4-%D7%94%D7%97%D7%93%D7%A9%D7%94-2024-%D7%91%D7%99%D7%A9%D7%A8%D7%90%D7%9C-%D7%9E%D7%97%D7%99%D7%A8-399000-%D7%A9%D7%A7%D7%9C",
+   "quote": "ב.מ.וו M4 קומפטישן קופה - מחיר 815,000 ₪ | 2024 ב.מ.וו סדרה 4",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e41",
+   "field": "registration_licence_fee",
+   "value": 5499,
+   "unit": "₪",
+   "source_url": "https://www.bmw.co.il/he/All-Models/m-series/m4-series/bmw-m4-coupe.html",
+   "quote": "רישוי מחיר כולל מע\"מ ואגרת רישוי M4 Coupe Competition 599,900 ₪ 5,499 ₪ 605,399",
+   "market": "IL",
+   "variant_match": "unclear",
+   "binding_level": "body_powertrain",
+   "binding_requirement": "exact_market_trim",
+   "source_authority": "official_importer",
+   "source_domain": "bmw.co.il"
+  },
+  {
+   "evidence_id": "e42",
+   "field": "vehicle_warranty",
+   "value": "3 years",
+   "unit": null,
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "אחריות | 3 שנים",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "body_powertrain",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  },
+  {
+   "evidence_id": "e43",
+   "field": "warranty_years",
+   "value": 3,
+   "unit": "years",
+   "source_url": "https://www.cartube.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%A8%D7%9B%D7%91-%D7%97%D7%93%D7%A9/23-%D7%91-%D7%9E-%D7%95%D7%95/124-%D7%91-%D7%9E-%D7%95%D7%95-m4/1225-3-0-competition-2024-2",
+   "quote": "אחריות | 3 שנים",
+   "market": "IL",
+   "variant_match": "exact",
+   "binding_level": "exact_market_trim",
+   "binding_requirement": "body_powertrain",
+   "source_authority": "aggregator",
+   "source_domain": "cartube.co.il"
+  }
+ ],
+ "recorded": {
+  "torque_nm": {
+   "state": "conflicting",
+   "value": null
+  },
+  "acceleration_0_100_s": {
+   "state": "ok",
+   "value": 3.9
+  },
+  "top_speed_kmh": {
+   "state": "ok",
+   "value": 250
+  },
+  "fuel_consumption_combined_l_100km": {
+   "state": "missing",
+   "value": null
+  },
+  "length_mm": {
+   "state": "ok",
+   "value": 4794
+  },
+  "width_mm": {
+   "state": "ok",
+   "value": 1887
+  },
+  "height_mm": {
+   "state": "ok",
+   "value": 1393
+  },
+  "wheelbase_mm": {
+   "state": "ok",
+   "value": 2857
+  },
+  "curb_weight_kg": {
+   "state": "ok",
+   "value": 1800
+  },
+  "ground_clearance_mm": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "cargo_volume_l": {
+   "state": "ok",
+   "value": 440
+  },
+  "fuel_tank_l": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "gearbox_type": {
+   "state": "ok",
+   "value": "automatic"
+  },
+  "gear_count": {
+   "state": "ok",
+   "value": 8
+  },
+  "screen_size_in": {
+   "state": "ok",
+   "value": 14.9
+  },
+  "apple_carplay": {
+   "state": "missing",
+   "value": null
+  },
+  "android_auto": {
+   "state": "missing",
+   "value": null
+  },
+  "wireless_phone_projection": {
+   "state": "missing",
+   "value": null
+  },
+  "power_seats": {
+   "state": "missing",
+   "value": null
+  },
+  "heated_seats": {
+   "state": "missing",
+   "value": null
+  },
+  "ventilated_seats": {
+   "state": "missing",
+   "value": null
+  },
+  "climate_zones": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "sunroof_panoramic": {
+   "state": "missing",
+   "value": null
+  },
+  "other_comfort_features": {
+   "state": "missing",
+   "value": null
+  },
+  "rim_diameter_in": {
+   "state": "conflicting",
+   "value": null
+  },
+  "tire_size_front": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "tire_size_rear": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "alternative_tire_sizes": {
+   "state": "missing",
+   "value": null
+  },
+  "local_trim_name": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "list_price": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "registration_licence_fee": {
+   "state": "variant_not_exact",
+   "value": null
+  },
+  "vehicle_warranty": {
+   "state": "ok",
+   "value": "3 years"
+  },
+  "battery_hybrid_warranty": {
+   "state": "missing",
+   "value": null
+  },
+  "warranty_km": {
+   "state": "missing",
+   "value": null
+  },
+  "warranty_years": {
+   "state": "ok",
+   "value": 3
+  },
+  "energy_consumption_kwh_100km": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "battery_gross_kwh": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "battery_usable_kwh": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "electric_range_km": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "electric_range_standard": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "ac_charging_time": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "dc_charging_time": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "dc_charging_window_pct": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "ac_max_charging_power_kw": {
+   "state": "not_applicable",
+   "value": null
+  },
+  "dc_max_charging_power_kw": {
+   "state": "not_applicable",
+   "value": null
+  }
+ }
+}
