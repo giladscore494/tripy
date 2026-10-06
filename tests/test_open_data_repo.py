@@ -169,8 +169,9 @@ def test_a_missing_manifest_is_no_snapshot_for_every_dataset(repo_snapshot):
 
 # --- G2: compaction -------------------------------------------------------------------------------------------------------
 
-def test_eea_compaction_keeps_one_row_per_configuration_with_min_max_median():
-    from src.open_data.build import compact
+def test_group_configurations_keeps_one_row_per_configuration_with_min_max_median():
+    """The generic Python grouping (EEA is grouped server-side since H2; compact() passes its rows through)."""
+    from src.open_data.build import compact, group_configurations
 
     base = {"make": "BMW", "model": "530E", "type_approval": "e1", "variant": "JA", "version": "51EA", "fuel": "petrol/electric",
             "fuel_mode": "P", "displacement_cc": 1998, "power_kw": 135, "co2_wltp": 47, "year": 2020, "status": "F",
@@ -179,17 +180,20 @@ def test_eea_compaction_keeps_one_row_per_configuration_with_min_max_median():
             {**base, "mass_running_order_kg": 1990, "wheelbase_mm": 2975, "electric_range_km": 54, "registrations": 1},
             {**base, "mass_running_order_kg": 2010, "wheelbase_mm": 2975, "electric_range_km": 52, "registrations": 1},
             {**base, "co2_wltp": 51, "mass_running_order_kg": 2080, "wheelbase_mm": 2975, "registrations": 2}]
-    out = compact("eea_co2_cars", {"rows": rows})
-    assert out["compaction"]["rows_before"] == 4 and out["compaction"]["rows_after"] == 2
-    first = next(r for r in out["rows"] if r["co2_wltp"] == 47)
+    keys = ["make", "model", "type_approval", "variant", "version", "fuel", "fuel_mode", "displacement_cc", "power_kw",
+            "co2_wltp", "year"]
+    out = group_configurations(rows, keys, ["mass_running_order_kg", "wheelbase_mm", "electric_range_km"],
+                               "registrations", ["status"])
+    assert len(out) == 2
+    first = next(r for r in out if r["co2_wltp"] == 47)
     assert (first["mass_running_order_kg"], first["mass_running_order_kg_min"], first["mass_running_order_kg_max"]) \
         == (1945.0, 1945.0, 2010.0)                                          # weighted median: 3 of 5 registrations
     assert (first["electric_range_km_min"], first["electric_range_km_max"]) == (52.0, 57.0)
     assert first["registrations"] == 5.0 and first["status"] == "F" and "co2_nedc" not in first
-    assert first["row_id"].startswith("eea-2020-")
-    second = next(r for r in out["rows"] if r["co2_wltp"] == 51)
-    assert second["mass_running_order_kg"] == second["mass_running_order_kg_min"] == 2080.0
+    second = next(r for r in out if r["co2_wltp"] == 51)
     assert "electric_range_km" not in second                                 # not stated: not invented
+    passed = compact("eea_co2_cars", {"rows": rows})                         # server-grouped: no Python regrouping
+    assert passed["compaction"]["rows_after"] == 4
 
 
 def test_compaction_filters_the_years_and_the_vocabulary_makes():
@@ -203,11 +207,14 @@ def test_compaction_filters_the_years_and_the_vocabulary_makes():
     assert [r["file_year"] for r in compact("tc_cvs", {"rows": cvs})["rows"]] == [2018]
 
 
-def test_eea_offers_a_configurations_median_only_when_min_equals_max_or_one_configuration():
+def test_eea_offers_a_value_only_when_min_equals_max():
+    """H2: an EEA configuration's value is its MIN when MIN = MAX, else an AVG: never offered (range_policy
+    equal_only), even with one configuration."""
     from src.open_data.offers import field_offers
 
     entry = next(e for e in ds.config()["field_map"] if e["source"] == "eea_co2_cars" and e["field"] == "curb_weight_kg")
-    row = {"row_id": "eea-2020-1", "mass_running_order_kg": 1945.0, "mass_running_order_kg_min": 1945.0,
+    assert entry["range_policy"] == "equal_only"
+    row = {"row_id": "eea-2020-1", "mass_running_order_kg": 1977.5, "mass_running_order_kg_min": 1945.0,
            "mass_running_order_kg_max": 2010.0}
 
     def offer(status, survivors):
@@ -216,8 +223,10 @@ def test_eea_offers_a_configurations_median_only_when_min_equals_max_or_one_conf
                                                           "configurations": ["a", "b"][:len(survivors)]}}},
                             [entry])[0]
     one = offer("unique", [row])
-    assert one["status"] == "offered" and one["value"] == 1945 and one["range"] == [1945, 2010]
-    assert offer("ambiguous", [row, {**row, "row_id": "eea-2020-2"}])["status"] == "range"
+    assert one["status"] == "range" and one["range"] == [1945, 2010] and "value" not in one
+    equal = {**row, "mass_running_order_kg": 1945.0, "mass_running_order_kg_max": 1945.0}
+    exact = offer("unique", [equal])
+    assert exact["status"] == "offered" and exact["value"] == 1945 and "range" not in exact
 
 
 # --- G1: the Action -------------------------------------------------------------------------------------------------------

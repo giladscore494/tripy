@@ -8,11 +8,15 @@ name: build-open-data
 #   1. live-schema probe: per dataset / year / file the live header or field schema and its resolution against
 #      data/open_datasets.json (step summary + artifact + data/open/probe.json); a dataset whose probe fails is not
 #      built (the failure stops only that dataset)
-#   2. build with src/open_data/build.py, compacted (data/open_datasets.json `compaction`)
+#   2. make aliases for every catalog manufacturer (scripts/build_make_aliases.py: the probe's distinct source makes,
+#      matched deterministically; ambiguous / unmatched makes go to the review list in the PR body), then build with
+#      src/open_data/build.py, compacted (data/open_datasets.json `compaction`)
 #   3. compress to data/open/<dataset>.sqlite.gz; a file over 50 MB fails the step with its size
 #   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
 #      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010)
-#   5. pull request on automation/open-data with the summaries in its body
+#   5. pull request on automation/open-data with the summaries in its body. Creating it needs the repository setting
+#      "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the
+#      branch is still pushed and the last step writes the compare URL to open the pull request by hand
 
 on:
   workflow_dispatch:
@@ -54,12 +58,16 @@ jobs:
             data/open/probe.json
             open-data-probe.md
           if-no-files-found: ignore
+      - name: Make aliases for every catalog manufacturer (review list for the ambiguous / unmatched ones)
+        run: python scripts/build_make_aliases.py --probe data/open/probe.json --out data/open_data_make_aliases.json --review open-data-makes.md
       - name: Build and compress the snapshots (each file under 50 MB)
         run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50
       - name: Coverage report (before the pull request step)
         if: always()
-        run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --body open-data-pr-body.md
+        run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --makes open-data-makes.md --body open-data-pr-body.md
       - name: Open a pull request
+        id: cpr
+        continue-on-error: true
         uses: peter-evans/create-pull-request@v6
         with:
           branch: automation/open-data
@@ -70,3 +78,14 @@ jobs:
             data/open/*.sqlite.gz
             data/open/manifest.json
             data/open/probe.json
+            data/open_data_make_aliases.json
+      - name: Pull request fallback (the repository does not let Actions create pull requests)
+        if: always() && steps.cpr.outcome == 'failure'
+        run: |
+          {
+            echo "## Open the pull request by hand"
+            echo ""
+            echo "The pull request step failed (often: GitHub Actions is not permitted to create or approve pull requests; enable it under Settings -> Actions -> General -> \"Allow GitHub Actions to create and approve pull requests\"). If the branch was pushed, open the pull request here:"
+            echo ""
+            echo "https://github.com/${{ github.repository }}/compare/main...automation/open-data?expand=1"
+          } >> "$GITHUB_STEP_SUMMARY"

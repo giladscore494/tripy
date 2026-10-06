@@ -277,24 +277,90 @@ def build_csv_dataset(dataset: str, urls: list[str], fetch: Fetcher, *, keep_mak
 
 
 def known_makes() -> set[str]:
-    from ..document_binding import vocabulary
+    """Every make spelling of the aliases (data/open_data_make_aliases.json, generated for the whole catalog by
+    scripts/build_make_aliases.py, merged with the reviewed identity_vocabulary entries)."""
+    from .makes import aliases
 
-    aliases = vocabulary().get("open_data_make_aliases") or {}
-    return {str(m).upper() for k, v in aliases.items() if not k.startswith("_") and isinstance(v, list) for m in v}
+    return {m for makes in aliases().values() for m in makes}
 
 
 # --- EEA (DISCODATA) -------------------------------------------------------------------------------------------------------
 
+class EeaQueryError(RuntimeError):
+    """DISCODATA answered without results (an error message, or no `results` key): never "a year with no cars"."""
+
+
+def _q(column: str) -> str:
+    return "[" + column.replace("]", "]]") + "]"
+
+
+def eea_response(body: bytes) -> list[dict]:
+    """The rows of a DISCODATA response; EeaQueryError (message kept, <= 500 chars) when it carries an error or no
+    `results` key."""
+    text = _decode(body)
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise EeaQueryError(f"not JSON: {text[:400]}") from exc
+    if not isinstance(data, dict):
+        raise EeaQueryError(f"unexpected response: {text[:400]}")
+    errors = {k: v for k, v in data.items() if "error" in k.lower() and v}
+    if errors:
+        raise EeaQueryError(json.dumps(errors, ensure_ascii=False, default=str)[:500])
+    for key in ("results", "Results"):
+        if key in data:
+            rows = data[key]
+            if not isinstance(rows, list):
+                raise EeaQueryError(f"`{key}` is not a list: {str(rows)[:400]}")
+            return rows
+    raise EeaQueryError(f"no `results` in the response: {text[:450]}")
+
+
+def eea_grouped_query(table: str, mapping: dict[str, str], cfg: dict, registrations: str | None, where: str,
+                      makes: list[str]) -> str:
+    """H2: grouped server-side by the identity keys only, the measurements aggregated (MIN / MAX / AVG over
+    TRY_CAST float), the registrations summed over TRY_CAST bigint, no ORDER BY."""
+    keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
+    measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
+    select = [f"{_q(mapping[k])} AS {_q(k)}" for k in keys]
+    for key in measures:
+        value = f"TRY_CAST({_q(mapping[key])} AS float)"
+        select += [f"MIN({value}) AS {_q(key + '_min')}", f"MAX({value}) AS {_q(key + '_max')}",
+                   f"AVG({value}) AS {_q(key + '_avg')}"]
+    if registrations:
+        select.append(f"SUM(TRY_CAST({_q(registrations)} AS bigint)) AS [registrations]")
+    in_makes = ", ".join("'" + m.replace("'", "''") + "'" for m in makes)
+    return (f"SELECT {', '.join(select)} FROM {table} WHERE {where} AND UPPER({_q(mapping['make'])}) IN ({in_makes}) "
+            f"GROUP BY {', '.join(_q(mapping[k]) for k in keys)}")
+
+
+def _eea_rows(chunk: list[dict], cfg: dict, mapping: dict, status: str) -> list[dict]:
+    keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
+    measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
+    out = []
+    for raw in chunk:
+        item = {key: raw.get(key) for key in keys}
+        for key in measures:
+            low, high, avg = (_as_float(raw.get(f"{key}_{s}")) for s in ("min", "max", "avg"))
+            if low is None and high is None:
+                continue
+            item[f"{key}_min"], item[f"{key}_max"] = low, high
+            item[key] = low if low == high else (round(avg, 3) if avg is not None else None)
+        item["registrations"] = ds._int(raw.get("registrations"))
+        item["status"] = status
+        out.append(item)
+    return out
+
+
 def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop) -> dict:
-    """Year discovery, then per year its own schema and one grouped query (module docstring)."""
+    """Year discovery, then per year its own schema and one grouped query; a year whose query fails or fills a page
+    is split by make (module docstring). A query error is an error, never a year without cars."""
     cfg = ds.datasets()["eea_co2_cars"]
     base, table = cfg["source_url"], cfg["table"]
     columns = cfg["columns"]
 
     def sql(query: str, page: int = 1) -> list[dict]:
-        body = fetch(f"{base}?query={quote(query)}&p={page}&nrOfHits={EEA_PAGE}")
-        data = json.loads(_decode(body))
-        return data.get("results") or data.get("Results") or []
+        return eea_response(fetch(f"{base}?query={quote(query)}&p={page}&nrOfHits={EEA_PAGE}"))
 
     def sql_all(query: str) -> list[dict]:
         """Every page of a query (DISCODATA pages by p / nrOfHits): a full page asks for the next one."""
@@ -306,9 +372,6 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
                 return out
             page += 1
 
-    def q(column: str) -> str:
-        return "[" + column.replace("]", "]]") + "]"
-
     progress("schema")
     sample = sql(f"SELECT TOP 1 * FROM {table}")
     header = list(sample[0].keys()) if sample else []
@@ -316,7 +379,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     year_col, status_col = head["year"], head["status"]
     progress("year discovery")
     statuses: dict[int, set[str]] = {}
-    for pair in sql_all(f"SELECT DISTINCT {q(year_col)}, {q(status_col)} FROM {table}"):
+    for pair in sql_all(f"SELECT DISTINCT {_q(year_col)}, {_q(status_col)} FROM {table}"):
         year = ds._int(pair.get(year_col))
         if year is not None:
             statuses.setdefault(year, set()).add(str(pair.get(status_col) or "").strip())
@@ -324,8 +387,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     wanted = sorted(y for y in statuses if y >= floor and (years is None or y in years))
     makes = sorted(known_makes())
     if not makes:
-        raise BuildStopped("no_makes", note="identity_vocabulary open_data_make_aliases is empty")
-    in_makes = ", ".join("'" + m.replace("'", "''") + "'" for m in makes)
+        raise BuildStopped("no_makes", note="no open-data make aliases (data/open_data_make_aliases.json)")
     rows: list[dict] = []
     reports: list[dict] = []
     absent_by_year: dict[str, list[str]] = {}
@@ -338,8 +400,13 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
                             "statuses": sorted(statuses[year])})
             continue
         progress(f"year {year} (status {status})")
-        where = f"{q(year_col)} = {int(year)} AND {q(status_col)} = '{status}'"
-        sample = sql(f"SELECT TOP 1 * FROM {table} WHERE {where}")
+        where = f"{_q(year_col)} = {int(year)} AND {_q(status_col)} = '{status}'"
+        try:
+            sample = sql(f"SELECT TOP 1 * FROM {table} WHERE {where}")
+        except EeaQueryError as exc:
+            reports.append({"year": year, "status": "failed", "status_used": status, "stage": "schema",
+                            "error": str(exc)[:500]})
+            continue
         if not sample:
             reports.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status})
             continue
@@ -353,25 +420,38 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         mapping = resolved["mapping"]
         registrations = resolve_map(year_header, {"registrations": cfg["registrations_column"]})["mapping"].get(
             "registrations")
-        group = ", ".join(q(c) for c in mapping.values())
-        total = f", SUM({q(registrations)}) AS registrations" if registrations else ""
+        report: dict[str, Any] = {"year": year, "status_used": status, "absent_columns": resolved["absent"],
+                                  "registrations_column": registrations}
+        built: list[dict] = []
         try:
-            chunk = sql_all(f"SELECT {group}{total} FROM {table} WHERE {where} AND UPPER({q(mapping['make'])}) "
-                            f"IN ({in_makes}) GROUP BY {group} ORDER BY {group}")
-        except Exception as exc:  # noqa: BLE001 - one year never costs the others
-            reports.append({"year": year, "status": "failed", "status_used": status,
-                            "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
-            continue
-        for n, raw in enumerate(chunk):
-            item = {key: raw.get(column) for key, column in mapping.items()}
-            item["registrations"] = raw.get("registrations")
-            item["status"] = status
+            chunk = sql(eea_grouped_query(table, mapping, cfg, registrations, where, makes))
+            if len(chunk) >= EEA_PAGE:
+                raise EeaQueryError(f"a full page ({len(chunk)} rows): split by make")
+            built, report["mode"] = _eea_rows(chunk, cfg, mapping, status), "year"
+        except EeaQueryError as exc:
+            report.update(mode="make_split", year_error=str(exc)[:500])
+            errors: dict[str, str] = {}
+            for make in makes:
+                progress(f"year {year} (status {status}): {make}")
+                try:
+                    built += _eea_rows(sql_all(eea_grouped_query(table, mapping, cfg, registrations, where, [make])),
+                                       cfg, mapping, status)
+                except EeaQueryError as make_exc:
+                    errors[make] = str(make_exc)[:500]
+            if errors:
+                report["make_errors"] = errors
+            if len(errors) == len(makes):
+                reports.append({**report, "status": "failed", "error": report["year_error"]})
+                continue
+        by_make: dict[str, int] = {}
+        for n, item in enumerate(built):
             item["row_id"] = f"eea-{year}-{status}-{n + 1}"
-            rows.append(item)
+            by_make[str(item.get("make") or "").upper()] = by_make.get(str(item.get("make") or "").upper(), 0) + 1
+        rows += built
         absent_by_year[str(year)] = resolved["absent"]
-        reports.append({"year": year, "status": "built", "status_used": status, "rows": len(chunk),
-                        "absent_columns": resolved["absent"], "registrations_column": registrations})
-    if not any(r["status"] == "built" for r in reports):
+        reports.append({**report, "status": "partial" if report.get("make_errors") else "built", "rows": len(built),
+                        "by_make": dict(sorted(by_make.items()))})
+    if not any(r["status"] in ("built", "partial") for r in reports):
         raise BuildStopped("no_year_built", years=reports, discovered={str(y): sorted(s) for y, s in statuses.items()})
     return {"rows": rows, "schema": header, "urls": [base], "years": reports,
             "absent_columns": absent_by_year}
@@ -542,9 +622,20 @@ def _xls_rows(body: bytes) -> list[list[str]]:
     return out
 
 
-def dictionary_check(rows: list[list[str]], check: dict) -> list[dict]:
-    """Problems of the CVS data dictionary against the map: every code must be a cell of some row and that row must
-    name the code's unit (unit_tokens)."""
+def override_units(overrides: dict | None) -> dict[str, str]:
+    """{CODE: unit} of the dataset's `unit_overrides` entries that name a source code (CVS: OL / OW / OH / WB / CW)."""
+    out = {}
+    for key, entry in (overrides or {}).items():
+        if isinstance(entry, dict) and not str(key).startswith("_") and entry.get("code") and entry.get("unit"):
+            out[str(entry["code"]).strip().upper()] = str(entry["unit"])
+    return out
+
+
+def dictionary_check(rows: list[list[str]], check: dict, overrides: dict | None = None) -> list[dict]:
+    """Problems of the CVS data dictionary against the map: every code must be a cell of some row (codes matched
+    trimmed: "OH ", "CW ") and that row must name the code's unit (unit_tokens), or a `unit_overrides` entry must
+    confirm that unit (recorded evidence). A code with neither is still a problem."""
+    confirmed = override_units(overrides)
     problems = []
     for code, unit in (check.get("codes") or {}).items():
         row = next((r for r in rows if any(c.strip().upper() == code.upper() for c in r)), None)
@@ -552,7 +643,10 @@ def dictionary_check(rows: list[list[str]], check: dict) -> list[dict]:
             problems.append({"code": code, "reason": "not_in_dictionary"})
             continue
         if unit and not _tokens_in(" ".join(row).lower(), (check.get("unit_tokens") or {}).get(unit) or [unit]):
-            problems.append({"code": code, "reason": "unit_not_stated", "expected_unit": unit, "dictionary_row": row})
+            if confirmed.get(code.upper()) == unit:
+                continue
+            problems.append({"code": code, "reason": "unit_not_stated", "expected_unit": unit, "dictionary_row": row,
+                             "override": confirmed.get(code.upper())})
     return problems
 
 
@@ -567,7 +661,7 @@ def build_ckan_files(dataset: str, fetch: Fetcher, *, progress: Progress = _noop
         raise BuildStopped("no_dictionary", resources=[_file_name(r) for r in resources][:80])
     progress("data dictionary")
     dict_rows = _xls_rows(fetch(dictionary["url"]))
-    problems = dictionary_check(dict_rows, cfg.get("dictionary_check") or {})
+    problems = dictionary_check(dict_rows, cfg.get("dictionary_check") or {}, cfg.get("unit_overrides"))
     if problems:
         raise BuildStopped("dictionary_mismatch", problems=problems, dictionary_rows=dict_rows[:120])
     targets = sorted((r for r in resources if files_re.search(_file_name(r))), key=_file_name)

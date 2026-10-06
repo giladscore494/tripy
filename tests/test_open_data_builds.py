@@ -88,7 +88,36 @@ def test_the_eea_map_resolves_the_2018_header_with_every_required_key():
     assert resolve_map(H.EEA_2018_HEADER, {"r": _cfg("eea_co2_cars")["registrations_column"]})["mapping"] == {"r": "R"}
 
 
-def _eea_fetch(pairs, per_year_rows, queries, header=H.EEA_2018_HEADER):
+def eea_grouped(rows: list[dict], query: str) -> list[dict]:
+    """A fake DISCODATA for the grouped query: groups the per-vehicle rows by the identity keys' live columns and
+    aggregates the measurements (MIN / MAX / AVG) and R (SUM), only for the makes of the query's IN list."""
+    import re as _re
+
+    cfg = _cfg("eea_co2_cars")
+    assert "GROUP BY" in query and "ORDER BY" not in query and "TRY_CAST" in query
+    makes = set(_re.findall(r"'([^']+)'", query.split(" IN (", 1)[1]))
+    header = list(rows[0].keys()) if rows else H.EEA_2018_HEADER
+    mapping = resolve_map(header, cfg["columns"])["mapping"]
+    keys = [k for k in cfg["group_by_keys"] if k in mapping]
+    measures = [k for k in cfg["measure_keys"] if k in mapping]
+    groups: dict = {}
+    for row in rows:
+        if str(row.get(mapping["make"]) or "").upper() not in makes:
+            continue
+        groups.setdefault(tuple(row.get(mapping[k]) for k in keys), []).append(row)
+    out = []
+    for key, members in groups.items():
+        item = dict(zip(keys, key))
+        for m in measures:
+            values = [float(r[mapping[m]]) for r in members if r.get(mapping[m]) is not None]
+            item[f"{m}_min"], item[f"{m}_max"] = (min(values), max(values)) if values else (None, None)
+            item[f"{m}_avg"] = sum(values) / len(values) if values else None
+        item["registrations"] = sum(int(r.get("R") or 0) for r in members)
+        out.append(item)
+    return out
+
+
+def _eea_fetch(pairs, per_year_rows, queries, header=H.EEA_2018_HEADER, grouped=None):
     def fetch(url):
         query = parse_qs(urlparse(url).query)["query"][0]
         queries.append(query)
@@ -101,9 +130,9 @@ def _eea_fetch(pairs, per_year_rows, queries, header=H.EEA_2018_HEADER):
         if query.startswith("SELECT TOP 1"):
             rows = per_year_rows.get((year, status)) or []
             return json.dumps({"results": rows[:1]}).encode()
-        assert "GROUP BY" in query and "'CADILLAC'" in query
-        return json.dumps({"results": [{**{k: v for k, v in r.items() if k != "R"}, "registrations": r.get("R")}
-                                       for r in per_year_rows.get((year, status)) or []]}).encode()
+        if grouped is not None:
+            return grouped(year, status, query)
+        return json.dumps({"results": eea_grouped(per_year_rows.get((year, status)) or [], query)}).encode()
     return fetch
 
 
@@ -364,14 +393,19 @@ def test_cvs_reads_its_files_from_the_package_and_checks_the_dictionary(monkeypa
     assert built["file_years"] == [2018, 2023] and built["last_file_year"] == 2023
     assert not any(url.endswith("_fr.csv") for url in fetched)
     assert [r["wheelbase_cm"] for r in built["rows"]] == ["291", "291"]
-    wrong = [row if row[0] != "WB" else ["WB", "Wheelbase (mm)"] for row in H.CVS_DICTIONARY_ROWS]
-    monkeypatch.setattr(build, "_xls_rows", lambda body: wrong)
+    # H4: the live dictionary states no unit for the codes: the unit_overrides (CTS 2018 evidence) confirm them
+    unitless = [[row[0], row[1].split(" (")[0]] for row in H.CVS_DICTIONARY_ROWS]
+    monkeypatch.setattr(build, "_xls_rows", lambda body: unitless)
+    assert len(build_ckan_files("tc_cvs", _cvs_fetch([]))["rows"]) == 2
+    cfg = json.loads(json.dumps(ds.config()))
+    del cfg["datasets"]["tc_cvs"]["unit_overrides"]["wheelbase_cm"]          # a code without an override still stops
+    monkeypatch.setattr(ds, "config", lambda path=None: cfg)
     with pytest.raises(BuildStopped) as stop:
         build_ckan_files("tc_cvs", _cvs_fetch([]))
     assert stop.value.reason == "dictionary_mismatch"
     assert stop.value.report["problems"] == [{"code": "WB", "reason": "unit_not_stated", "expected_unit": "cm",
-                                              "dictionary_row": ["WB", "Wheelbase (mm)"]}]
-    assert ["WB", "Wheelbase (mm)"] in stop.value.report["dictionary_rows"]
+                                              "dictionary_row": ["WB", "Wheelbase"], "override": None}]
+    assert ["WB", "Wheelbase"] in stop.value.report["dictionary_rows"]
 
 
 def test_the_dictionary_check_names_a_code_the_dictionary_lacks():
