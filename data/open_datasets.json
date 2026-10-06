@@ -1,5 +1,5 @@
 {
-  "_about": "Open structured data layer (src/open_data/). Per dataset: where it is downloaded from, the source column -> canonical key map (unit, definition tag, year semantics) and the snapshot it becomes: built by the build-open-data GitHub Action (scripts/build_open_data.py, compacted by `compaction`) and committed as data/open/<dataset>.sqlite.gz with data/open/manifest.json; the server reads them from the deploy image (sha256-verified, decompressed to the temp dir) and never builds or writes open data. A column map entry lists the EXACT source spellings it accepts (`source`); the build reads the live header first and matches the spellings case-insensitively (whitespace trimmed) and never guesses: a `required` key (the identity keys) whose spellings are all absent stops that table / file (`schema_mismatch`), an optional key that is absent is recorded in the snapshot meta (`absent_columns`) and its offers are not produced, and two different live columns matching one key are `ambiguous` (stop). `fallback` spellings are read only when no `source` spelling is present. `schema_verified` records whether the map was checked against the live schema; the build re-checks it every time either way. The engine reads only the committed snapshots (vPIC: an on-demand decode, cached). `field_map`: the field offers a matched configuration makes, with the definition each source column measures and the route an offer may port to (D-4). Make aliases live in data/identity_vocabulary.json (`open_data_make_aliases`).",
+  "_about": "Open structured data layer (src/open_data/). Per dataset: where it is downloaded from, the source column -> canonical key map (unit, definition tag, year semantics) and the snapshot it becomes: built by the build-open-data GitHub Action (scripts/build_open_data.py, compacted by `compaction`) and committed as data/open/<dataset>.sqlite.gz with data/open/manifest.json; the server reads them from the deploy image (sha256-verified, decompressed to the temp dir) and never builds or writes open data. A column map entry lists the EXACT source spellings it accepts (`source`); the build reads the live header first and matches the spellings case-insensitively (whitespace trimmed) and never guesses: a `required` key (the identity keys) whose spellings are all absent stops that table / file (`schema_mismatch`), an optional key that is absent is recorded in the snapshot meta (`absent_columns`) and its offers are not produced, and two different live columns matching one key are `ambiguous` (stop). `fallback` spellings are read only when no `source` spelling is present. `schema_verified` records whether the map was checked against the live schema; the build re-checks it every time either way. The engine reads only the committed snapshots (vPIC: an on-demand decode, cached). `field_map`: the field offers a matched configuration makes, with the definition each source column measures and the route an offer may port to (D-4). Make aliases: data/make_canonical.json (reviewed: tozar -> canonical makes) and the spellings that normalize to them per dataset (scripts/build_make_aliases.py -> data/open_data_make_aliases.json).",
   "version": "open-datasets-v4",
   "refresh_interval_days": 30,
   "datasets": {
@@ -16,7 +16,7 @@
                         "power_kw", "co2_wltp", "year"],
       "measure_keys": ["mass_running_order_kg", "mass_wltp_test_kg", "wheelbase_mm", "track_front_mm", "track_rear_mm",
                        "energy_wh_km", "fuel_consumption_l_100km", "electric_range_km"],
-      "compaction": {"_about": "H2: grouped server-side (DISCODATA) by `group_by_keys` only, one row per configuration: each of `measure_keys` as MIN / MAX / AVG (TRY_CAST float; the stored value is the minimum when MIN = MAX, else the average, with `_min` / `_max`), SUM(TRY_CAST(R AS bigint)) as registrations, no ORDER BY; a year whose grouped query fails or fills a page is split by make; final rows (provisional per year only without final ones), the years that exist, the aliases' makes; never a per-vehicle row"},
+      "compaction": {"_about": "E1 / G2: per (year, make spelling) one short DISCODATA query (its URL-encoded query= value <= 1,800 bytes, checked before sending; over it the measurement columns split into two queries joined locally on the identity key; still over: query_too_long): SELECT the identity and measurement columns + SUM(TRY_CAST(R AS bigint)) AS r, GROUP BY the same columns, no other alias, no MIN / MAX / AVG, no ORDER BY. The runner computes per identity key (`group_by_keys`) the registration-weighted median, min and max of each of `measure_keys` and the summed registrations; final rows (provisional per year only without final ones), the years that exist, the make values present that year whose spelling normalizes to a canonical make (data/make_canonical.json; a model-gated make only with a catalog model match); never a per-vehicle row"},
       "schema_verified": "2018 header (reviewer, live DISCODATA, 2026-10-06); other years are read per year at build time",
       "columns": {
         "make": {"source": ["Mk"], "required": true},
@@ -95,7 +95,7 @@
       "label": "EPA fueleconomy.gov vehicles",
       "source_url": "https://www.fueleconomy.gov/feg/epadata/vehicles.csv.zip",
       "download_urls": ["https://www.fueleconomy.gov/feg/epadata/vehicles.csv.zip"],
-      "compaction": {"_about": "G2: the mapped columns, model year >= 2005, the vocabulary's makes", "makes": "vocabulary", "min_year": 2005},
+      "compaction": {"_about": "G2: the mapped columns, model year >= 2005, the rows whose make spelling normalizes to a canonical make (data/make_canonical.json; a model-gated make only with a catalog model match)", "makes": "vocabulary", "min_year": 2005},
       "year_semantics": "model_year",
       "schema_verified": "luggage / passenger columns lv2, lv4, hlv, pv2, pv4, hpv (reviewer, live vehicles.csv, 2026-10-06); no lv / pv",
       "columns": {
@@ -164,8 +164,10 @@
       "ckan_api": "https://open.canada.ca/data/api/action/package_show?id=913f8940-036a-45f2-a5f2-19bde76c1252",
       "resource_pattern": "_en\\.csv$",
       "dictionary_pattern": "data_dictionary.*\\.xls$",
-      "compaction": {"_about": "G2: the file years 2011-2023, the mapped columns, the vocabulary's makes", "makes": "vocabulary", "year_key": "file_year", "min_year": 2011, "max_year": 2023},
+      "compaction": {"_about": "G2: the file years 2011-2023, the mapped columns, the rows whose make spelling normalizes to a canonical make (data/make_canonical.json; a model-gated make only with a catalog model match)", "makes": "vocabulary", "year_key": "file_year", "min_year": 2011, "max_year": 2023},
       "year_semantics": "file_year",
+      "measured_year_max_age": 6,
+      "measured_year_note": "E5: `year` is the file year (2018_en.csv -> 2018) and matching uses it (PR #56 D-3); MYR is the 2-digit measurement year, stored as `measured_year` (14 -> 2014); every CVS offer records the measured_year of its rows, and an offer whose measured_year is more than measured_year_max_age years before the target year is reference_only (it may be an older generation)",
       "file_years_note": "2011-2023 English CSVs listed by the package on 2026-10-06: 2023 is the last file year (the build records the file years it found)",
       "schema_verified": false,
       "unit_overrides": {
@@ -183,7 +185,7 @@
                         "kg": ["kg", "kilogram", "kilograms", "kilogramme", "kilogrammes"]}
       },
       "columns": {
-        "year": {"source": ["MYR"], "required": true},
+        "measured_year": {"source": ["MYR"], "required": true},
         "make": {"source": ["MAKE"], "required": true},
         "model": {"source": ["MODEL"], "required": true},
         "length_cm": {"source": ["OL"], "required": false, "unit": "cm"},

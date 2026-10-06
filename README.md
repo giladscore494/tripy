@@ -1176,17 +1176,23 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
   demand; no secret), never on the server: (1) a live-schema probe per dataset / year / file (step summary, artifact,
   `data/open/probe.json`; a dataset whose probe fails is not built), (2) the builders of `src/open_data/build.py`
   (case-insensitive maps; a missing required key stops that table / file; absent optional keys are recorded),
-  compacted to what matching and offers use (`compaction` in `data/open_datasets.json`: EEA grouped server-side by its
-  identity keys, MIN / MAX / AVG of each measure and the summed registrations, a year that fails whole retried make by
-  make (the mode is recorded per year; an error response is a failed year with its message, never 0 rows; a value is
-  offered only when MIN = MAX); EPA / NRCan model years >= 2005; CVS 2011-2023; the catalog's makes), (3)
-  `data/open/<dataset>.sqlite.gz` (each under 50 MB) + `data/open/manifest.json`, (4) a coverage report before (5) the
-  pull request on `automation/open-data`. Make aliases for every catalog manufacturer are generated in the Action
-  (`scripts/build_make_aliases.py` -> `data/open_data_make_aliases.json`): the catalog's tozar
-  (`data/catalog_manufacturers.json`, a tozeret_nm without its country suffix) matched to the source makes the probe
-  saw (EEA `SELECT DISTINCT Mk`, the make columns of EPA / NRCan / ADEME / CVS) by `data/make_transliteration.json`;
-  ambiguous and unmatched manufacturers are listed for review in the pull request body, never guessed, and the
-  reviewed `open_data_make_aliases` of the vocabulary win. The automatic pull request needs the repository setting
+  compacted to what matching and offers use (`compaction` in `data/open_datasets.json`: EEA one short query per
+  (year, make spelling), its URL-encoded `query=` value checked <= 1,800 bytes before sending (DISCODATA's IIS answers
+  404 above 2,048; over the limit the measurement columns split into two queries joined locally, else
+  `query_too_long`), the identity and measurement columns grouped server-side with SUM(R) AS r and the
+  registration-weighted median / min / max per identity key computed by the runner (an error response is a failed
+  spelling / year with its message, never 0 rows; a value is offered only when MIN = MAX); EPA / NRCan model years
+  >= 2005; CVS 2011-2023 with `year` = the file year and MYR kept as `measured_year` (an offer measured more than 6
+  years before the target year is reference-only); the catalog's makes), (3) `data/open/<dataset>.sqlite.gz` (each
+  under 50 MB) + `data/open/manifest.json` (with the spellings kept per make), (4) a coverage report before (5) the
+  pull request on `automation/open-data`. Makes: `data/make_canonical.json` is the reviewed table catalog tozar ->
+  canonical Latin make(s) (a model-gated make such as MINI under ב מ וו counts only when the row's model matches a
+  catalog model family of the tozar); a dataset spelling belongs to a make only when both normalize to the same key
+  (upper case, punctuation stripped, legal-form words and address tails dropped, spaces collapsed: `B.M.W.` = BMW,
+  `LANDROVER` = LAND ROVER, `1OYOTA` and `HIUNDAI` are nothing), never fuzzy. `scripts/build_make_aliases.py`
+  generates `data/open_data_make_aliases.json` from it and the probe's distinct makes, and reports per make the
+  spellings per dataset and rows kept vs total; the vocabulary's `open_data_make_aliases` only adds reviewed extra
+  spellings. The build summary prints per dataset rows kept / total and the kept makes. The automatic pull request needs the repository setting
   "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the branch
   is still pushed and the step summary carries the compare URL
   (`https://github.com/giladscore494/tripy/compare/main...automation/open-data?expand=1`) to open it by hand. The

@@ -8,7 +8,9 @@ valid for, identified_by (unique | all_survivors_agree), status}. Status:
                              (only for a (source, field, route) triple of data/open_data_admission.json)
     alternative_definition   another definition of the field (CVS curb weight `na_curb` on the european route): an
                              alternative, never a conflict
-    reference_only           never portable (another test cycle: EPA / NRCan consumption; SAE luggage volume)
+    reference_only           never portable (another test cycle: EPA / NRCan consumption; SAE luggage volume), or a CVS
+                             offer whose measured_year is more than the dataset's measured_year_max_age years before the
+                             target year (it may be an older generation)
     below_level              the match level is below the entry's min_level
     missing_key              a required key did not match (co2_wltp for WLTP consumption)
     uncorroborated           CVS dimensions without a second source agreeing on the wheelbase
@@ -92,7 +94,7 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
                 offer["range"] = [low, high]
                 if entry.get("range_policy") == "equal_only":
                     out.append({**offer, "status": "range", "reason": "MIN != MAX within the configuration "
-                                "(the stored value is an average, never offered)"})
+                                "(the stored value is the registration-weighted median, never offered)"})
                     continue
                 if src.get("status") != "unique":
                     out.append({**offer, "status": "range", "reason": "Min != Max and the match leaves "
@@ -102,8 +104,19 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
                      else "all_survivors_agree")
         if entry.get("companion"):
             offer["companion"] = entry["companion"]
+        # E5: CVS rows record their measurement year (MYR); the oldest one of the offer's rows decides
+        measured = sorted({ds._int(r.get("measured_year")) for _, r in stated} - {None})
+        max_age = (ds.datasets().get(entry["source"]) or {}).get("measured_year_max_age")
+        target_year = ds._int((result.get("keys") or {}).get("year"))
+        if measured:
+            offer["measured_year"] = measured[0] if len(measured) == 1 else measured
+        too_old = bool(measured and max_age is not None and target_year is not None
+                       and target_year - measured[0] > int(max_age))
         if entry.get("reference_only") or not entry.get("routes"):
             offer.update(status="reference_only", reason=entry.get("reference_only") or "no route")
+        elif too_old:
+            offer.update(status="reference_only", reason=f"measured in {measured[0]}, more than {max_age} years before "
+                         f"the target year {target_year} (may be an older generation)")
         elif route not in entry["routes"]:
             same_field = [e for e in field_map if e["field"] == entry["field"] and route in (e.get("routes") or [])]
             offer.update(status="alternative_definition" if same_field else "route_mismatch",

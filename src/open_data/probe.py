@@ -26,8 +26,9 @@ from urllib.parse import quote
 
 from . import datasets as ds
 from .build import (BuildStopped, EeaQueryError, Fetcher, _csv_tables, _decode, _file_name, _languages, _resources,
-                    _xls_rows, eea_grouped_query, eea_response, known_makes,
+                    _xls_rows, EEA_PAGE, eea_query_bytes, eea_query_plan, eea_response,
                     dictionary_check, distribution, override_units, resolve_map, unit_scales)
+from .makes import canonical_makes, spelling
 
 PROBE_VERSION = "open-data-probe-v1"
 
@@ -44,9 +45,19 @@ def _distinct(rows: list[dict], column: str | None, limit: int = 2000) -> list[s
     """The distinct values of a source's make column (what scripts/build_make_aliases.py matches against)."""
     if not column:
         return []
-    values = {" ".join(str(r.get(column) or "").split()).upper() for r in rows}
+    values = {spelling(r.get(column)) for r in rows}
     values.discard("")
     return sorted(values)[:limit]
+
+
+def _make_rows(rows: list[dict], column: str | None, into: dict[str, int] | None = None) -> dict[str, int]:
+    """{spelling: rows} of a source's make column (the generator's rows kept vs total)."""
+    out = into if into is not None else {}
+    for row in rows if column else []:
+        value = spelling(row.get(column))
+        if value:
+            out[value] = out.get(value, 0) + 1
+    return out
 
 
 def probe_eea(fetch: Fetcher) -> dict:
@@ -78,6 +89,14 @@ def probe_eea(fetch: Fetcher) -> dict:
         makes, make_error = [], str(exc)[:500]
     else:
         make_error = None
+    make_rows: dict[str, int] | None = {}
+    try:                                    # rows per make spelling (the generator's rows kept vs total)
+        for row in sql(f"SELECT [{make_col}],COUNT(*) AS n FROM {table} GROUP BY [{make_col}]", 50_000):
+            value = spelling(row.get(make_col))
+            if value:
+                make_rows[value] = make_rows.get(value, 0) + (ds._int(row.get("n")) or 0)
+    except Exception:  # noqa: BLE001 - optional evidence, never stops the probe
+        make_rows = None
     years = []
     floor = int(cfg.get("years_from") or 0)
     for year in sorted(y for y in statuses if y >= floor):
@@ -96,29 +115,44 @@ def probe_eea(fetch: Fetcher) -> dict:
     ok = any(y["status"] == "ok" for y in years)
     out = {"status": "ok" if ok else "stopped", "reason": None if ok else "no_year_resolves",
            "discovered": {str(y): sorted(s) for y, s in sorted(statuses.items())}, "years": years,
-           "distinct_makes": makes, "distinct_makes_error": make_error}
-    # H1: one grouped test query (one make, the latest resolving year, the real column list); the raw response head
-    # goes to the step summary, so a server-side refusal is visible before the build
+           "distinct_makes": makes, "distinct_makes_error": make_error, "make_rows": make_rows}
+    # E3: exactly the build's E1 query (or its two-part split) for one (year, make spelling) of the latest resolving
+    # year; its URL length and the head of the response go to the step summary
     latest = next((y for y in reversed(years) if y["status"] == "ok"), None)
-    test_make = next((m for m in sorted(known_makes()) if m in set(makes)), None) or (sorted(known_makes()) or [None])[0]
+    present = set(makes)
+    test_make = next((m for m in canonical_makes() if m in present), None) or (sorted(present) or [None])[0]
     if latest and test_make:
         year_header = latest["live_header"]
         mapping = resolve_map(year_header, cfg["columns"])["mapping"]
         registrations = resolve_map(year_header, {"r": cfg["registrations_column"]})["mapping"].get("r")
         where = f"[{year_col}] = {int(latest['year'])} AND [{status_col}] = '{latest['status_used']}'"
-        query = eea_grouped_query(table, mapping, cfg, registrations, where, [test_make])
+        test: dict[str, Any] = {"year": latest["year"], "make": test_make}
         try:
-            body = raw(query)
-            head_text = _decode(body)[:1500]
+            plan = eea_query_plan(table, mapping, cfg, registrations, where, test_make)
+        except EeaQueryError as exc:
+            plan, test = [], {**test, "status": "failed", "error": str(exc)}
+        parts = []
+        for _, query in plan:
+            url = f"{base}?query={quote(query)}&p=1&nrOfHits={EEA_PAGE}"
+            part: dict[str, Any] = {"query": query, "query_bytes": eea_query_bytes(query), "url_length": len(url)}
             try:
-                rows = eea_response(body)
-                test = {"status": "ok", "rows": len(rows)}
-            except EeaQueryError as exc:
-                test = {"status": "failed", "error": str(exc)[:500]}
-        except Exception as exc:  # noqa: BLE001
-            head_text, test = "", {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:400]}"}
-        out["grouped_test"] = {**test, "year": latest["year"], "make": test_make, "query": query[:2000],
-                               "response_head": head_text}
+                body = fetch(url)
+                part["response_head"] = _decode(body)[:300]
+                try:
+                    part.update(status="ok", rows=len(eea_response(body)))
+                except EeaQueryError as exc:
+                    part.update(status="failed", error=str(exc)[:500])
+            except Exception as exc:  # noqa: BLE001
+                part.update(status="failed", error=f"{type(exc).__name__}: {str(exc)[:400]}", response_head="")
+            parts.append(part)
+        if parts:
+            failed = next((p for p in parts if p["status"] != "ok"), None)
+            test.update(status="failed" if failed else "ok", queries=len(parts),
+                        rows=None if failed else sum(p["rows"] for p in parts),
+                        error=failed.get("error") if failed else None, query=parts[0]["query"],
+                        url_length=max(p["url_length"] for p in parts), response_head=parts[0]["response_head"],
+                        parts=parts)
+        out["grouped_test"] = {k: v for k, v in test.items() if v is not None}
     return out
 
 
@@ -140,28 +174,31 @@ def probe_ademe(fetch: Fetcher) -> dict:
     return {"status": "ok" if resolved["ok"] else "stopped", "reason": None if resolved["ok"] else "schema_mismatch",
             "live_header": header, "rows": len(rows), **resolved, "units": units,
             "unit_unknown_distribution": unknown, "schema_fields": fields,
-            "distinct_makes": _distinct(rows, resolved["matched"].get("make"))}
+            "distinct_makes": _distinct(rows, resolved["matched"].get("make")),
+            "make_rows": _make_rows(rows, resolved["matched"].get("make"))}
 
 
 def probe_csv(dataset: str, fetch: Fetcher) -> dict:
     cfg = ds.datasets()[dataset]
-    files, makes = [], set()
+    files, makes, counts = [], set(), {}
     for url in cfg.get("download_urls") or []:
         tables = _csv_tables(fetch(url))
         for name, rows, header in tables:
             resolved = _resolution(header, cfg["columns"])
             makes.update(_distinct(rows, resolved["matched"].get("make")))
+            _make_rows(rows, resolved["matched"].get("make"), counts)
             files.append({"url": url, "table": name, "rows": len(rows), "live_header": header, **resolved})
     ok = bool(files) and all(f["ok"] for f in files)
     return {"status": "ok" if ok else "stopped", "reason": None if ok else
-            ("no_download_url" if not files else "schema_mismatch"), "files": files, "distinct_makes": sorted(makes)}
+            ("no_download_url" if not files else "schema_mismatch"), "files": files, "distinct_makes": sorted(makes),
+            "make_rows": counts}
 
 
 def probe_ckan_groups(dataset: str, fetch: Fetcher) -> dict:
     cfg = ds.datasets()[dataset]
     fmt, lang = str(cfg.get("resource_format") or "CSV").upper(), str(cfg.get("resource_language") or "en").lower()
     excluded = [p.lower() for p in (cfg.get("exclude_resources") or {}).get("patterns") or []]
-    files, makes = [], set()
+    files, makes, counts = [], set(), {}
     for resource in _resources(fetch, cfg["ckan_api"]):
         name = _file_name(resource)
         if str(resource.get("format") or "").upper() != fmt or (_languages(resource) and lang not in _languages(resource)):
@@ -183,11 +220,12 @@ def probe_ckan_groups(dataset: str, fetch: Fetcher) -> dict:
             continue
         resolved = _resolution(header, group["columns"])
         makes.update(_distinct(rows, resolved["matched"].get("make")))
+        _make_rows(rows, resolved["matched"].get("make"), counts)
         files.append({"url": resource["url"], "group": group["group"], "status": "ok" if resolved["ok"] else "stopped",
                       "live_header": header, **resolved})
     ok = any(f["status"] == "ok" for f in files)
     return {"status": "ok" if ok else "stopped", "reason": None if ok else "no_file_resolves", "files": files,
-            "distinct_makes": sorted(makes)}
+            "distinct_makes": sorted(makes), "make_rows": counts}
 
 
 def probe_ckan_files(dataset: str, fetch: Fetcher, header_years: tuple[int, ...] = (2018, 2023)) -> dict:
@@ -206,7 +244,7 @@ def probe_ckan_files(dataset: str, fetch: Fetcher, header_years: tuple[int, ...]
     out["dictionary"] = {"url": dictionary["url"], "rows": rows[:200]}
     out["dictionary_problems"] = dictionary_check(rows, cfg.get("dictionary_check") or {}, cfg.get("unit_overrides"))
     out["unit_overrides"] = override_units(cfg.get("unit_overrides"))
-    headers, makes = {}, set()
+    headers, makes, counts = {}, set(), {}
     unit_keys = [k for k, v in (cfg.get("columns") or {}).items() if isinstance(v, dict) and v.get("unit")]
     for resource in resources:
         name = _file_name(resource)
@@ -218,12 +256,14 @@ def probe_ckan_files(dataset: str, fetch: Fetcher, header_years: tuple[int, ...]
             resolved = _resolution(header, cfg["columns"])
             canonical = [{k: row.get(c) for k, c in resolved["matched"].items()} for row in file_rows]
             makes.update(_distinct(file_rows, resolved["matched"].get("make")))
+            _make_rows(file_rows, resolved["matched"].get("make"), counts)
             # H4: each unit column's distribution, so a wrong unit override is visible
             headers[name] = {"live_header": header, **resolved,
                              "distributions": {k: distribution(canonical, k) for k in unit_keys
                                                if k in resolved["matched"]}}
     out["headers"] = headers
     out["distinct_makes"] = sorted(makes)
+    out["make_rows"] = counts
     ok = not out["dictionary_problems"] and bool(headers) and all(h["ok"] for h in headers.values())
     return {**out, "status": "ok" if ok else "stopped",
             "reason": None if ok else "dictionary_mismatch" if out["dictionary_problems"] else "schema_mismatch"}
@@ -295,8 +335,11 @@ def markdown(report: dict) -> str:
         if test:
             lines.append(f"- grouped test query ({test.get('make')}, {test.get('year')}): {test.get('status')}"
                          + (f", {test.get('rows')} rows" if test.get("rows") is not None else "")
+                         + (f", {test.get('queries')} quer{'y' if test.get('queries') == 1 else 'ies'}"
+                            if test.get("queries") else "")
+                         + (f", URL length {test.get('url_length')}" if test.get("url_length") else "")
                          + (f" — {test.get('error')}" if test.get("error") else ""))
-            lines.append(f"  - response head: `{(test.get('response_head') or '')[:600].replace('`', chr(39))}`")
+            lines.append(f"  - response head: `{(test.get('response_head') or '')[:300].replace('`', chr(39))}`")
         if item.get("unit_overrides"):
             lines.append(f"- unit overrides: {json.dumps(item['unit_overrides'], ensure_ascii=False)}")
         if item.get("dictionary"):

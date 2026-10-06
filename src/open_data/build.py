@@ -12,8 +12,12 @@ agent. Each dataset's `builder`:
 
     discodata    EEA: `SELECT TOP 1 *` for the year / status columns, `SELECT DISTINCT year, status`, then per existing
                  year (final rows preferred, provisional rows only for a year without final ones) the year's own
-                 schema (`TOP 1` of that year) and one grouped query (distinct configurations + sum of registrations),
-                 only for the makes of identity_vocabulary `open_data_make_aliases`; a year that fails stops only itself
+                 schema (`TOP 1` of that year), the make values present that year (`SELECT DISTINCT Mk`; kept when
+                 their spelling is an alias spelling) and per (year, make spelling) one short query (E1: identity and
+                 measurement columns + SUM(R) AS r, grouped by the same columns, no other alias, no MIN / MAX / AVG, no
+                 ORDER BY; its URL-encoded query= value <= EEA_MAX_QUERY_BYTES, else split in two on the measurement
+                 columns, else `query_too_long`); the runner computes the registration-weighted median / min / max per
+                 identity key; a failing spelling stops only itself, a year whose spellings all fail stops only itself
     data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_from_description` rule
                  is read from the schema field's description ("Puissance en kW"); a column without a stated unit is
                  stored raw with unit `unknown` (its p5 / p50 / p95 recorded) and yields nothing until a
@@ -26,9 +30,9 @@ agent. Each dataset's `builder`:
     ckan_files   CVS: the package's resources matching `resource_pattern`; the data dictionary must state every mapped
                  code and its unit (`dictionary_check`), else the build stops with the dictionary's rows
 
-After the build, `compact` keeps only what matching and offers use (the dataset's `compaction` rules): the
-vocabulary's makes, the year window, and for EEA one row per configuration with the median / min / max of each
-measure (weighted by the registrations).
+After the build, `compact` keeps only what matching and offers use (the dataset's `compaction` rules): the rows whose
+make spelling normalizes to a canonical make of data/make_canonical.json (a model-gated make only with a catalog model
+match), the year window, and the grouping; it records the kept makes and their spellings.
 
 `progress(text)` (optional) is called with the current stage.
 """
@@ -52,6 +56,7 @@ Progress = Callable[[str], None]
 MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024
 EEA_PAGE = 50_000
 MAX_EEA_PAGES = 200
+EEA_MAX_QUERY_BYTES = 1800                   # E1: the URL-encoded query= value (IIS 404.15 above 2,048)
 PLAIN_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
 COMMA_NUMBER = re.compile(r"^-?\d+,\d+$")
 
@@ -316,50 +321,104 @@ def eea_response(body: bytes) -> list[dict]:
     raise EeaQueryError(f"no `results` in the response: {text[:450]}")
 
 
-def eea_grouped_query(table: str, mapping: dict[str, str], cfg: dict, registrations: str | None, where: str,
-                      makes: list[str]) -> str:
-    """H2: grouped server-side by the identity keys only, the measurements aggregated (MIN / MAX / AVG over
-    TRY_CAST float), the registrations summed over TRY_CAST bigint, no ORDER BY."""
-    keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
-    measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
-    select = [f"{_q(mapping[k])} AS {_q(k)}" for k in keys]
-    for key in measures:
-        value = f"TRY_CAST({_q(mapping[key])} AS float)"
-        select += [f"MIN({value}) AS {_q(key + '_min')}", f"MAX({value}) AS {_q(key + '_max')}",
-                   f"AVG({value}) AS {_q(key + '_avg')}"]
-    if registrations:
-        select.append(f"SUM(TRY_CAST({_q(registrations)} AS bigint)) AS [registrations]")
-    in_makes = ", ".join("'" + m.replace("'", "''") + "'" for m in makes)
-    return (f"SELECT {', '.join(select)} FROM {table} WHERE {where} AND UPPER({_q(mapping['make'])}) IN ({in_makes}) "
-            f"GROUP BY {', '.join(_q(mapping[k]) for k in keys)}")
+class EeaQueryTooLong(EeaQueryError):
+    """E1: a DISCODATA query whose URL-encoded `query=` value is over EEA_MAX_QUERY_BYTES (never sent: IIS answers 404
+    above its 2,048-byte query-string limit)."""
+
+    def __init__(self, length: int, limit: int):
+        super().__init__(f"query_too_long: {length} bytes > {limit}")
+        self.reason, self.length, self.limit = "query_too_long", length, limit
 
 
-def _eea_rows(chunk: list[dict], cfg: dict, mapping: dict, status: str) -> list[dict]:
+def eea_query_bytes(query: str) -> int:
+    """The length of the URL-encoded `query=` value (what the server's query-string limit counts)."""
+    return len(quote(query))
+
+
+def assert_query_length(query: str, limit: int | None = None) -> int:
+    """The query's encoded length, checked before it is sent (EeaQueryTooLong over the limit)."""
+    limit = EEA_MAX_QUERY_BYTES if limit is None else limit
+    length = eea_query_bytes(query)
+    if length > limit:
+        raise EeaQueryTooLong(length, limit)
+    return length
+
+
+def _sql_text(value: str) -> str:
+    text = "'" + str(value).replace("'", "''") + "'"
+    return text if text.isascii() else "N" + text
+
+
+def eea_query(table: str, columns: list[str], registrations: str | None, where: str, make_column: str,
+              make_value: str) -> str:
+    """E1: one (year, make spelling): SELECT the columns + SUM(TRY_CAST([R] AS bigint)) AS r, GROUP BY the same
+    columns; no alias but `r`, no MIN / MAX / AVG, no ORDER BY."""
+    listed = ",".join(_q(c) for c in columns)
+    total = f",SUM(TRY_CAST({_q(registrations)} AS bigint)) AS r" if registrations else ""
+    return (f"SELECT {listed}{total} FROM {table} WHERE {where} AND {_q(make_column)}={_sql_text(make_value)} "
+            f"GROUP BY {listed}")
+
+
+def eea_query_plan(table: str, mapping: dict[str, str], cfg: dict, registrations: str | None, where: str,
+                   make_value: str, limit: int | None = None) -> list[tuple[list[str], str]]:
+    """[(measure keys, query)]: one query with every measurement column; when that is over the limit, the measurement
+    columns split into two queries (joined locally on the identity key). Every query is checked against the limit
+    (EeaQueryTooLong when even a split one is over it)."""
+    limit = EEA_MAX_QUERY_BYTES if limit is None else limit
     keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
     measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
+
+    def build(part: list[str]) -> str:
+        return eea_query(table, [mapping[k] for k in keys + part], registrations, where, mapping["make"], make_value)
+    whole = build(measures)
+    if eea_query_bytes(whole) <= limit or len(measures) < 2:
+        assert_query_length(whole, limit)
+        return [(measures, whole)]
+    half = (len(measures) + 1) // 2
+    plan = [(part, build(part)) for part in (measures[:half], measures[half:])]
+    for _, query in plan:
+        assert_query_length(query, limit)
+    return plan
+
+
+def eea_aggregate(parts: list[tuple[list[str], list[dict]]], mapping: dict[str, str], cfg: dict,
+                  status: str) -> list[dict]:
+    """G2 locally: the server rows of one (year, make) (distinct configurations with a registration count `r`) ->
+    one row per identity key with the registration-weighted median, min and max of each measurement and the summed
+    registrations; the parts of a split query are joined on the identity key."""
+    keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
+    merged: dict[tuple, dict] = {}
+    for p, (measures, server_rows) in enumerate(parts):
+        rows = [{**{k: raw.get(mapping[k]) for k in keys + measures}, "r": raw.get("r")} for raw in server_rows]
+        for item in group_configurations(rows, keys, measures, "r"):
+            ident = tuple(str(item.get(k)) for k in keys)
+            target = merged.setdefault(ident, {k: item.get(k) for k in keys})
+            for m in measures:
+                for suffix in ("", "_min", "_max"):
+                    if f"{m}{suffix}" in item:
+                        target[f"{m}{suffix}"] = item[f"{m}{suffix}"]
+            if p == 0 or "registrations" not in target:
+                target["registrations"] = ds._int(item.get("r"))
     out = []
-    for raw in chunk:
-        item = {key: raw.get(key) for key in keys}
-        for key in measures:
-            low, high, avg = (_as_float(raw.get(f"{key}_{s}")) for s in ("min", "max", "avg"))
-            if low is None and high is None:
-                continue
-            item[f"{key}_min"], item[f"{key}_max"] = low, high
-            item[key] = low if low == high else (round(avg, 3) if avg is not None else None)
-        item["registrations"] = ds._int(raw.get("registrations"))
+    for ident in sorted(merged):
+        item = merged[ident]
         item["status"] = status
         out.append(item)
     return out
 
 
 def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop) -> dict:
-    """Year discovery, then per year its own schema and one grouped query; a year whose query fails or fills a page
-    is split by make (module docstring). A query error is an error, never a year without cars."""
+    """Year discovery, then per year its own schema, the make spellings present that year, and per (year, make
+    spelling) the E1 query (or its two-part split); a query error is an error, never a year without cars, and a failing
+    spelling stops only itself."""
+    from .makes import canonical_of, row_filter, spelling
+
     cfg = ds.datasets()["eea_co2_cars"]
     base, table = cfg["source_url"], cfg["table"]
     columns = cfg["columns"]
 
     def sql(query: str, page: int = 1) -> list[dict]:
+        assert_query_length(query)
         return eea_response(fetch(f"{base}?query={quote(query)}&p={page}&nrOfHits={EEA_PAGE}"))
 
     def sql_all(query: str) -> list[dict]:
@@ -387,7 +446,8 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     wanted = sorted(y for y in statuses if y >= floor and (years is None or y in years))
     makes = sorted(known_makes())
     if not makes:
-        raise BuildStopped("no_makes", note="no open-data make aliases (data/open_data_make_aliases.json)")
+        raise BuildStopped("no_makes", note="no open-data make aliases (data/make_canonical.json)")
+    keep = row_filter()
     rows: list[dict] = []
     reports: list[dict] = []
     absent_by_year: dict[str, list[str]] = {}
@@ -421,40 +481,59 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         registrations = resolve_map(year_header, {"registrations": cfg["registrations_column"]})["mapping"].get(
             "registrations")
         report: dict[str, Any] = {"year": year, "status_used": status, "absent_columns": resolved["absent"],
-                                  "registrations_column": registrations}
-        built: list[dict] = []
+                                  "registrations_column": registrations, "mode": "per_make"}
+        # the raw make values present this year whose spelling is an alias spelling or normalizes to a canonical make
+        # (the server compares the exact value); without that list, the alias spellings themselves
+        wanted_makes = set(makes)
         try:
-            chunk = sql(eea_grouped_query(table, mapping, cfg, registrations, where, makes))
-            if len(chunk) >= EEA_PAGE:
-                raise EeaQueryError(f"a full page ({len(chunk)} rows): split by make")
-            built, report["mode"] = _eea_rows(chunk, cfg, mapping, status), "year"
+            present = [str(r.get(mapping["make"])) for r in
+                       sql_all(f"SELECT DISTINCT {_q(mapping['make'])} FROM {table} WHERE {where}")
+                       if r.get(mapping["make"]) not in (None, "")]
+            values = sorted({v for v in present if spelling(v) in wanted_makes or canonical_of(v)})
+            report["spelling_source"] = "year_distinct"
         except EeaQueryError as exc:
-            report.update(mode="make_split", year_error=str(exc)[:500])
-            errors: dict[str, str] = {}
-            for make in makes:
-                progress(f"year {year} (status {status}): {make}")
-                try:
-                    built += _eea_rows(sql_all(eea_grouped_query(table, mapping, cfg, registrations, where, [make])),
-                                       cfg, mapping, status)
-                except EeaQueryError as make_exc:
-                    errors[make] = str(make_exc)[:500]
-            if errors:
-                report["make_errors"] = errors
-            if len(errors) == len(makes):
-                reports.append({**report, "status": "failed", "error": report["year_error"]})
+            values = makes
+            report.update(spelling_source="aliases", distinct_error=str(exc)[:300])
+        built: list[dict] = []
+        errors: dict[str, str] = {}
+        sizes: list[int] = []
+        queries = 0
+        for value in values:
+            progress(f"year {year} (status {status}): {value}")
+            try:
+                plan = eea_query_plan(table, mapping, cfg, registrations, where, value)
+                parts = []
+                for measures, query in plan:
+                    sizes.append(eea_query_bytes(query))
+                    queries += 1
+                    parts.append((measures, sql_all(query)))
+            except EeaQueryError as exc:
+                errors[spelling(value)] = str(exc)[:500]
                 continue
+            if len(plan) > 1:
+                report["split"] = True
+            found = [r for r in eea_aggregate(parts, mapping, cfg, status)
+                     if keep(r.get("make"), " ".join(str(r.get(k) or "") for k in ("model", "variant", "version")))]
+            for item in found:
+                item["make"] = spelling(item.get("make"))
+            built += found
+        report.update(queries=queries, spellings=len(values), max_query_bytes=max(sizes) if sizes else None)
+        if errors:
+            report["make_errors"] = errors
+        if values and len(errors) == len(values):
+            reports.append({**report, "status": "failed", "error": next(iter(errors.values()))})
+            continue
         by_make: dict[str, int] = {}
         for n, item in enumerate(built):
             item["row_id"] = f"eea-{year}-{status}-{n + 1}"
-            by_make[str(item.get("make") or "").upper()] = by_make.get(str(item.get("make") or "").upper(), 0) + 1
+            by_make[str(item.get("make") or "")] = by_make.get(str(item.get("make") or ""), 0) + 1
         rows += built
         absent_by_year[str(year)] = resolved["absent"]
-        reports.append({**report, "status": "partial" if report.get("make_errors") else "built", "rows": len(built),
+        reports.append({**report, "status": "partial" if errors else "built", "rows": len(built),
                         "by_make": dict(sorted(by_make.items()))})
     if not any(r["status"] in ("built", "partial") for r in reports):
         raise BuildStopped("no_year_built", years=reports, discovered={str(y): sorted(s) for y, s in statuses.items()})
-    return {"rows": rows, "schema": header, "urls": [base], "years": reports,
-            "absent_columns": absent_by_year}
+    return {"rows": rows, "schema": header, "urls": [base], "years": reports, "absent_columns": absent_by_year}
 
 
 # --- ADEME (data-fair) -----------------------------------------------------------------------------------------------------
@@ -650,6 +729,14 @@ def dictionary_check(rows: list[list[str]], check: dict, overrides: dict | None 
     return problems
 
 
+def measured_year(value: Any) -> int | None:
+    """The CVS MYR (2-digit measurement year: 2 -> 2002, 14 -> 2014); a 4-digit year stays as stated."""
+    year = ds._int(value)
+    if year is None or year < 0:
+        return None
+    return 2000 + year if year < 100 else year
+
+
 def build_ckan_files(dataset: str, fetch: Fetcher, *, progress: Progress = _noop) -> dict:
     """CVS: the data dictionary first (every mapped code and unit), then every file matching resource_pattern."""
     cfg = ds.datasets()[dataset]
@@ -672,10 +759,15 @@ def build_ckan_files(dataset: str, fetch: Fetcher, *, progress: Progress = _noop
         name = _file_name(resource)
         progress(f"file {name}")
         year = re.search(r"(\d{4})", name)
+        # E5: `year` is the file year (2018_en.csv -> 2018); MYR is the 2-digit measurement year, kept apart
+        file_year = int(year.group(1)) if year else None
         built, report = _build_file(resource["url"], fetch, cfg.get("columns"), id_prefix=f"{dataset}-{name}-",
                                     decimal_comma=bool(cfg.get("decimal_comma")),
-                                    extra={"file_year": int(year.group(1))} if year else None)
-        files.append({**report, "file_year": int(year.group(1)) if year else None})
+                                    extra={"file_year": file_year, "year": file_year} if year else None)
+        for row in built:
+            if "measured_year" in row:
+                row["measured_year"] = measured_year(row["measured_year"])
+        files.append({**report, "file_year": file_year})
         rows += built
     if not any(f["status"] == "built" for f in files):
         raise BuildStopped("no_file_built", files=files)
@@ -738,15 +830,38 @@ def group_configurations(rows: list[dict], group_by: list[str], measures: list[s
     return out
 
 
+def make_stats(rows: list[dict]) -> dict:
+    """{kept_makes, make_rows, make_spellings}: the canonical makes of the kept rows (data/make_canonical.json), rows
+    per make, and the spellings of each (a spelling that normalizes to no canonical make is counted as `_unmapped`)."""
+    from .makes import canonical_of, spelling
+
+    of: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    spellings: dict[str, set[str]] = {}
+    for row in rows:
+        value = spelling(row.get("make"))
+        if value not in of:
+            of[value] = canonical_of(value) or "_unmapped"
+        make = of[value]
+        counts[make] = counts.get(make, 0) + 1
+        spellings.setdefault(make, set()).add(value)
+    return {"kept_makes": len([m for m in counts if m != "_unmapped"]), "make_rows": dict(sorted(counts.items())),
+            "make_spellings": {m: sorted(v) for m, v in sorted(spellings.items()) if m != "_unmapped"}}
+
+
 def compact(dataset: str, built: dict) -> dict:
-    """Apply the dataset's `compaction` rules (data/open_datasets.json) to a built dataset: the make filter (the
-    identity vocabulary's makes), the year window, and the EEA grouping. Row ids are reassigned when grouping."""
+    """Apply the dataset's `compaction` rules (data/open_datasets.json) to a built dataset: the make filter (E4: a
+    spelling that normalizes to a canonical make of data/make_canonical.json; a model-gated make only with a catalog
+    model match), the year window, and the grouping. Row ids are reassigned when grouping."""
+    from .makes import row_filter
+
     rules = (ds.datasets().get(dataset) or {}).get("compaction") or {}
     rows = built["rows"]
     before = len(rows)
     if rules.get("makes") == "vocabulary":
-        makes = known_makes()
-        rows = [r for r in rows if str(r.get("make") or "").strip().upper() in makes]
+        keep = row_filter()
+        rows = [r for r in rows if keep(r.get("make"), " ".join(str(r.get(k) or "") for k in
+                                                               ("model", "base_model", "variant", "version")))]
     year_key = rules.get("year_key") or "year"
     lo, hi = rules.get("min_year"), rules.get("max_year")
     if lo is not None or hi is not None:
@@ -760,8 +875,11 @@ def compact(dataset: str, built: dict) -> dict:
         prefix = rules.get("row_prefix") or dataset
         for n, row in enumerate(rows):
             row["row_id"] = f"{prefix}-{row.get(year_key)}-{n + 1}"
-    return {**built, "rows": rows, "compaction": {"rows_before": before, "rows_after": len(rows),
-                                                  "rules": {k: v for k, v in rules.items() if not k.startswith("_")}}}
+    stats = make_stats(rows)
+    return {**built, "rows": rows, "make_spellings": stats["make_spellings"],
+            "compaction": {"rows_before": before, "rows_after": len(rows), "kept_makes": stats["kept_makes"],
+                           "make_rows": stats["make_rows"],
+                           "rules": {k: v for k, v in rules.items() if not k.startswith("_")}}}
 
 
 # --- one dataset -----------------------------------------------------------------------------------------------------------
@@ -806,7 +924,8 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "file_years": built.get("file_years"), "last_file_year": built.get("last_file_year"),
                 "build_duration_s": duration, "config_version": ds.config().get("version"),
                 "column_units": built.get("column_units"), "unit_unknown_distribution": built.get(
-                    "unit_unknown_distribution"), "compaction": built.get("compaction")}
+                    "unit_unknown_distribution"), "compaction": built.get("compaction"),
+                "make_spellings": built.get("make_spellings")}
         path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
         size = path.stat().st_size if path and path.exists() else None
         return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"], "duration_s": duration,
@@ -814,7 +933,7 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year"),
                 "column_units": built.get("column_units"),
                 "unit_unknown_distribution": built.get("unit_unknown_distribution"),
-                "compaction": built.get("compaction")}
+                "compaction": built.get("compaction"), "make_spellings": built.get("make_spellings")}
     except BuildStopped as stop:
         return {"status": "stopped", "reason": stop.reason, "report": stop.report,
                 "duration_s": round(time.monotonic() - started, 1)}
