@@ -62,6 +62,14 @@ def snapshot_section(manifest: dict, probe: dict) -> list[str]:
             if isinstance(part, dict):
                 lines.append(f"- {name} {part.get('year')}: {part.get('status')} ({part.get('status_used') or '—'}) "
                              f"rows {part.get('rows', '—')}")
+        for shard in entry.get("shards") or []:
+            if isinstance(shard, dict):
+                lines.append(f"- {name} shard {shard.get('file')}: {shard.get('status_used') or '—'} rows "
+                             f"{shard.get('rows', '—')}, {(shard.get('bytes') or 0) / 1024 / 1024:.1f} MB")
+        for part in entry.get("too_large") or []:
+            if isinstance(part, dict):
+                lines.append(f"- {name} {part.get('year')}{'-' + part['part'] if part.get('part') else ''}: too large "
+                             f"({(part.get('bytes') or 0) / 1024 / 1024:.1f} MB), not written")
         for part in entry.get("files") or []:
             if isinstance(part, dict):
                 lines.append(f"- {name} {str(part.get('url') or '').rsplit('/', 1)[-1]}: {part.get('status')} "

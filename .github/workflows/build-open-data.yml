@@ -12,10 +12,13 @@ name: build-open-data
 #      that normalize to a canonical make; spellings per dataset and rows kept vs total go to the PR body), then build
 #      with src/open_data/build.py, compacted (data/open_datasets.json `compaction`); the build summary prints per
 #      dataset rows kept / total and the kept makes
-#   3. compress to data/open/<dataset>.sqlite.gz; a file over 50 MB fails the step with its size
+#   3. compress to data/open/<dataset>.sqlite.gz (EEA: one shard per year, data/open/eea_co2_cars/<year>.sqlite.gz, a
+#      year over 50 MB split by make initial); a file still over 50 MB is not written and listed as a warning, the step
+#      fails only when nothing at all was written, and the steps below run either way: one dataset never costs the others
 #   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
 #      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010)
-#   5. pull request on automation/open-data with the summaries in its body. Creating it needs the repository setting
+#   5. pull request on automation/open-data with the summaries in its body (always, so the datasets that were written are
+#      never lost to one that was not). Creating it needs the repository setting
 #      "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the
 #      branch is still pushed and the last step writes the compare URL to open the pull request by hand
 
@@ -61,13 +64,14 @@ jobs:
           if-no-files-found: ignore
       - name: Make aliases from the canonical make table (spellings per dataset, rows kept vs total)
         run: python scripts/build_make_aliases.py --probe data/open/probe.json --out data/open_data_make_aliases.json --review open-data-makes.md
-      - name: Build and compress the snapshots (each file under 50 MB)
+      - name: Build and compress the snapshots (each file under 50 MB; fails only when nothing was written)
         run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50
       - name: Coverage report (before the pull request step)
         if: always()
         run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --makes open-data-makes.md --body open-data-pr-body.md
       - name: Open a pull request
         id: cpr
+        if: always()
         continue-on-error: true
         uses: peter-evans/create-pull-request@v6
         with:
@@ -77,6 +81,7 @@ jobs:
           body-path: open-data-pr-body.md
           add-paths: |
             data/open/*.sqlite.gz
+            data/open/*/*.sqlite.gz
             data/open/manifest.json
             data/open/probe.json
             data/open_data_make_aliases.json

@@ -260,9 +260,9 @@ def test_the_build_script_compresses_records_the_manifest_and_skips_a_failed_pro
                                                                          "sha256": "abc", "rows": 7}}}), "utf-8")
     probe = {"datasets": {"epa_fueleconomy": {"status": "ok"},
                           "tc_cvs": {"status": "stopped", "reason": "dictionary_mismatch"}}}
-    results, manifest, errors = build.run(["epa_fueleconomy", "tc_cvs"], out, tmp_path / "work", probe,
-                                          50 * 1024 * 1024, "https://github.com/x/actions/runs/1")
-    assert not errors and results["tc_cvs"]["status"] == "skipped"
+    results, manifest, warnings = build.run(["epa_fueleconomy", "tc_cvs"], out, tmp_path / "work", probe,
+                                            50 * 1024 * 1024, "https://github.com/x/actions/runs/1")
+    assert not warnings and results["tc_cvs"]["status"] == "skipped"
     epa = manifest["datasets"]["epa_fueleconomy"]
     assert epa["file"] == "epa_fueleconomy.sqlite.gz" and epa["sha256"] == ds.sha256_file(out / epa["file"])
     assert epa["run_url"] == "https://github.com/x/actions/runs/1" and epa["absent_columns"] == ["x"]
@@ -275,8 +275,8 @@ def test_the_build_script_compresses_records_the_manifest_and_skips_a_failed_pro
     first = (out / epa["file"]).read_bytes()
     build.run(["epa_fueleconomy"], out, tmp_path / "work2", {}, 50 * 1024 * 1024, None)
     assert (out / epa["file"]).read_bytes() == first                        # deterministic gzip
-    _, _, errors = build.run(["epa_fueleconomy"], out, tmp_path / "work3", {}, 10, None)
-    assert errors and "over the 0 MB limit" in errors[0]
+    _, _, warnings = build.run(["epa_fueleconomy"], out, tmp_path / "work3", {}, 10, None)
+    assert warnings and "over the 0 MB limit" in warnings[0]
     assert (out / epa["file"]).read_bytes() == first                        # a too-large file is never written
 
 
