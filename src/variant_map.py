@@ -66,7 +66,7 @@ import re
 from typing import Any
 
 from .candidate_harvest import NUMBER, normalize_text, parse_number
-from .document_binding import (TargetIdentity, _close, _family_status, _other_family_pattern, _veto_dims,
+from .document_binding import (TargetIdentity, _close, _family_status, _other_family_pattern, _veto_dims, power_gate,
                                catalog_family_entries, catalog_key, designation_spans, designations, mentions,
                                power_bucket, vocabulary)
 
@@ -761,8 +761,8 @@ def region_verdict(region: dict, identity: TargetIdentity, doc_statuses: dict | 
         if len(vec["drivetrain"]) > 1:
             return {"status": "unresolved", "reason": "drivetrain_mixed"}
     if vec["power"] and identity.power_hp and "power" in veto_dims:
-        tol = power_tolerance(identity)["tolerance"]
-        hits = [p for p in vec["power"] if _close(p, identity.power_hp, tol)]
+        r3 = power_tolerance(identity)
+        hits = [p for p in vec["power"] if power_gate(p, identity.power_hp, r3["tolerance"], r3["neighbour_hp"])]  # A4
         if not hits:
             return {"status": "other_variant", "contradicts": "power", "reason": "power"}
         if len(hits) != len(vec["power"]):

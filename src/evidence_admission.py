@@ -46,10 +46,11 @@ from typing import Any
 from .candidate_harvest import semantic_reason, owns_dimension_number, dimension_assignment, _tires, takes_inches, wheel_size_number
 from .candidate_harvest import (NUMBER, OPERATIONS, TIRE, _bool_value, _classify_unit, _contains, _owner, _stated_bool,
                                 compile_terms, dictionary_for, harvest_document, harvest_text, normalize_term,
-                                logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line, rtl_dictionary)
+                                logical_lines, logical_rtl_line, normalize_text, parse_number, reverse_hebrew_line,
+                                rtl_dictionary)
 from .document_binding import (OFFICIAL_AUTHORITIES, STALE_PUBLICATION_YEARS, TargetIdentity, about_target, bind,
-                               designations, document_profile, identity_zone, level_index, normalize_catalog_trim,
-                               target_identity)
+                               designations, document_profile, gov_code_table_codes, identity_zone, level_index,
+                               normalize_catalog_trim, target_identity)
 from .fields import sanity_specs
 from .fields import harvest_vocabulary, load_schema, normalize_field_name, resolve_requested_fields
 from .source_authority import classify_source, normalize_market, source_market
@@ -150,6 +151,13 @@ class DocumentText:
     publication_date: str | None = None
     publication_basis: str | None = None
     article_date: str | None = None
+    # A3: a PDF entirely in visual order: `logical_text` is its logical form (the harvest, the code-table and the
+    # spec-sheet identity / equipment parsers read it; the binding profile keeps the stored text it was tuned on), and
+    # logical_quote_span maps a quote of it back to the stored (visual) lines
+    reversed_document: bool = False
+    logical_text: str | None = None
+    # A2 / C4: the government model codes the document's "קוד דגם | תיאור דגם" tables state (text and tables)
+    gov_codes: list | None = None
 
 
 @dataclass
@@ -280,12 +288,19 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
             parts.append(json.dumps(structured, ensure_ascii=False))
         except Exception:  # structured data is a convenience; the text is enough
             structured = None
+    logical_text, reversed_document = None, False
     if meta.get("doc_type") == "pdf":
         parts.append("\n".join(reverse_hebrew_line(line) for line in text.splitlines()))
         # the harvest's logical form of visually ordered right-to-left lines (F4): line for line, so a quote of the
         # logical text is checked against the same source line
-        words = rtl_dictionary(dictionary_for(load_schema()).hebrew_aliases)
+        dictionary = dictionary_for(load_schema())
+        words = rtl_dictionary(dictionary.hebrew_aliases)
         parts.append("\n".join(logical_rtl_line(line, words) or "" for line in text.splitlines()))
+        logical, verdict = logical_lines(text, is_pdf=True, words=words, hebrew_aliases=dictionary.hebrew_aliases)
+        if verdict["reversed"]:
+            # A3: the whole document is visual: its logical form for the code-table / identity / equipment parsers
+            logical_text, reversed_document = "\n".join(line for line, _, _ in logical), True
+            parts.append(logical_text)
     market, basis = source_market(url, text)
     source_date, date_basis = _document_date(meta, structured)
     publication, publication_basis = _publication_date(meta, structured, url)
@@ -296,7 +311,9 @@ def document_text(cache, meta: dict, *, remember: bool = True) -> DocumentText:
                             subheadings=subheadings, body_text=body_text,
                             market=market, market_basis=basis, source_date=source_date, source_date_basis=date_basis,
                             publication_date=publication, publication_basis=publication_basis,
-                            article_date=article_date(body_text if body_text is not None else text))
+                            article_date=article_date(body_text if body_text is not None else text),
+                            reversed_document=reversed_document, logical_text=logical_text,
+                            gov_codes=gov_code_table_codes(logical_text or text))
     if not remember:
         return material
     with _TEXTS_LOCK:
@@ -1202,8 +1219,9 @@ def target_among_versions(adm: AdmissionContext, material: DocumentMaterial, ver
 
     identity = adm.identity
     target = identity.power_hp
-    power = bool(target) and any(abs(float(p) - target) <= REPEATED_POWER_TOLERANCE * target
-                                 for p in versions.get("powers") or [])
+    from .document_binding import power_gate
+
+    power = bool(target) and any(power_gate(p, target, REPEATED_POWER_TOLERANCE) for p in versions.get("powers") or [])
     profile = material.profile or {}
     year_stated = any((profile.get(k) or {}).get("year", "absent") != "absent"
                       for k in ("zone_statuses", "full_statuses"))
@@ -1394,6 +1412,32 @@ def sanity_rejection(adm: AdmissionContext, material: DocumentMaterial, spec: di
         note = semantic_violation(adm, spec, context_semantic_clauses(quote, ctx), value)
         if note:
             return {"reason": "semantic_mismatch", "note": note}
+    return None
+
+
+def logical_quote_span(material, quote: str) -> dict | None:
+    """A3: where a quote of a reversed document's logical text sits in the STORED (visual) text: {line, start, end} of
+    the original line (offsets mapped token by token), None when the quote is in no logical line."""
+    from .candidate_harvest import visual_to_logical_map
+
+    doc = getattr(material, "doc", material)
+    if not getattr(doc, "reversed_document", False):
+        return None
+    target = squash(quote)
+    for index, line in enumerate(ln.strip() for ln in (doc.text or "").splitlines() if ln.strip()):
+        logical, mapping = visual_to_logical_map(line)
+        position = logical.find(quote)
+        if position < 0 and target and target in squash(logical):
+            words = quote.split()
+            position = logical.find(words[0]) if words else -1
+        if position < 0:
+            continue
+        from .candidate_harvest import map_logical_span
+
+        span = map_logical_span(mapping, position, position + len(quote))
+        if span is not None:
+            return {"line": index, "original_line": line, "start": span[0], "end": span[1],
+                    "original": line[span[0]:span[1]]}
     return None
 
 

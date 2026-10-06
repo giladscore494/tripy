@@ -313,7 +313,9 @@ def _power_match(found: Iterable[float], target: float | None) -> str:
     powers = list(found or [])
     if not powers or target is None:
         return "absent"
-    hits = [p for p in powers if abs(p - target) <= max(0.051, POWER_TOLERANCE * target)]
+    from .document_binding import power_gate
+
+    hits = [p for p in powers if power_gate(p, target, POWER_TOLERANCE)]           # A4: both definitions
     return "match" if hits and len(hits) == len(powers) else "mixed" if hits else "mismatch"
 
 

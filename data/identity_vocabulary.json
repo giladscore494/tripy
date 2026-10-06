@@ -1019,5 +1019,8 @@
   "sky": [
    "סקיי"
   ]
- }
+ },
+  "approval_routes": {"_about": "The government approval type (sug_tkina_cd / sug_tkina_nm) -> the open-data identity route (src/gov_registry.approval_route, src/open_data/match.py). Anything else is `unknown` (the stricter gate of both routes).", "by_code": {"1": "european", "2": "american"}, "by_name": {"אירופאית": "european", "אמריקאית": "american"}},
+  "open_data_make_aliases": {"_about": "Manufacturer (government tozar) -> the make spellings of the open datasets (upper case, matched exactly against the snapshot's make column). Only makes listed here are kept in the EEA snapshot.", "טויוטה": ["TOYOTA"], "אאודי": ["AUDI"], "ב מ וו": ["BMW", "BMW I", "MINI"], "מרצדס": ["MERCEDES-BENZ", "MERCEDES BENZ", "MERCEDES-AMG"], "יונדאי": ["HYUNDAI"], "קאדילאק": ["CADILLAC"], "אקספנג": ["XPENG"]},
+  "open_data_model_aliases": {"_about": "Optional per `tozar|family` model spellings of the open datasets when the family word alone does not match (a whole word / phrase of the dataset's model text).", "ב מ וו|m4": ["M4", "M4 COMPETITION", "M4 COUPE"], "קאדילאק|cts": ["CTS"]}
 }

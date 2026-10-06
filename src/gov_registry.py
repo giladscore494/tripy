@@ -492,3 +492,156 @@ def emit(ctx, payload: dict | None, data: dict | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001 - the registry layer never costs the run
         out["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     return out
+
+
+# --- A1: the government identity fingerprint (Level 1.5 record + the live catalog, read-only) -------------------------
+#
+# The target's government identity as anchors a document or a dataset row can be checked against:
+#
+#   codes            tozeret_cd, degem_cd, the type code (degem_nm), the model year
+#   code family      every degem_cd of the same tozeret_cd + type code (2276 / 31AZ -> 1847, 2218, ...): the same
+#                    homologated type under the importer's yearly codes
+#   code years       the first / last catalog year of the degem_cd and of the type code
+#   approval route   sug_tkina_cd / _nm -> european | american | unknown (identity vocabulary `approval_routes`)
+#   homologation     co2_wltp, kamut_co2_city / hway, kvutzat_zihum, madad_yarok, mishkal_kolel, towing limits,
+#                    airbags; the equipment_on bitmask; the technical keys
+#   equivalent codes codes of the family whose every catalog row is identical to the target's in every technical and
+#                    homologation column and the equipment bitmask (27 <-> 44): recorded, never merged
+#
+# Without DATABASE_URL (tests, snapshot) the catalog part is the given rows or nothing: the family is the target's own
+# code. Deterministic; never raises.
+
+FINGERPRINT_VERSION = "identity-fingerprint-v1"
+HOMOLOGATION_KEYS = ("co2_wltp", "kamut_co2_city", "kamut_co2_hway", "kvutzat_zihum", "madad_yarok", "mishkal_kolel",
+                     "kosher_grira_im_blamim", "kosher_grira_bli_blamim", "mispar_kariot_avir")
+TECHNICAL_KEYS = ("nefah_manoa", "koah_sus", "hanaa_nm", "norm_body_style", "norm_propulsion_technology",
+                  "norm_drivetrain", "automatic_ind", "mispar_dlatot", "mispar_moshavim", "delek_nm", "sug_tkina_cd",
+                  "technologiat_hanaa_nm")
+FINGERPRINT_COLUMNS = ("upstream_record_id", "tozeret_cd", "degem_cd", "degem_nm", "kinuy_mishari", "shnat_yitzur",
+                       "ramat_gimur", "sug_tkina_nm", "equipment_on", *HOMOLOGATION_KEYS, *TECHNICAL_KEYS)
+CATALOG_VIEW = "public.catalog_variants_current"
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    """Catalog cells compared as numbers when both parse ('223' == 223, '343.0' == 343), else as stripped text."""
+    if a in (None, "") and b in (None, ""):
+        return True
+    try:
+        return float(str(a).strip()) == float(str(b).strip())
+    except (TypeError, ValueError):
+        return str(a or "").strip() == str(b or "").strip()
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def approval_route(code: Any, name: Any) -> str:
+    """european | american | unknown from the government approval type (identity vocabulary `approval_routes`)."""
+    from .document_binding import vocabulary
+
+    routes = vocabulary().get("approval_routes") or {}
+    by_code = routes.get("by_code") or {}
+    by_name = routes.get("by_name") or {}
+    code_key = str(_int_or_none(code)) if _int_or_none(code) is not None else ""
+    return by_code.get(code_key) or by_name.get(str(name or "").strip()) or "unknown"
+
+
+def catalog_rows_for_fingerprint(query, tozeret_cd: Any, type_code: Any) -> tuple[list[dict], dict[int, dict]]:
+    """(family rows, {degem_cd: {type_code, years}} of the manufacturer) from the live catalog through a read-only
+    query function (src/catalog.database_query)."""
+    family = query(f"SELECT {', '.join(FINGERPRINT_COLUMNS)} FROM {CATALOG_VIEW} "
+                   "WHERE tozeret_cd = %(t)s AND degem_nm = %(n)s", {"t": int(tozeret_cd), "n": str(type_code)})
+    codes = query(f"SELECT degem_cd, degem_nm, min(shnat_yitzur) AS first, max(shnat_yitzur) AS last FROM {CATALOG_VIEW} "
+                  "WHERE tozeret_cd = %(t)s GROUP BY degem_cd, degem_nm", {"t": int(tozeret_cd)})
+    out: dict[int, dict] = {}
+    for row in codes:
+        code = _int_or_none(row.get("degem_cd"))
+        if code is not None:
+            out.setdefault(code, {"type_codes": [], "years": [row.get("first"), row.get("last")]})
+            out[code]["type_codes"].append(str(row.get("degem_nm") or ""))
+    return [dict(r) for r in family], out
+
+
+def identity_fingerprint(payload: dict | None, family_rows: list[dict] | None = None,
+                         code_types: dict[int, dict] | None = None, catalog: str = "unavailable") -> dict:
+    """The fingerprint of the module comment from the Level 1.5 payload (its raw_row) and the catalog rows of the
+    target's code family (+ the manufacturer's code -> type code map, for A2)."""
+    payload = payload or {}
+    raw = payload.get("raw_row") if isinstance(payload.get("raw_row"), dict) else {}
+    ident = payload.get("identity") or {}
+    codes = ident.get("government_codes") if isinstance(ident.get("government_codes"), dict) else {}
+    tozeret = _int_or_none(codes.get("tozeret_cd") if codes.get("tozeret_cd") is not None else raw.get("tozeret_cd"))
+    degem = _int_or_none(codes.get("degem_cd") if codes.get("degem_cd") is not None else raw.get("degem_cd"))
+    type_code = str(ident.get("model_code") or raw.get("degem_nm") or "").strip() or None
+    year = _int_or_none(ident.get("year") or raw.get("shnat_yitzur"))
+    structure, environment = payload.get("structure") or {}, payload.get("environment") or {}
+    target_row = dict(raw) if raw else {
+        "co2_wltp": environment.get("co2_wltp"), "kamut_co2_city": environment.get("co2_city"),
+        "kamut_co2_hway": environment.get("co2_highway"), "kvutzat_zihum": environment.get("pollution_group"),
+        "madad_yarok": environment.get("green_index"), "mishkal_kolel": structure.get("gross_weight_kg"),
+        "sug_tkina_nm": structure.get("standard")}
+    family_rows = [r for r in family_rows or [] if _int_or_none(r.get("tozeret_cd")) == tozeret
+                   and str(r.get("degem_nm") or "").strip() == (type_code or "")]
+    family = sorted({c for c in (_int_or_none(r.get("degem_cd")) for r in family_rows) if c is not None}
+                    | ({degem} if degem is not None else set()))
+    own_years = sorted({_int_or_none(r.get("shnat_yitzur")) for r in family_rows
+                        if _int_or_none(r.get("degem_cd")) == degem} - {None})
+    type_years = sorted({_int_or_none(r.get("shnat_yitzur")) for r in family_rows} - {None})
+    keys = (*TECHNICAL_KEYS, *HOMOLOGATION_KEYS, "equipment_on")
+    equivalent = []
+    if raw:
+        for code in family:
+            rows = [r for r in family_rows if _int_or_none(r.get("degem_cd")) == code]
+            if code != degem and rows and all(all(_same_value(r.get(k), raw.get(k)) for k in keys if k in raw)
+                                              for r in rows):
+                equivalent.append(code)
+    route = approval_route(target_row.get("sug_tkina_cd"), target_row.get("sug_tkina_nm") or structure.get("standard"))
+    other = {}
+    for code, info in (code_types or {}).items():
+        types = sorted({t for t in info.get("type_codes") or [] if t})
+        if code not in family and types:
+            other[int(code)] = types
+    return {
+        "version": FINGERPRINT_VERSION, "catalog": catalog,
+        "tozeret_cd": tozeret, "degem_cd": degem, "type_code": type_code, "year": year,
+        "code_family": family,
+        "code_years": {"degem_cd": [own_years[0], own_years[-1]] if own_years else None,
+                       "type_code": [type_years[0], type_years[-1]] if type_years else None},
+        "approval_route": {"code": target_row.get("sug_tkina_cd"),
+                           "name": target_row.get("sug_tkina_nm") or structure.get("standard"), "route": route},
+        "homologation": {k: target_row.get(k) for k in HOMOLOGATION_KEYS if k in target_row},
+        "equipment_on": target_row.get("equipment_on"),
+        "technical": {k: target_row.get(k) for k in TECHNICAL_KEYS if k in target_row},
+        "equivalent_codes": equivalent,
+        # the manufacturer's other codes with their type codes (A2: a sheet naming only codes of another type is
+        # another version); not part of the recorded event (size), counted there
+        "other_code_types": other,
+    }
+
+
+def fingerprint_event(fingerprint: dict) -> dict:
+    """The identity_fingerprint event / target_identity view (the other-code map counted, not listed)."""
+    return {**{k: v for k, v in fingerprint.items() if k != "other_code_types"},
+            "other_codes_known": len(fingerprint.get("other_code_types") or {})}
+
+
+def run_fingerprint(payload: dict | None, dsn: str | None = None, query=None) -> dict:
+    """The run's fingerprint: the live catalog through DATABASE_URL (read-only) when it is configured, else the
+    payload alone. Never raises (a catalog failure is recorded on the fingerprint)."""
+    payload = payload or {}
+    base = identity_fingerprint(payload)
+    if query is None and dsn:
+        from .catalog import database_query
+
+        query = database_query(dsn)
+    if query is None or base["tozeret_cd"] is None or not base["type_code"]:
+        return base
+    try:
+        rows, code_types = catalog_rows_for_fingerprint(query, base["tozeret_cd"], base["type_code"])
+    except Exception as exc:  # noqa: BLE001 - the fingerprint never costs the run
+        return {**base, "catalog": "failed", "catalog_error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    return identity_fingerprint(payload, rows, code_types, catalog="live")

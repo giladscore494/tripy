@@ -46,7 +46,10 @@ from .fields import DICTIONARY_KEYS, harvest_vocabulary, normalize_field_name, s
 # v8 (PR #42): visually ordered right-to-left PDF lines / cells are detected by dictionary hit rate and reordered
 # v10 (PR #44): rpm_guard (an engine speed is never a torque), a unit named in the row label converts a bare value
 # (kgf·m -> Nm, rounded to whole Nm)
-HARVESTER_VERSION = "harvest-v10"
+# v11 (identity anchors PR): a PDF entirely in visual order is put in logical order as a whole (A3), per-axle rims
+# from tyre sizes (D2), imperial conversions with exact factors and km/l -> l/100km to one decimal (D3 / D4), spec-sheet
+# equipment markers (B3)
+HARVESTER_VERSION = "harvest-v11"
 MAX_CANDIDATES_PER_FIELD_PER_DOC = 12
 MAX_CANDIDATES_PER_DOC = 400
 MAX_STRUCTURED_LEAVES = 3000
@@ -183,6 +186,87 @@ def visual_to_logical(line: str) -> str:
     for base, items in reversed(runs):
         out.append(" ".join(_backwards(t) for t in reversed(items)) if base == "H" else " ".join(items))
     return " ".join(out)
+
+
+def visual_to_logical_map(line: str) -> tuple[str, list[tuple[int, int, int, int]]]:
+    """visual_to_logical with offsets: (logical line, [(logical start, logical end, original start, original end)] per
+    token). The same reordering as visual_to_logical (runs reversed, a Hebrew run's words reversed and read backwards),
+    so a quote found in the logical line maps back to the characters of the original (visual) line."""
+    spans = [(m.group(0), m.start(), m.end()) for m in re.finditer(r"\S+", line or "")]
+    tokens = [t for t, _, _ in spans]
+    kinds = ["H" if HEBREW.search(t) else "L" if LATIN.search(t) else "N" for t in tokens]
+    for i, kind in enumerate(kinds):
+        if kind == "N":
+            left = next((k for k in reversed(kinds[:i]) if k != "N"), None)
+            right = next((k for k in kinds[i + 1:] if k != "N"), None)
+            if left == right and left is not None:
+                kinds[i] = left.lower()
+    runs: list[tuple[str, list[int]]] = []
+    for i, kind in enumerate(kinds):
+        base = kind.upper()
+        if runs and base in ("H", "L") and runs[-1][0] == base:
+            runs[-1][1].append(i)
+        else:
+            runs.append((base, [i]))
+    pieces: list[tuple[str, int]] = []
+    for base, items in reversed(runs):
+        order = list(reversed(items)) if base == "H" else items
+        pieces += [(_backwards(tokens[i]) if base == "H" else tokens[i], i) for i in order]
+    out, mapping, pos = [], [], 0
+    for text, i in pieces:
+        if out:
+            pos += 1
+        mapping.append((pos, pos + len(text), spans[i][1], spans[i][2]))
+        out.append(text)
+        pos += len(text)
+    return " ".join(out), mapping
+
+
+def map_logical_span(mapping: list[tuple[int, int, int, int]], start: int, end: int) -> tuple[int, int] | None:
+    """The original (visual) character span of a logical span: the union of the tokens it overlaps."""
+    hit = [(os, oe) for ls, le, os, oe in mapping if ls < end and le > start]
+    return (min(s for s, _ in hit), max(e for _, e in hit)) if hit else None
+
+
+DOCUMENT_REVERSAL_MIN_WORDS = 6
+PAGE_MARKER = re.compile(r"\[page \d+\]")        # the fetch tool's own page separator (never PDF content)
+
+
+def document_reversal(lines: Iterable[str], words: frozenset) -> dict:
+    """A3: is the WHOLE document in visual order? The dictionary hit rate of every Hebrew line read backwards against
+    as read (PR #42 F4, summed over the document): {reversed, as_read, backwards, hebrew_lines}. A document with
+    fewer than DOCUMENT_REVERSAL_MIN_WORDS Hebrew words is never judged as a whole."""
+    as_read = backwards = n = count = 0
+    for line in lines:
+        if not HEBREW.search(line or ""):
+            continue
+        score = rtl_reversal_score(line, words)
+        as_read, backwards, n, count = as_read + score["as_read"], backwards + score["reversed"], n + 1, \
+            count + score["words"]
+    return {"reversed": count >= DOCUMENT_REVERSAL_MIN_WORDS and backwards > as_read and backwards > 0,
+            "as_read": as_read, "backwards": backwards, "hebrew_lines": n}
+
+
+def logical_lines(text: str, *, is_pdf: bool, words: frozenset,
+                  hebrew_aliases: Iterable[str] = ()) -> tuple[list[tuple[str, str, bool]], dict]:
+    """([(logical line, original line, reversed)], document verdict) of a document's non-empty lines. A PDF whose
+    whole text is in visual order (document_reversal) has EVERY line put in logical order, Latin / number lines with
+    several runs included ("BMW M4 2423" -> "2423 BMW M4": the code cell is the first cell of a right-to-left row);
+    otherwise each line is judged on its own (F4)."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    verdict = document_reversal(lines, words) if is_pdf else {"reversed": False}
+    out = []
+    for line in lines:
+        logical = None
+        if verdict["reversed"] and not PAGE_MARKER.fullmatch(line):
+            converted = visual_to_logical(line)
+            logical = converted if converted != line else None
+        elif is_pdf:
+            logical = logical_rtl_line(line, words)
+            if logical is None and HEBREW.search(line) and looks_reversed(line, hebrew_aliases):
+                logical = reverse_hebrew_line(line)
+        out.append((logical if logical is not None else line, line, logical is not None))
+    return out, verdict
 
 
 def logical_rtl_line(line: str, words: frozenset) -> str | None:
@@ -579,16 +663,12 @@ def document_segments(text: str, tables: list[dict] | None, structured: dict | N
                       dictionary: Dictionary) -> list[Segment]:
     """Every searchable unit of one document, built ONCE and then read by all field matchers."""
     segments: list[Segment] = []
-    lines = [ln.strip() for ln in (text or "").splitlines()]
-    lines = [ln for ln in lines if ln]
     norms: list[tuple[str, str, bool]] = []
     words = rtl_dictionary(dictionary.hebrew_aliases) if is_pdf else frozenset()
-    for line in lines:
-        logical = logical_rtl_line(line, words) if is_pdf else None
-        if logical is None and is_pdf and HEBREW.search(line) and looks_reversed(line, dictionary.hebrew_aliases):
-            logical = reverse_hebrew_line(line)
-        reversed_ = logical is not None
-        norms.append((normalize_text(logical if reversed_ else line), logical if reversed_ else line, reversed_))
+    # A3: a document entirely in visual order is put in logical order line by line before any field rule reads it
+    for logical, _, reversed_ in logical_lines(text, is_pdf=is_pdf, words=words,
+                                               hebrew_aliases=dictionary.hebrew_aliases)[0]:
+        norms.append((normalize_text(logical), logical, reversed_))
     descriptions: set[int] = set()
     blocks = [] if is_pdf else spec_block_segments(norms, descriptions)
     for i, (norm, quote, reversed_) in enumerate(norms):
