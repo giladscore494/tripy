@@ -25,8 +25,9 @@ from typing import Any
 from urllib.parse import quote
 
 from . import datasets as ds
-from .build import (BuildStopped, Fetcher, _csv_tables, _decode, _file_name, _languages, _resources, _xls_rows,
-                    dictionary_check, distribution, resolve_map, unit_scales)
+from .build import (BuildStopped, EeaQueryError, Fetcher, _csv_tables, _decode, _file_name, _languages, _resources,
+                    _xls_rows, eea_grouped_query, eea_response, known_makes,
+                    dictionary_check, distribution, override_units, resolve_map, unit_scales)
 
 PROBE_VERSION = "open-data-probe-v1"
 
@@ -39,25 +40,44 @@ def _resolution(header: list[str], columns: dict) -> dict:
             "required_keys": required, "ok": not out["missing"] and not out["ambiguous"]}
 
 
+def _distinct(rows: list[dict], column: str | None, limit: int = 2000) -> list[str]:
+    """The distinct values of a source's make column (what scripts/build_make_aliases.py matches against)."""
+    if not column:
+        return []
+    values = {" ".join(str(r.get(column) or "").split()).upper() for r in rows}
+    values.discard("")
+    return sorted(values)[:limit]
+
+
 def probe_eea(fetch: Fetcher) -> dict:
     cfg = ds.datasets()["eea_co2_cars"]
     base, table = cfg["source_url"], cfg["table"]
 
-    def sql(query: str) -> list[dict]:
-        return json.loads(_decode(fetch(f"{base}?query={quote(query)}&p=1&nrOfHits=5000"))).get("results") or []
+    def raw(query: str, hits: int = 5000) -> bytes:
+        return fetch(f"{base}?query={quote(query)}&p=1&nrOfHits={hits}")
+
+    def sql(query: str, hits: int = 5000) -> list[dict]:
+        return eea_response(raw(query, hits))
 
     sample = sql(f"SELECT TOP 1 * FROM {table}")
     header = list(sample[0].keys()) if sample else []
-    head = resolve_map(header, {"year": cfg["columns"]["year"], "status": cfg["status_column"]})
+    head = resolve_map(header, {"year": cfg["columns"]["year"], "status": cfg["status_column"],
+                                "make": cfg["columns"]["make"]})
     if head["missing"] or head["ambiguous"]:
         return {"status": "stopped", "reason": "schema_mismatch", "live_header": header, **_resolution(header, {
-            "year": cfg["columns"]["year"], "status": cfg["status_column"]})}
-    year_col, status_col = head["mapping"]["year"], head["mapping"]["status"]
+            "year": cfg["columns"]["year"], "status": cfg["status_column"], "make": cfg["columns"]["make"]})}
+    year_col, status_col, make_col = head["mapping"]["year"], head["mapping"]["status"], head["mapping"]["make"]
     statuses: dict[int, set[str]] = {}
     for pair in sql(f"SELECT DISTINCT [{year_col}], [{status_col}] FROM {table}"):
         year = ds._int(pair.get(year_col))
         if year is not None:
             statuses.setdefault(year, set()).add(str(pair.get(status_col) or "").strip())
+    try:
+        makes = _distinct(sql(f"SELECT DISTINCT [{make_col}] FROM {table}", 50_000), make_col)
+    except EeaQueryError as exc:
+        makes, make_error = [], str(exc)[:500]
+    else:
+        make_error = None
     years = []
     floor = int(cfg.get("years_from") or 0)
     for year in sorted(y for y in statuses if y >= floor):
@@ -74,8 +94,32 @@ def probe_eea(fetch: Fetcher) -> dict:
         years.append({"year": year, "status": "ok" if resolved["ok"] else "stopped", "status_used": status,
                       "live_header": year_header, **resolved})
     ok = any(y["status"] == "ok" for y in years)
-    return {"status": "ok" if ok else "stopped", "reason": None if ok else "no_year_resolves",
-            "discovered": {str(y): sorted(s) for y, s in sorted(statuses.items())}, "years": years}
+    out = {"status": "ok" if ok else "stopped", "reason": None if ok else "no_year_resolves",
+           "discovered": {str(y): sorted(s) for y, s in sorted(statuses.items())}, "years": years,
+           "distinct_makes": makes, "distinct_makes_error": make_error}
+    # H1: one grouped test query (one make, the latest resolving year, the real column list); the raw response head
+    # goes to the step summary, so a server-side refusal is visible before the build
+    latest = next((y for y in reversed(years) if y["status"] == "ok"), None)
+    test_make = next((m for m in sorted(known_makes()) if m in set(makes)), None) or (sorted(known_makes()) or [None])[0]
+    if latest and test_make:
+        year_header = latest["live_header"]
+        mapping = resolve_map(year_header, cfg["columns"])["mapping"]
+        registrations = resolve_map(year_header, {"r": cfg["registrations_column"]})["mapping"].get("r")
+        where = f"[{year_col}] = {int(latest['year'])} AND [{status_col}] = '{latest['status_used']}'"
+        query = eea_grouped_query(table, mapping, cfg, registrations, where, [test_make])
+        try:
+            body = raw(query)
+            head_text = _decode(body)[:1500]
+            try:
+                rows = eea_response(body)
+                test = {"status": "ok", "rows": len(rows)}
+            except EeaQueryError as exc:
+                test = {"status": "failed", "error": str(exc)[:500]}
+        except Exception as exc:  # noqa: BLE001
+            head_text, test = "", {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:400]}"}
+        out["grouped_test"] = {**test, "year": latest["year"], "make": test_make, "query": query[:2000],
+                               "response_head": head_text}
+    return out
 
 
 def probe_ademe(fetch: Fetcher) -> dict:
@@ -95,27 +139,29 @@ def probe_ademe(fetch: Fetcher) -> dict:
               if isinstance(f, dict)]
     return {"status": "ok" if resolved["ok"] else "stopped", "reason": None if resolved["ok"] else "schema_mismatch",
             "live_header": header, "rows": len(rows), **resolved, "units": units,
-            "unit_unknown_distribution": unknown, "schema_fields": fields}
+            "unit_unknown_distribution": unknown, "schema_fields": fields,
+            "distinct_makes": _distinct(rows, resolved["matched"].get("make"))}
 
 
 def probe_csv(dataset: str, fetch: Fetcher) -> dict:
     cfg = ds.datasets()[dataset]
-    files = []
+    files, makes = [], set()
     for url in cfg.get("download_urls") or []:
         tables = _csv_tables(fetch(url))
         for name, rows, header in tables:
-            files.append({"url": url, "table": name, "rows": len(rows), "live_header": header,
-                          **_resolution(header, cfg["columns"])})
+            resolved = _resolution(header, cfg["columns"])
+            makes.update(_distinct(rows, resolved["matched"].get("make")))
+            files.append({"url": url, "table": name, "rows": len(rows), "live_header": header, **resolved})
     ok = bool(files) and all(f["ok"] for f in files)
     return {"status": "ok" if ok else "stopped", "reason": None if ok else
-            ("no_download_url" if not files else "schema_mismatch"), "files": files}
+            ("no_download_url" if not files else "schema_mismatch"), "files": files, "distinct_makes": sorted(makes)}
 
 
 def probe_ckan_groups(dataset: str, fetch: Fetcher) -> dict:
     cfg = ds.datasets()[dataset]
     fmt, lang = str(cfg.get("resource_format") or "CSV").upper(), str(cfg.get("resource_language") or "en").lower()
     excluded = [p.lower() for p in (cfg.get("exclude_resources") or {}).get("patterns") or []]
-    files = []
+    files, makes = [], set()
     for resource in _resources(fetch, cfg["ckan_api"]):
         name = _file_name(resource)
         if str(resource.get("format") or "").upper() != fmt or (_languages(resource) and lang not in _languages(resource)):
@@ -130,15 +176,18 @@ def probe_ckan_groups(dataset: str, fetch: Fetcher) -> dict:
             continue
         tables = _csv_tables(fetch(resource["url"]))
         header = tables[0][2] if tables else []
+        rows = tables[0][1] if tables else []
         if group.get("columns") is None:
             files.append({"url": resource["url"], "group": group["group"], "status": "map_pending",
                           "live_header": header})
             continue
         resolved = _resolution(header, group["columns"])
+        makes.update(_distinct(rows, resolved["matched"].get("make")))
         files.append({"url": resource["url"], "group": group["group"], "status": "ok" if resolved["ok"] else "stopped",
                       "live_header": header, **resolved})
     ok = any(f["status"] == "ok" for f in files)
-    return {"status": "ok" if ok else "stopped", "reason": None if ok else "no_file_resolves", "files": files}
+    return {"status": "ok" if ok else "stopped", "reason": None if ok else "no_file_resolves", "files": files,
+            "distinct_makes": sorted(makes)}
 
 
 def probe_ckan_files(dataset: str, fetch: Fetcher, header_years: tuple[int, ...] = (2018, 2023)) -> dict:
@@ -155,16 +204,26 @@ def probe_ckan_files(dataset: str, fetch: Fetcher, header_years: tuple[int, ...]
     except BuildStopped as stop:
         return {**out, "status": "stopped", "reason": stop.reason, **stop.report}
     out["dictionary"] = {"url": dictionary["url"], "rows": rows[:200]}
-    out["dictionary_problems"] = dictionary_check(rows, cfg.get("dictionary_check") or {})
-    headers = {}
+    out["dictionary_problems"] = dictionary_check(rows, cfg.get("dictionary_check") or {}, cfg.get("unit_overrides"))
+    out["unit_overrides"] = override_units(cfg.get("unit_overrides"))
+    headers, makes = {}, set()
+    unit_keys = [k for k, v in (cfg.get("columns") or {}).items() if isinstance(v, dict) and v.get("unit")]
     for resource in resources:
         name = _file_name(resource)
         year = re.search(r"(\d{4})", name)
         if files_re.search(name) and year and int(year.group(1)) in header_years:
             tables = _csv_tables(fetch(resource["url"]))
             header = tables[0][2] if tables else []
-            headers[name] = {"live_header": header, **_resolution(header, cfg["columns"])}
+            file_rows = tables[0][1] if tables else []
+            resolved = _resolution(header, cfg["columns"])
+            canonical = [{k: row.get(c) for k, c in resolved["matched"].items()} for row in file_rows]
+            makes.update(_distinct(file_rows, resolved["matched"].get("make")))
+            # H4: each unit column's distribution, so a wrong unit override is visible
+            headers[name] = {"live_header": header, **resolved,
+                             "distributions": {k: distribution(canonical, k) for k in unit_keys
+                                               if k in resolved["matched"]}}
     out["headers"] = headers
+    out["distinct_makes"] = sorted(makes)
     ok = not out["dictionary_problems"] and bool(headers) and all(h["ok"] for h in headers.values())
     return {**out, "status": "ok" if ok else "stopped",
             "reason": None if ok else "dictionary_mismatch" if out["dictionary_problems"] else "schema_mismatch"}
@@ -229,6 +288,17 @@ def markdown(report: dict) -> str:
                          + (f" — stated: “{info.get('stated')}”" if info.get("stated") else "")
                          + (f" — p5 {dist['p5']}, p50 {dist['p50']}, p95 {dist['p95']} (n {dist['n']})" if dist
                             else ""))
+        if item.get("distinct_makes") is not None:
+            lines.append(f"- distinct makes: {len(item.get('distinct_makes') or [])}"
+                         + (f" (error: {item['distinct_makes_error']})" if item.get("distinct_makes_error") else ""))
+        test = item.get("grouped_test")
+        if test:
+            lines.append(f"- grouped test query ({test.get('make')}, {test.get('year')}): {test.get('status')}"
+                         + (f", {test.get('rows')} rows" if test.get("rows") is not None else "")
+                         + (f" — {test.get('error')}" if test.get("error") else ""))
+            lines.append(f"  - response head: `{(test.get('response_head') or '')[:600].replace('`', chr(39))}`")
+        if item.get("unit_overrides"):
+            lines.append(f"- unit overrides: {json.dumps(item['unit_overrides'], ensure_ascii=False)}")
         if item.get("dictionary"):
             lines.append(f"- data dictionary problems: {json.dumps(item.get('dictionary_problems'), ensure_ascii=False)}")
             lines.append("- data dictionary rows:")
@@ -236,4 +306,7 @@ def markdown(report: dict) -> str:
         for name_, header in (item.get("headers") or {}).items():
             lines.append(f"- {name_} header: `{' | '.join(header.get('live_header') or [])}`; missing required: "
                          f"{_cols(header.get('missing_required'))}")
+            for key, dist in (header.get("distributions") or {}).items():
+                if dist:
+                    lines.append(f"  - {key}: p5 {dist['p5']}, p50 {dist['p50']}, p95 {dist['p95']} (n {dist['n']})")
     return "\n".join(lines) + "\n"

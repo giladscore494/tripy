@@ -82,14 +82,18 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
             continue
         value = distinct.pop()
         if entry.get("max_column"):
-            # Min / Max (ADEME Min / Max columns; EEA min / max around the configuration's median): Min != Max
-            # identifies a single value only when the match leaves one configuration
+            # Min / Max (ADEME Min / Max columns): Min != Max identifies a single value only when the match leaves one
+            # configuration. EEA (`range_policy: equal_only`, the value is an average when MIN != MAX): only MIN = MAX
             lows = {_value(r, {**entry, "column": entry["min_column"]}) for _, r in stated} - {None} \
                 if entry.get("min_column") else {value}
             highs = {_value(r, {**entry, "column": entry["max_column"]}) for _, r in stated} - {None}
             low, high = min(lows | {value}), max(highs | {value}) if highs else value
             if low != high:
                 offer["range"] = [low, high]
+                if entry.get("range_policy") == "equal_only":
+                    out.append({**offer, "status": "range", "reason": "MIN != MAX within the configuration "
+                                "(the stored value is an average, never offered)"})
+                    continue
                 if src.get("status") != "unique":
                     out.append({**offer, "status": "range", "reason": "Min != Max and the match leaves "
                                 f"{len(src.get('configurations') or []) or 'several'} configurations"})

@@ -69,7 +69,9 @@ def target_keys(fingerprint: dict, payload: dict | None, identity=None) -> dict:
         from ..document_binding import target_identity
 
         family = target_identity(payload).family
-    makes = [m.upper() for m in (vocab.get("open_data_make_aliases") or {}).get(manufacturer) or []]
+    from .makes import aliases
+
+    makes = [m.upper() for m in aliases().get(manufacturer) or []]
     models = (vocab.get("open_data_model_aliases") or {}).get(f"{manufacturer}|{family}") or ([family] if family else [])
     homologation = fingerprint.get("homologation") or {}
     technical = fingerprint.get("technical") or {}

@@ -1176,10 +1176,22 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
   demand; no secret), never on the server: (1) a live-schema probe per dataset / year / file (step summary, artifact,
   `data/open/probe.json`; a dataset whose probe fails is not built), (2) the builders of `src/open_data/build.py`
   (case-insensitive maps; a missing required key stops that table / file; absent optional keys are recorded),
-  compacted to what matching and offers use (`compaction` in `data/open_datasets.json`: EEA one row per configuration
-  with the registration-weighted median / min / max of each measure; EPA / NRCan model years >= 2005; CVS 2011-2023;
-  the vocabulary's makes), (3) `data/open/<dataset>.sqlite.gz` (each under 50 MB) + `data/open/manifest.json`, (4) a
-  coverage report before (5) the pull request on `automation/open-data`. The deploy image carries the files; the
+  compacted to what matching and offers use (`compaction` in `data/open_datasets.json`: EEA grouped server-side by its
+  identity keys, MIN / MAX / AVG of each measure and the summed registrations, a year that fails whole retried make by
+  make (the mode is recorded per year; an error response is a failed year with its message, never 0 rows; a value is
+  offered only when MIN = MAX); EPA / NRCan model years >= 2005; CVS 2011-2023; the catalog's makes), (3)
+  `data/open/<dataset>.sqlite.gz` (each under 50 MB) + `data/open/manifest.json`, (4) a coverage report before (5) the
+  pull request on `automation/open-data`. Make aliases for every catalog manufacturer are generated in the Action
+  (`scripts/build_make_aliases.py` -> `data/open_data_make_aliases.json`): the catalog's tozar
+  (`data/catalog_manufacturers.json`, a tozeret_nm without its country suffix) matched to the source makes the probe
+  saw (EEA `SELECT DISTINCT Mk`, the make columns of EPA / NRCan / ADEME / CVS) by `data/make_transliteration.json`;
+  ambiguous and unmatched manufacturers are listed for review in the pull request body, never guessed, and the
+  reviewed `open_data_make_aliases` of the vocabulary win. The automatic pull request needs the repository setting
+  "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the branch
+  is still pushed and the step summary carries the compare URL
+  (`https://github.com/giladscore494/tripy/compare/main...automation/open-data?expand=1`) to open it by hand. The
+  CVS data dictionary states no units: `unit_overrides` (cm for OL / OW / OH / WB, kg for CW, with the recorded
+  evidence) confirm them, and a unit column without an override still stops the build. The deploy image carries the files; the
   engine verifies each against the manifest's sha256 and decompresses it into the container's temp dir (a mismatch is
   `no_snapshot`). ADEME units come from the schema's field descriptions ("Puissance en kW", "En Kg"); a column whose
   unit is not stated is kept raw (`unit: unknown`, the probe prints its p5 / p50 / p95) and yields no match key and no

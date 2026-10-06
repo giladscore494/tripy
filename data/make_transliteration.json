@@ -1,0 +1,230 @@
+{
+ "_about": "scripts/build_make_aliases.py: deterministic matching of a Hebrew manufacturer name (tozar) to the make spellings the open datasets actually contain. Both sides become consonant skeletons: the Hebrew letters through `letters` (already normalized consonants; every option is generated; a geresh ' after a letter selects `geresh`), the Latin make through `latin_rules` (applied in order) with the vowels of `latin_drop` removed and doubled letters collapsed. A source make matches when its skeleton (of the whole name or of its first word) is one the Hebrew name can produce; among several matches the longest skeleton wins, a tie is ambiguous (review list), no match is unmatched (review list). Nothing is guessed: an alias exists only when a source spells it.",
+ "letters": {
+  "א": [
+   ""
+  ],
+  "ב": [
+   "b",
+   "v"
+  ],
+  "ג": [
+   "g"
+  ],
+  "ד": [
+   "d"
+  ],
+  "ה": [
+   ""
+  ],
+  "ו": [
+   "v",
+   ""
+  ],
+  "ז": [
+   "z"
+  ],
+  "ח": [
+   "h",
+   "k"
+  ],
+  "ט": [
+   "t"
+  ],
+  "י": [
+   "y",
+   ""
+  ],
+  "כ": [
+   "k"
+  ],
+  "ך": [
+   "k"
+  ],
+  "ל": [
+   "l"
+  ],
+  "מ": [
+   "m"
+  ],
+  "ם": [
+   "m"
+  ],
+  "נ": [
+   "n"
+  ],
+  "ן": [
+   "n"
+  ],
+  "ס": [
+   "s",
+   "k"
+  ],
+  "ע": [
+   ""
+  ],
+  "פ": [
+   "p",
+   "f",
+   "v"
+  ],
+  "ף": [
+   "f"
+  ],
+  "צ": [
+   "z",
+   "k"
+  ],
+  "ץ": [
+   "z"
+  ],
+  "ק": [
+   "k"
+  ],
+  "ר": [
+   "r"
+  ],
+  "ש": [
+   "s",
+   "k"
+  ],
+  "ת": [
+   "t"
+  ]
+ },
+ "geresh": {
+  "ג": [
+   "j"
+  ],
+  "צ": [
+   "k"
+  ],
+  "ז": [
+   "j"
+  ]
+ },
+ "latin_rules": [
+  ["dge", "j"], [
+   "sch",
+   "s"
+  ],
+  [
+   "ph",
+   "f"
+  ],
+  [
+   "ck",
+   "k"
+  ],
+  [
+   "ch",
+   "k"
+  ],
+  [
+   "sh",
+   "s"
+  ],
+  [
+   "tz",
+   "z"
+  ],
+  [
+   "ts",
+   "z"
+  ],
+  [
+   "x",
+   "ks"
+  ],
+  [
+   "q",
+   "k"
+  ],
+  [
+   "c",
+   "k"
+  ],
+  [
+   "w",
+   "v"
+  ],
+  [
+   "j",
+   "j"
+  ],
+  [
+   "h",
+   ""
+  ]
+ ],
+ "latin_drop": "aeiou",
+ "separators": " .-_/'\"",
+ "country_words": [
+  "גרמניה",
+  "גרמנ",
+  "יפן",
+  "ארהב",
+  "ארה''ב",
+  "ארה",
+  "קוריאה",
+  "קוריא",
+  "ד.",
+  "ד",
+  "צרפת",
+  "ספרד",
+  "איטליה",
+  "אנגליה",
+  "בריטניה",
+  "בלגיה",
+  "שבדיה",
+  "הולנד",
+  "הונגריה",
+  "הונג",
+  "סלובקיה",
+  "סלובקי",
+  "סלוב",
+  "סלובק",
+  "צ'כיה",
+  "פולין",
+  "פולי",
+  "טורקיה",
+  "תורכיה",
+  "טורק",
+  "מקסיקו",
+  "מקסי",
+  "קנדה",
+  "סין",
+  "תאילנד",
+  "תאילנ",
+  "הודו",
+  "רומניה",
+  "רוסיה",
+  "אוסטריה",
+  "אוסטרי",
+  "אוסט",
+  "פורטוגל",
+  "פורט",
+  "פורטוג",
+  "פורט'",
+  "מרוקו",
+  "אפריקה",
+  "אפרי",
+  "אפר",
+  "ד.אפ",
+  "דרום",
+  "סרביה",
+  "ברזיל",
+  "ארגנ",
+  "ארגנטינה",
+  "פינל",
+  "פינלנד",
+  "סלובניה",
+  "ישראל",
+  "בלגי",
+  "איטל",
+  "אס",
+  "אר",
+  "ספ",
+  "אי"
+ ]
+}
