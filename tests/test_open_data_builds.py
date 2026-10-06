@@ -274,13 +274,26 @@ def test_a_unit_in_the_description_yields_offers_and_one_without_yields_none_unt
     assert offers(confirmed)["energy_consumption_kwh_100km"]["range"] == [18, 19.5]
 
 
-def test_a_decimal_comma_is_never_guessed():
+def test_a_decimal_comma_is_never_guessed(monkeypatch):
     header = H.ADEME_ORIGINAL_NAMES
     rows = _ademe_rows({"Conso vitesse mixte Min": "5,6", "Conso vitesse mixte Max": "6,1"})
+    config = ds.config()
+    undeclared = {**config, "datasets": {**config["datasets"], "ademe_car_labelling": {
+        k: v for k, v in config["datasets"]["ademe_car_labelling"].items() if k != "decimal_comma"}}}
+    monkeypatch.setattr(ds, "config", lambda path=None: undeclared)
     built = build_ademe(_ademe_fetch(_ademe_schema(), H.csv_text(header, rows, delimiter=";")))
     assert built["rows"][0]["fuel_consumption_l_100km"] is None
     assert built["files"][0]["decimal_comma_values"] == {"fuel_consumption_l_100km": 1,
                                                          "fuel_consumption_l_100km_max": 1}
+
+
+def test_ademe_declares_its_decimal_comma_and_reads_it():
+    """M4: the Action's report (3,470 power values with a decimal comma) is the evidence for the declaration."""
+    assert _cfg("ademe_car_labelling")["decimal_comma"] is True
+    header = H.ADEME_ORIGINAL_NAMES
+    rows = _ademe_rows({"Conso vitesse mixte Min": "5,6", "Conso vitesse mixte Max": "6,1"})
+    built = build_ademe(_ademe_fetch(_ademe_schema(), H.csv_text(header, rows, delimiter=";")))
+    assert built["rows"][0]["fuel_consumption_l_100km"] == "5.6" and "decimal_comma_values" not in built["files"][0]
 
 
 def test_unit_scales_records_a_column_missing_from_the_schema_as_unknown():
@@ -316,7 +329,7 @@ NRCAN_FILES = {
     "my1995-2014-fuel-consumption-ratings-5-cycle.csv": ("broken", 2010),
     "original-my1995-2014-fuel-consumption-ratings-2-cycle.csv": ("never", 2010),
     "my2012-2026-battery-electric-vehicles.csv": ("bev", 2024),
-    "my2012-2026-plug-in-hybrid-electric-vehicles.csv": ("bev", 2024),
+    "my2012-2026-plug-in-hybrid-electric-vehicles.csv": ("phev", 2024),
 }
 
 
@@ -334,8 +347,15 @@ def _nrcan_fetch(fetched):
                               [[year, "CADILLAC", "CTS", "Mid-size", "2.0", 4, "AS8", "Z", "9.5"]])
         if kind == "broken":
             return H.csv_text(["MODEL YEAR", "MAKE"], [[year, "CADILLAC"]])
-        if kind == "bev":
-            return H.csv_text(H.NRCAN_BEV_HEADER, [[year, "KIA", "EV6", "SUV", 239, 499]])
+        if kind == "bev":                  # M5: the recorded live header
+            row = {"Model year": year, "Make": "KIA", "Model": "EV6 AWD", "Vehicle class": "SUV: Small", "Motor (kW)": 239,
+                   "Transmission": "A1", "Fuel type": "B", "Combined (kWh/100 km)": "20.1", "Range (km)": 499}
+            return H.csv_text(H.NRCAN_BEV_LIVE_HEADER, [[row.get(c) for c in H.NRCAN_BEV_LIVE_HEADER]])
+        if kind == "phev":
+            row = {"Model year": year, "Make": "BMW", "Model": "530e xDrive", "Vehicle class": "Mid-size",
+                   "Motor (kW)": 80, "Engine size (L)": "2.0", "Cylinders": 4, "Transmission": "A8",
+                   "Fuel type 1": "B", "Fuel type 2": "Z", "Range 1 (km)": 32, "Combined (L/100 km)": "8.4"}
+            return H.csv_text(H.NRCAN_PHEV_LIVE_HEADER, [[row.get(c) for c in H.NRCAN_PHEV_LIVE_HEADER]])
         raise AssertionError(f"{url} must never be read")
     return fetch
 
@@ -353,10 +373,27 @@ def test_nrcan_builds_per_group_and_a_file_that_fails_stops_only_itself():
     assert five_cycle["status"] == "stopped" and five_cycle["group"] == "conventional"
     assert {m["key"] for m in five_cycle["missing"]} == {"model", "displacement_l", "transmission"}
     bev = by_file["my2012-2026-battery-electric-vehicles.csv"]
-    assert bev["status"] == "map_pending" and bev["live_header"] == H.NRCAN_BEV_HEADER   # no map from memory
-    assert by_file["my2012-2026-plug-in-hybrid-electric-vehicles.csv"]["group"] == "phev"
-    assert len(built["rows"]) == 3 and {r["group"] for r in built["rows"]} == {"conventional"}
-    assert sorted(r["year"] for r in built["rows"]) == ["2018", "2025", "2026"]
+    phev = by_file["my2012-2026-plug-in-hybrid-electric-vehicles.csv"]
+    assert bev["status"] == "built" and bev["group"] == "bev" and bev["absent_columns"] == []   # M5: the live header
+    assert phev["status"] == "built" and phev["group"] == "phev"
+    assert len(built["rows"]) == 5 and {r["group"] for r in built["rows"]} == {"conventional", "bev", "phev"}
+    assert sorted(r["year"] for r in built["rows"]) == ["2018", "2024", "2024", "2025", "2026"]
+    ev = next(r for r in built["rows"] if r["group"] == "bev")
+    assert (ev["fuel_mode"], ev["motor_kw"], ev["electric_range_km"], ev["energy_kwh_100km"]) == ("E", "239", "499", "20.1")
+    ph = next(r for r in built["rows"] if r["group"] == "phev")
+    assert (ph["fuel_mode"], ph["fuel"], ph["displacement_l"], ph["electric_range_km"]) == ("P", "Z", "2.0", "32")
+
+
+def test_an_nrcan_group_without_a_map_still_reports_its_live_header(monkeypatch):
+    config = ds.config()
+    groups = [{**g, "columns": None} if g["group"] == "bev" else g
+              for g in config["datasets"]["nrcan_fuel_ratings"]["resource_groups"]]
+    patched = {**config, "datasets": {**config["datasets"], "nrcan_fuel_ratings": {
+        **config["datasets"]["nrcan_fuel_ratings"], "resource_groups": groups}}}
+    monkeypatch.setattr(ds, "config", lambda path=None: patched)
+    built = build_ckan_groups("nrcan_fuel_ratings", _nrcan_fetch([]))
+    bev = next(f for f in built["files"] if f["url"].endswith("battery-electric-vehicles.csv"))
+    assert bev["status"] == "map_pending" and bev["live_header"] == H.NRCAN_BEV_LIVE_HEADER   # no map from memory
 
 
 CVS_RESOURCES = [{"url": f"https://open.canada.ca/data/dataset/913f/resource/{n}/download/{y}_en.csv", "format": "CSV"}

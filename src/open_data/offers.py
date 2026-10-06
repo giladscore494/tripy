@@ -19,8 +19,10 @@ valid for, identified_by (unique | all_survivors_agree), status}. Status:
                              while the match leaves several configurations (no offer value); with one configuration
                              the column's value (ADEME Min, EEA median) is offered and the offer records `range`
 
-A value is identified without a unique candidate when every surviving candidate states the same value (the PR #45 R4
-rule applied to dataset rows). Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h.
+A value is identified without a unique candidate when every surviving candidate that states it states the same value
+(the PR #45 R4 rule applied to dataset rows; M2: a survivor without the value states nothing and is counted in
+`n_null`, never a disagreement). M3: when the match narrowed an `exact_subset` (type code + co2, type code, or co2),
+the offers read only those rows. Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h.
 """
 
 from __future__ import annotations
@@ -70,6 +72,9 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
         survivors = src.get("survivors") or []
         if src.get("status") not in ("unique", "ambiguous") or not survivors:
             continue
+        subset = set((src.get("exact_subset") or {}).get("row_ids") or [])
+        if subset:                                  # M3: the narrowest exact subset (type code + co2 / type code / co2)
+            survivors = [r for r in survivors if r.get("row_id") in subset] or survivors
         values = [(_value(r, entry), r) for r in survivors]
         stated = [(v, r) for v, r in values if v is not None]
         if not stated:
@@ -77,9 +82,12 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
         offer = {"field": entry["field"], "source": entry["source"], "column": entry["column"],
                  "definition": entry.get("definition"), "routes": entry.get("routes") or [],
                  "row_ids": [r.get("row_id") for _, r in stated][:20],
-                 "raw": {"value": stated[0][1].get(entry["column"]), "unit": entry.get("unit")}}
+                 "raw": {"value": stated[0][1].get(entry["column"]), "unit": entry.get("unit")},
+                 "n_null": len(survivors) - len(stated)}
+        if subset:
+            offer["subset"] = (src.get("exact_subset") or {}).get("basis")
         distinct = {v for v, _ in stated}
-        if len(distinct) != 1 or len(stated) != len(survivors):
+        if len(distinct) != 1:                      # M2: a null states nothing; only different values disagree
             out.append({**offer, "status": "survivors_disagree", "values": sorted(map(str, distinct))[:10]})
             continue
         value = distinct.pop()
@@ -101,7 +109,7 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
                                 f"{len(src.get('configurations') or []) or 'several'} configurations"})
                     continue
         offer.update(value=value, identified_by="unique" if src.get("status") == "unique" and len(survivors) == 1
-                     else "all_survivors_agree")
+                     else "all_survivors_agree")      # every survivor that states the value agrees (n_null: the rest)
         if entry.get("companion"):
             offer["companion"] = entry["companion"]
         # E5: CVS rows record their measurement year (MYR); the oldest one of the offer's rows decides

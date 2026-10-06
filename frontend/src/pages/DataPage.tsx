@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { DatasetRow, OlderThanPlan, PolicyEntry, StorageStatus } from "../api/types";
+import type { DatasetRow, OlderThanPlan, PolicyEntry, ShadowReport, StorageStatus } from "../api/types";
 import {
   Badge, Button, ErrorState, ExternalLink, Field, KeyValue, Mono, Notice, Panel, SkeletonRows, Stat,
 } from "../components/ui/primitives";
@@ -262,6 +262,99 @@ function StoragePanel() {
   );
 }
 
+function shown(value: unknown): string {
+  return value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+// R: the open-data shadow report, run in-process on the server over every run on the volume: the match recomputed
+// now, its offers compared with the fields each run marked ok (the test reference only; nothing is admitted).
+function ShadowReportPanel() {
+  const last = useResource("data-shadow-report", (signal) => api.shadowReport({ signal }));
+  const [fresh, setFresh] = useState<ShadowReport | null>(null);
+  const [state, setState] = useState<{ busy: boolean; error: ApiError | null }>({ busy: false, error: null });
+  const report = fresh ?? last.data?.report ?? null;
+
+  const run = async () => {
+    setState({ busy: true, error: null });
+    try {
+      const out = await api.runShadowReport();
+      setFresh(out.report);
+      setState({ busy: false, error: null });
+    } catch (e) {
+      setState({ busy: false,
+                 error: e instanceof ApiError ? e : new ApiError(0, "client_error", "The shadow report did not run.") });
+    }
+  };
+
+  return (
+    <Panel kicker="Open datasets" title="Shadow report" id="shadow-report">
+      <div className="space-y-4">
+        <p className="text-xs text-ink-muted">
+          Recomputes the open-data match of every vehicle of every run on the volume and compares its offers with the
+          fields that run marked ok. Reads only; writes only <Mono>derived/open_data_shadow_report.json</Mono>; refused
+          when the volume has less than 200 MB free.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={run} busy={state.busy}>Shadow report</Button>
+          {report && <span className="text-xs text-ink-muted">Last report <Mono>{report.generated_at}</Mono>:{" "}
+            {report.vehicles_total} vehicle(s){report.vehicles_failed ? `, ${report.vehicles_failed} failed` : ""}.</span>}
+        </div>
+        {state.error && <ErrorState error={state.error} title="The shadow report did not run" />}
+        {report && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Stat label="Vehicles" value={String(report.vehicles_total)} />
+              <Stat label="Proposed triples" value={String(report.proposed.length)} />
+              <Stat label="Disagreements" value={String(report.disagreements.length)}
+                    tone={report.disagreements.length ? "danger" : undefined} />
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead><tr><th>Source</th><th>Field</th><th>Route</th><th>Agree</th><th>Disagree</th>
+                  <th>Offered agree / disagree</th><th>No offer</th></tr></thead>
+                <tbody>
+                  {report.table.map((t) => (
+                    <tr key={`${t.source}-${t.field}-${t.route}`}>
+                      <td><Mono>{t.source}</Mono></td><td><Mono>{t.field}</Mono></td><td>{t.route ?? "—"}</td>
+                      <td>{t.agree}</td><td className={t.disagree ? "text-danger" : undefined}>{t.disagree}</td>
+                      <td>{t.offered_agree} / {t.offered_disagree}</td><td>{t.no_offer}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <p className="kicker mb-2">Proposed data/open_data_admission.json (≥ {report.min_agree} agreements, 0
+                disagreements; never written automatically)</p>
+              {report.proposed.length === 0 ? <p className="text-xs text-ink-faint">None qualify.</p> : (
+                <ul className="space-y-1 text-xs">
+                  {report.proposed.map((p) => (
+                    <li key={`${p.source}-${p.field}-${p.route}`}><Mono>({p.source}, {p.field}, {p.route})</Mono>:{" "}
+                      {p.agreements} agreements</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {report.disagreements.length > 0 && (
+              <div>
+                <p className="kicker mb-2">Disagreements</p>
+                <ul className="space-y-1 text-xs">
+                  {report.disagreements.map((d, i) => (
+                    <li key={`${d.run_id}-${d.record_id}-${d.field}-${i}`}>
+                      <Mono>{d.record_id}</Mono> {d.field}: {d.source} {shown(d.offer_value)} vs run{" "}
+                      {shown(d.run_value)} <span className="text-ink-faint">({d.status}, {d.run_id})</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export function DataPage() {
   const datasets = useResource("data-datasets", (signal) => api.dataDatasets({ signal }));
   const policy = useResource("data-policy", (signal) => api.dataPolicy({ signal }));
@@ -359,6 +452,8 @@ export function DataPage() {
           </ul>
         )}
       </Panel>
+
+      <ShadowReportPanel />
 
       <StoragePanel />
 

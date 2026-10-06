@@ -14,6 +14,10 @@
     POST /api/data/retention/delete-older   {days, confirm: true}
     POST /api/data/retention/clean-cache    delete the cached documents no kept run (or the research memory) uses
                                             {confirm: true}
+    POST /api/data/open-data/shadow-report  R: the open-data shadow report over every run on the volume (the match
+                                            recomputed now, its offers compared with each run's ok fields; read-only,
+                                            writes only derived/open_data_shadow_report.json; refused below 200 MB free)
+    GET  /api/data/open-data/shadow-report  the last report ({report: null} before the first)
     GET  /api/data/policy                   the effective source policy (repository file + operator overlay) and its
                                             change log
     POST /api/data/policy                   switch ONE domain between blocked and allowed: {domain, policy,
@@ -145,6 +149,25 @@ def data_storage_delete_open_data(body: DeleteOpenData, ctx: ApiContext = Depend
         raise ApiError(422, "confirmation_required", "Confirm the deletion of the open-data files.")
     result = delete_open_data(ctx.paths.data_dir / "derived" / "open", by="operator (Data page)")
     return {**result, "storage": usage(ctx.paths.data_dir, _folders(ctx))}
+
+
+@router.post("/open-data/shadow-report")
+def data_shadow_report_run(ctx: ApiContext = Depends(get_context)) -> dict:
+    from ...open_data.shadow import run_and_store
+    from ...storage.disk import InsufficientDisk
+
+    try:
+        report = run_and_store(ctx.paths.runs_dir, ctx.paths.data_dir / "derived")
+    except InsufficientDisk as exc:
+        raise ApiError(507, exc.code, str(exc)) from None
+    return {"report": report}
+
+
+@router.get("/open-data/shadow-report")
+def data_shadow_report(ctx: ApiContext = Depends(get_context)) -> dict:
+    from ...open_data.shadow import last_report
+
+    return {"report": last_report(ctx.paths.data_dir / "derived")}
 
 
 @router.get("/policy")

@@ -538,6 +538,19 @@ class Observer:
                 "no_snapshot": sorted(d["dataset"] for d in view["datasets"]
                                       if not d["identity_only"] and not d["available"])}
 
+    def open_data_shadow_report(self) -> dict:
+        """The last open-data shadow report (the Data page's "Shadow report"; <data>/derived/
+        open_data_shadow_report.json): per (source, field, route) agree / disagree / no offer, the proposed
+        admission triples, every disagreement with both values, per vehicle the recomputed match. Read-only."""
+        from ..open_data.shadow import last_report, report_path
+
+        derived = Path(self.paths.data_dir) / "derived"
+        report = last_report(derived)
+        if report is None:
+            return {"report": None, "path": str(report_path(derived)),
+                    "note": "no shadow report yet: press \"Shadow report\" on the Data page"}
+        return {"report": safety.clip(report, 55_000), "path": str(report_path(derived))}
+
     def open_data_coverage(self, run_id: Any) -> dict:
         """Per vehicle of a run: the approval route, the open-data level / designation, the match status per source,
         the offers per field (offered / admitted / reference / vetoed ...) and the fields the research plan skipped."""

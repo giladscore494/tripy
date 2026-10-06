@@ -116,4 +116,40 @@ describe("Data page", () => {
     const panel = await screen.findByText("The policy was not changed");
     expect(within(panel.closest("div") as HTMLElement).getByText(/needs the terms clause/)).toBeInTheDocument();
   });
+
+  it("runs the shadow report and shows the agreement table, the proposed triples and the disagreements", async () => {
+    const report = {
+      version: "open-data-shadow-v1", generated_at: "2026-10-07T08:00:00+00:00", runs_dir: "/data/runs", min_agree: 5,
+      snapshots_built_at: "2026-10-06T18:23:00+00:00", vehicles_total: 6, vehicles_failed: 0,
+      table: [{ source: "eea_co2_cars", field: "curb_weight_kg", route: "european_co2", agree: 5, disagree: 0,
+                offered_agree: 5, offered_disagree: 0, no_offer: 1 },
+              { source: "eea_co2_cars", field: "wheelbase_mm", route: "european_co2", agree: 2, disagree: 1,
+                offered_agree: 2, offered_disagree: 1, no_offer: 0 }],
+      proposed: [{ source: "eea_co2_cars", field: "curb_weight_kg", route: "european_co2", agreements: 5 }],
+      disagreements: [{ run_id: "20261006T184604Z", record_id: "22010", source: "eea_co2_cars", field: "wheelbase_mm",
+                        route: "european_co2", status: "offered", offer_value: 2975, run_value: 2980, row_ids: [] }],
+      type_code: {}, vehicles: [],
+    };
+    const api = mockApi({ "GET /api/data/datasets": () => json(datasets), "GET /api/data/policy": () => json(policy),
+                          "GET /api/data/storage": () => json(storage),
+                          "POST /api/data/open-data/shadow-report": () => json({ report }) });
+    renderApp("/data");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Shadow report" }));
+    await waitFor(() => expect(api.callsTo("POST", "/api/data/open-data/shadow-report")).toHaveLength(1));
+    expect(await screen.findByText("(eea_co2_cars, curb_weight_kg, european_co2)")).toBeInTheDocument();
+    expect(screen.getByText(/2975 vs run/)).toBeInTheDocument();
+    expect(screen.getByText(/6 vehicle\(s\)/)).toBeInTheDocument();
+  });
+
+  it("reports a shadow report refused for lack of space", async () => {
+    mockApi({ "GET /api/data/datasets": () => json(datasets), "GET /api/data/policy": () => json(policy),
+              "GET /api/data/storage": () => json(storage),
+              "POST /api/data/open-data/shadow-report": () => apiError(507, "insufficient_disk",
+                "open-data shadow report refused: 100 MB free") });
+    renderApp("/data");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Shadow report" }));
+    expect(await screen.findByText("The shadow report did not run")).toBeInTheDocument();
+  });
 });

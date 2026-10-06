@@ -206,6 +206,14 @@ def build(observer_factory: Callable[[], Observer] = Observer):
         return await run("open_data_status", {}, lambda: observer_factory().open_data_status())
 
     @tool
+    async def open_data_shadow_report() -> str:
+        """The last open-data shadow report (run from the Data page): per (source, field, route) agree / disagree /
+        no offer against the fields each run marked ok, the proposed open_data_admission.json triples (>= 5
+        agreements, 0 disagreements), every disagreement with both values and the recomputed match per vehicle.
+        Read-only."""
+        return await run("open_data_shadow_report", {}, lambda: observer_factory().open_data_shadow_report())
+
+    @tool
     async def list_bakeoffs(limit: int = 20, offset: int = 0) -> str:
         """Search bake-offs newest first (the web UI's "Search bake-off" jobs): id, status, backends, progress and
         each backend's version_url_hit / accepted pages / USD per record."""
@@ -243,4 +251,4 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
-              "open_data_coverage", "open_data_status", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")
+              "open_data_coverage", "open_data_status", "open_data_shadow_report", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")

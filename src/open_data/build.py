@@ -17,7 +17,10 @@ agent. Each dataset's `builder`:
                  measurement columns + SUM(R) AS r, grouped by the same columns, no other alias, no MIN / MAX / AVG, no
                  ORDER BY; its URL-encoded query= value <= EEA_MAX_QUERY_BYTES, else split in two on the measurement
                  columns, else `query_too_long`); the runner computes the registration-weighted median / min / max per
-                 identity key; a failing spelling stops only itself, a year whose spellings all fail stops only itself
+                 identity key; a failing spelling stops only itself, a year whose spellings all fail stops only itself.
+                 K3: the years from `csv_years.from_year` that DISCODATA does not have ([latest] ends at 2022) come
+                 from the EEA datahub's downloadable CSV (`build_eea_csv`: the records read from the datahub API, the
+                 zip streamed to the runner disk and grouped locally exactly like the DISCODATA rows)
     data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_from_description` rule
                  is read from the schema field's description ("Puissance en kW"); a column without a stated unit is
                  stored raw with unit `unknown` (its p5 / p50 / p95 recorded) and yields nothing until a
@@ -43,14 +46,16 @@ match), the year window, and the grouping; it records the kept makes and their s
 from __future__ import annotations
 
 import csv
+import gzip
 import io
 import json
 import re
 import time
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlparse
 
 from . import datasets as ds
 
@@ -97,6 +102,15 @@ def default_fetcher(session=None, timeout_s: float = 120.0) -> Fetcher:
                 raise BuildStopped("download_too_large", url=url, bytes=size)
             chunks.append(chunk)
         return b"".join(chunks)
+
+    def fetch_json(url: str) -> bytes:
+        """The same, asking for JSON (the EEA datahub API answers XML to */*)."""
+        if not fetch_allowed(url):
+            raise BuildStopped("policy_blocked", url=url)
+        resp = http.get(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, timeout=(15, timeout_s))
+        resp.raise_for_status()
+        return resp.content
+    fetch.json = fetch_json
     return fetch
 
 
@@ -539,6 +553,383 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     return {"rows": rows, "schema": header, "urls": [base], "years": reports, "absent_columns": absent_by_year}
 
 
+# --- EEA 2023+ (the datahub's downloadable CSV, K3) ------------------------------------------------------------------------
+
+Downloader = Callable[[str, Path], int]
+FILE_SUFFIXES = (".zip", ".csv", ".csv.gz")
+NOT_CSV = ("accdb", "mdb", "xlsx", "xls", "sqlite", "pdf", "json", "xml")
+HREF = re.compile(r"""href\s*=\s*["']([^"'#]+)["']""", re.I)
+
+
+def default_downloader(max_bytes: int, session=None, timeout_s: float = 900.0) -> Downloader:
+    """Stream a URL to a file on the runner disk (policy-checked, size-capped); the bytes written."""
+    import requests
+
+    from ..source_authority import fetch_allowed
+    from ..tools.fetch import USER_AGENT
+
+    http = session or requests.Session()
+
+    def download(url: str, target: Path) -> int:
+        if not fetch_allowed(url):
+            raise BuildStopped("policy_blocked", url=url)
+        size = 0
+        with http.get(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}, timeout=(15, timeout_s),
+                      stream=True) as resp:
+            resp.raise_for_status()
+            with open(target, "wb") as handle:
+                for chunk in resp.iter_content(1 << 20):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise BuildStopped("download_too_large", url=url, bytes=size)
+                    handle.write(chunk)
+        return size
+    return download
+
+
+def _text_of(value: Any) -> str:
+    """A datahub field that may be a string, a {language: text} map or a list of either."""
+    if isinstance(value, dict):
+        for key in ("eng", "en", "default", "#text", "value"):
+            if isinstance(value.get(key), str):
+                return value[key]
+        return next((v for v in value.values() if isinstance(v, str)), "")
+    if isinstance(value, list):
+        return next((t for t in (_text_of(v) for v in value) if t), "")
+    return str(value) if value is not None else ""
+
+
+def datahub_related(data: Any) -> dict:
+    """{children: [{uuid, title}], onlines: [{url, title, function, protocol}]} of a datahub record's `/related` JSON
+    (read defensively: any `children` list, any `onlines` list, any object with an http(s) `url`)."""
+    children: dict[str, str] = {}
+    onlines: dict[str, dict] = {}
+
+    def walk(node: Any, parent: str = "") -> None:
+        if isinstance(node, dict):
+            url = _text_of(node.get("url")) if "url" in node else ""
+            if url.startswith(("http://", "https://")) and url not in onlines:
+                onlines[url] = {"url": url, "title": _text_of(node.get("title"))[:200],
+                                "function": _text_of(node.get("function")), "protocol": _text_of(node.get("protocol"))}
+            for key, value in node.items():
+                if key == "children" and isinstance(value, list):
+                    for child in value:
+                        if isinstance(child, dict):
+                            uuid = _text_of(child.get("id") or child.get("uuid") or child.get("metadataUuid"))
+                            if uuid:
+                                children.setdefault(uuid, _text_of(child.get("title"))[:300])
+                walk(value, key)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, parent)
+    walk(data)
+    return {"children": [{"uuid": k, "title": v} for k, v in children.items()], "onlines": list(onlines.values())}
+
+
+def title_year_status(title: str, pattern: str) -> tuple[int, str] | None:
+    """(year, F | P) from a datahub record title ("..., 2023 - Final data"), or None."""
+    m = re.search(pattern, title or "", re.I)
+    if not m:
+        return None
+    return int(m.group("year")), "F" if m.group("status").lower().startswith("final") else "P"
+
+
+def _is_file(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return path.endswith(FILE_SUFFIXES)
+
+
+def csv_candidates(links: list[str], fetch: Fetcher, file_pattern: str | None = None) -> tuple[list[str], list[str]]:
+    """(the CSV / zip file links, every link seen): a link that is not a file is read as an index page and its same-host
+    file links are followed (one level). `file_pattern` (data) narrows them; never a constructed URL."""
+    seen, files = [], []
+    for url in links:
+        seen.append(url)
+        if _is_file(url):
+            files.append(url)
+            continue
+        try:
+            page = _decode(fetch(url))
+        except Exception:  # noqa: BLE001 - an index that cannot be read is listed, not fatal
+            continue
+        host = urlparse(url).netloc
+        for href in HREF.findall(page):
+            target = urljoin(url if url.endswith("/") else url + "/", href)
+            if urlparse(target).netloc == host and _is_file(target) and target not in files:
+                seen.append(target)
+                files.append(target)
+    files = [f for f in files if not any(t in f.lower().rsplit("/", 1)[-1] for t in NOT_CSV)]
+    if file_pattern:
+        files = [f for f in files if re.search(file_pattern, f, re.I)]
+    return sorted(set(files)), seen
+
+
+def eea_csv_sources(fetch: Fetcher, csv_cfg: dict) -> tuple[dict[int, dict], list[dict]]:
+    """({year: {uuid, status, title, links}} preferring final records, the discovery report): the series' children and
+    the listed records, read from the datahub API (`api` + uuid + `/related`). A record that cannot be read is
+    reported, never fatal."""
+    fetch_json = getattr(fetch, "json", fetch)
+    api, pattern = str(csv_cfg.get("api") or ""), str(csv_cfg.get("title_pattern") or "")
+    report: list[dict] = []
+    records: dict[str, dict] = {}
+
+    def related(uuid: str) -> dict | None:
+        url = f"{api}{uuid}/related"
+        try:
+            data = json.loads(_decode(fetch_json(url)))
+        except BuildStopped as stop:
+            report.append({"uuid": uuid, "url": url, "status": "stopped", "reason": stop.reason})
+            return None
+        except Exception as exc:  # noqa: BLE001 - one record never costs the others
+            report.append({"uuid": uuid, "url": url, "status": "failed", "error": f"{type(exc).__name__}: "
+                                                                                f"{str(exc)[:200]}"})
+            return None
+        return datahub_related(data)
+
+    for series in csv_cfg.get("series") or []:
+        found = related(str(series.get("uuid")))
+        if found is None:
+            continue
+        report.append({"uuid": series.get("uuid"), "kind": "series", "children": len(found["children"])})
+        for child in found["children"]:
+            parsed = title_year_status(child["title"], pattern)
+            entry = {"uuid": child["uuid"], "kind": "child", "title": child["title"]}
+            if parsed:
+                records.setdefault(child["uuid"], {**entry, "year": parsed[0], "status": parsed[1]})
+            else:
+                report.append({**entry, "status": "skipped", "reason": "title without year / status"})
+    for record in csv_cfg.get("records") or []:
+        if record.get("uuid") and record.get("year") and record.get("status"):
+            records.setdefault(str(record["uuid"]), {"uuid": str(record["uuid"]), "kind": "listed",
+                                                     "year": int(record["year"]), "status": str(record["status"]),
+                                                     "title": record.get("note")})
+    by_year: dict[int, dict] = {}
+    for record in sorted(records.values(), key=lambda r: (r["year"], r["status"] != "F")):
+        if record["year"] in by_year:
+            report.append({**record, "status_note": "superseded (final preferred)"})
+            continue
+        found = related(record["uuid"])
+        if found is None:
+            continue
+        record["links"] = [o["url"] for o in found["onlines"]]
+        report.append({k: record.get(k) for k in ("uuid", "kind", "year", "status", "title")} | {
+            "links": record["links"][:20]})
+        by_year[record["year"]] = record
+    return by_year, report
+
+
+def _bigint(value: Any) -> int | None:
+    """TRY_CAST(... AS bigint): an integer text, else None."""
+    text = str(value if value is not None else "").strip()
+    return int(text) if re.fullmatch(r"-?\d+", text) else None
+
+
+def _csv_streams(path: Path):
+    """(name, text stream) of every CSV in a zip, or of the file itself."""
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            for name in sorted(n for n in archive.namelist() if n.lower().endswith(".csv")):
+                with archive.open(name) as raw:
+                    yield name, io.TextIOWrapper(raw, encoding="utf-8-sig", errors="replace", newline="")
+        return
+    opener = gzip.open if path.name.endswith(".gz") else open
+    with opener(path, "rb") as raw:
+        yield path.name, io.TextIOWrapper(raw, encoding="utf-8-sig", errors="replace", newline="")
+
+
+def eea_csv_columns(cfg: dict) -> dict:
+    """The column map with the CSV's `column_aliases` added to each key's accepted spellings."""
+    aliases = ((cfg.get("csv_years") or {}).get("column_aliases")) or {}
+    columns = {}
+    for key, spec in (cfg.get("columns") or {}).items():
+        spec = dict(spec)
+        if key in aliases:
+            known = list(spec.get("source") or [])
+            spec["source"] = known + [a for a in aliases[key] if a not in known]
+        columns[key] = spec
+    return columns
+
+
+def eea_csv_year(path: Path, year: int, status: str, *, progress: Progress = _noop) -> tuple[list[dict], dict]:
+    """(rows, report) of one year's datahub CSV: streamed, filtered to the make values that are alias spellings or
+    normalize to a canonical make, grouped exactly like the DISCODATA path (identity + measurement columns with
+    SUM(r), then `eea_aggregate`). A header without a required key stops this year (`schema_mismatch`)."""
+    from .makes import canonical_of, row_filter, spelling
+
+    cfg = ds.datasets()["eea_co2_cars"]
+    columns = eea_csv_columns(cfg)
+    wanted_makes = known_makes()
+    keep = row_filter()
+    report: dict[str, Any] = {"year": year, "status_used": status, "source": "datahub_csv", "mode": "csv"}
+    combos: dict[tuple, list] = {}
+    mapping: dict[str, str] = {}
+    keys: list[str] = []
+    measures: list[str] = []
+    read = skipped_year = 0
+    allowed: dict[str, bool] = {}
+    for name, stream in _csv_streams(path):
+        head = stream.read(65536)
+        try:
+            dialect = csv.Sniffer().sniff(head.split("\n", 1)[0], delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.reader(_rejoin(head, stream), dialect)
+        header = next(reader, [])
+        resolved = resolve_map(header, columns)
+        if resolved["missing"] or resolved["ambiguous"]:
+            return [], {**report, "status": "stopped", "reason": "schema_mismatch", "file": name,
+                        "missing": resolved["missing"], "ambiguous": resolved["ambiguous"],
+                        "live_header": header[:200]}
+        if not mapping:
+            mapping = resolved["mapping"]
+            keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
+            measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
+            report["absent_columns"] = resolved["absent"]
+            report["live_header"] = header[:200]
+        reg = resolve_map(header, {"registrations": cfg["registrations_column"]})["mapping"].get("registrations")
+        index = {h: i for i, h in enumerate(header)}
+        cols = [index[mapping[k]] for k in keys + measures]
+        make_i, year_i = index[mapping["make"]], index[mapping["year"]]
+        reg_i = index.get(reg) if reg else None
+        for row in reader:
+            if len(row) < len(header):
+                continue
+            read += 1
+            if read % 1_000_000 == 0:
+                progress(f"year {year} (csv): {read:,} rows read")
+            row_year = ds._int(row[year_i])
+            if row_year is not None and row_year != year:
+                skipped_year += 1
+                continue
+            make = row[make_i]
+            if make not in allowed:
+                allowed[make] = bool(make.strip()) and (spelling(make) in wanted_makes or bool(canonical_of(make)))
+            if not allowed[make]:
+                continue
+            values = tuple(None if row[i].strip() == "" else row[i].strip() for i in cols)
+            r = _bigint(row[reg_i]) if reg_i is not None else None
+            acc = combos.get(values)
+            if acc is None:
+                combos[values] = [r or 0, r is not None]
+            elif r is not None:
+                acc[0] += r
+                acc[1] = True
+    if not mapping:
+        return [], {**report, "status": "stopped", "reason": "no_csv_in_download"}
+    live = [mapping[k] for k in keys + measures]
+    server_rows = [{**dict(zip(live, values)), "r": total if seen else None}
+                   for values, (total, seen) in combos.items()]
+    combos.clear()
+    built = [r for r in eea_aggregate([(measures, server_rows)], mapping, cfg, status)
+             if keep(r.get("make"), " ".join(str(r.get(k) or "") for k in ("model", "variant", "version")))]
+    by_make: dict[str, int] = {}
+    for n, item in enumerate(built):
+        item["make"] = spelling(item.get("make"))
+        item["year"] = ds._int(item.get("year"))       # CSV text; the shard types every other number
+        item["row_id"] = f"eea-{year}-{status}-{n + 1}"
+        by_make[item["make"]] = by_make.get(item["make"], 0) + 1
+    report.update(status="built", rows=len(built), rows_read=read, other_year_rows=skipped_year,
+                  by_make=dict(sorted(by_make.items())))
+    return built, report
+
+
+def _rejoin(head: str, stream):
+    """The lines of a text stream whose first 64 KB were already read (for the dialect sniff)."""
+    lines = head.split("\n")
+    yield from (line + "\n" for line in lines[:-1])
+    yield lines[-1] + stream.readline()               # the line the 64 KB cut (or "" at the end)
+    yield from stream
+
+
+def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, download: Downloader | None = None,
+                  work: Path | None = None, progress: Progress = _noop) -> dict:
+    """K3: the years from `csv_years.from_year` that DISCODATA did not build, from the datahub CSV. {rows, years
+    (one report per year), absent_columns, urls, discovery}; a year that fails stops only itself; never raises."""
+    import shutil
+    import tempfile
+
+    cfg = ds.datasets()["eea_co2_cars"]
+    csv_cfg = cfg.get("csv_years") or {}
+    out: dict[str, Any] = {"rows": [], "years": [], "absent_columns": {}, "urls": [], "discovery": []}
+    if not csv_cfg:
+        return out
+    progress("datahub records (2023+)")
+    try:
+        by_year, out["discovery"] = eea_csv_sources(fetch, csv_cfg)
+    except Exception as exc:  # noqa: BLE001 - the CSV years never cost the DISCODATA years
+        out["discovery"] = [{"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}]
+        return out
+    floor = int(csv_cfg.get("from_year") or 0)
+    max_bytes = int(float(csv_cfg.get("max_download_mb") or 6000) * 1024 * 1024)
+    if download is None:
+        def download(url: str, target: Path) -> int:          # the injected fetcher (tests): bytes in memory
+            body = fetch(url)
+            target.write_bytes(body)
+            return len(body)
+    if work:
+        Path(work).mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix="eea-csv-", dir=str(work) if work else None))
+    try:
+        for year, record in sorted(by_year.items()):
+            base = {"year": year, "status_used": record["status"], "source": "datahub_csv", "record": record["uuid"]}
+            if year < floor or year in (skip_years or set()):
+                out["years"].append({**base, "status": "skipped", "reason": "built from DISCODATA" if year >= floor
+                                     else f"before csv_years.from_year {floor}"})
+                continue
+            files, seen = csv_candidates(record.get("links") or [], fetch, csv_cfg.get("file_pattern"))
+            if len(files) != 1:
+                out["years"].append({**base, "status": "stopped", "reason": "no_csv_link" if not files
+                                     else "ambiguous_download", "files": files[:20], "links": seen[:40]})
+                continue
+            url = files[0]
+            target = folder / f"{year}{''.join(Path(urlparse(url).path).suffixes[-2:]) or '.zip'}"
+            progress(f"year {year} (csv): download {url.rsplit('/', 1)[-1]}")
+            try:
+                size = download(url, target)
+                rows, report = eea_csv_year(target, year, record["status"], progress=progress)
+            except BuildStopped as stop:
+                out["years"].append({**base, "status": "stopped", "reason": stop.reason, "url": url, **stop.report})
+                continue
+            except Exception as exc:  # noqa: BLE001 - one year never costs the others
+                out["years"].append({**base, "status": "failed", "url": url,
+                                     "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+                continue
+            finally:
+                if target.exists():
+                    target.unlink()
+            out["years"].append({**base, **report, "url": url, "download_bytes": size})
+            if report.get("status") == "built":
+                out["rows"] += rows
+                out["urls"].append(url)
+                out["absent_columns"][str(year)] = report.get("absent_columns") or []
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    return out
+
+
+def build_eea_all(fetch: Fetcher, *, download: Downloader | None = None, progress: Progress = _noop) -> dict:
+    """The DISCODATA years, then the datahub CSV years DISCODATA does not have (K3); stops only when no year built."""
+    stopped = None
+    try:
+        built = build_eea(fetch, progress=progress)
+    except BuildStopped as stop:
+        stopped = stop
+        built = {"rows": [], "schema": None, "urls": [], "years": list(stop.report.get("years") or []),
+                 "absent_columns": {}, "discodata": {"reason": stop.reason}}
+    done = {r["year"] for r in built["years"] if r.get("status") in ("built", "partial")}
+    extra = build_eea_csv(fetch, skip_years=done, download=download, work=ds.snapshot_dir(), progress=progress)
+    built["rows"] += extra["rows"]
+    built["years"] += [y for y in extra["years"] if y.get("year") not in done or y.get("status") != "skipped"]
+    built["urls"] = list(built.get("urls") or []) + extra["urls"]
+    built["absent_columns"] = {**(built.get("absent_columns") or {}), **extra["absent_columns"]}
+    built["csv_discovery"] = extra["discovery"]
+    if not any(r.get("status") in ("built", "partial") for r in built["years"]):
+        raise BuildStopped(stopped.reason if stopped else "no_year_built", years=built["years"],
+                           csv_discovery=extra["discovery"], **({k: v for k, v in stopped.report.items()
+                                                                 if k != "years"} if stopped else {}))
+    return built
+
+
 # --- ADEME (data-fair) -----------------------------------------------------------------------------------------------------
 
 def _schema_fields(schema: Any) -> list[dict]:
@@ -624,15 +1015,32 @@ def build_ademe(fetch: Fetcher, *, progress: Progress = _noop) -> dict:
         raise BuildStopped("schema_mismatch", missing=resolved["missing"], ambiguous=resolved["ambiguous"],
                            absent=resolved["absent"], live_header=header[:200])
     scales, units = unit_scales(columns, resolved["mapping"], schema)
+    catalogue = ademe_catalogue_date(fetch, cfg)
     rows, report = _build_file(cfg["csv_url"], fetch, columns, id_prefix="ademe-", scales=scales,
-                               decimal_comma=bool(cfg.get("decimal_comma")), body=body)
+                               decimal_comma=bool(cfg.get("decimal_comma")), body=body,
+                               extra={"catalogue_date": catalogue["date"]} if catalogue.get("date") else None)
     if report["status"] != "built":
         raise BuildStopped(report.get("reason") or report["status"], files=[report])
     unknown = {k: distribution(rows, k) for k, info in units.items() if info.get("unit") == UNKNOWN_UNIT}
     report["units"] = {k: v.get("unit") for k, v in units.items()}
     return {"rows": rows, "schema": header, "urls": [cfg["csv_url"]], "files": [report],
             "absent_columns": report.get("absent_columns") or [], "column_units": units,
-            "unit_unknown_distribution": unknown}
+            "unit_unknown_distribution": unknown, "catalogue_date": catalogue.get("date"), "catalogue": catalogue}
+
+
+def ademe_catalogue_date(fetch: Fetcher, cfg: dict) -> dict:
+    """M4: {date, basis | error} of the ADEME catalogue: the data-fair dataset metadata (`source_url`) field named by
+    catalogue_period.metadata_fields (dataUpdatedAt, else updatedAt). The catalogue has no model year: the match uses
+    this date to keep a target out of period."""
+    fields = (cfg.get("catalogue_period") or {}).get("metadata_fields") or []
+    try:
+        meta = json.loads(_decode(fetch(cfg["source_url"])))
+    except Exception as exc:  # noqa: BLE001 - the match falls back to the snapshot's built_at
+        return {"date": None, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    for field in fields:
+        if isinstance(meta, dict) and meta.get(field):
+            return {"date": str(meta[field]), "basis": field}
+    return {"date": None, "error": f"none of {fields} in the dataset metadata"}
 
 
 # --- CKAN (NRCan, CVS) -----------------------------------------------------------------------------------------------------
@@ -675,7 +1083,8 @@ def build_ckan_groups(dataset: str, fetch: Fetcher, *, progress: Progress = _noo
             continue
         progress(f"{group['group']}: {name}")
         built, report = _build_file(resource["url"], fetch, group.get("columns"), id_prefix=f"{dataset}-{name}-",
-                                    decimal_comma=bool(cfg.get("decimal_comma")), extra={"group": group["group"]})
+                                    decimal_comma=bool(cfg.get("decimal_comma")),
+                                    extra={"group": group["group"], **(group.get("constants") or {})})
         files.append({**report, "group": group["group"]})
         rows += built
     if not any(f["status"] == "built" for f in files):
@@ -887,7 +1296,8 @@ def compact(dataset: str, built: dict) -> dict:
 
 # --- one dataset -----------------------------------------------------------------------------------------------------------
 
-def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress | None = None) -> dict:
+def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress | None = None,
+                  download: Downloader | None = None) -> dict:
     """Build one snapshot. {status: built | stopped | failed, rows, built_at, report, ...}; never raises."""
     from ..source_authority import dataset_policy
 
@@ -901,11 +1311,15 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
     policy = dataset_policy(cfg.get("policy_id") or dataset)
     if policy["policy"] != "allowed" or not policy.get("bulk_store"):
         return {"status": "stopped", "reason": "policy", "policy": policy["policy"]}
-    fetch = fetch or default_fetcher()
+    if fetch is None:
+        fetch = default_fetcher()
+        if download is None and cfg.get("csv_years"):
+            download = default_downloader(int(float((cfg.get("csv_years") or {}).get("max_download_mb") or 6000)
+                                              * 1024 * 1024))
     builder = cfg.get("builder") or "csv"
     try:
         if builder == "discodata":
-            built = build_eea(fetch, progress=progress)
+            built = build_eea_all(fetch, download=download, progress=progress)
         elif builder == "data_fair":
             built = build_ademe(fetch, progress=progress)
         elif builder == "ckan_groups":
@@ -928,7 +1342,8 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "build_duration_s": duration, "config_version": ds.config().get("version"),
                 "column_units": built.get("column_units"), "unit_unknown_distribution": built.get(
                     "unit_unknown_distribution"), "compaction": built.get("compaction"),
-                "make_spellings": built.get("make_spellings")}
+                "make_spellings": built.get("make_spellings"), "catalogue_date": built.get("catalogue_date"),
+                "catalogue": built.get("catalogue")}
         shards = None
         if ds.shard_spec(dataset):
             # S1: one shard per year; its meta holds no timestamp (an unchanged year gives the same bytes)
@@ -949,7 +1364,10 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year"),
                 "column_units": built.get("column_units"),
                 "unit_unknown_distribution": built.get("unit_unknown_distribution"),
-                "compaction": built.get("compaction"), "make_spellings": built.get("make_spellings")}
+                "compaction": built.get("compaction"), "make_spellings": built.get("make_spellings"),
+                **({"catalogue_date": built.get("catalogue_date"), "catalogue": built["catalogue"]}
+                   if built.get("catalogue") else {}),
+                **({"csv_discovery": built["csv_discovery"]} if built.get("csv_discovery") is not None else {})}
     except BuildStopped as stop:
         return {"status": "stopped", "reason": stop.reason, "report": stop.report,
                 "duration_s": round(time.monotonic() - started, 1)}

@@ -44,6 +44,18 @@ EPA_HEADER = [
 NRCAN_CONVENTIONAL_HEADER = ["Model year", "Make", "Model", "Vehicle class", "Engine size (L)", "Cylinders",
                              "Transmission", "Fuel type", "Combined (L/100 km)"]
 NRCAN_BEV_HEADER = ["Model year", "Make", "Model", "Vehicle class", "Motor (kW)", "Range (km)"]
+# M5: verbatim from the live-schema probe of Action run 37509576679 (data/open/probe.json, nrcan_fuel_ratings)
+NRCAN_BEV_LIVE_HEADER = [
+    "Model year", "Make", "Model", "Vehicle class", "Motor (kW)", "Transmission", "Fuel type", "City (kWh/100 km)",
+    "Highway (kWh/100 km)", "Combined (kWh/100 km)", "City (Le/100 km)", "Highway (Le/100 km)",
+    "Combined (Le/100 km)", "Range (km)", "CO2 emissions (g/km)", "CO2 rating ", "Smog rating", "Recharge time (h)",
+]
+NRCAN_PHEV_LIVE_HEADER = [
+    "Model year", "Make", "Model", "Vehicle class", "Motor (kW)", "Engine size (L)", "Cylinders", "Transmission",
+    "Fuel type 1", "Combined Le/100 km", "Range 1 (km)", "Recharge time (h)", "Fuel type 2", "City (L/100 km)",
+    "Highway (L/100 km)", "Combined (L/100 km)", "Range 2 (km)", "CO2 emissions (g/km)", "CO2 rating",
+    "Smog rating",
+]
 CVS_HEADER = ["MYR", "MAKE", "MODEL", "OL", "OW", "OH", "WB", "CW"]
 CVS_DICTIONARY_ROWS = [
     ["Code", "Description"], ["MYR", "Model year"], ["MAKE", "Make"], ["MODEL", "Model"],

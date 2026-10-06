@@ -100,9 +100,10 @@ def test_a_shard_stores_only_what_matching_and_offers_read_typed(tmp_path):
         types = dict(conn.execute("SELECT 'cc', typeof(displacement_cc) FROM rows LIMIT 1").fetchall()
                      + conn.execute("SELECT 'kw', typeof(power_kw) FROM rows WHERE power_kw = 81.5 LIMIT 1").fetchall()
                      + conn.execute("SELECT 'wb', typeof(wheelbase_mm) FROM rows LIMIT 1").fetchall())
-    for dropped in ("data", "type_approval", "registrations", "status", "track_front_mm", "track_front_mm_min",
+    for dropped in ("data", "registrations", "status", "track_front_mm", "track_front_mm_min",
                     "mass_wltp_test_kg", "co2_nedc"):
         assert dropped not in columns
+    assert columns["type_approval"] == "TEXT"                                          # K2: T is kept
     for key in ("wheelbase_mm", "mass_running_order_kg", "energy_wh_km", "fuel_consumption_l_100km",
                 "electric_range_km"):
         assert columns[key] == columns[f"{key}_min"] == columns[f"{key}_max"] == "REAL"

@@ -36,6 +36,7 @@ import type {
   PolicyChange,
   PolicyChangeLog,
   PolicyTable,
+  ShadowReport,
   RunSettingsContract,
   SeriesList,
   SeriesStarted,
@@ -154,6 +155,9 @@ export const api = {
   deleteOpenData: () =>
     request<{ deleted: boolean; bytes_freed: number; path: string; storage: StorageStatus }>(
       "/api/data/storage/delete-open-data", { method: "POST", body: { confirm: true } }),
+  shadowReport: (o: Opts = {}) => request<{ report: ShadowReport | null }>("/api/data/open-data/shadow-report", o),
+  runShadowReport: () =>
+    request<{ report: ShadowReport }>("/api/data/open-data/shadow-report", { method: "POST" }),
   dataPolicy: (o: Opts = {}) => request<PolicyTable>("/api/data/policy", o),
   changePolicy: (body: PolicyChange) =>
     request<{ change: PolicyChangeLog; policy: PolicyTable }>("/api/data/policy", { method: "POST", body }),
