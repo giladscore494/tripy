@@ -10,3 +10,5 @@ uvicorn>=0.30
 mcp==1.28.1
 # render_page and the automatic render fallback (src/tools/fetch.py); the Dockerfile installs Chromium's headless shell
 playwright==1.55.0
+# the CVS data dictionary (.xls) check of the open-data build (src/open_data/build.py). BSD.
+xlrd>=2.0

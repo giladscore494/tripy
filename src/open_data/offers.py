@@ -13,6 +13,9 @@ valid for, identified_by (unique | all_survivors_agree), status}. Status:
     missing_key              a required key did not match (co2_wltp for WLTP consumption)
     uncorroborated           CVS dimensions without a second source agreeing on the wheelbase
     survivors_disagree       the surviving configurations state different values (no offer value)
+    range                    a Min / Max column pair (ADEME) with Min != Max while the match leaves several
+                             configurations (no offer value); with one configuration the Min value is offered and the
+                             offer records `range`
 
 A value is identified without a unique candidate when every surviving candidate states the same value (the PR #45 R4
 rule applied to dataset rows). Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h.
@@ -78,6 +81,15 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
             out.append({**offer, "status": "survivors_disagree", "values": sorted(map(str, distinct))[:10]})
             continue
         value = distinct.pop()
+        if entry.get("max_column"):
+            # Min / Max (ADEME): Min != Max identifies a single value only when the match leaves one configuration
+            highs = {_value(r, {**entry, "column": entry["max_column"]}) for _, r in stated} - {None}
+            if highs and highs != {value}:
+                offer["range"] = [value, max(highs)]
+                if src.get("status") != "unique":
+                    out.append({**offer, "status": "range", "reason": "Min != Max and the match leaves "
+                                f"{len(src.get('configurations') or []) or 'several'} configurations"})
+                    continue
         offer.update(value=value, identified_by="unique" if src.get("status") == "unique" and len(survivors) == 1
                      else "all_survivors_agree")
         if entry.get("companion"):

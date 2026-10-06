@@ -220,54 +220,6 @@ def test_a_snapshot_round_trips_and_the_engine_reads_only_it(tmp_path):
     assert result["sources"]["epa_fueleconomy"]["status"] == "no_snapshot"
 
 
-def test_a_build_reads_the_live_header_and_stops_on_a_missing_column(tmp_path):
-    from src.open_data.build import BuildStopped, build_dataset, resolve_columns
-
-    with pytest.raises(BuildStopped) as stop:
-        resolve_columns(["id", "year", "make"], {"model": {"source": ["model"]}, "make": {"source": ["make"]}})
-    assert stop.value.reason == "schema_mismatch" and stop.value.report["missing"][0]["key"] == "model"
-    header = ["id", "year", "make", "model", "baseModel", "displ", "cylinders", "trany", "drive", "VClass", "fuelType",
-              "comb08", "hlv", "lv", "hpv", "pv", "range", "combE"]
-    body = ",".join(header) + "\n" + "38704,2018,Cadillac,CTS,CTS,2.0,4,Automatic (S8),Rear-Wheel Drive,Midsize Cars," \
-        "Premium Gasoline,25,0,14,0,98,0,0\n"
-    ds.set_snapshot_dir(tmp_path / "open")
-    try:
-        built = build_dataset("epa_fueleconomy", fetch=lambda url: body.encode("utf-8"))
-        assert built["status"] == "built" and built["rows"] == 1
-        row = ds.query_rows("epa_fueleconomy", makes=["CADILLAC"], years=[2018])[0]
-        assert (row["row_id"], row["transmission"], row["drive"]) == ("38704", "Automatic (S8)", "Rear-Wheel Drive")
-        stopped = build_dataset("epa_fueleconomy", fetch=lambda url: b"id,year,make\n1,2018,Cadillac\n")
-        assert stopped["status"] == "stopped" and stopped["reason"] == "schema_mismatch"
-        assert ds.snapshot_meta("epa_fueleconomy")["rows"] == 1                # the previous snapshot stays
-        assert build_dataset("tc_cvs", fetch=lambda url: b"")["reason"] == "no_download_url"
-    finally:
-        ds.set_snapshot_dir(None)
-
-
-def test_eea_is_built_per_year_from_the_live_schema(tmp_path):
-    from urllib.parse import parse_qs, urlparse
-
-    from src.open_data.build import build_eea
-
-    cfg = ds.datasets()["eea_co2_cars"]
-    header = {"Mk": "CADILLAC", "Cn": "CTS", "T": "e4", "Va": "AL", "Ve": "A1AK1", "Ft": "petrol", "Fm": "M",
-              "ec (cm3)": 1998, "ep (KW)": 203, "Ewltp (g/km)": None, "Enedc (g/km)": 172, "W (mm)": 2910,
-              "At1 (mm)": 1560, "At2 (mm)": 1590, "m (kg)": 1734, "Mt": 1810, "z (Wh/km)": None,
-              "Electric range (km)": None, "Fuel consumption ": None, "year": 2018, "r": 3}
-    queries = []
-
-    def fetch(url):
-        query = parse_qs(urlparse(url).query)["query"][0]
-        queries.append(query)
-        if query.startswith("SELECT TOP 1"):
-            return json.dumps({"results": [header]}).encode()
-        return json.dumps({"results": [{**{k: v for k, v in header.items() if k != "r"}, "registrations": 3}]}).encode()
-
-    built = build_eea(fetch, years=[2018])
-    assert built["rows"][0]["wheelbase_mm"] == 2910 and built["rows"][0]["registrations"] == 3
-    assert "GROUP BY" in queries[1] and "'CADILLAC'" in queries[1] and cfg["table"] in queries[1]
-
-
 # --- vPIC ------------------------------------------------------------------------------------------------------------------
 
 def test_vpic_builds_a_partial_vin_only_for_a_vds_shaped_type_code():

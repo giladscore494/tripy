@@ -110,7 +110,7 @@ one address); the protection is a long random token. `/health` is not gated. Out
 ### Read-only MCP for Claude (optional)
 
 One variable turns on a **read-only** MCP server in the same process and on the same port: runs, live events,
-results, diagnostics, binding replay, candidates, fetched documents, the target's identity and its open-data match (`target_identity`, `open_data_match`, `open_data_coverage`), search bake-offs, the live catalog (`catalog_search`) and the server log (17 tools; nothing can start,
+results, diagnostics, binding replay, candidates, fetched documents, the target's identity and its open-data match (`target_identity`, `open_data_match`, `open_data_coverage`, `open_data_status`), search bake-offs, the live catalog (`catalog_search`) and the server log (18 tools; nothing can start,
 cancel, delete or write). Without the variable it does not exist at all (no route; the `mcp` SDK is not imported).
 
 1. Railway → service → **Variables** → add `TRIPY_MCP_TOKEN` = a long random value (`openssl rand -hex 32`).
@@ -1173,8 +1173,15 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
   applicable for a staggered set); km/l -> l/100km; exact imperial factors; never across test cycles.
 - **Open structured data (`src/open_data/`).** Local SQLite snapshots in `<TRIPY_DATA_DIR>/derived/open` of EEA CO2
   cars, ADEME Car Labelling, EPA fueleconomy.gov, NRCan fuel ratings and Transport Canada CVS, rebuilt monthly and on
-  "Rebuild now" (Data page; `python scripts/build_open_data.py`). A build reads the live header first and stops with a
-  report when a mapped column is absent (the previous snapshot stays). The match is routed by the approval type, keyed
+  "Rebuild now" (Data page; `python scripts/build_open_data.py --summary report.md`). A build reads the live header first
+  and matches spellings case-insensitively; a missing `required` (identity) key stops that table / file
+  (`schema_mismatch`), a missing optional key is recorded (`absent_columns`) and its offers are not produced; a failed
+  build keeps the previous snapshot. EEA builds only the years DISCODATA has (final rows preferred, provisional only for
+  a year without final ones; the schema is read per year), ADEME checks its units against the field schema (none
+  stated: stop), NRCan builds each file with its group's map (the original 2-cycle file is never read; a file that
+  fails stops only itself), CVS lists its files from the open.canada.ca package and checks its data dictionary. The
+  Data page shows each dataset's progress; `open_data_status` (MCP) returns the last build report and the snapshot meta;
+  a run started without a snapshot records `open_data_no_snapshot` and its run view says "open data not built". The match is routed by the approval type, keyed
   and vetoed deterministically; a value is identified by a unique row or when every surviving row agrees. Run setting
   `open_data_mode`: `off`, `shadow` (default: match and offers recorded, nothing admitted) or `admit` (only the
   (source, field, route) triples of `data/open_data_admission.json`, which starts empty). vPIC is identity only.

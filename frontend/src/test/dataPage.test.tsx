@@ -40,6 +40,24 @@ describe("Data page", () => {
     expect(screen.getByText(/Unlisted domains are blocked/)).toBeInTheDocument();
   });
 
+  it("shows each dataset's build progress, absent columns and the first scheduled build", async () => {
+    const building = {
+      ...datasets, building: "eea_co2_cars", first_check_at: "2026-10-06T08:33:00+00:00", scheduled: true,
+      datasets: [
+        { ...datasets.datasets[0], progress: { state: "building", detail: "year 2019 (status F)" },
+          absent_columns: { "2018": ["electric_range_km"] }, snapshot_size_bytes: 52428800, build_duration_s: 412.5 },
+        { ...datasets.datasets[1], progress: null },
+      ],
+    };
+    mockApi({ "GET /api/data/datasets": () => json(building), "GET /api/data/policy": () => json(policy) });
+    renderApp("/data");
+    expect(await screen.findByText("year 2019 (status F)")).toBeInTheDocument();
+    expect(screen.getByText("building")).toBeInTheDocument();
+    expect(screen.getByText(/absent: 2018: electric_range_km/)).toBeInTheDocument();
+    expect(screen.getByText(/50\.0 MB · 412\.5 s/)).toBeInTheDocument();
+    expect(screen.getByText("First build scheduled")).toBeInTheDocument();
+  });
+
   it("switches a domain to allowed with its terms clause and shows the logged change", async () => {
     let posted: unknown = null;
     const api = mockApi({

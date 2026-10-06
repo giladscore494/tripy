@@ -3894,6 +3894,7 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
         {"role": "user", "content": task},
     ]
     research_prompt_hash = hashlib.sha256(messages[0]["content"].encode("utf-8")).hexdigest()[:12]
+    from .open_data.engine import missing_snapshots
     from .run_profiles import env_overrides as list_env_overrides
     try:       # informational: env values that differ from the code defaults (a named profile ignores them)
         env_overrides = list_env_overrides()
@@ -3913,7 +3914,8 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
                   final_assembly=config.final_assembly,
                   acquisition_document_card=config.acquisition_document_card, run_profile=config.run_profile,
                   site_map=config.site_map, grounded_candidates=config.grounded_candidates,
-                  research_prompt_hash=research_prompt_hash, env_overrides=env_overrides)
+                  research_prompt_hash=research_prompt_hash, env_overrides=env_overrides,
+                  open_data_no_snapshot=missing_snapshots())
     try:
         memory = ResearchMemory.for_cache(cache) if config.research_memory_enabled else None
     except Exception as exc:  # memory problems never cost the run

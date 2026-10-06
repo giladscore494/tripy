@@ -199,6 +199,13 @@ def build(observer_factory: Callable[[], Observer] = Observer):
                          lambda: observer_factory().open_data_coverage(run_id))
 
     @tool
+    async def open_data_status() -> str:
+        """The open-data snapshot builds: the last build per dataset (status, reason, missing / ambiguous keys, live
+        header, per-year / per-file report) and each snapshot's meta (built_at, rows, years, absent_columns, size).
+        Read-only."""
+        return await run("open_data_status", {}, lambda: observer_factory().open_data_status())
+
+    @tool
     async def list_bakeoffs(limit: int = 20, offset: int = 0) -> str:
         """Search bake-offs newest first (the web UI's "Search bake-off" jobs): id, status, backends, progress and
         each backend's version_url_hit / accepted pages / USD per record."""
@@ -236,4 +243,4 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
-              "open_data_coverage", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")
+              "open_data_coverage", "open_data_status", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")
