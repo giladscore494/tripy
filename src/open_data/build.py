@@ -30,6 +30,9 @@ agent. Each dataset's `builder`:
     ckan_files   CVS: the package's resources matching `resource_pattern`; the data dictionary must state every mapped
                  code and its unit (`dictionary_check`), else the build stops with the dictionary's rows
 
+A dataset with a `snapshot.shard_by: year` config (EEA) is written as one shard per year (`ds.write_shards`: only the
+columns matching and offers read, typed, in the identity-key order, no timestamp in the file).
+
 After the build, `compact` keeps only what matching and offers use (the dataset's `compaction` rules): the rows whose
 make spelling normalizes to a canonical make of data/make_canonical.json (a model-gated make only with a catalog model
 match), the year window, and the grouping; it records the kept makes and their spellings.
@@ -926,10 +929,23 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                 "column_units": built.get("column_units"), "unit_unknown_distribution": built.get(
                     "unit_unknown_distribution"), "compaction": built.get("compaction"),
                 "make_spellings": built.get("make_spellings")}
-        path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
-        size = path.stat().st_size if path and path.exists() else None
+        shards = None
+        if ds.shard_spec(dataset):
+            # S1: one shard per year; its meta holds no timestamp (an unchanged year gives the same bytes)
+            status_used = {r["year"]: r.get("status_used") for r in built.get("years") or [] if r.get("year")}
+            shard_meta = {"source_url": cfg.get("source_url"), "licence": policy.get("licence"),
+                          "attribution": policy.get("attribution")}
+            shards = ds.write_shards(dataset, built["rows"], {k: v for k, v in shard_meta.items() if v is not None},
+                                     status_used=status_used)
+            size = sum(s["path"].stat().st_size for s in shards)
+            shards = [{**{k: v for k, v in s.items() if k != "path"}, "path": str(s["path"]),
+                       "absent_columns": (built.get("absent_columns") or {}).get(str(s["year"]))
+                       if isinstance(built.get("absent_columns"), dict) else None} for s in shards]
+        else:
+            path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
+            size = path.stat().st_size if path and path.exists() else None
         return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"], "duration_s": duration,
-                "size_bytes": size, "years": built.get("years"), "files": built.get("files"),
+                "size_bytes": size, "shards": shards, "years": built.get("years"), "files": built.get("files"),
                 "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year"),
                 "column_units": built.get("column_units"),
                 "unit_unknown_distribution": built.get("unit_unknown_distribution"),

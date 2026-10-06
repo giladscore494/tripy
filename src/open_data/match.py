@@ -265,7 +265,10 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
     if rows is None:
         if not ds.available(source, folder):
             return {**out, "status": "no_snapshot"}
-        rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder)
+        read: dict = {}
+        rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder, report=read)
+        if read.get("skipped_shards"):
+            out["skipped_shards"] = read["skipped_shards"]          # a missing / mismatched shard: reported, skipped
     rows = [r for r in rows if _model_matches(r, keys)]
     out["candidates"] = len(rows)
     survivors, vetoed = [], []

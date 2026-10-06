@@ -74,7 +74,7 @@ def _eea_mapping(extra=("Electric range (km)",)):
 
 def test_every_query_for_the_real_column_set_is_short_and_has_the_e1_shape():
     cfg, mapping = _eea_mapping()
-    assert len([k for k in cfg["measure_keys"] if k in mapping]) == 8
+    assert len([k for k in cfg["measure_keys"] if k in mapping]) == 5             # S2: no At1 / At2 / Mt
     for make in LONG_MAKES:
         for year, status in ((2017, "F"), (2022, "P")):
             plan = eea_query_plan(cfg["table"], mapping, cfg, "R", f"[Year] = {year} AND [Status] = '{status}'", make)
@@ -86,9 +86,10 @@ def test_every_query_for_the_real_column_set_is_short_and_has_the_e1_shape():
             select = query[len("SELECT "):query.index(",SUM(")]
             assert query.endswith("GROUP BY " + select)               # GROUP BY the same columns
             assert select.startswith("[Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],")
-            for column in ("[M (kg)]", "[Mt]", "[W (mm)]", "[At1 (mm)]", "[At2 (mm)]", "[Z (Wh/km)]", "[Fc]",
-                           "[Electric range (km)]"):
+            for column in ("[M (kg)]", "[W (mm)]", "[Z (Wh/km)]", "[Fc]", "[Electric range (km)]"):
                 assert column in select
+            for column in ("[Mt]", "[At1 (mm)]", "[At2 (mm)]"):            # read by neither the match nor an offer
+                assert column not in select
     assert "[Mk]=N'CITRO" in eea_query_plan(cfg["table"], mapping, cfg, "R", "[Year] = 2018", "CITROËN")[0][1]
     assert "[Mk]='L''AUTOMOBILE'" in eea_query_plan(cfg["table"], mapping, cfg, "R", "[Year] = 2018",
                                                      "L'AUTOMOBILE")[0][1]
@@ -133,8 +134,9 @@ def test_a_build_over_the_limit_splits_and_a_failing_spelling_stops_only_itself(
     from src.open_data import build
 
     monkeypatch.setattr(build, "known_makes", lambda: {"BMW", "CADILLAC", "TOYOTA"})
-    rows = {(2018, "F"): [H.eea_row(), H.eea_row(Ve="X"), H.eea_row(Mk="BMW", Cn="530E", **{"M (kg)": 1945}),
-                          H.eea_row(Mk="BMW", Cn="530E", **{"M (kg)": 2010}, R=1),
+    rows = {(2018, "F"): [H.eea_row(), H.eea_row(Ve="X"),
+                          H.eea_row(Mk="BMW", Cn="530E", **{"M (kg)": 1945, "Z (Wh/km)": 180}),
+                          H.eea_row(Mk="BMW", Cn="530E", **{"M (kg)": 2010, "Z (Wh/km)": 180}, R=1),
                           H.eea_row(Mk="TOYOTA", Cn="YARIS"), H.eea_row(Mk="1OYOTA", Cn="YARIS")]}
     queries: list[str] = []
 
@@ -157,7 +159,8 @@ def test_a_build_over_the_limit_splits_and_a_failing_spelling_stops_only_itself(
     bmw = next(r for r in built["rows"] if r["make"] == "BMW")
     assert (bmw["mass_running_order_kg_min"], bmw["mass_running_order_kg_max"]) == (1945.0, 2010.0)
     assert bmw["mass_running_order_kg"] == 1945.0 and bmw["registrations"] == 4   # weighted median (3 vs 1)
-    assert bmw["wheelbase_mm"] == 2910.0 and bmw["track_rear_mm"] == 1590.0     # both halves joined on the identity key
+    assert bmw["wheelbase_mm"] == 2910.0 and bmw["energy_wh_km"] == 180.0       # both halves joined on the identity key
+    assert "track_rear_mm" not in bmw and "mass_wltp_test_kg" not in bmw        # S2: no longer queried
     assert "fuel_consumption_l_100km" not in bmw                       # no value stated: no measurement
     cts = next(r for r in built["rows"] if r["make"] == "CADILLAC")
     assert cts["mass_running_order_kg"] == cts["mass_running_order_kg_min"] == 1734.0

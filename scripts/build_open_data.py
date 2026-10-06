@@ -3,9 +3,15 @@
 data/open/<dataset>.sqlite.gz and record it in data/open/manifest.json (file, sha256, bytes, rows, years / files,
 absent columns, units, built_at, the Action run URL). Never run on the server: the server reads the committed files.
 
+A sharded dataset (EEA, `snapshot.shard_by: year`) is compressed per year to data/open/<dataset>/<year>.sqlite.gz and
+its manifest entry lists the shards (file, year, part, status_used, rows, bytes, sha256). Every file must be under
+--max-mb (50 MB): a year over it is first split by make initial (<year>-A-L, <year>-M-Z); a file still over it is not
+written (`too_large`; the previous file of that year / dataset stays).
+
 A dataset whose probe (data/open/probe.json, step 1) did not resolve is not built; a dataset whose build stops or fails
-keeps its previous file and manifest entry (its `last_attempt` records the failure). Every file must be under
---max-mb (50 MB): a larger one is not written and the step fails with its size.
+keeps its previous file and manifest entry (its `last_attempt` records the failure, `build_status` is failed). One
+dataset never costs the others: too-large or failed items are listed in the summary and the manifest and printed as
+::warning::; the step exits 0 when at least one dataset or shard was written, 1 only when nothing was.
 
     python scripts/build_open_data.py [--datasets all|eea_co2_cars,...] [--out data/open] [--probe data/open/probe.json]
                                       [--work DIR] [--summary open-data-build.md] [--max-mb 50]
@@ -41,10 +47,12 @@ def _utc() -> str:
 
 
 def gzip_file(source: Path, target: Path) -> None:
-    """Deterministic gzip (no name / mtime in the header): the same snapshot gives the same sha256."""
+    """Deterministic gzip (mtime 0, a fixed file name: the target's name without .gz, never a path): the same snapshot
+    gives the same sha256."""
     tmp = target.with_name(f".{target.name}.tmp")
     with open(source, "rb") as src, open(tmp, "wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=9) as dst:
+        with gzip.GzipFile(filename=target.name.removesuffix(".gz"), mode="wb", fileobj=raw, mtime=0,
+                           compresslevel=9) as dst:
             shutil.copyfileobj(src, dst, 1 << 20)
     os.replace(tmp, target)
 
@@ -76,14 +84,34 @@ def makes_table(results: dict, probe: dict) -> list[str]:
     return lines
 
 
+def shard_table(results: dict) -> list[str]:
+    """S1: per sharded dataset and year, the shard's size (compressed / SQLite) and rows."""
+    lines = []
+    for name, r in results.items():
+        items = r.get("shard_items") or []
+        if not items:
+            continue
+        lines += ["", f"Shards of {name} (data/open/{name}/):", "",
+                  "| year | part | status | status_used | rows | compressed | sqlite |", "|---|---|---|---|---|---|---|"]
+        for i in items:
+            split = f" (year split from {_mb(i['split_from_bytes'])})" if i.get("split_from_bytes") else ""
+            lines.append(f"| {i.get('year')} | {i.get('part') or '—'} | {i.get('status')}{split} | "
+                         f"{i.get('status_used') or '—'} | {i.get('rows', '—')} | {_mb(i.get('bytes'))} | "
+                         f"{_mb(i.get('raw_bytes'))} |")
+    return lines
+
+
 def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
     lines = ["## Open-data build", "", "| dataset | status | rows | file | size | build time |", "|---|---|---|---|---|---|"]
     for name, r in results.items():
         entry = (manifest.get("datasets") or {}).get(name) or {}
-        size = f"{entry['bytes'] / 1024 / 1024:.1f} MB" if r.get("status") == "built" and entry.get("bytes") else "—"
+        built = r.get("status") == "built"
+        size = _mb(entry.get("bytes")) if built and entry.get("bytes") else "—"
+        file = (f"{name}/ ({len(entry.get('shards') or [])} shards)" if entry.get("shards") else entry.get("file")) \
+            if built else "—"
         lines.append(f"| {name} | {r.get('status')}{' (' + str(r.get('reason')) + ')' if r.get('reason') else ''} | "
-                     f"{r.get('rows', '—')} | {entry.get('file') if r.get('status') == 'built' else '—'} | {size} | "
-                     f"{r.get('duration_s', '—')} s |")
+                     f"{r.get('rows', '—')} | {file} | {size} | {r.get('duration_s', '—')} s |")
+    lines += shard_table(results)
     lines += makes_table(results, probe or {})
     lines += ["", "Per year / file:"]
     for name, r in results.items():
@@ -106,13 +134,84 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _mb(size: Any) -> str:
+    return f"{size / 1024 / 1024:.1f} MB" if isinstance(size, (int, float)) else "—"
+
+
+def compress_shard(name: str, shard: dict, staged_dir: Path, max_bytes: int) -> list[dict]:
+    """The compressed shard of one year ({file, year, part, status_used, rows, bytes, raw_bytes, gz, status ok |
+    too_large}); a year over max_bytes is first split by make initial (<year>-A-L, <year>-M-Z) and each part checked."""
+    raw = Path(shard["path"])
+    staged = staged_dir / f"{raw.name}.gz"
+    gzip_file(raw, staged)
+    size = staged.stat().st_size
+    keep = ("file", "year", "part", "status_used", "rows", "absent_columns")
+    if size <= max_bytes:
+        return [{**{k: shard.get(k) for k in keep}, "file": f"{shard['file']}.gz", "bytes": size,
+                 "raw_bytes": raw.stat().st_size, "gz": staged, "status": "ok"}]
+    staged.unlink()
+    out = []
+    for part in ds.split_shard(name, raw):
+        target = staged_dir / f"{part['path'].name}.gz"
+        gzip_file(part["path"], target)
+        part_size = target.stat().st_size
+        item = {**{k: part.get(k) for k in keep}, "absent_columns": shard.get("absent_columns"),
+                "file": f"{part['file']}.gz", "bytes": part_size, "raw_bytes": part["path"].stat().st_size,
+                "gz": target, "split_from_bytes": size, "status": "ok"}
+        if part_size > max_bytes:
+            target.unlink()
+            item.update(status="too_large", gz=None)
+        out.append(item)
+    return out
+
+
+def write_shards(name: str, result: dict, out: Path, work: Path, previous: dict, max_bytes: int,
+                 run_url: str | None) -> tuple[dict, list[dict]]:
+    """(the dataset's manifest entry, the shard items) of a sharded build: each year compressed (split when over the
+    limit) and moved to data/open/<dataset>/; a year with a written shard replaces its previous shards, a year not built
+    or too large keeps them."""
+    staged_dir = work / "gz" / name
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    items = [i for shard in result.get("shards") or [] for i in compress_shard(name, shard, staged_dir, max_bytes)]
+    ok = [i for i in items if i["status"] == "ok"]
+    if not ok:
+        return previous, items
+    replaced = {i["year"] for i in ok}
+    kept = [s for s in previous.get("shards") or [] if isinstance(s, dict) and s.get("year") not in replaced
+            and (out / str(s.get("file") or "")).is_file()]
+    shards = []
+    for item in ok:
+        target = out / item["file"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(item.pop("gz")), target)
+        shards.append({**{k: item.get(k) for k in ("file", "year", "part", "status_used", "rows", "bytes")},
+                       "sha256": ds.sha256_file(target)})
+    shards = sorted(kept + shards, key=lambda s: (int(s.get("year") or 0), str(s.get("part") or "")))
+    live = {str(s["file"]) for s in shards}
+    stale = [str(s.get("file") or "") for s in previous.get("shards") or [] if isinstance(s, dict)]
+    stale += [str(previous["file"])] if previous.get("file") else []      # the former single-file snapshot
+    for file in stale:
+        if file and file not in live and (out / file).is_file():
+            (out / file).unlink()
+    too_large = [{k: i.get(k) for k in ("year", "part", "rows", "bytes")} for i in items if i["status"] == "too_large"]
+    entry = {"sharded": True, "shards": shards, "rows": sum(int(s.get("rows") or 0) for s in shards),
+             "bytes": sum(int(s.get("bytes") or 0) for s in shards), "built_at": result.get("built_at"),
+             "run_url": run_url, "build_status": "too_large" if too_large else "built",
+             **{k: result.get(k) for k in ENTRY_KEYS if k != "rows" and result.get(k) is not None}}
+    if too_large:
+        entry["too_large"] = too_large
+    return entry, items
+
+
 def run(names: list[str], out: Path, work: Path, probe: dict, max_bytes: int, run_url: str | None,
         fetch=None) -> tuple[dict, dict, list[str]]:
-    """(results per dataset, the new manifest, errors that fail the step)."""
+    """(results per dataset, the new manifest, warnings: the too-large or failed items). Each result records how many
+    files it `written` (a dataset file or its shards)."""
     out.mkdir(parents=True, exist_ok=True)
     manifest = ds._read_json(out / ds.MANIFEST_NAME) or {}
     entries = dict(manifest.get("datasets") or {})
-    results, errors = {}, []
+    results, warnings = {}, []
+    limit = f"{max_bytes / 1024 / 1024:.0f} MB"
     ds.set_snapshot_dir(work)
     try:
         for name in names:
@@ -123,24 +222,51 @@ def run(names: list[str], out: Path, work: Path, probe: dict, max_bytes: int, ru
             else:
                 result = build_dataset(name, fetch)
             results[name] = result
+            result["written"] = 0
             entry = dict(entries.get(name) or {})
             attempt = {"at": _utc(), "status": result.get("status"), "reason": result.get("reason")
                        or result.get("error"), "run_url": run_url}
-            if result.get("status") == "built":
+            if result.get("status") == "built" and result.get("shards") is not None:
+                entry, items = write_shards(name, result, out, work, entry, max_bytes, run_url)
+                entry = dict(entry)
+                result["shard_items"] = [{k: v for k, v in i.items() if k != "gz"} for i in items]
+                result["written"] = sum(1 for i in items if i["status"] == "ok")
+                too_large = [i for i in items if i["status"] == "too_large"]
+                for item in too_large:
+                    warnings.append(f"{name} {item['year']}{'-' + item['part'] if item.get('part') else ''}: "
+                                    f"{_mb(item['bytes'])} compressed (split by make initial), over the {limit} "
+                                    f"limit (not written)")
+                if not result["written"]:
+                    result["status"] = entry["build_status"] = "too_large" if too_large else "failed"
+                    result["reason"] = "every shard over the limit" if too_large else "no shard (no rows)"
+                    if not too_large:
+                        warnings.append(f"{name}: built without rows, nothing written; the previous snapshot stays")
+                attempt.update(status=result["status"],
+                               reason=f"{len(too_large)} shard(s) over {limit}" if too_large else None)
+            elif result.get("status") == "built":
                 target = out / f"{name}.sqlite.gz"
                 staged = work / f"{name}.sqlite.gz"
                 gzip_file(work / f"{name}.sqlite", staged)
                 size = staged.stat().st_size
                 if size > max_bytes:
-                    errors.append(f"{name}: {size / 1024 / 1024:.1f} MB compressed, over the {max_bytes / 1024 / 1024:.0f}"
-                                  f" MB limit (not written)")
+                    warnings.append(f"{name}: {_mb(size)} compressed, over the {limit} limit (not written)")
                     attempt.update(status="too_large", reason=f"{size} bytes")
                     result["status"], result["reason"] = "too_large", f"{size} bytes"
+                    entry["build_status"] = "too_large"
                 else:
                     shutil.move(str(staged), target)
+                    for shard in entry.get("shards") or []:                 # a formerly sharded dataset
+                        if isinstance(shard, dict) and shard.get("file") and (out / str(shard["file"])).is_file():
+                            (out / str(shard["file"])).unlink()
                     entry = {"file": target.name, "sha256": ds.sha256_file(target), "bytes": size,
                              "built_at": result.get("built_at"), "run_url": run_url, "build_status": "built",
                              **{k: result.get(k) for k in ENTRY_KEYS if result.get(k) is not None}}
+                    result["written"] = 1
+            elif result.get("status") in ("stopped", "failed"):
+                warnings.append(f"{name}: {result['status']} ({result.get('reason') or result.get('error')}); the "
+                                f"previous snapshot stays")
+                if entry:
+                    entry["build_status"] = "failed"
             entry["last_attempt"] = attempt
             entries[name] = entry
     finally:
@@ -148,7 +274,7 @@ def run(names: list[str], out: Path, work: Path, probe: dict, max_bytes: int, ru
     manifest = {"version": MANIFEST_VERSION, "built_at": _utc(), "run_url": run_url,
                 "config_version": ds.config().get("version"), "datasets": entries}
     (out / ds.MANIFEST_NAME).write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=str) + "\n", "utf-8")
-    return results, manifest, errors
+    return results, manifest, warnings
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,18 +292,23 @@ def main(argv: list[str] | None = None) -> int:
     work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="open-data-"))
     work.mkdir(parents=True, exist_ok=True)
     run_url = os.environ.get("OPEN_DATA_RUN_URL") or None
-    results, manifest, errors = run(selected(args.datasets), Path(args.out), work, probe,
-                                    int(args.max_mb * 1024 * 1024), run_url)
-    text = summary(results, manifest, probe) + ("".join(f"\n**Failed:** {e}\n" for e in errors))
+    results, manifest, warnings = run(selected(args.datasets), Path(args.out), work, probe,
+                                      int(args.max_mb * 1024 * 1024), run_url)
+    written = sum(int(r.get("written") or 0) for r in results.values())
+    text = summary(results, manifest, probe) + "".join(f"\n**Not written:** {w}\n" for w in warnings)
+    if not written:
+        text += "\n**Nothing was written** (no dataset or shard built under the limit).\n"
     if args.summary:
         Path(args.summary).write_text(text, "utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
             handle.write(text)
     print(text)
-    for error in errors:
-        print(f"::error::{error}", file=sys.stderr)
-    return 1 if errors else 0
+    for warning in warnings:
+        print(f"::warning::{warning}", file=sys.stderr)
+    if not written:
+        print("::error::nothing was written: no dataset or shard built under the limit", file=sys.stderr)
+    return 0 if written else 1
 
 
 if __name__ == "__main__":

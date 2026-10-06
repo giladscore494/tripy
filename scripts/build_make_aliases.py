@@ -72,15 +72,13 @@ def observed_makes(probe: dict, open_dir: Path) -> tuple[dict[str, set[str]], di
         for name, cfg in ds.datasets().items():
             if cfg.get("identity_only"):
                 continue
-            path, _ = ds.materialize(name)
-            if path is None:
-                continue
-            try:
-                with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-                    out.setdefault(name, set()).update(mk.spelling(m) for (m,) in
-                                                       conn.execute("SELECT DISTINCT make FROM rows") if m)
-            except sqlite3.Error:
-                continue
+            for path in ds.shard_files(name):                  # the snapshot, or every shard of a sharded one
+                try:
+                    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+                        out.setdefault(name, set()).update(mk.spelling(m) for (m,) in
+                                                           conn.execute("SELECT DISTINCT make FROM rows") if m)
+                except sqlite3.Error:
+                    continue
     finally:
         ds.set_repo_dir(None)
     return out, rows
