@@ -127,6 +127,18 @@ def test_two_manufacturers_matching_one_make_are_ambiguous():
     assert result["aliases"] == {} and set(result["ambiguous"]) == {"דאצ'יה", "דאציה"}
 
 
+def test_a_short_first_word_never_matches_alone_and_dge_spells_j():
+    result = mk.propose(["אודי", "דה טומאסו", "דודג'"], {"eea_co2_cars": ["AUDI", "DE TOMASO", "DODGE"]})
+    assert result["aliases"] == {"אודי": ["AUDI"], "דה טומאסו": ["DE TOMASO"], "דודג'": ["DODGE"]}
+
+
+def test_one_skeleton_naming_makes_with_different_first_words_is_ambiguous():
+    result = mk.propose(["גמס"], {"eea_co2_cars": ["GMC", "GMC TRUCK"]})
+    assert result["aliases"] == {"גמס": ["GMC", "GMC TRUCK"]}
+    result = mk.propose(["גמס"], {"eea_co2_cars": ["GMC", "GEMEC"]})
+    assert result["aliases"] == {} and result["ambiguous"] == {"גמס": {"gmk": ["GEMEC", "GMC"]}}
+
+
 def test_the_generated_aliases_merge_with_the_reviewed_vocabulary(tmp_path):
     path = tmp_path / "aliases.json"
     path.write_text(json.dumps({"aliases": {"קיה": ["Kia"], "ב מ וו": ["BMW ALPINA"]}}), "utf-8")

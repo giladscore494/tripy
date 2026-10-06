@@ -25,6 +25,7 @@ GENERATED_PATH = DATA / "open_data_make_aliases.json"
 TRANSLITERATION_PATH = DATA / "make_transliteration.json"
 CATALOG_PATH = DATA / "catalog_manufacturers.json"
 MAX_VARIANTS = 4096
+MIN_FIRST_WORD = 3                                     # consonants a first-word skeleton needs to match alone
 _CACHE: dict[str, tuple[float, dict]] = {}
 
 
@@ -140,9 +141,10 @@ def propose(manufacturers: Iterable[str], observed: dict[str, Iterable[str]], ex
             table: dict | None = None) -> dict:
     """{aliases, ambiguous, unmatched, reviewed}: per manufacturer the source makes it spells (module docstring).
 
-    `observed` is {dataset: makes}. A make matches a manufacturer when its whole-name or first-word skeleton is one
-    of the manufacturer's Hebrew skeletons; the matches with the longest skeleton are kept; if those come from more
-    than one distinct skeleton it is ambiguous. `existing` (the reviewed vocabulary) is kept as is and never re-proposed."""
+    `observed` is {dataset: makes}. A make matches a manufacturer when its whole-name skeleton, or its first-word
+    skeleton of at least MIN_FIRST_WORD consonants, is one of the manufacturer's Hebrew skeletons; the matches with the
+    longest skeleton are kept; if those come from more than one distinct skeleton, or name makes with different first
+    words, it is ambiguous. `existing` (the reviewed vocabulary) is kept as is and never re-proposed."""
     table = table or transliteration()
     existing = {k: list(v) for k, v in (existing or {}).items() if isinstance(v, list) and not k.startswith("_")}
     makes: dict[str, set[str]] = {}
@@ -153,9 +155,12 @@ def propose(manufacturers: Iterable[str], observed: dict[str, Iterable[str]], ex
                 makes.setdefault(name, set()).add(dataset)
     index: dict[str, set[str]] = {}
     for make in makes:
-        for skeleton in {latin_skeleton(make, table), latin_skeleton(_first_word(make), table)}:
-            if skeleton:
-                index.setdefault(skeleton, set()).add(make)
+        skeletons = {latin_skeleton(make, table)}
+        first = latin_skeleton(_first_word(make), table)
+        if len(first) >= MIN_FIRST_WORD:                 # "DE" of DE TOMASO ("d") would match AUDI's Hebrew name
+            skeletons.add(first)
+        for skeleton in skeletons - {""}:
+            index.setdefault(skeleton, set()).add(make)
     aliases, ambiguous, unmatched = {}, {}, []
     for tozar in sorted(set(manufacturers)):
         if tozar in existing:
@@ -170,7 +175,11 @@ def propose(manufacturers: Iterable[str], observed: dict[str, Iterable[str]], ex
             ambiguous[tozar] = {s: sorted(m) for s, m in sorted(best.items())}
             continue
         (skeleton, found), = best.items()
-        # every make spelled with that skeleton: e.g. MERCEDES-BENZ / MERCEDES BENZ share the first-word skeleton
+        # every make spelled with that skeleton: e.g. MERCEDES-BENZ / MERCEDES BENZ share the first-word skeleton;
+        # makes with different first words under one skeleton are not variants of one make: review
+        if len({_first_word(m) for m in found}) > 1:
+            ambiguous[tozar] = {skeleton: sorted(found)}
+            continue
         aliases[tozar] = sorted(found)
     claimed: dict[str, list[str]] = {}
     for tozar, found in aliases.items():
