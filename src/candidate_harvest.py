@@ -238,7 +238,22 @@ OPERATIONS: dict[str, Callable[[float], float]] = {
     "multiply_by_10": lambda v: v * 10,
     "divide_by_1000": lambda v: v / 1000,
     "multiply_by_1000": lambda v: v * 1000,
-    "reciprocal_times_100": lambda v: round(100 / v, 2) if v else v,
+    # D3: km/l -> l/100km = 100 / x, one decimal
+    "reciprocal_times_100": lambda v: round(100 / v, 1) if v else v,
+    # D4: exact imperial factors (never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h)
+    "multiply_by_1_35582": lambda v: float(round(v * 1.35582)),          # lb-ft -> Nm
+    "multiply_by_25_4": lambda v: float(round(v * 25.4)),                # in -> mm
+    "multiply_by_3_785411784": lambda v: round(v * 3.785411784, 1),     # US gal -> l
+    "multiply_by_28_316846592": lambda v: float(round(v * 28.316846592)),  # ft3 -> l
+    "multiply_by_0_45359237": lambda v: float(round(v * 0.45359237)),    # lb -> kg
+}
+# D1: the exact factor of each conversion (the rounding tolerance of a converted value is the source unit's last stated
+# digit times this factor; src/conflict_normalizer.py)
+OPERATION_FACTORS: dict[str, float] = {
+    "identity": 1.0, "multiply_by_9_80665": 9.80665, "divide_by_10": 0.1, "multiply_by_10": 10.0,
+    "divide_by_1000": 0.001, "multiply_by_1000": 1000.0, "multiply_by_1_35582": 1.35582, "multiply_by_25_4": 25.4,
+    "multiply_by_3_785411784": 3.785411784, "multiply_by_28_316846592": 28.316846592,
+    "multiply_by_0_45359237": 0.45359237,
 }
 GENERIC_UNITS = ["hp", "ps", "bhp", 'כ"ס', "כוח סוס", "rpm", "סל\"ד", "mph", "lb-ft", "cc", 'סמ"ק', "volt", "v",
                  "mpg", "mpge", "miles", "mi", "seats", "מושבים", "doors", "דלתות", "cylinders", "צילינדרים",
@@ -1497,6 +1512,31 @@ def _rule_hits(rule: FieldRule, d: Dictionary, seg: Segment) -> list[tuple[Hit, 
                 continue
             hints["position"] = position or "unspecified"
             out.append((Hit(size, raw, confidence=confidence, span=span, hints=hints),
+                        base if structured else "tire_size_form", None, text))
+    elif m == "rim_axle":
+        # D2: the rim diameter of ONE axle, read from that axle's tyre size ("ק' 275/35R19 , א' 285/30R20" -> front
+        # 19 / rear 20); a size stated for both axles, or the only size of a tyre statement, counts for each axle
+        source = seg.value if structured else text
+        has_tire_word = bool(anchors) or _contains(d.tire_terms, text)
+        label_position = None
+        if structured:
+            for name, pattern in (("front", d.front), ("rear", d.rear)):
+                if _contains(pattern, seg.label):
+                    label_position = name
+        sizes = _tires(d, source)
+        for size, raw, span, position in sizes:
+            position = position or label_position
+            if position in (rule.component, "both"):
+                confidence = 0.9 if structured else 0.8
+            elif position is None and has_tire_word and len({s for s, _, _, _ in sizes}) == 1:
+                confidence = 0.6
+            else:
+                continue
+            rim = int(size.rsplit("R", 1)[1])
+            if not _plausible(rule, float(rim)):
+                continue
+            out.append((Hit(rim, raw, rule.normalized_unit, None, confidence, span,
+                            hints={"position": position or "unspecified", "tire_size": size}),
                         base if structured else "tire_size_form", None, text))
     elif m in ("charging_time", "charging_window"):
         if not _contains(d.charging, text):

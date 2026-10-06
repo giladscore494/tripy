@@ -68,6 +68,8 @@ REASON_TEXT = {
     "field_not_applicable_for_vehicle": "This field does not apply to this vehicle's propulsion; report "
                                         "not_applicable instead.",
     "quote_missing": "Give a short verbatim quote from the document that states the value.",
+    "source_policy_blocked": "This document's domain is not allowed by the production source policy: it is never "
+                             "evidence. Use documents of allowed domains.",
     "quote_too_short": "The quote is too short to identify what it states; quote the label with the value.",
     "quote_not_in_source": "The quote does not occur in the cited document (fragments joined with … must be in "
                            "order and close together). Quote the document verbatim.",
@@ -684,9 +686,13 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
                         continue
                 elif nearest is not None and nearest != spec["name"]:
                     continue
+            converted = cand.get("converted_from") if isinstance(cand.get("converted_from"), dict) else {}
             return Entailment(True, f"deterministic_parse:{cand.get('extraction_method')}",
                               position=hit if hit >= 0 else None, fragment=parse_text,
-                              details={"unit": cand.get("unit")})
+                              details={"unit": cand.get("unit"),
+                                       "stated": {"raw": str(cand.get("raw_value") or ""),
+                                                  "operation": converted.get("operation") or "identity"}
+                                       if matcher in NUMERIC_MATCHERS and cand.get("raw_value") else None})
     if matcher == "tire_size":
         sizes = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(text)}
         claimed = {f"{m.group(1)}/{m.group(2)} R{m.group(4)}" for m in TIRE.finditer(normalize_text(str(value)))}
@@ -698,6 +704,18 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             m = next((m for m in TIRE.finditer(text) if f"{m.group(1)}/{m.group(2)} R{m.group(4)}" in claimed), None)
             return Entailment(True, "tire_size_literal", position=m.start() if m else None, fragment=text)
         return Entailment(False, reason="value_not_in_quote" if sizes else "unsupported_inference")
+    if matcher == "rim_axle":
+        # D2: a stated tyre size of this axle (or of both / the only size) whose R number is the value
+        component = spec.get("component")
+        parsed_sizes = _tires(d, text)
+        distinct = {size for size, _, _, _ in parsed_sizes}
+        claimed = numbers_in(value)
+        for size, raw, span, position in parsed_sizes:
+            if position in (component, "both") or (position is None and len(distinct) == 1):
+                if claimed and int(size.rsplit("R", 1)[1]) == int(claimed[0]):
+                    return Entailment(True, "tire_size_rim", position=span[0], fragment=text,
+                                      details={"stated": {"raw": str(int(claimed[0])), "operation": "identity"}})
+        return Entailment(False, reason="value_not_in_quote" if parsed_sizes else "unsupported_inference")
     if matcher == "enum" and rule is not None:
         entry = next((p for v, p in rule.enum if normalize_term(v) == normalize_term(str(value))), None)
         hit = entry.search(text) if entry else None
@@ -716,7 +734,7 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             return Entailment(True, "text_literal", fragment=text)
         return Entailment(False, reason="value_not_in_quote")
     quote_numbers = _quote_numbers(text, adm.number_words, d, rule)
-    first_position, methods, units = None, [], []
+    first_position, methods, units, stated = None, [], [], []
     for number in claimed_numbers:
         found = None
         for q, start, end in quote_numbers:
@@ -729,10 +747,10 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
                 if kind in ("other", "convert"):
                     found = found or ("unit", kind)
                     continue
-                found = ("literal", start, unit)
+                found = ("literal", start, unit, {"raw": text[start:end], "operation": "identity"})
                 break
             if kind == "convert" and operation and _close(OPERATIONS[operation](q), number, 0.005):
-                found = ("conversion:" + operation, start, None)
+                found = ("conversion:" + operation, start, None, {"raw": text[start:end], "operation": operation})
                 break
         if found is None:
             return Entailment(False, reason="value_not_in_quote" if quote_numbers else "unsupported_inference")
@@ -740,6 +758,7 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
             return Entailment(False, reason="unit_mismatch" if found[1] == "other" else "unit_not_normalized")
         methods.append(found[0])
         units.append(found[2])
+        stated.append(found[3])
         first_position = found[1] if first_position is None else first_position
     # the number must be stated FOR THIS FIELD: its label in the value's clause, or the parser's own pairing of this
     # field and value in this document; and not a number the quote's own parse gives to another field
@@ -784,7 +803,9 @@ def _entail_fragment(adm: AdmissionContext, spec: dict, rule, value: Any, fragme
         next(f"approved_{m}" for m in methods if m != "literal")
     currency = next((d.currencies.get(u) for u in units if u and matcher == "price" and d.currencies.get(u)), None)
     return Entailment(True, method + ("" if labelled else "+candidate_backed"), position=first_position,
-                      fragment=text, details={"unit": currency})
+                      fragment=text, details={"unit": currency,
+                                              "stated": stated[0] if len(stated) == 1 and matcher in NUMERIC_MATCHERS
+                                              else None})
 
 
 def entail(adm: AdmissionContext, spec: dict, value: Any, quote: str,
@@ -1376,6 +1397,14 @@ def sanity_rejection(adm: AdmissionContext, material: DocumentMaterial, spec: di
     return None
 
 
+def document_policy(material) -> dict:
+    """The production source policy of a cached document (its final URL, else its requested URL)."""
+    from .source_authority import policy_of
+
+    meta = getattr(material, "meta", None) or {}
+    return policy_of(meta.get("final_url") or getattr(material, "url", None) or meta.get("url"))
+
+
 def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | tuple = ()) -> dict:
     """{'accepted': True, 'record': {...}} or {'accepted': False, 'reasons': [...], 'message': ...}."""
     name = normalize_field_name(args.get("field"))
@@ -1387,6 +1416,11 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     if material is None:
         return _reject(["source_not_retrieved"])
     reject = lambda reasons, **extra: _reject(reasons, document_id=material.document_id, **extra)  # noqa: E731
+    policy = document_policy(material)
+    if policy["policy"] != "allowed":
+        # the production source policy: a document of a domain that is not `allowed` (blocked, unlisted, or
+        # identity_only) is never evidence; the cached copy stays on disk
+        return reject(["source_policy_blocked"], source_policy=policy["policy"], policy_domain=policy["domain"])
     if spec.get("applicable") is False:
         return reject(["field_not_applicable_for_vehicle"])
     if isinstance(value, dict) or (isinstance(value, (list, tuple)) and spec.get("value_type") != "text"):
@@ -1483,6 +1517,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "note": _text_arg(args.get("note")) or None, "condition": condition, "typed_value": typed,
         "admission_status": "accepted", "admission_version": ADMISSION_VERSION, "admission_checks": checks,
         "entailment": entailment.method,
+        # D1: the number as the source states it and the conversion it went through (its rounding tolerance)
+        "stated_number": (entailment.details or {}).get("stated"),
         "binding_level": binding["binding_level"], "binding_requirement": binding["binding_requirement"],
         "binding_veto": binding["binding_veto"] or None, "binding_dimensions": binding["binding_dimensions"],
         "binding_basis": binding.get("binding_basis"), "year_context": binding.get("year_context"),

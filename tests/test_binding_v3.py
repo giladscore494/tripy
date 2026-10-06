@@ -13,6 +13,8 @@ from fixtures import admission_records
 # excluded as the spec allows) and the year telemetry binding-v3 adds to a record (Part D; never read by binding,
 # evaluation or Final Assembly). Every other key, the binding fields included, must be identical.
 NEW_TELEMETRY = ("binding_version", "year_context",
+                 # D1: the number as the source states it (its rounding tolerance; read only by the conflict normalizer)
+                 "stated_number",
                  # binding-v4 (PR #40) proof telemetry: the Document Variant Map decision and the rules applied
                  "variant_map_region", "binding_rules", "binding_policy",
                  # PR #43 binding flags (system_power_unmapped, ...): recorded whenever their condition holds; a flag

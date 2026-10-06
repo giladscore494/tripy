@@ -40,11 +40,11 @@ def feed(vehicle: VehicleLive, events):
         vehicle.apply(e["kind"], e)
 
 
-def test_bev_denominator_is_43_of_45():
+def test_bev_denominator_is_45_of_47():
     v = VehicleLive("85095", "קאדילאק LYRIQ · 2025 · Luxury")
     feed(v, [started()])
-    assert len(v.specs) == 45 and v.progress()["total"] == 43
-    assert v.card()["progress_text"] == "הושלמו 0 מתוך 43 שדות"
+    assert len(v.specs) == 47 and v.progress()["total"] == 45
+    assert v.card()["progress_text"] == "הושלמו 0 מתוך 45 שדות"
 
 
 def test_field_table_is_hebrew_for_every_default_field():
@@ -54,7 +54,7 @@ def test_field_table_is_hebrew_for_every_default_field():
              evidence(3, "e2", "torque_nm", 610, "IL"), evidence(4, "e3", "torque_nm", 650, "IL"),
              {"kind": "field_status", "seq": 5, "field": "fuel_tank_l", "status": "not_applicable"}])
     rows = v.field_rows()
-    assert len(rows) == 45 and list(rows[0]) == he.FIELD_TABLE_COLUMNS_HE
+    assert len(rows) == 47 and list(rows[0]) == he.FIELD_TABLE_COLUMNS_HE
     text = json.dumps(rows, ensure_ascii=False)
     assert not he.has_raw_identifier(text)                             # no snake_case in the user-facing table
     for raw in ("battery_gross_kwh", "energy_consumption_kwh_100km", "foreign_market_only", "not_applicable"):
@@ -71,7 +71,7 @@ def test_field_table_is_hebrew_for_every_default_field():
     hev = VehicleLive("2", "t")
     feed(hev, [started(propulsion="hybrid")])
     hev_names = {r["שדה"] for r in hev.field_rows()}
-    assert len(hev_names) == 37 and "צריכת חשמל" not in hev_names and "קיבולת סוללה ברוטו" in hev_names
+    assert len(hev_names) == 39 and "צריכת חשמל" not in hev_names and "קיבולת סוללה ברוטו" in hev_names
 
 
 def test_unresolved_with_evidence_needs_followup_but_is_not_without_evidence():

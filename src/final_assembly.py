@@ -111,6 +111,13 @@ def _value_identity(spec: dict, carriers: list[dict], state: dict) -> tuple[list
         return None
     if cls.get("class") == "unit_equivalent":
         return carriers, "unit_equivalent"
+    if cls.get("class") == "rounding_equivalent":
+        # D1: one value; the most precise statement carries it, every carrier stays its evidence
+        rep = str(cls.get("representative") or "")
+        lead = [i for i in carriers if str(i.get("evidence_id")) == rep]
+        if lead:
+            return lead + [i for i in carriers if i is not lead[0]], "rounding_equivalent"
+        return None
     if cls.get("class") == "scalar_inside_range":
         spec = with_dictionary(spec)
         spans = [(i, interval(i, spec)) for i in carriers]
@@ -202,7 +209,9 @@ def assemble_output(events: list[dict], payload: dict | None, specs: list[dict],
             info = [i for i in state.get("info") or [] if i == "market_not_established"]
             entry = _entry(kind, alternatives=_alternative(items), notes=", ".join([kind] + info))
         elif kind == "not_applicable":
-            entry = _entry(kind, notes="not_applicable")
+            staggered = next((i for i in state.get("info") or [] if str(i).startswith("staggered_axles:")), None)
+            entry = _entry(kind, notes="not_applicable" + (
+                f" (staggered set {staggered.split(':', 1)[1]}: see the per-axle fields)" if staggered else ""))
         else:                                       # missing / unresolved
             entry = _entry(kind, alternatives=_alternative(items), notes=kind)
         fields[name] = entry

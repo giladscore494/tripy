@@ -70,8 +70,12 @@ def http_fetch(ctx, url: str, deadline: float) -> tuple[int, bytes]:
     timeouts, never beyond the deadline. The body streams in chunks: past the deadline the read is aborted
     (SiteMapDeadline); past MAX_FILE_BYTES (or the tools' response cap) it is cut. Raises on a network error (the
     caller records it)."""
+    from .source_authority import fetch_allowed, note_policy_block
     from .tools.fetch import USER_AGENT
 
+    if not fetch_allowed(url):
+        note_policy_block(ctx, url, "site_map")
+        raise PermissionError(f"policy_blocked: {url}")
     remaining = max(0.5, deadline - time.monotonic())
     cfg = ctx.config
     cap = min(int(getattr(cfg, "max_response_bytes", MAX_FILE_BYTES) or MAX_FILE_BYTES), MAX_FILE_BYTES)

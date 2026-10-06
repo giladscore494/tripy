@@ -752,10 +752,20 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
         _offer(ctx, search_result=result)
         return triage(_search_items(result), domain, query, mode)
 
+    from .source_authority import fetch_allowed
+
+    blocked_sites: set[str] = set()
     try:
         for domain, query in search_queries(terms, limit=10 ** 6):
             if out["searches"] >= max_searches:
                 break
+            if not fetch_allowed(f"https://{domain}/"):
+                # the production source policy: a site that is not allowed is never searched or fetched (its resolver
+                # code stays; a future licence turns it back on through data/source_policy.json alone)
+                if domain not in blocked_sites:
+                    blocked_sites.add(domain)
+                    out["skipped"].append({"domain": domain, "reason": "policy_blocked"})
+                continue
             if not run_search(query, domain, "site") and out["searches"] < max_searches:
                 # nothing useful from the `site:` query: once more with the backend's domain filter, no `site:` prefix
                 run_search(_strip_site(query), domain, "domain_filter")

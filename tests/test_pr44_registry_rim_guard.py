@@ -33,5 +33,5 @@ def test_rim_requires_both_axles_to_be_present():
 
     fields = [row["field"] for row in rows]
 
-    assert fields == ["tire_size_front"]
+    assert fields == ["tire_size_front", "rim_diameter_front_in"]      # D2: the reliable axle's own rim only
     assert "rim_diameter_in" not in fields

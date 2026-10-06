@@ -1,4 +1,5 @@
-"""The field dictionary in data/enrichment_fields.json: complete for all 45 default Level-2 fields, Hebrew
+"""The field dictionary in data/enrichment_fields.json: complete for all 47 default Level-2 fields (45 + the D2 per-axle
+rims), Hebrew
 labels for the UI, and representative positive / negative phrases through the generic matchers."""
 
 import json
@@ -19,7 +20,7 @@ DEFAULT_45 = [
     "curb_weight_kg", "ground_clearance_mm", "cargo_volume_l", "fuel_tank_l", "gearbox_type", "gear_count",
     "screen_size_in", "apple_carplay", "android_auto", "wireless_phone_projection", "power_seats", "heated_seats",
     "ventilated_seats", "climate_zones", "sunroof_panoramic", "other_comfort_features", "rim_diameter_in",
-    "tire_size_front", "tire_size_rear", "alternative_tire_sizes", "local_trim_name", "list_price",
+    "rim_diameter_front_in", "rim_diameter_rear_in", "tire_size_front", "tire_size_rear", "alternative_tire_sizes", "local_trim_name", "list_price",
     "registration_licence_fee", "vehicle_warranty", "battery_hybrid_warranty", "warranty_km", "warranty_years"]
 EXPECTED_HE = {
     "torque_nm": "מומנט מרבי", "acceleration_0_100_s": "תאוצה 0–100 קמ״ש", "battery_gross_kwh": "קיבולת סוללה ברוטו",
@@ -41,7 +42,7 @@ def test_all_45_canonical_fields_are_unchanged_and_fully_described(specs):
     assert [s["name"] for s in specs] == DEFAULT_45
     labels = [s.get("display_name_he") for s in specs]
     assert all(label and label.strip() and HEBREW.search(label) for label in labels)
-    assert len(set(labels)) == 45                                            # no duplicate labels
+    assert len(set(labels)) == 47                                            # no duplicate labels
     for name, label in EXPECTED_HE.items():
         assert field_display_name(name) == label
     for spec in specs:

@@ -330,13 +330,13 @@ def test_propulsion_applicability_and_coverage_denominator():
 
     names = {p: {s["name"] for s in resolve_requested_fields(None, propulsion=p) if s["applicable"]}
              for p in ("conventional", "hybrid", "plug_in", "battery_electric")}
-    assert not names["hybrid"] & PLUG_FIELDS and len(names["hybrid"]) == 37          # a regular HEV does not plug in
-    assert PLUG_FIELDS <= names["plug_in"] and len(names["plug_in"]) == 45
+    assert not names["hybrid"] & PLUG_FIELDS and len(names["hybrid"]) == 39          # a regular HEV does not plug in
+    assert PLUG_FIELDS <= names["plug_in"] and len(names["plug_in"]) == 47
     assert PLUG_FIELDS <= names["battery_electric"] and "fuel_tank_l" not in names["battery_electric"]
     assert not names["conventional"] & (PLUG_FIELDS | {"battery_gross_kwh"}) and "fuel_tank_l" in names["conventional"]
     assert {"battery_gross_kwh", "battery_usable_kwh"} <= names["hybrid"]
     hev = {"requested_fields": {n: n for n in names["hybrid"]}, "output": {"fields": {}}}
-    assert compute_metrics(hev)["target_fields"] == 37                                 # the coverage denominator
+    assert compute_metrics(hev)["target_fields"] == 39                                 # the coverage denominator
     evaluation = evaluate_fields(resolve_requested_fields(None, propulsion="hybrid"), [], "IL")
     assert {e["field"] for e in evaluation if e["state"] == "not_applicable"} == PLUG_FIELDS
 
@@ -470,10 +470,10 @@ def test_corolla_run_rejects_the_polluted_evidence_end_to_end(tmp_path, make_ctx
     assert result["research_bundle"]["field_states"]["fuel_tank_l"]["portable_evidence_ids"]
     uk_tank = next(e for e in result["research_bundle"]["evidence"] if e["field"] == "fuel_tank_l")
     assert uk_tank["market"] == "UK" and uk_tank["portable_to_target_market"] is True
-    assert states["electric_range_km"] == "not_applicable" and len(result["requested_fields"]) == 37   # HEV: no plug
+    assert states["electric_range_km"] == "not_applicable" and len(result["requested_fields"]) == 39   # HEV: no plug
     m = compute_metrics(result)
     assert (m["target_fields"], m["evidence_rejected"], m["evidence_variant_exact"], m["evidence_variant_different"]) \
-        == (37, 3, 3, 1)
+        == (39, 3, 3, 1)
     assert m["evidence_aggregator_source"] == 2 and m["evidence_official_source"] == 1
     assert "100,000" not in json.dumps(result["research_bundle"]["evidence"], ensure_ascii=False)
 

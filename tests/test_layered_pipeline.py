@@ -342,7 +342,7 @@ def test_documents_fetched_during_recovery_are_harvested_for_every_field(tmp_pat
 
 @pytest.mark.sweep_mode("legacy")   # encodes the legacy tool-loop sweep
 @pytest.mark.acquisition_mode("legacy")   # encodes the legacy research contract
-def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recovery(tmp_path, make_ctx):
+def test_cadillac_acceptance_harvest_all_45_fields_before_paying_for_web_recovery(tmp_path, make_ctx):
     ctx = make_ctx({})
     ids = put_documents(ctx.cache)
 
@@ -371,8 +371,8 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     client = PhaseGLM([read_docs(ids), say({"summary": "primary", "fields": {}})], sweep=sweep)
     result, events, _ = run(tmp_path, ctx, client, field_recovery_max_total_steps=24)
     harvest = next(e for e in events if e["kind"] == "deterministic_harvest_summary")
-    assert harvest["applicable_fields"] == 43 and harvest["documents_harvested"] == 10
-    assert harvest["candidate_fields_total"] >= 35 and harvest["fields_unresolved_before_harvest"] == 43
+    assert harvest["applicable_fields"] == 45 and harvest["documents_harvested"] == 10
+    assert harvest["candidate_fields_total"] >= 35 and harvest["fields_unresolved_before_harvest"] == 45
     sweep = result["document_sweep"]
     layered = result["candidate_summary"]
     # 43 open fields / 60+ candidates exceed one packet's limits: deterministic chunks by recovery_cluster, one call
@@ -380,11 +380,11 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     chunks = sweep["document_sweep_chunk_details"]
     assert sweep["model_calls"] == sweep["document_sweep_chunks"] == len(chunks) >= 2 and sweep["external_calls"] == 0
     assert sorted(f for c in chunks for f in c["fields"]) == sorted(set(f for c in chunks for f in c["fields"]))
-    assert len({f for c in chunks for f in c["fields"]}) == 43
+    assert len({f for c in chunks for f in c["fields"]}) == 45
     # 8 before the variant_match=unclear fix: IL equipment / tyre / price values whose server-side binding stays
     # below the field's exact_market_trim requirement (the trim is not bound for that fact) are no longer usable
     # evidence, so they enter web recovery instead of counting as resolved.
-    assert sweep["fields_unresolved_before"] == 43 and sweep["fields_unresolved_after"] <= 22
+    assert sweep["fields_unresolved_before"] == 45 and sweep["fields_unresolved_after"] <= 24
     assert layered["fields_entering_web_recovery"] == sweep["fields_unresolved_after"]
     rec = result["field_recovery"]
     assert len(rec["queue"]) == sweep["fields_unresolved_after"]
@@ -400,7 +400,7 @@ def test_cadillac_acceptance_harvest_all_43_fields_before_paying_for_web_recover
     assert result["usage_research"]["model_calls"] == 2 and result["usage_field_recovery"]["model_calls"] <= 24
     m = compute_metrics(result)
     assert (m["fields_unresolved_before_harvest"], m["fields_entering_web_recovery"]) == \
-        (43, sweep["fields_unresolved_after"])
+        (45, sweep["fields_unresolved_after"])
     assert m["candidate_fields_total"] >= 35 and m["documents_harvested"] == 10
     print(json.dumps({"candidates": m["candidate_count_total"], "candidate_fields": m["candidate_fields_total"],
                       "unresolved_before": 43, "unresolved_after_sweep": sweep["fields_unresolved_after"],

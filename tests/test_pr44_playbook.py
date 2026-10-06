@@ -534,7 +534,9 @@ def test_registry_majority_emits_tyres_and_rim_at_the_market_trim(cache, tmp_pat
     _registry(tmp_path, monkeypatch, {"21|260|2025|SLINE SUPER": _entry("285/45 R21", 0.92, 120)})
     out, ctx = _emit(cache, None)
     items = {e["field"]: e for e in ctx.evidence.items}
-    assert set(items) == {"tire_size_front", "tire_size_rear", "rim_diameter_in"} and out["stored"] == 3
+    # D2: each axle's rim too (rim_diameter_in only because both axles agree)
+    assert set(items) == {"tire_size_front", "tire_size_rear", "rim_diameter_in", "rim_diameter_front_in",
+                          "rim_diameter_rear_in"} and out["stored"] == 5
     assert items["tire_size_front"]["value"] == "285/45 R21" and items["rim_diameter_in"]["value"] == 21
     for item in items.values():
         assert item["source_authority"] == "government_registry" and item["market"] == "IL"
@@ -570,7 +572,9 @@ def test_registry_emits_nothing_below_the_thresholds(cache, tmp_path, monkeypatc
 def test_registry_rims_that_disagree_give_no_rim(cache, tmp_path, monkeypatch):
     _registry(tmp_path, monkeypatch, {"21|260|2025|SLINE SUPER": _entry("255/45 R20", 0.9, 50, "285/40 R21", 0.9)})
     _, ctx = _emit(cache, None)
-    assert {e["field"] for e in ctx.evidence.items} == {"tire_size_front", "tire_size_rear"}
+    # a staggered set: each axle's rim (D2), never one rim_diameter_in
+    assert {e["field"] for e in ctx.evidence.items} == {"tire_size_front", "tire_size_rear", "rim_diameter_front_in",
+                                                        "rim_diameter_rear_in"}
 
 
 def test_registry_evidence_replays_to_the_same_binding(cache, tmp_path, monkeypatch):

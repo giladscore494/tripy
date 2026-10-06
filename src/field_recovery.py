@@ -398,12 +398,48 @@ def evaluate_fields(specs: list[dict], events: list[dict], target_market: str = 
     declared = declarations(events)
     parsed, output_seq = primary_output(events, with_seq=True)
     output = {normalize_field_name(name): entry for name, entry in iter_fields(parsed)}
-    return [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
-                           output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
-                           evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
-                           conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True),
-                           assess(spec, evidence_by_field.get(spec["name"], []), target_market, is_target_market))
-            for spec in specs]
+    evaluated = [evaluate_field(spec, evidence_by_field.get(spec["name"], []), declared.get(spec["name"]),
+                               output.get(spec["name"]), target_market, last_seq.get(spec["name"]), output_seq,
+                               evidence_seq, conditional_not_applicable(spec, evidence_by_field, target_market),
+                               conditional_not_applicable(spec, evidence_by_field, target_market, ignore_own=True),
+                               assess(spec, evidence_by_field.get(spec["name"], []), target_market, is_target_market))
+                 for spec in specs]
+    return split_axle_states(evaluated, specs, evidence_by_field, target_market)
+
+
+def axle_value(evaluation: dict | None, evidence: list[dict], spec: dict | None, target_market: str):
+    """The one value of an `ok` per-axle field in the server scope (None when it is not ok or states several)."""
+    if not evaluation or evaluation.get("state") != "ok":
+        return None
+    portability = evaluation.get("portability") or {}
+    requirement = field_requirement(spec)
+    scoped = [{**e, **portability.get(str(e.get("evidence_id")), {})} for e in evidence if _has_value(e.get("value"))]
+    scoped = [e for e in scoped if in_server_scope(e, target_market, requirement)]
+    values = {material_key(e.get("value")) for e in scoped}
+    return scoped[0].get("value") if len(values) == 1 else None
+
+
+def split_axle_states(evaluated: list[dict], specs: list[dict], evidence_by_field: dict[str, list[dict]],
+                      target_market: str) -> list[dict]:
+    """D2: a field with `split_axles` (the single rim diameter) is not applicable when its front and rear fields are both ok
+    with different values (a staggered set: 19 / 20 is not a conflict); the per-axle fields state it."""
+    by_name = {e["field"]: e for e in evaluated}
+    spec_by_name = {s["name"]: s for s in specs}
+    for spec in specs:
+        axles = spec.get("split_axles") if isinstance(spec.get("split_axles"), dict) else None
+        if not axles or spec["name"] not in by_name:
+            continue
+        front_name, rear_name = axles.get("front"), axles.get("rear")
+        front = axle_value(by_name.get(front_name), evidence_by_field.get(front_name, []),
+                           spec_by_name.get(front_name), target_market)
+        rear = axle_value(by_name.get(rear_name), evidence_by_field.get(rear_name, []),
+                          spec_by_name.get(rear_name), target_market)
+        if front is None or rear is None or material_key(front) == material_key(rear):
+            continue
+        entry = by_name[spec["name"]]
+        entry.update(state="not_applicable", retry_eligible=False,
+                     info=list(entry.get("info") or []) + [f"staggered_axles:front={front},rear={rear}"])
+    return evaluated
 
 
 def current_evaluation(events: list[dict], specs: list[dict], target_market: str | None = None) -> list[dict]:

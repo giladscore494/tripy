@@ -114,14 +114,18 @@
    "קדמי",
    "קדמיים",
    "קדמית",
-   "קדמיות"
+   "קדמיות",
+   "ק'",
+   "קד'"
   ],
   "rear_terms": [
    "rear",
    "אחורי",
    "אחוריים",
    "אחורית",
-   "אחוריות"
+   "אחוריות",
+   "א'",
+   "אח'"
   ],
   "both_axles_terms": [
    "front and rear",
@@ -488,22 +492,6 @@
    ],
    "plausible_min": 50,
    "plausible_max": 3000,
-   "negative_context_terms_en": [
-    "lb-ft",
-    "lb ft",
-    "lbs-ft"
-   ],
-   "exclusion_rules": [
-    {
-     "terms": [
-      "lb-ft",
-      "lb ft",
-      "lbs-ft",
-      "pound-feet"
-     ],
-     "reason": "imperial torque value"
-    }
-   ],
    "semantic_definition": "Peak torque in Nm, by propulsion class (never chosen per vehicle by the model): conventional = combustion engine peak torque; hybrid and plug_in = the COMBUSTION ENGINE's peak torque only (electric-motor and combined/system torque are different quantities and are not this field); battery_electric = total electric-motor peak torque as published.",
    "binding_requirement": "exact_technical_variant",
    "recovery_cluster": "performance",
@@ -566,6 +554,23 @@
      ],
      "to_unit": "Nm",
      "operation": "multiply_by_9_80665"
+    },
+    {
+     "from_unit": "lb-ft",
+     "from_unit_variants": [
+      "lb-ft",
+      "lb ft",
+      "lbs-ft",
+      "lb·ft",
+      "lb.ft",
+      "lbf·ft",
+      "lbf-ft",
+      "pound-feet",
+      "pound-foot",
+      "פאונד-רגל"
+     ],
+     "to_unit": "Nm",
+     "operation": "multiply_by_1_35582"
     }
    ],
    "rpm_guard": true
@@ -1834,6 +1839,17 @@
      ],
      "to_unit": "mm",
      "operation": "multiply_by_10"
+    },
+    {
+     "from_unit": "in",
+     "from_unit_variants": [
+      "in",
+      "in.",
+      "inch",
+      "inches"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_25_4"
     }
    ],
    "plausible_min": 2000,
@@ -1924,6 +1940,17 @@
      ],
      "to_unit": "mm",
      "operation": "multiply_by_10"
+    },
+    {
+     "from_unit": "in",
+     "from_unit_variants": [
+      "in",
+      "in.",
+      "inch",
+      "inches"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_25_4"
     }
    ],
    "plausible_min": 1200,
@@ -2060,6 +2087,17 @@
      ],
      "to_unit": "mm",
      "operation": "multiply_by_10"
+    },
+    {
+     "from_unit": "in",
+     "from_unit_variants": [
+      "in",
+      "in.",
+      "inch",
+      "inches"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_25_4"
     }
    ],
    "plausible_min": 900,
@@ -2180,6 +2218,17 @@
      ],
      "to_unit": "mm",
      "operation": "multiply_by_10"
+    },
+    {
+     "from_unit": "in",
+     "from_unit_variants": [
+      "in",
+      "in.",
+      "inch",
+      "inches"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_25_4"
     }
    ],
    "plausible_min": 1500,
@@ -2240,6 +2289,18 @@
      ],
      "to_unit": "kg",
      "operation": "multiply_by_1000"
+    },
+    {
+     "from_unit": "lb",
+     "from_unit_variants": [
+      "lb",
+      "lbs",
+      "lb.",
+      "pounds",
+      "pound"
+     ],
+     "to_unit": "kg",
+     "operation": "multiply_by_0_45359237"
     }
    ],
    "plausible_min": 300,
@@ -2364,6 +2425,17 @@
      ],
      "to_unit": "mm",
      "operation": "multiply_by_10"
+    },
+    {
+     "from_unit": "in",
+     "from_unit_variants": [
+      "in",
+      "in.",
+      "inch",
+      "inches"
+     ],
+     "to_unit": "mm",
+     "operation": "multiply_by_25_4"
     }
    ],
    "plausible_min": 50,
@@ -2423,16 +2495,6 @@
    ],
    "plausible_min": 20,
    "plausible_max": 5000,
-   "exclusion_rules": [
-    {
-     "terms": [
-      "cu ft",
-      "cu. ft",
-      "cubic feet"
-     ],
-     "reason": "imperial volume"
-    }
-   ],
    "ambiguity_rules": [
     {
      "terms": [
@@ -2473,6 +2535,25 @@
       "תא מטען קדמי"
      ],
      "reason": "seats-folded / maximum / front-trunk volume"
+    }
+   ],
+   "conversion_rules": [
+    {
+     "from_unit": "ft3",
+     "from_unit_variants": [
+      "cu ft",
+      "cu. ft",
+      "cu.ft",
+      "cu.ft.",
+      "cu-ft",
+      "cuft",
+      "ft3",
+      "ft³",
+      "cubic feet",
+      "cubic ft"
+     ],
+     "to_unit": "l",
+     "operation": "multiply_by_28_316846592"
     }
    ]
   },
@@ -2538,7 +2619,22 @@
    "market_sensitivity": "low",
    "portability_scope": "exact_technical_variant",
    "unknown_market_policy": "portable",
-   "reuse_scope": "exact_technical_variant"
+   "reuse_scope": "exact_technical_variant",
+   "conversion_rules": [
+    {
+     "from_unit": "US gal",
+     "from_unit_variants": [
+      "gal",
+      "gal.",
+      "gallon",
+      "gallons",
+      "us gal",
+      "us gallons"
+     ],
+     "to_unit": "l",
+     "operation": "multiply_by_3_785411784"
+    }
+   ]
   },
   {
    "name": "gearbox_type",
@@ -3383,7 +3479,7 @@
      "note": "rim diameter as stated inside a tire size"
     }
    ],
-   "semantic_definition": "Standard wheel rim diameter of this trim in inches.",
+   "semantic_definition": "Standard wheel rim diameter of this trim in inches, when front and rear are the same (a staggered set, front != rear, is stated by rim_diameter_front_in / rim_diameter_rear_in and this field is not applicable).",
    "binding_requirement": "exact_market_trim",
    "recovery_cluster": "tires_wheels",
    "market_sensitivity": "high",
@@ -3396,7 +3492,109 @@
      "gross_weight_min_exclusive": 3500,
      "step": 0.5
     }
-   ]
+   ],
+   "split_axles": {
+    "front": "rim_diameter_front_in",
+    "rear": "rim_diameter_rear_in"
+   }
+  },
+  {
+   "name": "rim_diameter_front_in",
+   "description": "Front rim diameter (in)",
+   "group": "tires_wheels",
+   "display_name_he": "קוטר חישוק קדמי",
+   "value_type": "number",
+   "matcher": "rim_axle",
+   "component": "front",
+   "aliases_he": [
+    "צמיגים",
+    "צמיג",
+    "מידת צמיגים",
+    "מידות צמיגים",
+    "חישוקים",
+    "קוטר חישוקים"
+   ],
+   "aliases_en": [
+    "tires",
+    "tyres",
+    "tire size",
+    "tyre size",
+    "wheels",
+    "rims"
+   ],
+   "expected_units": [
+    "in"
+   ],
+   "normalized_unit": "in",
+   "accepted_unit_variants": [
+    "inch",
+    "inches",
+    "in",
+    "\"",
+    "''",
+    "אינץ'",
+    "אינץ",
+    "אינטש",
+    "-inch"
+   ],
+   "plausible_min": 10,
+   "plausible_max": 30,
+   "semantic_definition": "Standard front rim diameter of this trim in inches, read from the front tyre size (R number) or a rim statement labelled front; a size stated for all wheels counts for both axles.",
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
+   "reuse_scope": "none",
+   "allowed_step": 1
+  },
+  {
+   "name": "rim_diameter_rear_in",
+   "description": "Rear rim diameter (in)",
+   "group": "tires_wheels",
+   "display_name_he": "קוטר חישוק אחורי",
+   "value_type": "number",
+   "matcher": "rim_axle",
+   "component": "rear",
+   "aliases_he": [
+    "צמיגים",
+    "צמיג",
+    "מידת צמיגים",
+    "מידות צמיגים",
+    "חישוקים",
+    "קוטר חישוקים"
+   ],
+   "aliases_en": [
+    "tires",
+    "tyres",
+    "tire size",
+    "tyre size",
+    "wheels",
+    "rims"
+   ],
+   "expected_units": [
+    "in"
+   ],
+   "normalized_unit": "in",
+   "accepted_unit_variants": [
+    "inch",
+    "inches",
+    "in",
+    "\"",
+    "''",
+    "אינץ'",
+    "אינץ",
+    "אינטש",
+    "-inch"
+   ],
+   "plausible_min": 10,
+   "plausible_max": 30,
+   "semantic_definition": "Standard rear rim diameter of this trim in inches, read from the rear tyre size (R number) or a rim statement labelled rear; a size stated for all wheels counts for both axles.",
+   "binding_requirement": "exact_market_trim",
+   "recovery_cluster": "tires_wheels",
+   "market_sensitivity": "high",
+   "portability_scope": "none",
+   "reuse_scope": "none",
+   "allowed_step": 1
   },
   {
    "name": "tire_size_front",

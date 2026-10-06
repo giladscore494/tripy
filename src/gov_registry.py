@@ -15,8 +15,9 @@ At the start of a run (src/agent.run_vehicle) the target's entry becomes GOVERNM
 government_registry, market IL, binding exact_market_trim through the government model code), fail-closed:
 
     N < MIN_VEHICLES (20)               nothing
-    share >= MIN_SHARE (0.8)            tire_size_front / tire_size_rear = the majority size; rim_diameter_in = its R
-                                        number (front and rear agree on it, else no rim)
+    share >= MIN_SHARE (0.8)            tire_size_front / tire_size_rear = the majority size; rim_diameter_front_in /
+                                        rim_diameter_rear_in = each axle's R number; rim_diameter_in = the R number only
+                                        when front and rear agree on it (a staggered set has no single rim)
     share < MIN_SHARE                   alternative_tire_sizes = the two most common sizes, never a standard size
     an index not marked complete        nothing (the shipped file is empty until the workflow fills it)
 
@@ -214,9 +215,10 @@ def facts(entry: dict | None) -> list[dict]:
                         "statement": f"{label} | {majority} ({round(share * 100)}% of {n} registered vehicles)"})
         else:
             alternatives += [s for s in top[:2] if s not in alternatives]
-    # A rim diameter is only strong enough to emit when BOTH axles independently passed the
-    # registry confidence thresholds and agree on the same R diameter. One reliable axle is
-    # enough for that axle's tyre-size fact, but never enough to promote a trim-level rim fact.
+    # D2: each axle's rim from its own standard size (rim_diameter_front_in / _rear_in); rim_diameter_in only when
+    # BOTH axles independently passed the registry confidence thresholds and agree on the same R diameter (a
+    # staggered set is never one rim). One reliable axle is enough for that axle's facts, never for rim_diameter_in.
+    out += _axle_rims(standard, "")
     if set(standard) == {"front", "rear"}:
         rims = {rim_of(standard["front"]), rim_of(standard["rear"])}
         if len(rims) == 1 and None not in rims:
@@ -229,6 +231,17 @@ def facts(entry: dict | None) -> list[dict]:
         out.append({"field": "alternative_tire_sizes", "value": joined,
                     "statement": f"מידות צמיגים חלופיות | {joined} (no size has {round(MIN_SHARE * 100)}% of the "
                                  "registered vehicles)"})
+    return out
+
+
+def _axle_rims(standard: dict[str, str], scope: str) -> list[dict]:
+    """rim_diameter_front_in / rim_diameter_rear_in rows of the axles with a standard size."""
+    out = []
+    for axle, field, label in (("front", "rim_diameter_front_in", "קוטר חישוק קדמי"),
+                               ("rear", "rim_diameter_rear_in", "קוטר חישוק אחורי")):
+        rim = rim_of(standard.get(axle))
+        if rim is not None:
+            out.append({"field": field, "value": rim, "statement": f"{label} | {rim} (R{rim} of {standard[axle]}{scope})"})
     return out
 
 
@@ -294,6 +307,7 @@ def model_year_facts(pool: dict | None) -> tuple[list[dict], str | None]:
         out.append({"field": field, "value": majority,
                     "statement": f"{label} | {majority} ({round(share * 100)}% of {n} registered vehicles of this "
                                  "model year, all trims agree)"})
+    out += _axle_rims(standard, ", model year, all trims")
     if set(standard) == {"front", "rear"}:
         rims = {rim_of(standard["front"]), rim_of(standard["rear"])}
         if len(rims) == 1 and None not in rims:
@@ -341,7 +355,8 @@ def _document(cache, key: str, entry: dict, rows: list[dict], data: dict, level:
     return cache.put("registry", document_url(key), text.encode("utf-8"), meta, text)["document_id"]
 
 
-FIELD_AXLES = {"tire_size_front": ("front",), "tire_size_rear": ("rear",), "rim_diameter_in": ("front", "rear")}
+FIELD_AXLES = {"tire_size_front": ("front",), "tire_size_rear": ("rear",), "rim_diameter_in": ("front", "rear"),
+               "rim_diameter_front_in": ("front",), "rim_diameter_rear_in": ("rear",)}
 
 
 def target_trim_check(pool: dict | None, trim_words, field: str | None) -> dict:
