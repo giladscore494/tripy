@@ -2500,7 +2500,7 @@ def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], eval
                      identity: dict, target_market: str, source_type: str, site_urls: list[dict],
                      fetched_urls: list[str], negative: dict[str, list[str]], search_budget: int,
                      fetch_budget: int, turns: int, trim_fields: list[str] | None = None,
-                     technical_fields: list[str] | None = None) -> dict:
+                     technical_fields: list[str] | None = None, open_data_identity: dict | None = None) -> dict:
     """The small task of ONE targeted acquisition episode (F1.1): identity, the cluster's missing fields with
     one-line definitions, the source type, site-map URLs ranked for the cluster, URLs already fetched, negative
     routes. A conflicting field asks for the DECIDING source (F3); a variant_not_exact field whose binding gap is the
@@ -2543,6 +2543,12 @@ def reacquire_packet(*, cluster: str, fields: list[str], specs: list[dict], eval
             "variants on one page, or no power / drivetrain beside the values). Fetch an official specification page "
             f"or specification PDF that states the target's power and drivetrain ({target or 'see vehicle_identity'}) "
             "next to these values.")
+    if open_data_identity:
+        # V1: the configuration the open-data match identified (search terms; the keys a page must state)
+        from .open_data.identity import identity_terms, research_note as identity_note
+
+        packet["open_data_identity"] = {"search_terms": identity_terms(open_data_identity),
+                                        "instruction": identity_note(open_data_identity)}
     if negative:
         packet["known_unproductive_routes"] = negative
     return packet
@@ -2696,12 +2702,14 @@ def run_reacquire_recovery(*, session: ToolSession, caller: ModelCaller, specs: 
         budget = SearchBudget(min([limit] + ([stage_left] if stage_left is not None else [])))
         budget_reason = SEARCH_REASON_MISSING
         fetch_budget = SearchBudget(REACQUIRE_FETCHES)
+        admission = getattr(session.ctx, "admission", None)
+        open_data_keys = admission.identity.open_data_keys if admission is not None else None
         packet = reacquire_packet(cluster=name, fields=open_fields, specs=specs, evaluation=current,
                                   identity=identity, target_market=market,
                                   source_type=cluster_source_type([by_name[f] for f in open_fields], market),
                                   site_urls=site_urls, fetched_urls=fetched_urls, negative=known_dead,
                                   search_budget=budget.limit, fetch_budget=fetch_budget.limit, turns=REACQUIRE_TURNS,
-                                  trim_fields=[], technical_fields=[])
+                                  trim_fields=[], technical_fields=[], open_data_identity=open_data_keys)
         states_before = {f: current[f]["state"] for f in open_fields}
         run_log.event("reacquire_started", cluster=name, fields=open_fields, mode="reacquire",
                       triage={f: (triaged.get(f) or {}).get("triage") for f in open_fields},
@@ -3969,6 +3977,14 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
             messages[1]["content"] += "\n\n" + note
         if skipped:
             run_log.event("research_plan", skipped_open_data_resolved=skipped)
+    # V1 (open-data research identity): at exact_technical_variant, the configuration's identity searches on the
+    # domains the source policy allows, and its terms in the acquisition task. Never blocks the run.
+    if open_data_state.get("identity"):
+        from .open_data.identity import identity_search_wave, research_note as identity_note
+
+        identity_wave = identity_search_wave(ctx, run_log, identity=open_data_state["identity"],
+                                             manufacturer=(payload.get("identity") or {}).get("manufacturer"))
+        messages[1]["content"] += "\n\n" + identity_note(open_data_state["identity"], identity_wave)
 
     # Part D: real URLs of the official sites (contract acquisition only), before research turn 1. Bounded, never
     # blocks the run: a failure logs site_map_failed and the task goes out without the section.
@@ -4383,6 +4399,20 @@ def run_vehicle(row: dict, payload: dict, *, client, cache: DocumentCache, run_l
     duration = round(time.monotonic() - t0, 2)
     export_documents()
     events = trace_events(run_log)
+    if open_data_state.get("identity"):
+        # V4: the open-data identity's effect on this run (identity queries, pages verified by its keys, values it
+        # corroborated, ok fields gained / lost against the same run without it). Never blocks the run.
+        try:
+            from .open_data.identity import research_report
+
+            od_report = research_report(events, specs, config.target_market)
+            for key in ("queries_with_open_data_identity", "pages_verified_by_open_data_keys",
+                        "values_corroborated_by_open_data"):
+                ctx.counters[key] = od_report[key]
+            run_log.event("open_data_research", **od_report)
+            events = trace_events(run_log)
+        except Exception as exc:  # noqa: BLE001 - telemetry
+            run_log.event("open_data_research", error=f"{type(exc).__name__}: {str(exc)[:200]}")
     if recovery is None and status == "interrupted":
         recovery = trace.field_recovery_summary(events)   # interrupted mid-recovery: history from events
     if bundle is None:

@@ -198,7 +198,8 @@ def replay_fact(adm: AdmissionContext, cache, *, field: str, value: Any, quote: 
     market, _ = evidence_market(material, market_claim)
     pool = (candidates or {}).get(str(material.document_id))
     binding, inputs = fact_binding(adm, material, name, spec, value, quote, ctx, variant_text=variant or "",
-                                   claim=claim, market=market, candidates=pool)
+                                   claim=claim, market=market, candidates=pool,
+                                   stated=(entailment.details or {}).get("stated") if entailment.ok else None)
     profile = material.profile
     layers = fact_layer_statuses(adm.identity, inputs["layers"], profile.get("trim_named_in_document", False))
     matching = inputs["matching"]
@@ -301,6 +302,10 @@ def replay_run(run_dir: Path | str, cache_dir: Path | str | None = None, *, writ
     from .gov_registry import fingerprint_from_events
 
     apply_fingerprint(adm.identity, fingerprint_from_events(events))     # A1: the run's own code family
+    from .open_data.identity import apply_to_admission
+
+    # V2 / V3: the open-data identity keys and corroborating offers the run used (its open_data_match event)
+    apply_to_admission(adm, next((e for e in events if e.get("kind") == "open_data_match"), None))
     run_documents = trace.document_ids(events)
     candidates = _candidates_by_document(events)
     recorded_eval = current_evaluation(events, specs, market)

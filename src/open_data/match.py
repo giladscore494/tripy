@@ -423,6 +423,13 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
         out["type_code"] = {**{k: v for k, v in by_code.items() if k != "rows"}, "code": keys.get("type_code"),
                             "rows": len(by_code["rows"])}
     typed = by_code["status"] == "match"
+    if typed:
+        # V2: the other type codes (Va) of the same model in the year window: a page naming only those is another
+        # variant
+        own = {str(r.get("variant") or "").strip().upper() for r in by_code["rows"]}
+        out["type_code"]["siblings"] = sorted(
+            {v for v in (str(r.get("variant") or "").strip().upper() for r in rows if _model_matches(r, keys))
+             if re.fullmatch(r"[A-Z0-9]{3,10}", v) and re.search(r"\d", v)} - own)[:40]
     rows = by_code["rows"] if typed else [r for r in rows if _model_matches(r, keys)]
     out["candidates"] = len(rows)
     hard = set(rules.get("hard_vetoes") or ["power", "displacement"])

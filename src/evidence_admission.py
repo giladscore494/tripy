@@ -358,6 +358,9 @@ class AdmissionContext:
         self.value_labels = [(r.name, pattern) for r in self.dictionary.rules
                              if r.matcher in NUMERIC_MATCHERS + COMPOUND_MATCHERS for _, pattern, _ in r.aliases]
         self.matcher_of = {r.name: r.matcher for r in self.dictionary.rules}
+        # V3: the open-data offers a web value may corroborate ({field: [offer]}; src/open_data/identity.py)
+        self.open_data_offers: dict[str, list[dict]] = {}
+        self._open_data_verdicts: dict[str, dict | None] = {}
 
     @classmethod
     def for_run(cls, payload: dict | None, vehicle: dict | None, specs: list[dict],
@@ -1319,9 +1322,23 @@ def region_agreement_violations(binding: dict, multi_version: dict | None) -> li
     return []
 
 
+def open_data_keys_of(adm: AdmissionContext, material: DocumentMaterial) -> dict | None:
+    """V2: the document's open-data identity-keys verdict (document_binding.open_data_keys_verdict), once per
+    document and run; None when the run's open-data match did not reach the technical variant."""
+    from .document_binding import open_data_keys_verdict
+
+    if not adm.identity.open_data_keys:
+        return None
+    key = str(material.document_id)
+    if key not in adm._open_data_verdicts:
+        doc = material.doc
+        adm._open_data_verdicts[key] = open_data_keys_verdict(doc.logical_text or doc.text, adm.identity)
+    return adm._open_data_verdicts[key]
+
+
 def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, spec: dict, value: Any, quote: str,
                  ctx: FactContext, *, variant_text: str = "", claim: str | None = None, market: str | None = None,
-                 candidates: list[dict] | None = None) -> tuple[dict, dict]:
+                 candidates: list[dict] | None = None, stated: dict | None = None) -> tuple[dict, dict]:
     """(binding, layer inputs) of one fact: src/document_binding.bind over binding_layers() plus the binding-v4 inputs
     (the document's propulsion mentions, the R4 brand-policy eligibility and the fact's Document Variant Map region).
     Pure; the one place both Evidence Admission and Binding Replay compute a fact's binding, so the two cannot drift."""
@@ -1386,6 +1403,10 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
         sheet = spec_sheet_verdict(adm, material)
     except Exception:  # noqa: BLE001 - an additional layer; the normal binding stands without it
         sheet = None
+    try:
+        keys = open_data_keys_of(adm, material)
+    except Exception:  # noqa: BLE001 - an additional layer; the normal binding stands without it
+        keys = None
     binding = bind(adm.identity, doc_statuses, inputs["layers"], inputs["veto_layers"], market=market,
                    requirement=spec.get("binding_requirement"), model_declared_different=claim == "different",
                    trim_named_in_document=trim_named,
@@ -1397,7 +1418,14 @@ def fact_binding(adm: AdmissionContext, material: DocumentMaterial, name: str, s
                    region=region, safeguard_context=_line_above(material, ctx.fragment), market_trim=offer,
                    powertrain_versions=profile.get("powertrain_versions"), stale=stale_publication(adm, material),
                    version_page=page, engine_invariant=spec.get("variant_invariance") == "engine",
-                   multi_version=multi_version, trim_column=column, spec_sheet=sheet)
+                   multi_version=multi_version, trim_column=column, spec_sheet=sheet, open_data_keys=keys)
+    if keys and keys.get("status") in ("target", "other_variant"):
+        binding["open_data_keys"] = dict(keys)
+    if adm.open_data_offers:
+        # V3: a web value equal (D1 rounding) to an open-data offer every survivor states is the configuration's
+        from .open_data.identity import corroborate, matching_offer
+
+        binding = corroborate(binding, matching_offer(adm, name, spec, value, stated), value)
     if region and region.get("status") not in (None, "none"):
         # the proof: region id, its identity vector, the catalog candidates before / after elimination
         binding["variant_map_region"] = {k: region.get(k) for k in (
@@ -1576,7 +1604,7 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
     model_market = args.get("market")
     market, market_basis = evidence_market(material, model_market)
     binding, _ = fact_binding(adm, material, name, spec, value, quote, ctx, variant_text=_text_arg(args.get("variant")),
-                              claim=claim, market=market)
+                              claim=claim, market=market, stated=(entailment.details or {}).get("stated"))
 
     # the unit: the model's, else what the source wrote (a USD price stays USD), else the field's unit
     record_unit = unit or stated_unit or spec.get("normalized_unit")
@@ -1628,6 +1656,8 @@ def admit(adm: AdmissionContext, cache, args: dict, run_documents: list[str] | t
         "trim_column": binding.get("trim_column"), "trim_page": binding.get("trim_page"),
         "spec_sheet": binding.get("spec_sheet"),
         **({"market_trim": binding["market_trim"]} if binding.get("market_trim") else {}),
+        **{k: binding[k] for k in ("open_data_keys", "open_data_corroboration", "without_open_data")
+           if binding.get(k)},
         "model_variant_claim": claim,
         "market_basis": market_basis,
         "model_market_claim": model_market if model_market and normalize_market(model_market) != market else None,

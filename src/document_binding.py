@@ -136,6 +136,21 @@ binding-v9 (identity anchors PR), deterministic and fail-closed; nothing here lo
                                  names the target trim or the target's own degem_cd. Vetoes and mixed fact layers win
     power anchor (A4)            every power gate reads koah_sus as PS or mechanical hp (power_anchor), max(2, 1 %),
                                  never wider than R3 and never a power nearer to the family's neighbour catalog power
+
+binding-v10 (open-data research identity), deterministic and fail-closed; nothing here loosens an earlier rule:
+
+    open_data_identity_keys (V2) when the run's open-data match reached exact_technical_variant (its configuration's
+                                 keys: identity.open_data_keys, src/open_data/identity.py), a document of the target model
+                                 stating the configuration's EU type-approval number, its type code (EEA Va / degem_nm),
+                                 or its kW AND WLTP co2 (g/km) AND displacement (cc) binds every value at
+                                 exact_technical_variant; every veto still applies. A type-approval number or a type
+                                 code also proves the version on a multi-version document (R4)
+    open_data_other_variant (V2) a document of the target model stating kW values none of which is the configuration's
+                                 (charging kW never counts), or naming only sibling type codes of the same model, is
+                                 another variant: a veto at the technical-variant cap
+    open_data_corroborated (V3)  evidence_admission: a value bound at body_powertrain or above without a veto that equals
+                                 (D1) an `offered` open-data offer every survivor states is raised to
+                                 exact_technical_variant; both sources are recorded
 """
 
 from __future__ import annotations
@@ -149,7 +164,7 @@ from typing import Any, Iterable
 
 from .candidate_harvest import compile_terms, normalize_text, parse_number
 
-BINDING_VERSION = "binding-v9"
+BINDING_VERSION = "binding-v10"
 VOCAB_PATH = Path(__file__).resolve().parent.parent / "data" / "identity_vocabulary.json"
 TRIM_INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_trim_index.json"
 OFFICIAL_AUTHORITIES = ("government", "official_manufacturer", "official_importer", "official_media")
@@ -159,7 +174,9 @@ DEFAULT_REQUIREMENT = "exact_technical_variant"
 VETO_CAP = {"model": "unknown", "body": "generation", "propulsion": "generation", "displacement": "body_powertrain",
             "drivetrain": "body_powertrain", "power": "body_powertrain", "trim": "exact_technical_variant",
             # A2: a document whose government codes are all of another type code is another version
-            "other_code_family": "body_powertrain"}
+            "other_code_family": "body_powertrain",
+            # V2: a page of the target's model stating only another kW / only sibling type codes (open-data keys)
+            "open_data_keys": "body_powertrain"}
 NON_TARGET_MATCHES = ("different", "unbound")
 _VOCAB: dict[str, tuple[float, dict]] = {}
 _TRIM_INDEX: dict[str, tuple[float, dict]] = {}
@@ -268,9 +285,14 @@ class TargetIdentity:
     code_family: list[int] = field(default_factory=list)
     approval_route: str | None = None
     other_code_types: dict = field(default_factory=dict)
+    # V2 (open-data research identity): the keys of the configuration the open-data match found at
+    # exact_technical_variant (src/open_data/identity.research_identity: type code, type-approval numbers, kW, co2, cc,
+    # sibling type codes); identity-only, never a scope key
+    open_data_keys: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in asdict(self).items() if v not in (None, [], "", {}) and k != "other_code_types"}
+        return {k: v for k, v in asdict(self).items() if v not in (None, [], "", {})
+                and k not in ("other_code_types", "open_data_keys")}
 
     def scope_key(self, level: str = "exact_technical_variant") -> str:
         """Stable identity key of the target at a binding level (used for scoped reuse)."""
@@ -506,6 +528,79 @@ def version_by_codes(codes: Iterable[int] | None, identity: TargetIdentity, text
         return {"status": "other_code_family", "basis": "other_type_code", "codes": codes,
                 "type_codes": {str(c): known[c] for c in codes}}
     return {"status": "unknown", "basis": "codes_not_in_catalog", "codes": codes}
+
+
+# V2: the open-data identity keys a page states (src/open_data/identity.py)
+OD_KW = re.compile(r"(?<![\d.,])(\d{2,3}(?:[.,]\d)?)\s*(?:kw|קילוואט|קוט\"ס)(?![a-zא-ת])(?!\s*-?\s*שע)")
+OD_CO2 = re.compile(r"(?<![\d.,])(\d{2,3})(?:[.,]\d)?\s*(?:g|gr|גר|גרם|ג)['׳]?\s*/\s*(?:km|ק\"מ|קמ|קילומטר)")
+
+
+def _od_numbers(pattern, text: str, *, skip_charging: bool = False) -> list[float]:
+    out = []
+    for m in pattern.finditer(text):
+        if skip_charging and charging_context(text, m.start(), m.end()):
+            continue
+        value = parse_number(m.group(1).replace(",", "."))
+        if value is not None:
+            out.append(float(value))
+    return out
+
+
+def _od_cc(text: str) -> list[float]:
+    cc = _alternation(vocabulary().get("cc_units") or [])
+    if not cc:
+        return []
+    out = []
+    for m in re.finditer(rf"(?<![\d.,])(\d,\d{{3}}|\d{{3,4}})\s*(?:{cc})(?![\w])", text):
+        value = parse_number(m.group(1))
+        if value and 600 <= value <= 8500:
+            out.append(float(value))
+    return out
+
+
+def _od_token(code: str, norm: str) -> bool:
+    code = normalize_text(code or "").strip()
+    return len(code) >= 3 and bool(re.search(rf"(?<![a-z0-9]){re.escape(code)}(?![a-z0-9])", norm))
+
+
+def open_data_keys_verdict(text: str | None, identity: TargetIdentity) -> dict | None:
+    """V2: the version a document is by the open-data identity keys it states (identity.open_data_keys, set when the
+    open-data match reached exact_technical_variant). {status: target, basis: type_approval | type_code |
+    power_co2_displacement} when it states the configuration's type-approval number, its type code (EEA Va / the
+    government type code) or its kW AND co2 (g/km) AND displacement (cc); {status: other_variant, contradicts: power_kw |
+    type_code} when it states kW values none of which is the configuration's (charging kW never counts), or names
+    only sibling type codes of the same model; None otherwise (nothing changes). Pure text; the caller (bind) applies
+    it only to a document of the target model."""
+    keys = identity.open_data_keys or {}
+    if not keys or not text:
+        return None
+    norm = normalize_text(text)
+    compact = re.sub(r"\s+", "", norm)
+    for approval in keys.get("type_approvals") or []:
+        wanted = re.sub(r"\s+", "", normalize_text(approval))
+        if len(wanted) >= 8 and wanted in compact:
+            return {"status": "target", "basis": "type_approval", "type_approval": approval}
+    codes = [c for c in (keys.get("eea_type_code"), keys.get("type_code")) if c]
+    named = [c for c in codes if _od_token(c, norm)]
+    if named:
+        return {"status": "target", "basis": "type_code", "type_code": named[0]}
+    kws = _od_numbers(OD_KW, norm, skip_charging=True)
+    target_kw = keys.get("power_kw")
+    kw_match = bool(target_kw) and any(abs(k - float(target_kw)) <= max(1.0, 0.01 * float(target_kw)) for k in kws)
+    if target_kw and kws and not kw_match:
+        return {"status": "other_variant", "contradicts": "power_kw", "stated_kw": sorted(set(kws))[:10],
+                "power_kw": target_kw}
+    siblings = [c for c in keys.get("sibling_type_codes") or [] if _od_token(c, norm)]
+    if siblings:
+        return {"status": "other_variant", "contradicts": "type_code", "named": siblings[:10],
+                "type_code": keys.get("eea_type_code") or keys.get("type_code")}
+    co2, cc = keys.get("co2_wltp"), keys.get("displacement_cc")
+    co2_match = bool(co2) and any(abs(v - float(co2)) < 0.5 for v in _od_numbers(OD_CO2, norm))
+    cc_match = bool(cc) and any(abs(v - float(cc)) <= max(1.0, 0.01 * float(cc)) for v in _od_cc(norm))
+    if kw_match and co2_match and cc_match:
+        return {"status": "target", "basis": "power_co2_displacement", "power_kw": target_kw, "co2_wltp": co2,
+                "displacement_cc": cc}
+    return None
 
 
 def _gov_code(value: Any) -> int | None:
@@ -1577,7 +1672,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
          region: dict | None = None, safeguard_context: Iterable[str] = (), market_trim: dict | None = None,
          powertrain_versions: dict | None = None, stale: dict | None = None,
          version_page: dict | None = None, engine_invariant: bool = False, multi_version: dict | None = None,
-         trim_column: dict | None = None, spec_sheet: dict | None = None) -> dict:
+         trim_column: dict | None = None, spec_sheet: dict | None = None,
+         open_data_keys: dict | None = None) -> dict:
     """The effective binding of a fact (or, with no layers, of the whole document). `source_authority`,
     `document_names_family` and `other_trims_named` (the document profile's) feed the single_trim_catalog rule only;
     `other_trims_named=None` (unknown) never lets it apply.
@@ -1608,7 +1704,12 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     binding-v9 input: `spec_sheet` (evidence_admission.spec_sheet_verdict: the document's government codes, A2): a
     document naming only codes of another type code is vetoed at the technical-variant cap (`other_code_family`); an
     official importer spec sheet of the target's version binds exact_technical_variant (basis importer_spec_sheet), its
-    market trim when it names the target trim or the target's own degem_cd."""
+    market trim when it names the target trim or the target's own degem_cd.
+
+    V2 input: `open_data_keys` (open_data_keys_verdict of the fact's document): a document of the target model stating
+    the open-data configuration's type-approval number, type code or kW + co2 + cc binds exact_technical_variant (basis
+    open_data_identity_keys; every veto still applies); one stating only another kW / only sibling type codes is
+    another variant (veto at the technical-variant cap)."""
     effective: dict[str, dict] = {}
     layer_statuses = fact_layer_statuses(identity, layers, trim_named_in_document)
     for dim in DIMENSIONS:
@@ -1806,6 +1907,20 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
             effective["trim"] = {"status": "match", "basis": "importer_spec_sheet"}
             s["trim"] = "match"
             level, basis, raised_by = "exact_market_trim", "importer_spec_sheet", "importer_spec_sheet"
+    keys_verdict = open_data_keys or {}
+    keys_target = False
+    if keys_verdict.get("status") == "other_variant" and s["model"] == "match":
+        # V2: a page of the target's model stating only another kW / only sibling type codes is another variant
+        vetoes.append("open_data_keys_mismatch@document")
+        rules.append("open_data_other_variant")
+    elif keys_verdict.get("status") == "target" and not vetoes and not model_declared_different \
+            and s["model"] == "match" and not fact_mixed and s["year"] != "mismatch" \
+            and level_index(level) >= level_index("generation"):
+        # V2: the page states the open-data configuration's identity keys (T, type code, kW + co2 + cc)
+        keys_target = keys_verdict.get("basis") in ("type_approval", "type_code")
+        rules.append("open_data_identity_keys")
+        if level_index(level) < level_index("exact_technical_variant"):
+            level, basis, raised_by = "exact_technical_variant", "open_data_identity_keys", "open_data_identity_keys"
     not_offered = bool(market_trim and market_trim.get("status") == "market_trim_not_offered")
     if not_offered and level == "exact_market_trim":
         # F5: the document's complete model-code table sells the target's technical variant under other codes only
@@ -1844,6 +1959,7 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
     # not contain the target at all never binds the technical variant of a multi-version document
     mv = multi_version or {}
     if int(mv.get("versions") or 0) >= 2 and not page_accepted and not column_target and not sheet_target \
+            and not keys_target \
             and level_index(level) >= level_index("exact_technical_variant"):
         technical = [d for d in ("displacement", "model_code", "power") if s.get(d) == "match"]
         target_region = bool(region and region.get("allowed") and region.get("status") == "target")
@@ -1907,7 +2023,8 @@ def bind(identity: TargetIdentity, doc_statuses: dict[str, str], layers: list[tu
         dimensions["power"] = {**dimensions["power"], "tolerance": power_tolerance(identity)["tolerance"]}
     out = {"binding_level": level, "variant_match": variant_match, "binding_requirement": required,
            "binding_veto": vetoes, "binding_dimensions": dimensions, "binding_version": BINDING_VERSION}
-    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page", "importer_spec_sheet") \
+    if raised_by in ("il_version_page", "engine_invariant", "il_compare_column", "il_trim_page", "importer_spec_sheet",
+                     "open_data_identity_keys") \
             and level_index(level) >= level_index(
             "exact_technical_variant") and not vetoes and not model_declared_different:
         out["binding_basis"] = raised_by
