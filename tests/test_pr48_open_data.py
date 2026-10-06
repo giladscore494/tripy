@@ -104,11 +104,30 @@ def test_cvs_dimensions_need_a_second_source_on_the_wheelbase():
 # --- M4 (record 23678) and a BEV (record 29053) -------------------------------------------------------------------------
 
 def test_m4_co2_key_selects_the_31az_configuration_and_vetoes_21hk():
-    result = run_match("23678", {"eea_co2_cars": F.M4_EEA})
+    """Without the type code (K1) the co2 key selects 31AZ and vetoes 21HK."""
+    p = payload("23678")
+    p["identity"] = {**p["identity"], "model_code": None}
+    p["raw_row"] = {k: v for k, v in (p.get("raw_row") or {}).items() if k != "degem_nm"}
+    fp = {**identity_fingerprint(p), "type_code": None}
+    result = match(fp, p, rows_by_source={"eea_co2_cars": F.M4_EEA})
+    result = {**result, "offers": field_offers(result)}
     eea = result["sources"]["eea_co2_cars"]
+    assert "type_code" not in eea
     assert eea["status"] == "unique" and eea["source_ids"] == ["eea-2024-m4-31az"]
     assert eea["vetoed"][0]["row_id"] == "eea-2024-m4-21hk" and eea["vetoed"][0]["vetoes"] == ["co2_wltp"]
     assert result["level"] == "exact_technical_variant" and result["route_detail"] == "european_co2"
+    assert offer(result, "fuel_consumption_combined_l_100km", "eea_co2_cars")["status"] == "offered"
+
+
+def test_m4_type_code_31az_names_the_configuration_before_any_other_key():
+    """K1: the government type code 31AZ is EEA Va 31AZ (BMW exact_va); 21HK is never a candidate."""
+    result = run_match("23678", {"eea_co2_cars": F.M4_EEA})
+    eea = result["sources"]["eea_co2_cars"]
+    assert result["keys"]["type_code"] == "31AZ"
+    assert eea["type_code"]["status"] == "match" and eea["type_code"]["rule"] == "exact_va"
+    assert eea["candidates"] == 1 and eea["source_ids"] == ["eea-2024-m4-31az"] and not eea["vetoed"]
+    assert "type_code_match" in eea["keys_matched"] and "co2_wltp" in eea["keys_matched"]
+    assert result["level"] == "exact_technical_variant" and result["level_basis"] == "european_type_code"
     assert offer(result, "fuel_consumption_combined_l_100km", "eea_co2_cars")["status"] == "offered"
 
 
@@ -288,7 +307,9 @@ def test_the_data_api_lists_datasets_and_switches_a_domain_with_a_logged_overlay
     from src import source_authority
 
     source_authority.set_policy_overlay_dir(ctx.manager.paths.data_dir / "derived")
+    ds.set_repo_dir(ctx.manager.paths.data_dir / "no-open-data")     # not the committed data/open/ snapshots
     datasets = client.get("/api/data/datasets").json()
+    ds.set_repo_dir(None)
     names = {d["dataset"] for d in datasets["datasets"]}
     assert {"eea_co2_cars", "ademe_car_labelling", "epa_fueleconomy", "nrcan_fuel_ratings", "tc_cvs",
             "nhtsa_vpic"} == names

@@ -209,7 +209,11 @@ def test_a_mini_row_counts_for_bmw_only_when_its_model_is_a_catalog_model_of_tha
 def test_the_aliases_are_canonical_names_generated_spellings_and_reviewed_extras(tmp_path):
     path = tmp_path / "aliases.json"
     path.write_text(json.dumps({"aliases": {"קיה": ["Kia Motors"], "ב מ וו": ["B.M.W."]}}), "utf-8")
-    merged = mk.aliases(path)
+    ds.set_repo_dir(tmp_path / "no-open-data")              # without the committed manifest's make_spellings
+    try:
+        merged = mk.aliases(path)
+    finally:
+        ds.set_repo_dir(None)
     assert merged["קיה"] == ["KIA", "KIA MOTORS"]
     assert merged["ב מ וו"] == ["B.M.W.", "BMW", "BMW I", "MINI"]           # + the reviewed extra BMW I
     assert merged["טויוטה"] == ["TOYOTA"] and merged["מרצדס"] == ["MERCEDES-AMG", "MERCEDES-BENZ"]

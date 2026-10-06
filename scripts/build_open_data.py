@@ -37,7 +37,7 @@ from src.open_data import datasets as ds  # noqa: E402
 from src.open_data.build import build_dataset  # noqa: E402
 
 MANIFEST_VERSION = "open-data-manifest-v1"
-ENTRY_KEYS = ("rows", "years", "files", "absent_columns", "column_units", "unit_unknown_distribution",
+ENTRY_KEYS = ("rows", "years", "files", "absent_columns", "column_units", "unit_unknown_distribution", "csv_discovery",
               "last_file_year", "compaction", "make_spellings")
 EXPECTED_MAKES = {"epa_fueleconomy": 40, "tc_cvs": 35}      # E4: reported when lower, never a failure
 
@@ -125,6 +125,8 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
             lines.append(f"- {name} {str(part.get('url') or '').rsplit('/', 1)[-1]}: {part.get('status')} "
                          f"group={part.get('group') or '—'} rows={part.get('rows', '—')} {part.get('reason') or ''} "
                          f"absent={part.get('absent_columns') or []}")
+        for item in r.get("csv_discovery") or []:              # K3: the datahub records read for the 2023+ years
+            lines.append(f"- {name} datahub: {json.dumps(item, ensure_ascii=False, default=str)[:600]}")
         if r.get("compaction"):
             c = r["compaction"]
             lines.append(f"- {name} compaction: {c.get('rows_before')} -> {c.get('rows_after')} rows, "

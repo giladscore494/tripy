@@ -12,7 +12,8 @@ name: build-open-data
 #      that normalize to a canonical make; spellings per dataset and rows kept vs total go to the PR body), then build
 #      with src/open_data/build.py, compacted (data/open_datasets.json `compaction`); the build summary prints per
 #      dataset rows kept / total and the kept makes
-#   3. compress to data/open/<dataset>.sqlite.gz (EEA: one shard per year, data/open/eea_co2_cars/<year>.sqlite.gz, a
+#   3. compress to data/open/<dataset>.sqlite.gz (EEA: one shard per year, data/open/eea_co2_cars/<year>.sqlite.gz; the
+#      years DISCODATA [latest] lacks (2023+) are downloaded from the EEA datahub's CSV, found through its record API; a
 #      year over 50 MB split by make initial); a file still over 50 MB is not written and listed as a warning, the step
 #      fails only when nothing at all was written, and the steps below run either way: one dataset never costs the others
 #   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /

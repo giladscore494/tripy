@@ -19,6 +19,13 @@ Every source is matched and recorded (the other route's sources corroborate); th
               transmission, no veto from a vPIC decode                                           exact_technical_variant
     anything else with survivors                                                                 body_powertrain
 
+Type-code key (K1, EEA, data/open_datasets.json `eea_type_code_rules`): when the target's government type code
+(degem_nm) names EEA rows by its make's rule (exact_va: degem_nm == Va; toyota_style: degem_nm == Ve or Va without a
+trailing "(...)"), those rows are the candidates before any other key (`type_code_match`): only the power (A4) and
+displacement vetoes apply, an equal co2_wltp selects among them when some row states it, and a surviving type-code
+match is exact_technical_variant on the european route even without a co2 match (the co2 narrows the measured values;
+the identity is the type code). A make without a rule, or a code no row carries: the match below, unchanged.
+
 Vetoes (data-driven, data/open_datasets.json): displacement (+-1 % or the source's rounding: 2.0 L = 1998 cc), power
 (A4, both definitions of koah_sus), drive (4X2 = FWD / RWD, 4X4 = AWD / 4WD), fuel / propulsion, transmission class,
 body / doors, co2_wltp when both have it, battery token, mass window. A key the source does not state is `unknown`,
@@ -80,7 +87,9 @@ def target_keys(fingerprint: dict, payload: dict | None, identity=None) -> dict:
     propulsion = engine.get("propulsion_normalized") or technical.get("norm_propulsion_technology")
     words = [w for w in TOKEN.findall(f"{ident.get('commercial_name') or ''} {ident.get('trim') or ''}".lower())]
     battery = [float(w) for w in words if w.isdigit() and 30 <= int(w) <= 150]
-    return {"manufacturer": manufacturer, "makes": makes, "models": [str(m).upper() for m in models if m],
+    type_code = str(fingerprint.get("type_code") or ident.get("model_code") or "").strip() or None
+    return {"manufacturer": manufacturer, "makes": makes, "type_code": type_code,
+            "models": [str(m).upper() for m in models if m],
             "family": family, "year": int(_num(ident.get("year"))) if _num(ident.get("year")) else None,
             "cc": _num(engine.get("engine_cc")),
             "power": _num(engine.get("power_hp")), "propulsion": propulsion,
@@ -236,6 +245,83 @@ def _check(row: dict, source: str, keys: dict, config: dict, dataset: dict) -> d
     return {"vetoes": vetoes, "matched": matched, "unknown": unknown, "power_definition": power_definition}
 
 
+PAREN_SUFFIX = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _type_code(value: Any) -> str:
+    """A type code as compared: trimmed, upper case, inner whitespace as '-' ('ZWE211L DEXGBW' = 'ZWE211L-DEXGBW')."""
+    return re.sub(r"\s+", "-", str(value or "").strip().upper())
+
+
+def type_code_rule(rule: str, code: Any, row: dict) -> bool:
+    """Does an EEA row carry the government type code under this rule (data/open_datasets.json eea_type_code_rules)?"""
+    code = _type_code(code)
+    if len(code) < 2:
+        return False
+    if rule == "exact_va":
+        return code == str(row.get("variant") or "").strip().upper()
+    if rule == "toyota_style":
+        return any(code == _type_code(PAREN_SUFFIX.sub("", str(row.get(k) or ""))) for k in ("version", "variant"))
+    return False                                # an unknown rule name never matches
+
+
+def type_code_rules(config: dict | None = None) -> dict[str, list[str]]:
+    """{canonical make: [rule, ...]} (ordered)."""
+    config = ds.config() if config is None else config
+    makes = (config.get("eea_type_code_rules") or {}).get("makes") or {}
+    return {str(k).upper(): [str(r) for r in v] for k, v in makes.items() if isinstance(v, list)}
+
+
+def type_code_match(rows: list[dict], code: Any, config: dict | None = None) -> dict:
+    """{status: no_code | no_rows | no_rule | no_match | match, rule, rows}: the rows whose make has rules and carries
+    the code by the first rule (in order) that matches any of them."""
+    from .makes import canonical_of
+
+    if not _type_code(code):
+        return {"status": "no_code", "rows": []}
+    if not rows:
+        return {"status": "no_rows", "rows": []}         # no EEA row of the make / years (e.g. a 2023+ year before K3)
+    rules = type_code_rules(config)
+    by_make: dict[str, list[dict]] = {}
+    for row in rows:
+        make = canonical_of(row.get("make")) or str(row.get("make") or "").strip().upper()
+        if make in rules:
+            by_make.setdefault(make, []).append(row)
+    if not by_make:
+        return {"status": "no_rule", "rows": []}
+    tried: list[str] = []
+    for make, make_rows in sorted(by_make.items()):
+        for rule in rules[make]:
+            tried.append(rule)
+            found = [r for r in make_rows if type_code_rule(rule, code, r)]
+            if found:
+                return {"status": "match", "rule": rule, "make": make, "rows": found}
+    return {"status": "no_match", "rules": sorted(set(tried)), "rows": []}
+
+
+def type_code_coverage(codes_by_make: dict[str, list[str]], rows_by_make: dict[str, list[dict]],
+                       config: dict | None = None, examples: int = 8) -> dict[str, dict]:
+    """The shadow report's per-make view of the key: {make: {degem_nm, rules (defined), per_rule {rule: n}, matched,
+    unmatched_examples}} for type codes against EEA rows of that make."""
+    rules = type_code_rules(config)
+    out = {}
+    for make, codes in sorted(codes_by_make.items()):
+        codes = sorted({_type_code(c) for c in codes if _type_code(c)})
+        make_rows = rows_by_make.get(make) or []
+        per_rule: dict[str, int] = {}
+        unmatched = []
+        for code in codes:
+            hit = next((rule for rule in rules.get(make.upper(), []) if any(type_code_rule(rule, code, r)
+                                                                            for r in make_rows)), None)
+            if hit:
+                per_rule[hit] = per_rule.get(hit, 0) + 1
+            else:
+                unmatched.append(code)
+        out[make] = {"degem_nm": len(codes), "rules": rules.get(make.upper(), []), "per_rule": per_rule,
+                     "matched": sum(per_rule.values()), "unmatched_examples": unmatched[:examples]}
+    return out
+
+
 def _years(source: str, keys: dict) -> list[int] | None:
     year = int(keys["year"]) if keys["year"] else None
     if year is None:
@@ -269,13 +355,32 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
         rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder, report=read)
         if read.get("skipped_shards"):
             out["skipped_shards"] = read["skipped_shards"]          # a missing / mismatched shard: reported, skipped
-    rows = [r for r in rows if _model_matches(r, keys)]
+    rules = config.get("eea_type_code_rules") or {}
+    by_code = {"status": "no_code", "rows": []}
+    if source in (rules.get("sources") or []):
+        by_code = type_code_match(rows, keys.get("type_code"), config)
+    if by_code["status"] != "no_code":
+        out["type_code"] = {**{k: v for k, v in by_code.items() if k != "rows"}, "code": keys.get("type_code"),
+                            "rows": len(by_code["rows"])}
+    typed = by_code["status"] == "match"
+    rows = by_code["rows"] if typed else [r for r in rows if _model_matches(r, keys)]
     out["candidates"] = len(rows)
+    hard = set(rules.get("hard_vetoes") or ["power", "displacement"])
     survivors, vetoed = [], []
     for row in rows:
         verdict = _check(row, source, keys, config, dataset)
+        if typed:
+            # K1: the type code is the identity; only the power / displacement vetoes still apply, co2 selects below
+            verdict["soft_vetoes"] = [v for v in verdict["vetoes"] if v not in hard]
+            verdict["vetoes"] = [v for v in verdict["vetoes"] if v in hard]
+            verdict["matched"] = verdict["matched"] + ["type_code_match"]
         entry = {"row_id": row.get("row_id"), "designation": designation(row, source), **verdict}
         (vetoed if verdict["vetoes"] else survivors).append((row, entry))
+    if typed and keys.get("co2_wltp"):
+        equal = [(r, e) for r, e in survivors if _num(r.get("co2_wltp")) == keys["co2_wltp"]]
+        out["type_code"]["co2_selected"] = bool(equal)
+        if equal:
+            survivors = equal
     out["vetoed"] = [{"row_id": e["row_id"], "designation": e["designation"], "vetoes": e["vetoes"]}
                      for _, e in vetoed][:40]
     out["veto_counts"] = {}
@@ -296,6 +401,11 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
     out["power_definition"] = first.get("power_definition")
     out["survivors"] = [{**{k: v for k, v in row.items() if k not in ("raw",)}} for row, _ in survivors][:40]
     out["configurations"] = sorted(configs)
+    if typed:
+        out["type_code"]["survivors"] = len(survivors)
+        named = {" ".join(str(r.get(k)) for k in ("model", "variant") if r.get(k)) for r, _ in survivors}
+        if out["designation"] is None and len(named) == 1:
+            out["designation"] = named.pop()        # one model + type code (Va); the versions differ
     return out
 
 
@@ -315,8 +425,8 @@ def match(fingerprint: dict, payload: dict | None, identity=None, folder=None,
     return {"version": MATCH_VERSION, "route": keys["route"],
             "route_detail": "european_co2" if keys["route"] == "european" and not keys["bev_or_no_co2"]
             else "european_no_co2" if keys["route"] == "european" else keys["route"],
-            "keys": {k: keys[k] for k in ("makes", "models", "year", "cc", "power", "drivetrain", "transmission",
-                                          "propulsion", "body", "co2_wltp", "battery")},
+            "keys": {k: keys[k] for k in ("makes", "models", "type_code", "year", "cc", "power", "drivetrain",
+                                          "transmission", "propulsion", "body", "co2_wltp", "battery")},
             "sources": sources, "level": level, "level_basis": basis,
             "designation": (sources.get(lead) or {}).get("designation") if lead else None, "lead_source": lead}
 
@@ -341,7 +451,15 @@ def _american_exact(sources: dict) -> bool:
     return same_disp and same_trans and "drive" not in (epa.get("keys_unknown") or []) and not vpic.get("vetoes")
 
 
+def type_code_matched(sources: dict) -> bool:
+    """K1: a type-code match that survived the power / displacement vetoes (EEA)."""
+    return any(((sources.get(s) or {}).get("type_code") or {}).get("status") == "match"
+               and (sources.get(s) or {}).get("status") in ("unique", "ambiguous") for s in EUROPEAN_SOURCES)
+
+
 def _european_exact(keys: dict, sources: dict) -> bool:
+    if type_code_matched(sources):
+        return True
     if not keys["bev_or_no_co2"]:
         return any(_unique(sources, s) and "co2_wltp" in ((sources[s].get("keys_matched")) or [])
                    for s in EUROPEAN_SOURCES)
@@ -358,7 +476,8 @@ def match_level(keys: dict, sources: dict) -> tuple[str | None, str]:
         exact = _european_exact(keys, sources) and _american_exact(sources)
         names = SOURCE_ORDER
     if exact:
-        return LEVEL_EXACT, f"{route}_unique"
+        return LEVEL_EXACT, f"{route}_type_code" if route == "european" and type_code_matched(sources) \
+            else f"{route}_unique"
     if _any_survivor(sources, names):
         return LEVEL_BODY, f"{route}_survivors"
     return None, "no_match"

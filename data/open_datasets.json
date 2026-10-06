@@ -18,15 +18,26 @@
                        "electric_range_km"],
       "_measure_keys": "S2: only the measurements an offer (D-4 field_map) or the match (D-3 mass window: mass_running_order_kg) reads; the track widths At1 / At2 and the WLTP test mass Mt are read by neither (src/open_data/match.py, offers.py) and are no longer queried",
       "snapshot": {
-        "_about": "S1 / S2: one shard per year (data/open/eea_co2_cars/<year>.sqlite.gz, an oversized year split by make initial into <year>-A-L / <year>-M-Z), each verified by its own sha256; a shard stores only what the match (D-3) and the offers (D-4) read, numbers typed (INTEGER / REAL), the rows in the identity-key order, VACUUMed, no timestamp in the file: an unchanged final year rebuilds to identical bytes. Not stored: type_approval (still in the server GROUP BY, so configurations are never merged), registrations, the per-row status (the shard's status_used is in the manifest)",
+        "_about": "S1 / S2: one shard per year (data/open/eea_co2_cars/<year>.sqlite.gz, an oversized year split by make initial into <year>-A-L / <year>-M-Z), each verified by its own sha256; a shard stores only what the match (D-3) and the offers (D-4) read, numbers typed (INTEGER / REAL), the rows in the identity-key order, VACUUMed, no timestamp in the file: an unchanged final year rebuilds to identical bytes. K2: type_approval (T) is stored again (corroboration of the type-code key, few distinct values per shard). Not stored: registrations, the per-row status (the shard's status_used is in the manifest)",
         "shard_by": "year",
         "identity_order": ["make", "model", "variant", "version", "fuel", "fuel_mode", "displacement_cc", "power_kw",
                            "co2_wltp"],
-        "columns": {"variant": "TEXT", "version": "TEXT", "fuel": "TEXT", "fuel_mode": "TEXT",
+        "columns": {"type_approval": "TEXT", "variant": "TEXT", "version": "TEXT", "fuel": "TEXT", "fuel_mode": "TEXT",
                     "displacement_cc": "INTEGER", "power_kw": "REAL", "co2_wltp": "REAL"},
         "range_measures": ["wheelbase_mm", "mass_running_order_kg", "energy_wh_km", "fuel_consumption_l_100km",
                            "electric_range_km"],
         "median_measures": []
+      },
+      "csv_years": {
+        "_about": "K3: DISCODATA [latest] ends at 2022; the years from `from_year` that DISCODATA does not have are built from the EEA datahub's downloadable CSV. Nothing is guessed: the build reads the datahub record API (`api` + uuid + `/related`) of the `series` record (its children: one record per year and status, the year and Final / Provisional read from the child's title by `title_pattern`) and of the listed `records`, follows each record's online / download links (an index page's links are followed one level, same host), and downloads the one CSV (or zip of CSVs) it finds (none, or several without `file_pattern` choosing one: that year stops, with the links it saw). The zip is streamed to the runner disk and grouped locally exactly like the DISCODATA path (identity + measurement columns, SUM(r), the registration-weighted median / min / max per identity key), then written as that year's shard. The CSV header is resolved through the same column map plus `column_aliases`; a missing required key stops only that year. Final data is preferred over provisional for a year.",
+        "from_year": 2023,
+        "api": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/",
+        "series": [{"uuid": "fa8b1229-3db6-495d-b18e-9c9b3267c02b", "note": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631 (the series; its children are the yearly datasets)"}],
+        "records": [{"uuid": "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd", "year": 2025, "status": "P", "note": "2025 provisional (reviewer, 2026-10-06)"}],
+        "title_pattern": "(?P<year>20\\d\\d)\\W+(?:-\\W*)?(?P<status>final|provisional)",
+        "file_pattern": null,
+        "column_aliases": {"fuel_consumption_l_100km": ["Fuel consumption"]},
+        "max_download_mb": 6000
       },
       "compaction": {"_about": "E1 / G2: per (year, make spelling) one short DISCODATA query (its URL-encoded query= value <= 1,800 bytes, checked before sending; over it the measurement columns split into two queries joined locally on the identity key; still over: query_too_long): SELECT the identity and measurement columns + SUM(TRY_CAST(R AS bigint)) AS r, GROUP BY the same columns, no other alias, no MIN / MAX / AVG, no ORDER BY. The runner computes per identity key (`group_by_keys`) the registration-weighted median, min and max of each of `measure_keys` and the summed registrations; final rows (provisional per year only without final ones), the years that exist, the make values present that year whose spelling normalizes to a canonical make (data/make_canonical.json; a model-gated make only with a catalog model match); never a per-vehicle row"},
       "schema_verified": "2018 header (reviewer, live DISCODATA, 2026-10-06); other years are read per year at build time",
@@ -211,6 +222,17 @@
       "identity_keys": {"model": "Model", "engine_code": "EngineModel", "displacement_l": "DisplacementL",
                         "body": "BodyClass", "drive": "DriveType"}
     }
+  },
+  "eea_type_code_rules": {
+    "_about": "K1: how the government type code (degem_nm) names an EEA configuration, per canonical make (data/make_canonical.json), as ordered rules (src/open_data/match.type_code_rule). exact_va: degem_nm (trimmed, upper case) == EEA Va. toyota_style: degem_nm (inner spaces as '-': 'ZWE211L DEXGBW' = 'ZWE211L-DEXGBW') == EEA Ve or Va with a trailing '(...)' removed ('ZWE211L-DWXNBW(1D)'). A make without rules: the type-code key is unknown and the match is unchanged. Coverage measured on 2026-10-06 against the 2020 + 2021 shards and the MILO catalog's 2020-2021 European-approval type codes: BMW 127 / 153 (exact_va), VOLVO 32 / 38 (exact_va), TOYOTA 58 / 97 (toyota_style), LEXUS 21 / 21 (toyota_style). MERCEDES-BENZ has no rule: its dotted codes ('205.040') match an EEA Va / Ve without the dot ('205040') for 29 of 202 (14 %) and with a space for 0, under the 20 % the reviewer set; not guessed.",
+    "makes": {
+      "BMW": ["exact_va"],
+      "VOLVO": ["exact_va"],
+      "TOYOTA": ["toyota_style", "exact_va"],
+      "LEXUS": ["toyota_style", "exact_va"]
+    },
+    "sources": ["eea_co2_cars"],
+    "hard_vetoes": ["power", "displacement"]
   },
   "mass_window": {"_about": "BEV / no-co2 route: a configuration whose running-order mass leaves a payload (government GVW - mass) outside this window is another configuration (another battery)", "min_payload_kg": 300, "max_payload_kg": 750},
   "wmi_by_make": {"קאדילאק": ["1G6"]},
