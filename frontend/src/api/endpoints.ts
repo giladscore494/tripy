@@ -15,7 +15,7 @@ import type {
   CatalogPage,
   CatalogQuery,
   CatalogStatus,
-  DatasetsStatus,
+  DatasetsStatus, StorageStatus,
   DerivedIndexStatus,
   LiveView,
   Reachability,
@@ -129,11 +129,13 @@ export const api = {
     request<{ started: boolean; status: DerivedIndexStatus; message: string }>("/api/catalog/index/rebuild",
       { method: "POST" }),
 
-  // the Data page: open datasets and the production source policy (src/api/routes/data.py)
+  // the Data page: the committed open-data snapshots, the data volume and the production source policy
+  // (src/api/routes/data.py)
   dataDatasets: (o: Opts = {}) => request<DatasetsStatus>("/api/data/datasets", o),
-  rebuildDatasets: (dataset?: string) =>
-    request<{ started: boolean; message: string }>("/api/data/datasets/rebuild",
-      { method: "POST", query: dataset ? { dataset } : undefined }),
+  dataStorage: (o: Opts = {}) => request<StorageStatus>("/api/data/storage", o),
+  deleteOpenData: () =>
+    request<{ deleted: boolean; bytes_freed: number; path: string; storage: StorageStatus }>(
+      "/api/data/storage/delete-open-data", { method: "POST", body: { confirm: true } }),
   dataPolicy: (o: Opts = {}) => request<PolicyTable>("/api/data/policy", o),
   changePolicy: (body: PolicyChange) =>
     request<{ change: PolicyChangeLog; policy: PolicyTable }>("/api/data/policy", { method: "POST", body }),

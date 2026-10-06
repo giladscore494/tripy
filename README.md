@@ -1171,22 +1171,29 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
 - **Decision fixes.** Values that differ only by unit-conversion rounding are one value (the most precise stated value
   is reported); front / rear rims are `rim_diameter_front_in` / `rim_diameter_rear_in` (the single rim field is not
   applicable for a staggered set); km/l -> l/100km; exact imperial factors; never across test cycles.
-- **Open structured data (`src/open_data/`).** Local SQLite snapshots in `<TRIPY_DATA_DIR>/derived/open` of EEA CO2
-  cars, ADEME Car Labelling, EPA fueleconomy.gov, NRCan fuel ratings and Transport Canada CVS, rebuilt monthly and on
-  "Rebuild now" (Data page; `python scripts/build_open_data.py --summary report.md`). A build reads the live header first
-  and matches spellings case-insensitively; a missing `required` (identity) key stops that table / file
-  (`schema_mismatch`), a missing optional key is recorded (`absent_columns`) and its offers are not produced; a failed
-  build keeps the previous snapshot. EEA builds only the years DISCODATA has (final rows preferred, provisional only for
-  a year without final ones; the schema is read per year), ADEME checks its units against the field schema (none
-  stated: stop), NRCan builds each file with its group's map (the original 2-cycle file is never read; a file that
-  fails stops only itself), CVS lists its files from the open.canada.ca package and checks its data dictionary. The
-  Data page shows each dataset's progress; `open_data_status` (MCP) returns the last build report and the snapshot meta;
-  a run started without a snapshot records `open_data_no_snapshot` and its run view says "open data not built". The match is routed by the approval type, keyed
-  and vetoed deterministically; a value is identified by a unique row or when every surviving row agrees. Run setting
+- **Open structured data (`src/open_data/`).** Snapshots of EEA CO2 cars, ADEME Car Labelling, EPA fueleconomy.gov,
+  NRCan fuel ratings and Transport Canada CVS are built by the `build-open-data` GitHub Action (monthly and on
+  demand; no secret), never on the server: (1) a live-schema probe per dataset / year / file (step summary, artifact,
+  `data/open/probe.json`; a dataset whose probe fails is not built), (2) the builders of `src/open_data/build.py`
+  (case-insensitive maps; a missing required key stops that table / file; absent optional keys are recorded),
+  compacted to what matching and offers use (`compaction` in `data/open_datasets.json`: EEA one row per configuration
+  with the registration-weighted median / min / max of each measure; EPA / NRCan model years >= 2005; CVS 2011-2023;
+  the vocabulary's makes), (3) `data/open/<dataset>.sqlite.gz` (each under 50 MB) + `data/open/manifest.json`, (4) a
+  coverage report before (5) the pull request on `automation/open-data`. The deploy image carries the files; the
+  engine verifies each against the manifest's sha256 and decompresses it into the container's temp dir (a mismatch is
+  `no_snapshot`). ADEME units come from the schema's field descriptions ("Puissance en kW", "En Kg"); a column whose
+  unit is not stated is kept raw (`unit: unknown`, the probe prints its p5 / p50 / p95) and yields no match key and no
+  offer until a `unit_overrides` entry confirms it. The match is routed by the approval type, keyed and vetoed
+  deterministically; a value is identified by a unique row or when every surviving row agrees. Run setting
   `open_data_mode`: `off`, `shadow` (default: match and offers recorded, nothing admitted) or `admit` (only the
   (source, field, route) triples of `data/open_data_admission.json`, which starts empty). vPIC is identity only.
-  `python scripts/open_data_report.py` is the shadow report and proposes the admission triples (>= 5 agreements with
-  earlier ok values, 0 disagreements).
+  The Data page shows the manifest (build date, Action run, rows, years, absent columns, units, licences) and the data
+  volume (total / used / free, size per folder, "Delete open-data files"); MCP `open_data_status` returns the manifest
+  and the last probe; a run started without a snapshot records `open_data_no_snapshot`.
+- **The data volume.** At startup what an earlier server-side open-data build left in `<data>/derived/open/` (partial /
+  temp files, unbuilt snapshots) is deleted and the bytes freed are logged. A run, a series and the trim index build
+  are refused with `insufficient_disk` (HTTP 507 for a run) when less than 200 MB is free, instead of failing
+  mid-write.
 
 Proof: `python scripts/pr48_proof_gate.py` replays production run 20261005T214857Z (record 23678) under the source
 policy and the 2023 importer sheet of the M4 (no network).

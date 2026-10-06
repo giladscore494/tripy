@@ -262,16 +262,16 @@ class RunManager:
 
         set_derived_index_dir(paths.data_dir / "derived")
         self.derived_index = DerivedIndexJob(paths.data_dir / "derived", rows=derived_rows or _catalog_rows())
-        # identity anchors PR: the operator's source-policy overlay (the Data page) and the open-data snapshots with
-        # their monthly rebuild, both in <data_dir>/derived
-        from ..open_data import datasets as open_datasets
-        from ..open_data.job import OpenDataJob
+        # identity anchors PR: the operator's source-policy overlay (the Data page) in <data_dir>/derived. The open-data
+        # snapshots are built by the build-open-data GitHub Action into the repository (data/open/) and read from the
+        # image: nothing is built or written on the volume; what an earlier server-side build left in
+        # <data_dir>/derived/open is cleaned up here (partial / temp files, unbuilt snapshots)
         from ..source_authority import set_policy_overlay_dir
+        from ..storage.disk import cleanup_open_data
 
         set_policy_overlay_dir(paths.data_dir / "derived")
-        snapshot = paths.data_dir / "derived" / str(open_datasets.config().get("snapshot_subdir") or "open")
-        open_datasets.set_snapshot_dir(snapshot)
-        self.open_data = OpenDataJob(snapshot)
+        self.open_data_dir = paths.data_dir / "derived" / "open"
+        self.open_data_cleanup = cleanup_open_data(self.open_data_dir)
         self.reconcile()
         self.reconcile_series()
         try:
@@ -376,6 +376,9 @@ class RunManager:
 
         if not request.vehicles:
             raise RunRejected("Select at least one vehicle.")
+        from ..storage.disk import check_free
+
+        check_free(self.runs_dir, "run start")      # InsufficientDisk below 200 MB free: refused before any write
         # a single A/B-arm run (outside a series) runs without cross-run research memory / negative routes
         request = replace(request, agent_cfg=isolate_single_run(request.agent_cfg, in_series=bool(request.series)))
         ids = [str(v["upstream_record_id"]) for v in request.vehicles]
@@ -764,6 +767,9 @@ class RunManager:
             raise RunRejected("Select at least one vehicle.")
         if not arms:
             raise RunRejected("Select at least one arm.")
+        from ..storage.disk import check_free
+
+        check_free(self.runs_dir, "series start")
         with self._series_lock:
             if self._shutting_down:
                 raise RunRejected("The server is shutting down; try again in a moment.")
@@ -936,7 +942,6 @@ class RunManager:
             pass
         try:
             self.derived_index.shutdown()
-            self.open_data.shutdown()
         except Exception:  # noqa: BLE001
             pass
         with self._lock:

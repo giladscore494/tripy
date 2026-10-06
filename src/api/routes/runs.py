@@ -26,6 +26,7 @@ from ...catalog import MAX_SET
 from ...research_targets import ALL, MANUFACTURER, ONE, SET, catalog_target, research_target
 from ...run_profiles import PRODUCTION
 from ...run_settings import build_research_request, settings_checks, settings_for_run, settings_from_env
+from ...storage.disk import InsufficientDisk
 from ..deps import ApiContext, get_context
 from ..errors import ApiError, not_found
 from ..schemas import (ActionAccepted, EventsPage, RestartVehicle, RunCandidates, RunDetail, RunEvidence, RunList,
@@ -112,6 +113,8 @@ def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: s
         started = ctx.manager.start(request)
     except RunRejected as exc:
         raise ApiError(409, "run_rejected", str(exc), existing_run_id=exc.existing_run_id) from None
+    except InsufficientDisk as exc:
+        raise ApiError(507, "insufficient_disk", str(exc)) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the run: {exc}") from None
     except Level15Error as exc:
@@ -206,6 +209,8 @@ def finalize_vehicle(run_id: str, record_id: str, ctx: ApiContext = Depends(get_
         ctx.manager.retry_finalization(record.run_id, record_id, settings.glm_settings())
     except RunRejected as exc:
         raise ApiError(409, "run_rejected", str(exc), existing_run_id=exc.existing_run_id) from None
+    except InsufficientDisk as exc:
+        raise ApiError(507, "insufficient_disk", str(exc)) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the finalization: {exc}") from None
     return {"run_id": record.run_id, "record_id": record_id,

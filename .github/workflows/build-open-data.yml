@@ -1,0 +1,72 @@
+name: build-open-data
+
+# Builds the open-data snapshots (EEA, ADEME, EPA, NRCan, CVS) on the runner (network + runner disk) and opens a pull
+# request committing them to data/open/ (<dataset>.sqlite.gz + manifest.json + probe.json): the deploy image carries
+# them and the server reads them from the image; nothing is built or written on the data volume. The same pattern as
+# build-gov-registry-index. No secret.
+#
+#   1. live-schema probe: per dataset / year / file the live header or field schema and its resolution against
+#      data/open_datasets.json (step summary + artifact + data/open/probe.json); a dataset whose probe fails is not
+#      built (the failure stops only that dataset)
+#   2. build with src/open_data/build.py, compacted (data/open_datasets.json `compaction`)
+#   3. compress to data/open/<dataset>.sqlite.gz; a file over 50 MB fails the step with its size
+#   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
+#      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010)
+#   5. pull request on automation/open-data with the summaries in its body
+
+on:
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: "Datasets to build: all, or a comma-separated list (eea_co2_cars, ademe_car_labelling, epa_fueleconomy, nrcan_fuel_ratings, tc_cvs)"
+        required: false
+        default: all
+  schedule:
+    - cron: "17 3 2 * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DATASETS: ${{ inputs.datasets || 'all' }}
+      OPEN_DATA_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Live-schema probe (per dataset / year / file; failures stop only that dataset)
+        run: python scripts/probe_open_data.py --datasets "$DATASETS" --out data/open/probe.json --markdown open-data-probe.md
+      - name: Upload the probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-data-probe
+          path: |
+            data/open/probe.json
+            open-data-probe.md
+          if-no-files-found: ignore
+      - name: Build and compress the snapshots (each file under 50 MB)
+        run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50
+      - name: Coverage report (before the pull request step)
+        if: always()
+        run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --body open-data-pr-body.md
+      - name: Open a pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: automation/open-data
+          commit-message: Rebuild the open-data snapshots (data/open)
+          title: Rebuild the open-data snapshots
+          body-path: open-data-pr-body.md
+          add-paths: |
+            data/open/*.sqlite.gz
+            data/open/manifest.json
+            data/open/probe.json

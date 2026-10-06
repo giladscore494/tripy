@@ -1,5 +1,6 @@
 """Open-data shadow report (Part D proof gate). Nothing is admitted and nothing is fetched: the report reads the local
-snapshots (<TRIPY_DATA_DIR>/derived/open, or --snapshots) and the earlier runs' results.
+snapshots (the committed data/open/, or a folder of plain <dataset>.sqlite files with --snapshots) and the earlier
+runs' results.
 
 Per record (default: the 50 benchmark records of data/benchmark_v1_level15_snapshot.json; 85095, 23678, 38626 and
 101136 are among them): the approval route, the match status per source, the designation and match level, every field
@@ -145,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     paths = resolve_paths()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--records", default="")
-    parser.add_argument("--snapshots", default=str(paths.data_dir / "derived" / "open"))
+    parser.add_argument("--snapshots", default="", help="a folder of <dataset>.sqlite (default: the committed data/open/)")
     parser.add_argument("--runs", default=str(paths.runs_dir))
     parser.add_argument("--dsn", default=None, help="read-only catalog for the code family (default: payload only)")
     parser.add_argument("--min-agree", type=int, default=5)
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     rows = {r["upstream_record_id"]: r for r in json.loads(SNAPSHOT.read_text("utf-8"))["rows"]}
     records = [r.strip() for r in args.records.split(",") if r.strip()] or list(rows)
-    folder = Path(args.snapshots)
+    folder = Path(args.snapshots) if args.snapshots else None
     ds.set_snapshot_dir(folder)
     analysed = analyse(records, rows, Path(args.runs), args.dsn, folder)
     text = report(analysed, {name: ds.snapshot_meta(name, folder) for name in ds.datasets()
