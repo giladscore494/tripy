@@ -1,18 +1,28 @@
 """D-1: the snapshot builders. One dataset at a time, into <TRIPY_DATA_DIR>/derived/open/<dataset>.sqlite.
 
-Every build reads the dataset's LIVE header first and resolves the column map of data/open_datasets.json against it:
-each canonical key lists the exact source spellings it accepts; a key whose spellings are all absent (or two of which
-are present) stops the build with a report (`schema_mismatch`: the missing keys and the live header). Nothing is
-guessed and a failed build keeps the previous snapshot. Downloads go through the production source policy (a dataset
-whose domain is not `allowed` is never downloaded) with the fetch tools' user agent.
+Every build reads the LIVE header first and resolves the column map of data/open_datasets.json against it
+(`resolve_map`): spellings are matched case-insensitively, whitespace trimmed; a `required` key (the identity keys) whose
+spellings are all absent stops that table / file (`schema_mismatch`); an absent optional key is recorded
+(`absent_columns` in the snapshot meta) and its offers are simply not produced; two different live columns matching one
+key are `ambiguous` (stop). Nothing is guessed, and a failed build keeps the previous snapshot. Downloads go through
+the production source policy (a dataset whose domain is not `allowed` is never downloaded) with the fetch tools' user
+agent. Each dataset's `builder`:
 
-    eea_co2_cars        DISCODATA SQL: `SELECT TOP 1 *` for the live schema, then one grouped query per year
-                        (distinct configurations + sum(r) as registrations), only makes of identity_vocabulary
-                        `open_data_make_aliases`
-    ademe_car_labelling the data.gouv.fr dataset page's CSV resource (`api_url` -> the first CSV resource)
-    epa_fueleconomy     vehicles.csv (zip)
-    nrcan_fuel_ratings  the CSV resources of the open.canada.ca package (`ckan_package`)
-    tc_cvs              the CSV files listed in `download_urls` (none listed: the build stops and reports)
+    discodata    EEA: `SELECT TOP 1 *` for the year / status columns, `SELECT DISTINCT year, status`, then per existing
+                 year (final rows preferred, provisional rows only for a year without final ones) the year's own
+                 schema (`TOP 1` of that year) and one grouped query (distinct configurations + sum of registrations),
+                 only for the makes of identity_vocabulary `open_data_make_aliases`; a year that fails stops only itself
+    data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_check` is read from the
+                 schema's x-unit / description / title (accepted -> its scale; another unit or none stated -> stop)
+    csv          EPA: the CSV files of `download_urls` (one zip)
+    ckan_groups  NRCan: the package's CSV resources in the dataset's language, each assigned to the first
+                 `resource_groups` entry whose pattern its file name contains (excluded patterns are never read); each
+                 group has its own map, a group without a map reports the live header (`map_pending`), and a file that
+                 fails stops only itself
+    ckan_files   CVS: the package's resources matching `resource_pattern`; the data dictionary must state every mapped
+                 code and its unit (`dictionary_check`), else the build stops with the dictionary's rows
+
+`progress(text)` (optional) is called with the current stage (the Data page shows it).
 """
 
 from __future__ import annotations
@@ -20,6 +30,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -29,16 +40,24 @@ from urllib.parse import quote
 from . import datasets as ds
 
 Fetcher = Callable[[str], bytes]
+Progress = Callable[[str], None]
 MAX_DOWNLOAD_BYTES = 400 * 1024 * 1024
 EEA_PAGE = 50_000
+PLAIN_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
+COMMA_NUMBER = re.compile(r"^-?\d+,\d+$")
 
 
 class BuildStopped(RuntimeError):
-    """The build stopped with a report (schema mismatch, no download URL, a policy-blocked source)."""
+    """The build (or one table / file / year) stopped with a report (schema mismatch, no download URL, a policy-blocked
+    source, an unstated unit)."""
 
     def __init__(self, reason: str, **report: Any):
         super().__init__(reason)
         self.reason, self.report = reason, report
+
+
+def _noop(_: str) -> None:
+    return None
 
 
 def default_fetcher(session=None, timeout_s: float = 120.0) -> Fetcher:
@@ -64,22 +83,50 @@ def default_fetcher(session=None, timeout_s: float = 120.0) -> Fetcher:
     return fetch
 
 
-def resolve_columns(header: list[str], columns: dict[str, dict]) -> dict[str, str]:
-    """{canonical key: the live source column} or BuildStopped(schema_mismatch) naming every key it cannot resolve."""
-    live = [h for h in header]
-    out, missing, ambiguous = {}, [], []
-    for key, spec in columns.items():
-        present = [s for s in spec.get("source") or [] if s in live]
-        if len(present) == 1:
-            out[key] = present[0]
-        elif not present:
-            missing.append({"key": key, "expected": spec.get("source")})
-        else:
-            ambiguous.append({"key": key, "present": present})
-    if missing or ambiguous:
-        raise BuildStopped("schema_mismatch", missing=missing, ambiguous=ambiguous, live_header=live[:200])
-    return out
+# --- column maps -----------------------------------------------------------------------------------------------------------
 
+def _norm(name: Any) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def _present(header: list[str], spellings: list[str]) -> list[str]:
+    wanted = {_norm(s) for s in spellings or []}
+    return [h for h in header if _norm(h) in wanted]
+
+
+def resolve_map(header: list[str], columns: dict[str, dict]) -> dict:
+    """{mapping: {key: live column}, missing: [...], ambiguous: [...], absent: [...]}. `missing` holds the required keys
+    whose spellings (and fallback spellings) are all absent; `absent` the optional ones. A key without `required` is
+    required (fail closed)."""
+    mapping, missing, ambiguous, absent = {}, [], [], []
+    for key, spec in columns.items():
+        if not isinstance(spec, dict):
+            continue
+        found = _present(header, spec.get("source") or [])
+        if not found:
+            found = _present(header, spec.get("fallback") or [])
+        if len(found) == 1:
+            mapping[key] = found[0]
+        elif found:
+            ambiguous.append({"key": key, "present": found})
+        elif spec.get("required", True):
+            missing.append({"key": key, "expected": (spec.get("source") or []) + (spec.get("fallback") or [])})
+        else:
+            absent.append(key)
+    return {"mapping": mapping, "missing": missing, "ambiguous": ambiguous, "absent": absent}
+
+
+def resolve_columns(header: list[str], columns: dict[str, dict]) -> dict[str, str]:
+    """{canonical key: the live source column}, or BuildStopped(schema_mismatch) naming every required key it cannot
+    resolve and every ambiguous one (absent optional keys are left out of the mapping)."""
+    resolved = resolve_map(header, columns)
+    if resolved["missing"] or resolved["ambiguous"]:
+        raise BuildStopped("schema_mismatch", missing=resolved["missing"], ambiguous=resolved["ambiguous"],
+                           absent=resolved["absent"], live_header=list(header)[:200])
+    return resolved["mapping"]
+
+
+# --- CSV -------------------------------------------------------------------------------------------------------------------
 
 def _decode(body: bytes) -> str:
     for enc in ("utf-8-sig", "cp1252", "latin-1"):
@@ -90,32 +137,134 @@ def _decode(body: bytes) -> str:
     return body.decode("utf-8", errors="replace")
 
 
-def _csv_tables(body: bytes) -> list[tuple[str, list[dict]]]:
-    """(name, rows) of a CSV body or of every CSV inside a zip."""
+def _csv_tables(body: bytes) -> list[tuple[str, list[dict], list[str]]]:
+    """(name, rows, header) of a CSV body or of every CSV inside a zip."""
     if body[:2] == b"PK":
         out = []
         with zipfile.ZipFile(io.BytesIO(body)) as archive:
             for name in archive.namelist():
                 if name.lower().endswith(".csv"):
-                    out += _csv_tables(archive.read(name))
+                    out += [(name, rows, header) for _, rows, header in _csv_tables(archive.read(name))]
         return out
     text = _decode(body)
-    dialect = csv.Sniffer().sniff(text[:5000], delimiters=",;\t") if text.strip() else csv.excel
+    if not text.strip():
+        return [("csv", [], [])]
+    try:
+        dialect = csv.Sniffer().sniff(text[:5000], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
     reader = csv.DictReader(io.StringIO(text), dialect=dialect)
-    return [("csv", list(reader))]
+    header = [h for h in (reader.fieldnames or []) if h is not None]
+    return [("csv", list(reader), header)]
 
 
-def _canonical(rows: list[dict], mapping: dict[str, str], dataset: str, keep_makes: set[str] | None,
-               id_prefix: str = "") -> list[dict]:
-    out = []
+def _number_value(value: Any, scale: float, decimal_comma: bool, counts: dict, key: str) -> Any:
+    """A unit column's value: plain numbers stay as stated (scale 1), a decimal-comma number is read only when the
+    dataset declares `decimal_comma` (else None and counted: never guessed)."""
+    if value is None or isinstance(value, (int, float)):
+        return value * scale if isinstance(value, (int, float)) and scale != 1 else value
+    text = str(value).strip()
+    if not text:
+        return None
+    if COMMA_NUMBER.match(text):
+        if not decimal_comma:
+            counts[key] = counts.get(key, 0) + 1
+            return None
+        text = text.replace(",", ".")
+    if scale == 1:
+        return text
+    if PLAIN_NUMBER.match(text):
+        return float(text) * scale
+    return None
+
+
+def _canonical(rows: list[dict], mapping: dict[str, str], columns: dict, keep_makes: set[str] | None,
+               id_prefix: str = "", scales: dict | None = None, decimal_comma: bool = False,
+               extra: dict | None = None) -> tuple[list[dict], dict]:
+    out, unreadable = [], {}
+    scales = scales or {}
     for n, row in enumerate(rows):
-        item = {key: (row.get(column) if row.get(column) not in ("",) else None) for key, column in mapping.items()}
+        item = {}
+        for key, column in mapping.items():
+            value = row.get(column)
+            value = None if value in ("",) else value
+            if (columns.get(key) or {}).get("unit") and key not in ("row_id", "year"):
+                value = _number_value(value, float(scales.get(key, 1)), decimal_comma, unreadable, key)
+            item[key] = value
         make = str(item.get("make") or "").strip().upper()
         if keep_makes is not None and make not in keep_makes:
             continue
-        item["row_id"] = str(item.pop("row_id", None) or f"{id_prefix}{n + 1}")
+        own_id = item.pop("row_id", None)
+        item["row_id"] = f"{id_prefix}{own_id}" if own_id not in (None, "") else f"{id_prefix}{n + 1}"
+        if extra:
+            item.update(extra)
         out.append(item)
-    return out
+    return out, unreadable
+
+
+def _build_file(url: str, fetch: Fetcher, columns: dict | None, *, keep_makes=None, id_prefix: str = "",
+                scales: dict | None = None, decimal_comma: bool = False, extra: dict | None = None,
+                body: bytes | None = None) -> tuple[list[dict], dict]:
+    """(rows, report) of one CSV file (or zip). The report: url, status built | stopped | map_pending | failed, rows,
+    absent_columns, live_header (when stopped), missing / ambiguous."""
+    report: dict[str, Any] = {"url": url}
+    try:
+        tables = _csv_tables(body if body is not None else fetch(url))
+    except BuildStopped as stop:
+        return [], {**report, "status": "stopped", "reason": stop.reason, **stop.report}
+    except Exception as exc:  # noqa: BLE001 - one file never costs the others
+        return [], {**report, "status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    rows: list[dict] = []
+    absent: set[str] = set()
+    unreadable: dict[str, int] = {}
+    for t, (name, table, header) in enumerate(tables):
+        if not header:
+            continue
+        if columns is None:
+            return [], {**report, "status": "map_pending", "live_header": header[:200],
+                        "reason": "no map for this file's group: write it from this live header"}
+        resolved = resolve_map(header, columns)
+        if resolved["missing"] or resolved["ambiguous"]:
+            return [], {**report, "status": "stopped", "reason": "schema_mismatch", "table": name,
+                        "missing": resolved["missing"], "ambiguous": resolved["ambiguous"],
+                        "absent_columns": resolved["absent"], "live_header": header[:200]}
+        absent |= set(resolved["absent"])
+        built, bad = _canonical(table, resolved["mapping"], columns, keep_makes, f"{id_prefix}{t}-" if len(tables) > 1
+                                else id_prefix, scales, decimal_comma, extra)
+        for key, count in bad.items():
+            unreadable[key] = unreadable.get(key, 0) + count
+        rows += built
+        report.setdefault("live_header", header[:200])
+    if not report.get("live_header"):
+        return [], {**report, "status": "stopped", "reason": "no_rows"}
+    report.update(status="built", rows=len(rows), absent_columns=sorted(absent))
+    if unreadable:
+        report["decimal_comma_values"] = unreadable
+    return rows, report
+
+
+def build_csv_dataset(dataset: str, urls: list[str], fetch: Fetcher, *, keep_makes: set[str] | None = None,
+                      progress: Progress = _noop) -> dict:
+    """Every URL is one file of the dataset's single map; any file that stops stops the dataset (one-map datasets)."""
+    cfg = ds.datasets()[dataset]
+    columns = cfg.get("columns") or {}
+    rows: list[dict] = []
+    files = []
+    for u, url in enumerate(urls):
+        progress(f"file {u + 1}/{len(urls)}: {url.rsplit('/', 1)[-1]}")
+        built, report = _build_file(url, fetch, columns, keep_makes=keep_makes, id_prefix=f"{dataset}-{u}-"
+                                    if u else "", decimal_comma=bool(cfg.get("decimal_comma")))
+        files.append(report)
+        if report["status"] == "failed":
+            raise RuntimeError(report.get("error") or "download failed")
+        if report["status"] != "built":
+            raise BuildStopped(report.get("reason") or report["status"], files=files, **{
+                k: report[k] for k in ("missing", "ambiguous", "live_header") if k in report})
+        rows += built
+    if not files:
+        raise BuildStopped("no_download_url", note=f"data/open_datasets.json {dataset}.download_urls is empty")
+    return {"rows": rows, "schema": files[0].get("live_header"), "urls": urls, "files": files,
+            "absent_columns": sorted({c for f in files for c in f.get("absent_columns") or []})}
 
 
 def known_makes() -> set[str]:
@@ -125,62 +274,288 @@ def known_makes() -> set[str]:
     return {str(m).upper() for k, v in aliases.items() if not k.startswith("_") and isinstance(v, list) for m in v}
 
 
-def build_csv_dataset(dataset: str, urls: list[str], fetch: Fetcher, *, keep_makes: set[str] | None = None) -> dict:
-    cfg = ds.datasets()[dataset]
-    columns = cfg.get("columns") or {}
-    rows: list[dict] = []
-    headers: list[list[str]] = []
-    for u, url in enumerate(urls):
-        for t, (_, table) in enumerate(_csv_tables(fetch(url))):
-            header = list(table[0].keys()) if table else []
-            if not header:
-                continue
-            mapping = resolve_columns(header, columns)
-            headers.append(header)
-            rows += _canonical(table, mapping, dataset, keep_makes, id_prefix=f"{dataset}-{u}-{t}-")
-    if not headers:
-        raise BuildStopped("no_rows", urls=urls)
-    return {"rows": rows, "schema": headers[0], "urls": urls}
+# --- EEA (DISCODATA) -------------------------------------------------------------------------------------------------------
 
-
-def build_eea(fetch: Fetcher, *, years: list[int] | None = None) -> dict:
-    """DISCODATA: the live schema (`SELECT TOP 1 *`), then per year the distinct configurations of the known makes."""
+def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop) -> dict:
+    """Year discovery, then per year its own schema and one grouped query (module docstring)."""
     cfg = ds.datasets()["eea_co2_cars"]
     base, table = cfg["source_url"], cfg["table"]
+    columns = cfg["columns"]
 
     def sql(query: str) -> list[dict]:
         body = fetch(f"{base}?query={quote(query)}&p=1&nrOfHits={EEA_PAGE}")
         data = json.loads(_decode(body))
         return data.get("results") or data.get("Results") or []
 
+    def q(column: str) -> str:
+        return "[" + column.replace("]", "]]") + "]"
+
+    progress("schema")
     sample = sql(f"SELECT TOP 1 * FROM {table}")
     header = list(sample[0].keys()) if sample else []
-    mapping = resolve_columns(header, cfg["columns"])
-    registrations = resolve_columns(header, {"registrations": cfg["registrations_column"]})["registrations"]
+    head = resolve_columns(header, {"year": columns["year"], "status": cfg["status_column"]})
+    year_col, status_col = head["year"], head["status"]
+    progress("year discovery")
+    statuses: dict[int, set[str]] = {}
+    for pair in sql(f"SELECT DISTINCT {q(year_col)}, {q(status_col)} FROM {table}"):
+        year = ds._int(pair.get(year_col))
+        if year is not None:
+            statuses.setdefault(year, set()).add(str(pair.get(status_col) or "").strip())
+    floor = int(cfg.get("years_from") or 0)
+    wanted = sorted(y for y in statuses if y >= floor and (years is None or y in years))
     makes = sorted(known_makes())
     if not makes:
         raise BuildStopped("no_makes", note="identity_vocabulary open_data_make_aliases is empty")
-    year_col = mapping["year"]
-    this_year = datetime.now(timezone.utc).year
-    years = years or list(range(int(cfg.get("years_from") or 2017), this_year + 1))
-    group = ", ".join(f"[{c}]" for c in mapping.values())
     in_makes = ", ".join("'" + m.replace("'", "''") + "'" for m in makes)
     rows: list[dict] = []
-    for year in years:
-        chunk = sql(f"SELECT {group}, SUM([{registrations}]) AS registrations FROM {table} "
-                    f"WHERE [{year_col}] = {int(year)} AND UPPER([{mapping['make']}]) IN ({in_makes}) GROUP BY {group}")
+    reports: list[dict] = []
+    absent_by_year: dict[str, list[str]] = {}
+    for year in ([y for y in (years or []) if y not in statuses] if years else []):
+        reports.append({"year": year, "status": "skipped", "reason": "no_rows"})
+    for year in wanted:
+        status = next((s for s in cfg.get("status_preference") or ["F", "P"] if s in statuses[year]), None)
+        if status is None:
+            reports.append({"year": year, "status": "skipped", "reason": "no_preferred_status",
+                            "statuses": sorted(statuses[year])})
+            continue
+        progress(f"year {year} (status {status})")
+        where = f"{q(year_col)} = {int(year)} AND {q(status_col)} = '{status}'"
+        sample = sql(f"SELECT TOP 1 * FROM {table} WHERE {where}")
+        if not sample:
+            reports.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status})
+            continue
+        year_header = list(sample[0].keys())
+        resolved = resolve_map(year_header, columns)
+        if resolved["missing"] or resolved["ambiguous"]:
+            reports.append({"year": year, "status": "stopped", "reason": "schema_mismatch", "status_used": status,
+                            "missing": resolved["missing"], "ambiguous": resolved["ambiguous"],
+                            "live_header": year_header[:200]})
+            continue
+        mapping = resolved["mapping"]
+        registrations = resolve_map(year_header, {"registrations": cfg["registrations_column"]})["mapping"].get(
+            "registrations")
+        group = ", ".join(q(c) for c in mapping.values())
+        total = f", SUM({q(registrations)}) AS registrations" if registrations else ""
+        try:
+            chunk = sql(f"SELECT {group}{total} FROM {table} WHERE {where} AND UPPER({q(mapping['make'])}) "
+                        f"IN ({in_makes}) GROUP BY {group}")
+        except Exception as exc:  # noqa: BLE001 - one year never costs the others
+            reports.append({"year": year, "status": "failed", "status_used": status,
+                            "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+            continue
         for n, raw in enumerate(chunk):
             item = {key: raw.get(column) for key, column in mapping.items()}
             item["registrations"] = raw.get("registrations")
-            item["row_id"] = f"eea-{year}-{n + 1}"
+            item["status"] = status
+            item["row_id"] = f"eea-{year}-{status}-{n + 1}"
             rows.append(item)
-    return {"rows": rows, "schema": header, "urls": [base], "years": years}
+        absent_by_year[str(year)] = resolved["absent"]
+        reports.append({"year": year, "status": "built", "status_used": status, "rows": len(chunk),
+                        "absent_columns": resolved["absent"], "registrations_column": registrations})
+    if not any(r["status"] == "built" for r in reports):
+        raise BuildStopped("no_year_built", years=reports, discovered={str(y): sorted(s) for y, s in statuses.items()})
+    return {"rows": rows, "schema": header, "urls": [base], "years": reports,
+            "absent_columns": absent_by_year}
 
 
-def build_dataset(dataset: str, fetch: Fetcher | None = None) -> dict:
+# --- ADEME (data-fair) -----------------------------------------------------------------------------------------------------
+
+def _schema_fields(schema: Any) -> list[dict]:
+    if isinstance(schema, dict):
+        schema = schema.get("schema") or schema.get("fields") or []
+    return [f for f in schema or [] if isinstance(f, dict)]
+
+
+def _tokens_in(text: str, tokens: list[str]) -> bool:
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(t.lower())}(?![a-z0-9])", text) for t in tokens)
+
+
+def unit_scales(columns: dict, mapping: dict[str, str], schema: Any) -> tuple[dict[str, float], list[dict]]:
+    """({key: scale}, problems) of every mapped column with a `unit_check`, read from the schema field whose original
+    name is the live column (x-unit, description, title). A unit is accepted only when exactly one accepted unit and no
+    rejected unit is stated; anything else is a problem (the build stops: never assumed)."""
+    fields = _schema_fields(schema)
+    scales, problems = {}, []
+    for key, spec in columns.items():
+        check = spec.get("unit_check") if isinstance(spec, dict) else None
+        if not check or key not in mapping:
+            continue
+        live = _norm(mapping[key])
+        field = next((f for f in fields if _norm(f.get("x-originalName") or f.get("title") or f.get("key")) == live),
+                     None)
+        if field is None:
+            problems.append({"key": key, "column": mapping[key], "reason": "not_in_schema"})
+            continue
+        stated = " ".join(json.dumps(field.get(k), ensure_ascii=False) for k in ("x-unit", "description", "title")
+                          if field.get(k)).lower()
+        accepted = [u for u, rule in (check.get("accept") or {}).items() if _tokens_in(stated, rule.get("tokens") or [])]
+        rejected = [u for u, tokens in (check.get("reject") or {}).items() if _tokens_in(stated, tokens)]
+        if len(accepted) == 1 and not rejected:
+            scales[key] = float(check["accept"][accepted[0]].get("scale") or 1)
+        else:
+            problems.append({"key": key, "column": mapping[key], "accepted": accepted, "rejected": rejected,
+                             "reason": "unit_mismatch" if rejected else "unit_unstated" if not accepted
+                             else "unit_ambiguous", "schema_field": {k: field.get(k) for k in (
+                                 "key", "x-originalName", "title", "description", "x-unit", "type") if k in field}})
+    for key, spec in columns.items():               # a Max column takes its Min column's scale
+        if isinstance(spec, dict) and spec.get("unit_of") in scales and key in mapping:
+            scales[key] = scales[spec["unit_of"]]
+    return scales, problems
+
+
+def build_ademe(fetch: Fetcher, *, progress: Progress = _noop) -> dict:
+    cfg = ds.datasets()["ademe_car_labelling"]
+    columns = cfg["columns"]
+    progress("schema")
+    schema = json.loads(_decode(fetch(cfg["schema_url"])))
+    progress("csv")
+    body = fetch(cfg["csv_url"])
+    tables = _csv_tables(body)
+    header = tables[0][2] if tables else []
+    resolved = resolve_map(header, columns)
+    if resolved["missing"] or resolved["ambiguous"]:
+        raise BuildStopped("schema_mismatch", missing=resolved["missing"], ambiguous=resolved["ambiguous"],
+                           absent=resolved["absent"], live_header=header[:200])
+    scales, problems = unit_scales(columns, resolved["mapping"], schema)
+    if problems:
+        raise BuildStopped("unit_check", problems=problems)
+    rows, report = _build_file(cfg["csv_url"], fetch, columns, id_prefix="ademe-", scales=scales,
+                               decimal_comma=bool(cfg.get("decimal_comma")), body=body)
+    if report["status"] != "built":
+        raise BuildStopped(report.get("reason") or report["status"], files=[report])
+    report["units"] = {k: v for k, v in scales.items()}
+    return {"rows": rows, "schema": header, "urls": [cfg["csv_url"]], "files": [report],
+            "absent_columns": report.get("absent_columns") or []}
+
+
+# --- CKAN (NRCan, CVS) -----------------------------------------------------------------------------------------------------
+
+def _resources(fetch: Fetcher, api: str) -> list[dict]:
+    page = json.loads(_decode(fetch(api)))
+    return [r for r in ((page.get("result") or {}).get("resources") or []) if isinstance(r, dict) and r.get("url")]
+
+
+def _file_name(resource: dict) -> str:
+    return str(resource.get("url") or "").rstrip("/").rsplit("/", 1)[-1].lower()
+
+
+def _languages(resource: dict) -> list[str]:
+    lang = resource.get("language")
+    return [str(x).lower() for x in (lang if isinstance(lang, list) else [lang] if lang else [])]
+
+
+def build_ckan_groups(dataset: str, fetch: Fetcher, *, progress: Progress = _noop) -> dict:
+    """NRCan: every CSV resource of the dataset's language, read with its group's map; a file stops only itself."""
+    cfg = ds.datasets()[dataset]
+    progress("package")
+    resources = _resources(fetch, cfg["ckan_api"])
+    fmt, lang = str(cfg.get("resource_format") or "CSV").upper(), str(cfg.get("resource_language") or "en").lower()
+    excluded = [p.lower() for p in (cfg.get("exclude_resources") or {}).get("patterns") or []]
+    files, rows = [], []
+    for resource in resources:
+        name = _file_name(resource)
+        if str(resource.get("format") or "").upper() != fmt or (_languages(resource) and lang not in _languages(resource)):
+            continue
+        text = f"{name} {str(resource.get('name') or '').lower()}"
+        if any(p in text for p in excluded):
+            files.append({"url": resource["url"], "status": "excluded",
+                          "reason": (cfg.get("exclude_resources") or {}).get("reason")})
+            continue
+        group = next((g for g in cfg.get("resource_groups") or [] if any(p.lower() in name for p in g["patterns"])),
+                     None)
+        if group is None:
+            files.append({"url": resource["url"], "status": "unclassified", "reason": "no resource_groups pattern"})
+            continue
+        progress(f"{group['group']}: {name}")
+        built, report = _build_file(resource["url"], fetch, group.get("columns"), id_prefix=f"{dataset}-{name}-",
+                                    decimal_comma=bool(cfg.get("decimal_comma")), extra={"group": group["group"]})
+        files.append({**report, "group": group["group"]})
+        rows += built
+    if not any(f["status"] == "built" for f in files):
+        raise BuildStopped("no_file_built", files=files)
+    return {"rows": rows, "schema": next((f.get("live_header") for f in files if f["status"] == "built"), None),
+            "urls": [f["url"] for f in files if f["status"] == "built"], "files": files,
+            "absent_columns": {f["url"].rsplit("/", 1)[-1]: f.get("absent_columns") or [] for f in files
+                               if f["status"] == "built"}}
+
+
+def _xls_rows(body: bytes) -> list[list[str]]:
+    try:
+        import xlrd
+    except ImportError as exc:
+        raise BuildStopped("dictionary_unreadable", note="the xlrd package is not installed") from exc
+    try:
+        book = xlrd.open_workbook(file_contents=body)
+    except Exception as exc:  # noqa: BLE001
+        raise BuildStopped("dictionary_unreadable", error=f"{type(exc).__name__}: {str(exc)[:200]}") from exc
+    out = []
+    for sheet in book.sheets():
+        for r in range(sheet.nrows):
+            cells = [str(c.value).strip() for c in sheet.row(r)]
+            if any(cells):
+                out.append(cells)
+    return out
+
+
+def dictionary_check(rows: list[list[str]], check: dict) -> list[dict]:
+    """Problems of the CVS data dictionary against the map: every code must be a cell of some row and that row must
+    name the code's unit (unit_tokens)."""
+    problems = []
+    for code, unit in (check.get("codes") or {}).items():
+        row = next((r for r in rows if any(c.strip().upper() == code.upper() for c in r)), None)
+        if row is None:
+            problems.append({"code": code, "reason": "not_in_dictionary"})
+            continue
+        if unit and not _tokens_in(" ".join(row).lower(), (check.get("unit_tokens") or {}).get(unit) or [unit]):
+            problems.append({"code": code, "reason": "unit_not_stated", "expected_unit": unit, "dictionary_row": row})
+    return problems
+
+
+def build_ckan_files(dataset: str, fetch: Fetcher, *, progress: Progress = _noop) -> dict:
+    """CVS: the data dictionary first (every mapped code and unit), then every file matching resource_pattern."""
+    cfg = ds.datasets()[dataset]
+    progress("package")
+    resources = _resources(fetch, cfg["ckan_api"])
+    files_re, dict_re = re.compile(cfg["resource_pattern"], re.I), re.compile(cfg["dictionary_pattern"], re.I)
+    dictionary = next((r for r in resources if dict_re.search(_file_name(r))), None)
+    if dictionary is None:
+        raise BuildStopped("no_dictionary", resources=[_file_name(r) for r in resources][:80])
+    progress("data dictionary")
+    dict_rows = _xls_rows(fetch(dictionary["url"]))
+    problems = dictionary_check(dict_rows, cfg.get("dictionary_check") or {})
+    if problems:
+        raise BuildStopped("dictionary_mismatch", problems=problems, dictionary_rows=dict_rows[:120])
+    targets = sorted((r for r in resources if files_re.search(_file_name(r))), key=_file_name)
+    if not targets:
+        raise BuildStopped("no_download_url", resources=[_file_name(r) for r in resources][:80])
+    files, rows = [], []
+    for resource in targets:
+        name = _file_name(resource)
+        progress(f"file {name}")
+        year = re.search(r"(\d{4})", name)
+        built, report = _build_file(resource["url"], fetch, cfg.get("columns"), id_prefix=f"{dataset}-{name}-",
+                                    decimal_comma=bool(cfg.get("decimal_comma")),
+                                    extra={"file_year": int(year.group(1))} if year else None)
+        files.append({**report, "file_year": int(year.group(1)) if year else None})
+        rows += built
+    if not any(f["status"] == "built" for f in files):
+        raise BuildStopped("no_file_built", files=files)
+    file_years = sorted(f["file_year"] for f in files if f.get("file_year"))
+    return {"rows": rows, "schema": next((f.get("live_header") for f in files if f["status"] == "built"), None),
+            "urls": [f["url"] for f in files if f["status"] == "built"], "files": files,
+            "file_years": file_years, "last_file_year": file_years[-1] if file_years else None,
+            "dictionary": dictionary["url"],
+            "absent_columns": {f["url"].rsplit("/", 1)[-1]: f.get("absent_columns") or [] for f in files
+                               if f["status"] == "built"}}
+
+
+# --- one dataset -----------------------------------------------------------------------------------------------------------
+
+def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress | None = None) -> dict:
     """Build one snapshot. {status: built | stopped | failed, rows, built_at, report, ...}; never raises."""
     from ..source_authority import dataset_policy
 
+    progress = progress or _noop
     started = time.monotonic()
     cfg = ds.datasets().get(dataset)
     if not cfg:
@@ -191,36 +566,37 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None) -> dict:
     if policy["policy"] != "allowed" or not policy.get("bulk_store"):
         return {"status": "stopped", "reason": "policy", "policy": policy["policy"]}
     fetch = fetch or default_fetcher()
+    builder = cfg.get("builder") or "csv"
     try:
-        if dataset == "eea_co2_cars":
-            built = build_eea(fetch)
-        elif dataset == "ademe_car_labelling":
-            page = json.loads(_decode(fetch(cfg["api_url"])))
-            urls = [r.get("url") for r in page.get("resources") or [] if str(r.get("format") or "").lower() == "csv"]
-            if not urls:
-                raise BuildStopped("no_csv_resource", api_url=cfg["api_url"])
-            built = build_csv_dataset(dataset, urls[:1], fetch)
-        elif dataset == "nrcan_fuel_ratings":
-            page = json.loads(_decode(fetch(cfg["ckan_api"])))
-            resources = (page.get("result") or {}).get("resources") or []
-            urls = [r.get("url") for r in resources if str(r.get("format") or "").upper() == "CSV"
-                    and "en" in (r.get("language") or ["en"])]
-            if not urls:
-                raise BuildStopped("no_csv_resource", ckan_api=cfg["ckan_api"])
-            built = build_csv_dataset(dataset, urls, fetch)
+        if builder == "discodata":
+            built = build_eea(fetch, progress=progress)
+        elif builder == "data_fair":
+            built = build_ademe(fetch, progress=progress)
+        elif builder == "ckan_groups":
+            built = build_ckan_groups(dataset, fetch, progress=progress)
+        elif builder == "ckan_files":
+            built = build_ckan_files(dataset, fetch, progress=progress)
         else:
             urls = cfg.get("download_urls") or []
             if not urls:
                 raise BuildStopped("no_download_url", note=f"data/open_datasets.json {dataset}.download_urls is empty")
-            built = build_csv_dataset(dataset, urls, fetch)
+            built = build_csv_dataset(dataset, urls, fetch, progress=progress)
+        progress("writing snapshot")
+        duration = round(time.monotonic() - started, 1)
         meta = {"built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataset": dataset,
                 "source_url": cfg.get("source_url"), "urls": built.get("urls"), "schema": built.get("schema"),
                 "licence": policy.get("licence"), "attribution": policy.get("attribution"),
-                "years": built.get("years")}
-        ds.write_snapshot(dataset, built["rows"], meta)
-        return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"],
-                "duration_s": round(time.monotonic() - started, 1)}
+                "years": built.get("years"), "files": built.get("files"), "absent_columns": built.get("absent_columns"),
+                "file_years": built.get("file_years"), "last_file_year": built.get("last_file_year"),
+                "build_duration_s": duration, "config_version": ds.config().get("version")}
+        path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
+        size = path.stat().st_size if path and path.exists() else None
+        return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"], "duration_s": duration,
+                "size_bytes": size, "years": built.get("years"), "files": built.get("files"),
+                "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year")}
     except BuildStopped as stop:
-        return {"status": "stopped", "reason": stop.reason, "report": stop.report}
+        return {"status": "stopped", "reason": stop.reason, "report": stop.report,
+                "duration_s": round(time.monotonic() - started, 1)}
     except Exception as exc:  # noqa: BLE001 - a failed build keeps the previous snapshot
-        return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+        return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                "duration_s": round(time.monotonic() - started, 1)}

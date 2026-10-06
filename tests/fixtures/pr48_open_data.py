@@ -29,22 +29,22 @@ CTS_EEA = [
 CTS_EPA = [
     {"row_id": "38704", "year": 2018, "make": "CADILLAC", "model": "CTS", "base_model": "CTS", "displacement_l": "2.0",
      "cylinders": 4, "transmission": "Automatic (S8)", "drive": "Rear-Wheel Drive", "vehicle_class": "Midsize Cars",
-     "fuel": "Premium Gasoline", "combined_mpg": 25, "luggage_ft3": 14},
+     "fuel": "Premium Gasoline", "combined_mpg": 25, "luggage_4door_ft3": 14},
     {"row_id": "38918", "year": 2018, "make": "CADILLAC", "model": "CTS AWD", "base_model": "CTS", "displacement_l": "2.0",
      "cylinders": 4, "transmission": "Automatic (S8)", "drive": "All-Wheel Drive", "vehicle_class": "Midsize Cars",
-     "fuel": "Premium Gasoline", "combined_mpg": 24, "luggage_ft3": 14},
+     "fuel": "Premium Gasoline", "combined_mpg": 24, "luggage_4door_ft3": 14},
     {"row_id": "38921", "year": 2018, "make": "CADILLAC", "model": "CTS", "base_model": "CTS", "displacement_l": "3.6",
      "cylinders": 6, "transmission": "Automatic (S8)", "drive": "Rear-Wheel Drive", "vehicle_class": "Midsize Cars",
-     "fuel": "Regular Gasoline", "combined_mpg": 22, "luggage_ft3": 14},
+     "fuel": "Regular Gasoline", "combined_mpg": 22, "luggage_4door_ft3": 14},
     {"row_id": "38916", "year": 2018, "make": "CADILLAC", "model": "CTS AWD", "base_model": "CTS", "displacement_l": "3.6",
      "cylinders": 6, "transmission": "Automatic (S8)", "drive": "All-Wheel Drive", "vehicle_class": "Midsize Cars",
-     "fuel": "Regular Gasoline", "combined_mpg": 21, "luggage_ft3": 14},
+     "fuel": "Regular Gasoline", "combined_mpg": 21, "luggage_4door_ft3": 14},
     {"row_id": "38919", "year": 2018, "make": "CADILLAC", "model": "CTS V-Sport", "base_model": "CTS",
      "displacement_l": "3.6", "cylinders": 6, "transmission": "Automatic (S8)", "drive": "Rear-Wheel Drive",
-     "vehicle_class": "Midsize Cars", "fuel": "Premium Gasoline", "combined_mpg": 19, "luggage_ft3": 14},
+     "vehicle_class": "Midsize Cars", "fuel": "Premium Gasoline", "combined_mpg": 19, "luggage_4door_ft3": 14},
     {"row_id": "38922", "year": 2018, "make": "CADILLAC", "model": "CTS-V", "base_model": "CTS", "displacement_l": "6.2",
      "cylinders": 8, "transmission": "Automatic (S8)", "drive": "Rear-Wheel Drive", "vehicle_class": "Midsize Cars",
-     "fuel": "Premium Gasoline", "combined_mpg": 16, "luggage_ft3": 14},
+     "fuel": "Premium Gasoline", "combined_mpg": 16, "luggage_4door_ft3": 14},
 ]
 
 CTS_NRCAN = [

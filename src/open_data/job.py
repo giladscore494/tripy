@@ -40,6 +40,8 @@ class OpenDataJob:
         self._building: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._progress: dict[str, dict] = {}         # per dataset: state queued | building | built | stopped | failed
+        self.first_check_at: str | None = None       # the first scheduled build (FIRST_CHECK_DELAY_S after start)
 
     @property
     def interval(self) -> timedelta:
@@ -63,13 +65,25 @@ class OpenDataJob:
             meta = ds.snapshot_meta(name, self.folder)
             policy = dataset_policy(cfg.get("policy_id") or name)
             rows.append({"dataset": name, "label": cfg.get("label"), "source_url": cfg.get("source_url"),
+                         "progress": self._progress.get(name), "snapshot_years": meta.get("years"),
+                         "absent_columns": meta.get("absent_columns"), "snapshot_size_bytes": meta.get("size_bytes"),
+                         "build_duration_s": meta.get("build_duration_s"), "last_file_year": meta.get("last_file_year"),
                          "market": cfg.get("market"), "routes": cfg.get("routes"),
                          "identity_only": bool(cfg.get("identity_only")), "policy": policy.get("policy"),
                          "licence": policy.get("licence"), "attribution": policy.get("attribution"),
                          "schema_verified": cfg.get("schema_verified"), "snapshot_built_at": meta.get("built_at"),
                          "snapshot_rows": meta.get("rows"), "last_build": state.get(name)})
-        return {"folder": str(self.folder), "building": self._building,
-                "interval_days": self.interval.days, "datasets": rows}
+        return {"folder": str(self.folder), "building": self._building, "first_check_at": self.first_check_at,
+                "scheduled": self._thread is not None, "interval_days": self.interval.days, "datasets": rows}
+
+    def _set_progress(self, dataset: str, state: str, detail: str | None = None) -> None:
+        entry = dict(self._progress.get(dataset) or {})
+        if state == "building" and entry.get("state") != "building":
+            entry["started_at"] = _utc()
+        if state in ("built", "stopped", "failed", "skipped", "already_running"):
+            entry["finished_at"] = _utc()
+        entry.update(state=state, detail=detail, at=_utc())
+        self._progress[dataset] = entry
 
     def due(self, dataset: str) -> bool:
         cfg = ds.datasets().get(dataset) or {}
@@ -93,12 +107,17 @@ class OpenDataJob:
             if self._building:
                 return {"status": "already_running", "building": self._building}
             self._building = dataset
+        self._set_progress(dataset, "building", "starting")
         try:
             ds.set_snapshot_dir(self.folder)
-            result = build_dataset(dataset, self._fetcher)
+            result = build_dataset(dataset, self._fetcher,
+                                   progress=lambda detail: self._set_progress(dataset, "building", detail))
         finally:
             with self._lock:
                 self._building = None
+        self._set_progress(dataset, str(result.get("status") or "failed"),
+                           result.get("reason") or result.get("error") or
+                           (f"{result.get('rows')} rows" if result.get("status") == "built" else None))
         state = self._read()
         state[dataset] = {**result, "reason": reason, "attempted_at": _utc()}
         try:
@@ -113,8 +132,11 @@ class OpenDataJob:
         return result
 
     def build_all(self, *, reason: str = "manual", only_due: bool = False) -> dict:
-        return {name: self.build(name, reason=reason) for name in ds.datasets()
-                if not (ds.datasets()[name].get("identity_only")) and (not only_due or self.due(name))}
+        names = [name for name in ds.datasets()
+                 if not (ds.datasets()[name].get("identity_only")) and (not only_due or self.due(name))]
+        for name in names:
+            self._set_progress(name, "queued", reason)
+        return {name: self.build(name, reason=reason) for name in names}
 
     def rebuild_async(self, dataset: str | None = None) -> bool:
         """'Rebuild now' (one dataset, or all): a daemon thread; False when a build is running."""
@@ -128,6 +150,7 @@ class OpenDataJob:
         """The monthly schedule (checked every check_s, first after FIRST_CHECK_DELAY_S)."""
         if self._thread is not None:
             return
+        self.first_check_at = (self._now() + timedelta(seconds=FIRST_CHECK_DELAY_S)).isoformat(timespec="seconds")
 
         def loop() -> None:
             if self._stop.wait(FIRST_CHECK_DELAY_S):

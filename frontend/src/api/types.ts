@@ -603,6 +603,7 @@ export interface IdentityAnchors {
     sources: Row[]; offers: Row[];
   };
   spec_sheets?: JsonObject;
+  open_data_not_built?: string[];
 }
 
 export interface LiveView {
@@ -837,15 +838,31 @@ export interface DatasetRow {
   policy: string | null;
   licence: string | null;
   attribution: string | null;
-  schema_verified: boolean | null;
+  schema_verified: boolean | string | null;
   snapshot_built_at: string | null;
   snapshot_rows: number | null;
   last_build: DatasetBuild | null;
+  progress?: DatasetProgress | null;
+  absent_columns?: string[] | Record<string, string[]> | null;
+  snapshot_size_bytes?: number | null;
+  build_duration_s?: number | null;
+  last_file_year?: number | null;
+}
+
+// the build state of one dataset in this server process (the open-data job)
+export interface DatasetProgress {
+  state: "queued" | "building" | "built" | "stopped" | "failed" | "skipped" | "already_running" | string;
+  detail?: string | null;
+  at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface DatasetsStatus {
   folder: string;
   building: string | null;
+  first_check_at?: string | null;
+  scheduled?: boolean;
   interval_days: number;
   datasets: DatasetRow[];
 }

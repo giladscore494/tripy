@@ -26,6 +26,16 @@ SOURCE_AUTHORITY = "open_dataset"
 EVENT_SURVIVORS = 8
 
 
+def missing_snapshots(folder=None) -> list[str]:
+    """The datasets (identity-only ones aside) without a local snapshot: recorded as `open_data_no_snapshot` in the run's
+    start event (the run view shows "open data not built"). Never raises."""
+    try:
+        return sorted(name for name, cfg in ds.datasets().items()
+                      if not cfg.get("identity_only") and not ds.available(name, folder))
+    except Exception:  # noqa: BLE001 - informational
+        return []
+
+
 def mode_of(value: Any) -> str:
     value = str(value or DEFAULT_MODE).strip().lower()
     return value if value in MODES else DEFAULT_MODE

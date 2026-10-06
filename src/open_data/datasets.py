@@ -3,8 +3,11 @@
 One file per dataset: <snapshot dir>/<dataset>.sqlite with
 
     rows(row_id TEXT PRIMARY KEY, make TEXT, model TEXT, year INTEGER, data TEXT)   data = the canonical columns (JSON)
-    meta(key TEXT PRIMARY KEY, value TEXT)                                          built_at, source_url, rows, columns,
-                                                                                    schema (the live header), licence
+    meta(key TEXT PRIMARY KEY, value TEXT)                                          built_at, source_url, rows, schema
+                                                                                    (the live header), licence, years /
+                                                                                    files (per year / file report),
+                                                                                    absent_columns, build_duration_s
+                                                                                    (+ size_bytes when read)
 
 The engine only reads (a read-only URI connection); the builder writes a new file next to the old one and swaps it in
 atomically, so a failed build keeps the previous snapshot.
@@ -81,8 +84,10 @@ def snapshot_meta(dataset: str, folder: Path | None = None) -> dict:
         return {}
     try:
         with _connect(path) as conn:
-            return {k: json.loads(v) for k, v in conn.execute("SELECT key, value FROM meta")}
-    except sqlite3.Error:
+            meta = {k: json.loads(v) for k, v in conn.execute("SELECT key, value FROM meta")}
+        meta["size_bytes"] = path.stat().st_size
+        return meta
+    except (sqlite3.Error, OSError):
         return {}
 
 

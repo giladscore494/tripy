@@ -5,6 +5,7 @@
 // computes a metric.
 
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { api } from "../../api/endpoints";
 import type {
@@ -261,6 +262,12 @@ function IdentityAnchorsView({ anchors }: { anchors: IdentityAnchors }) {
         { label: "International variant", value: <Dir>{od?.designation ?? "—"}</Dir> },
         { label: "Lead source", value: od?.lead_source ?? "—" },
       ]} />
+      {(anchors.open_data_not_built ?? []).length > 0 && (
+        <NoticeBox tone="warn" title="Open data not built">
+          No local snapshot for {(anchors.open_data_not_built ?? []).join(", ")} when this run started, so those
+          sources could not be matched. See the build status on the <Link className="underline" to="/data">Data page</Link>.
+        </NoticeBox>
+      )}
       {od?.error && <NoticeBox tone="danger">{od.error}</NoticeBox>}
       {od && od.sources.length > 0 && <><p className="kicker">International variant per source</p><DataTable rows={od.sources} /></>}
       {od && od.offers.length > 0 && <><p className="kicker">Offers per field</p><DataTable rows={od.offers} /></>}

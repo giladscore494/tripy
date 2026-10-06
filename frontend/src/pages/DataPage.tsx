@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { PolicyEntry } from "../api/types";
+import type { DatasetProgress, DatasetRow, PolicyEntry } from "../api/types";
 import {
   Badge, Button, ErrorState, ExternalLink, Field, Mono, Notice, Panel, SkeletonRows,
 } from "../components/ui/primitives";
@@ -18,12 +18,39 @@ const POLICY_TONE: Record<string, Tone> = {
   allowed: "ok", identity_only: "warn", blocked: "danger",
 };
 
+const PROGRESS_TONE: Record<string, Tone> = {
+  queued: "neutral", building: "accent", built: "ok", stopped: "warn", failed: "danger",
+};
+
+function ProgressCell({ progress }: { progress?: DatasetProgress | null }) {
+  if (!progress) return <span className="text-ink-faint">—</span>;
+  return (
+    <span>
+      <Badge tone={PROGRESS_TONE[progress.state] ?? "neutral"}>{progress.state}</Badge>
+      {progress.detail && <span className="block text-[11px] text-ink-muted">{progress.detail}</span>}
+    </span>
+  );
+}
+
+function absentText(row: DatasetRow): string | null {
+  const absent = row.absent_columns;
+  if (!absent) return null;
+  if (Array.isArray(absent)) return absent.length ? absent.join(", ") : null;
+  const parts = Object.entries(absent).filter(([, cols]) => cols.length).map(([k, cols]) => `${k}: ${cols.join(", ")}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function megabytes(bytes?: number | null): string | null {
+  return bytes ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : null;
+}
+
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 export function DataPage() {
-  const datasets = useResource("data-datasets", (signal) => api.dataDatasets({ signal }));
+  // polled: the progress column follows a running build
+  const datasets = useResource("data-datasets", (signal) => api.dataDatasets({ signal }), { intervalMs: 5000 });
   const policy = useResource("data-policy", (signal) => api.dataPolicy({ signal }));
   const [rebuild, setRebuild] = useState<{ busy: boolean; message: string | null; error: ApiError | null }>(
     { busy: false, message: null, error: null });
@@ -77,12 +104,14 @@ export function DataPage() {
             <div className="space-y-3">
               <div className="table-wrap">
                 <table className="data-table">
-                  <thead><tr><th>Dataset</th><th>Policy</th><th>Last build</th><th>Rows</th><th>Source</th><th /></tr></thead>
+                  <thead><tr><th>Dataset</th><th>Policy</th><th>Progress</th><th>Last build</th><th>Rows</th><th>Source</th><th /></tr></thead>
                   <tbody>
                     {datasets.data.datasets.map((d) => (
                       <tr key={d.dataset}>
                         <td><span className="text-ink">{d.label ?? d.dataset}</span><Mono className="block text-[11px]">{d.dataset}</Mono></td>
                         <td><Badge tone={POLICY_TONE[d.policy ?? "blocked"] ?? "neutral"}>{d.policy ?? "blocked"}</Badge></td>
+                        <td>{d.identity_only ? <span className="text-ink-faint">identity only</span>
+                          : <ProgressCell progress={d.progress} />}</td>
                         <td>
                           <Mono>{d.snapshot_built_at ?? "never built"}</Mono>
                           {d.last_build?.status && d.last_build.status !== "built" && (
@@ -91,7 +120,16 @@ export function DataPage() {
                             </span>
                           )}
                         </td>
-                        <td>{d.snapshot_rows ?? "—"}</td>
+                        <td>
+                          {d.snapshot_rows ?? "—"}
+                          {(megabytes(d.snapshot_size_bytes) || d.build_duration_s != null) && (
+                            <span className="block text-[11px] text-ink-faint">
+                              {[megabytes(d.snapshot_size_bytes), d.build_duration_s != null ? `${d.build_duration_s} s` : null]
+                                .filter(Boolean).join(" · ")}
+                            </span>
+                          )}
+                          {absentText(d) && <span className="block text-[11px] text-warn">absent: {absentText(d)}</span>}
+                        </td>
                         <td>{d.source_url ? <ExternalLink href={d.source_url}>source</ExternalLink> : "—"}</td>
                         <td>
                           {!d.identity_only && (
@@ -104,6 +142,13 @@ export function DataPage() {
                   </tbody>
                 </table>
               </div>
+              {datasets.data.first_check_at && datasets.data.datasets.some((d) => !d.identity_only && !d.snapshot_built_at
+                && !d.progress) && (
+                <Notice tone="info" title="First build scheduled">
+                  The first scheduled build after this deploy starts at <Mono>{datasets.data.first_check_at}</Mono>;
+                  "Rebuild now" starts it immediately.
+                </Notice>
+              )}
               {rebuild.message && <span className="text-xs text-ink-muted">{rebuild.message}</span>}
               {rebuild.error && <ErrorState error={rebuild.error} title="The rebuild did not start" />}
               <p className="text-xs text-ink-faint">Monthly schedule (every {datasets.data.interval_days} days). A build

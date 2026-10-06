@@ -647,9 +647,13 @@ def identity_anchors_view(events: list[dict]) -> dict | None:
     fp = next((e for e in events if e.get("kind") == "identity_fingerprint"), None)
     od = next((e for e in events if e.get("kind") == "open_data_match"), None)
     sheets = next((e for e in events if e.get("kind") == "spec_sheet_discovery"), None)
-    if not (fp or od or sheets):
+    started = next((e for e in events if e.get("kind") == "run_started"), None) or {}
+    not_built = started.get("open_data_no_snapshot") or []
+    if not (fp or od or sheets or not_built):
         return None
     out: dict = {}
+    if not_built:
+        out["open_data_not_built"] = list(not_built)
     if fp:
         view = fingerprint_event({k: v for k, v in fp.items() if k not in ("kind", "seq", "ts", "t")})
         out["fingerprint"] = {k: view.get(k) for k in ("tozeret_cd", "degem_cd", "type_code", "year", "code_family",
