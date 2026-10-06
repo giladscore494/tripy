@@ -124,7 +124,9 @@ def start_series(body: StartSeries, response: Response, ctx: ApiContext = Depend
         raise ApiError(409, "series_rejected", str(exc),
                        existing_series_id=_executing(ctx.manager, ctx.manager.list_series(limit=20))) from None
     except InsufficientDisk as exc:
-        raise ApiError(507, "insufficient_disk", str(exc)) from None
+        from .runs import disk_refusal
+
+        raise disk_refusal(ctx, exc) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the series: {exc}") from None
     except Level15Error as exc:

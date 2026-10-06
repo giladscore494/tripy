@@ -38,6 +38,12 @@ export interface RunSummary {
   elapsed_s: number | null;
   /** "26 / 37" from the final report, summed over vehicles */
   resolved_fields_text?: string | null;
+  /** the run folder's size on disk (retention) */
+  size_bytes?: number | null;
+  /** marked keep: never compacted, never deleted by the age rule */
+  pinned?: boolean;
+  /** when retention compacted the run (its heavy artefacts deleted) */
+  compacted_at?: string | null;
 }
 
 export interface RunList {
@@ -873,6 +879,19 @@ export interface DatasetsStatus {
   config_version: string | null;
   datasets: DatasetRow[];
 }
+
+// retention (src/storage/retention.Retention.overview)
+export interface RetentionOverview {
+  settings: { keep_newest: number; pinned: string[]; updated_at?: string | null };
+  compaction: { runs: { run_id: string; bytes: number; paths: number; compacted_before: boolean }[]; bytes: number;
+                kept: string[]; busy: string[] };
+  cache: { documents: number; bytes: number; cache_bytes: number; documents_bytes: number; used_by_kept_runs: number };
+  logs: { bytes: number; cap_bytes: number };
+  history: { at: string; action: string; run_id?: string; bytes?: number; by?: string }[];
+}
+
+export interface OlderThanPlan { days: number; runs: { run_id: string; created_at: string | null; bytes: number }[];
+                                 bytes: number }
 
 // the data volume (src/storage/disk.usage)
 export interface StorageStatus {

@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
 
 from ...db import Level15Error
 from ...glm_client import GLMError
@@ -27,6 +28,7 @@ from ...research_targets import ALL, MANUFACTURER, ONE, SET, catalog_target, res
 from ...run_profiles import PRODUCTION
 from ...run_settings import build_research_request, settings_checks, settings_for_run, settings_from_env
 from ...storage.disk import InsufficientDisk
+from ...storage.retention import RetentionError
 from ..deps import ApiContext, get_context
 from ..errors import ApiError, not_found
 from ..schemas import (ActionAccepted, EventsPage, RestartVehicle, RunCandidates, RunDetail, RunEvidence, RunList,
@@ -51,8 +53,11 @@ def list_runs(limit: int | None = Query(None, ge=1, le=1000), ctx: ApiContext = 
     """Run history, newest first, from the durable run repository (the dashboard's sidebar)."""
     records = ctx.manager.list_runs()
     executing = service.executing_ids(ctx)
+    retention = getattr(ctx.manager, "retention", None)
+    pinned = set(retention.settings()["pinned"]) if retention else set()
     return service.redacted({"total": len(records),
-                             "runs": [service.summary(r, executing) for r in records[:limit]]})
+                             "runs": [service.summary(r, executing, service.storage_info(ctx, r, pinned))
+                                      for r in records[:limit]]})
 
 
 @router.get("/{run_id}", response_model=RunDetail)
@@ -114,7 +119,7 @@ def _start(ctx: ApiContext, vehicles: list[dict], label: str, scope: str, key: s
     except RunRejected as exc:
         raise ApiError(409, "run_rejected", str(exc), existing_run_id=exc.existing_run_id) from None
     except InsufficientDisk as exc:
-        raise ApiError(507, "insufficient_disk", str(exc)) from None
+        raise disk_refusal(ctx, exc) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the run: {exc}") from None
     except Level15Error as exc:
@@ -171,6 +176,54 @@ def start_run(body: StartRun, response: Response, ctx: ApiContext = Depends(get_
     return _start(ctx, vehicles, label, SCOPES[body.scope], body.idempotency_key, body.profile, response, overrides)
 
 
+def disk_refusal(ctx: ApiContext, exc: InsufficientDisk) -> ApiError:
+    """The refusal of a run / series start below the free-space guard: how many MB compacting the old runs would free
+    and where (the Data page's Storage section)."""
+    retention = getattr(ctx.manager, "retention", None)
+    try:
+        freed = retention.compaction_plan()["bytes"] if retention else 0
+    except Exception:  # noqa: BLE001 - the refusal never fails on its hint
+        freed = 0
+    hint = (f" Compacting the old runs would free {freed / 1024 / 1024:.0f} MB." if freed
+            else " Delete old runs or cached documents.")
+    return ApiError(507, "insufficient_disk", f"{exc}.{hint} See Data → Storage.", free_bytes=exc.free,
+                    needed_bytes=exc.needed, compaction_bytes=freed, storage_path="/data#storage")
+
+
+# --- delete / keep (retention) -----------------------------------------------------------------------------------------
+
+class KeepRun(BaseModel):
+    keep: bool
+
+
+def _retention(ctx: ApiContext):
+    retention = getattr(ctx.manager, "retention", None)
+    if retention is None:
+        raise ApiError(503, "not_ready", "Retention is not available.")
+    return retention
+
+
+@router.delete("/{run_id}")
+def delete_run(run_id: str, ctx: ApiContext = Depends(get_context)) -> dict:
+    """Delete <data>/runs/<run_id>/ (only that folder). 409 while the run is executing. Logged (run id, bytes, time)."""
+    record = service.get_record(ctx, run_id)
+    try:
+        return _retention(ctx).delete_run(record.run_id, by="operator (run view)")
+    except RetentionError as exc:
+        raise ApiError(exc.status, exc.code, str(exc)) from None
+
+
+@router.post("/{run_id}/keep")
+def keep_run(run_id: str, body: KeepRun, ctx: ApiContext = Depends(get_context)) -> dict:
+    """Mark a run keep (never compacted, never deleted by the age rule) or clear the mark."""
+    record = service.get_record(ctx, run_id)
+    try:
+        settings = _retention(ctx).set_pinned(record.run_id, body.keep, by="operator (run view)")
+    except RetentionError as exc:
+        raise ApiError(exc.status, exc.code, str(exc)) from None
+    return {"run_id": record.run_id, "pinned": record.run_id in settings["pinned"]}
+
+
 # --- cancel / finalize / restart -------------------------------------------------------------------------------------
 
 @router.post("/{run_id}/cancel", response_model=ActionAccepted, status_code=202)
@@ -210,7 +263,7 @@ def finalize_vehicle(run_id: str, record_id: str, ctx: ApiContext = Depends(get_
     except RunRejected as exc:
         raise ApiError(409, "run_rejected", str(exc), existing_run_id=exc.existing_run_id) from None
     except InsufficientDisk as exc:
-        raise ApiError(507, "insufficient_disk", str(exc)) from None
+        raise disk_refusal(ctx, exc) from None
     except GLMError as exc:
         raise ApiError(503, "provider_configuration", f"Could not start the finalization: {exc}") from None
     return {"run_id": record.run_id, "record_id": record_id,

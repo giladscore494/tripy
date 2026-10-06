@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { DatasetRow, PolicyEntry, StorageStatus } from "../api/types";
+import type { DatasetRow, OlderThanPlan, PolicyEntry, StorageStatus } from "../api/types";
 import {
   Badge, Button, ErrorState, ExternalLink, Field, KeyValue, Mono, Notice, Panel, SkeletonRows, Stat,
 } from "../components/ui/primitives";
@@ -48,6 +49,137 @@ function unknownUnits(row: DatasetRow): string[] {
   return Object.entries(row.column_units ?? {}).filter(([, u]) => u.unit === "unknown" && !u.unit_of).map(([k]) => k);
 }
 
+type Action = "compact" | "older" | "cache" | "keep" | null;
+
+/** Retention (src/storage/retention.py): keep the newest N runs (+ the runs marked keep), compact the older ones, delete
+ * runs older than N days, delete the cached documents no kept run uses; every action is previewed and confirmed. */
+function RetentionSection({ onFreed }: { onFreed: () => void }) {
+  const overview = useResource("data-retention", (signal) => api.dataRetention({ signal }));
+  const [confirm, setConfirm] = useState<Action>(null);
+  const [busy, setBusy] = useState<Action>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [keepNewest, setKeepNewest] = useState<string>("");
+  const [days, setDays] = useState("30");
+  const [older, setOlder] = useState<OlderThanPlan | null>(null);
+  const data = overview.data;
+
+  const act = async (action: Action, run: () => Promise<string>) => {
+    setBusy(action);
+    setError(null);
+    setMessage(null);
+    try {
+      setMessage(await run());
+      setConfirm(null);
+      setOlder(null);
+      void overview.refresh();
+      onFreed();
+    } catch (e) {
+      setError(e instanceof ApiError ? e : new ApiError(0, "client_error", "The action failed."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (overview.loading && !data) return <SkeletonRows rows={3} />;
+  if (overview.error && !data) return <ErrorState error={overview.error} onRetry={overview.refresh} />;
+  if (!data) return null;
+  const compactRuns = data.compaction.runs.length;
+  return (
+    <div className="space-y-4 border-t border-line pt-4">
+      <p className="kicker">Retention</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Keep the newest runs whole" htmlFor="keep-newest"
+               hint={`Plus ${data.settings.pinned.length} run(s) marked keep in the run view.`}>
+          <input id="keep-newest" type="number" min={0} className="input w-28"
+                 value={keepNewest || String(data.settings.keep_newest)} onChange={(e) => setKeepNewest(e.target.value)} />
+        </Field>
+        <Button size="sm" variant="ghost" busy={busy === "keep"}
+                disabled={!keepNewest || Number(keepNewest) === data.settings.keep_newest}
+                onClick={() => act("keep", async () => {
+                  const out = await api.setRetention(Number(keepNewest));
+                  setKeepNewest("");
+                  return `Keeping the newest ${out.keep_newest} run(s).`;
+                })}>Save</Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        {confirm !== "compact" ? (
+          <Button size="sm" onClick={() => setConfirm("compact")} disabled={!compactRuns}>
+            Compact old runs now ({megabytes(data.compaction.bytes)})
+          </Button>
+        ) : (
+          <>
+            <span className="text-xs text-ink">Compact {compactRuns} run(s) and free {megabytes(data.compaction.bytes)}?
+              Their result, events, diagnostics and binding-replay files are kept.</span>
+            <Button size="sm" variant="danger" busy={busy === "compact"} onClick={() => act("compact", async () => {
+              const out = await api.compactRuns();
+              return `Compacted ${out.runs.length} run(s): ${megabytes(out.bytes_freed)} freed.`;
+            })}>Confirm compact</Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Delete runs older than (days)" htmlFor="older-days" hint="Never the newest runs, kept runs or a running one.">
+          <input id="older-days" type="number" min={1} className="input w-28" value={days}
+                 onChange={(e) => { setDays(e.target.value); setOlder(null); setConfirm(null); }} />
+        </Field>
+        {confirm !== "older" ? (
+          <Button size="sm" variant="ghost" disabled={!(Number(days) >= 1)} onClick={async () => {
+            setError(null);
+            try {
+              setOlder(await api.olderThan(Number(days)));
+              setConfirm("older");
+            } catch (e) {
+              setError(e instanceof ApiError ? e : new ApiError(0, "client_error", "The preview failed."));
+            }
+          }}>Delete runs older than {days || "N"} days</Button>
+        ) : older && (
+          <>
+            <span className="text-xs text-ink">{older.runs.length ? `Delete ${older.runs.length} run(s) and free ${megabytes(older.bytes)}?`
+              : "No run is older than that."}</span>
+            {older.runs.length > 0 && (
+              <Button size="sm" variant="danger" busy={busy === "older"} onClick={() => act("older", async () => {
+                const out = await api.deleteOlder(older.days);
+                return `Deleted ${out.runs.length} run(s): ${megabytes(out.bytes_freed)} freed.`;
+              })}>Confirm delete</Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => { setConfirm(null); setOlder(null); }}>Cancel</Button>
+          </>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm text-ink">Document cache: {megabytes(data.cache.cache_bytes)}
+          <span className="text-xs text-ink-muted"> · {data.cache.documents} document(s) ({megabytes(data.cache.bytes)})
+            not used by a kept run or the research memory</span></p>
+        <div className="flex flex-wrap items-center gap-3">
+          {confirm !== "cache" ? (
+            <Button size="sm" variant="ghost" onClick={() => setConfirm("cache")} disabled={!data.cache.documents}>
+              Delete cached documents not used by a kept run
+            </Button>
+          ) : (
+            <>
+              <span className="text-xs text-ink">Delete {data.cache.documents} cached document(s) and free {megabytes(data.cache.bytes)}?</span>
+              <Button size="sm" variant="danger" busy={busy === "cache"} onClick={() => act("cache", async () => {
+                const out = await api.cleanCache();
+                return `Deleted ${out.documents} cached document(s): ${megabytes(out.bytes_freed)} freed.`;
+              })}>Confirm delete</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-ink-muted">Logs: {megabytes(data.logs.bytes)} of a {megabytes(data.logs.cap_bytes)} cap (rotated).</p>
+      {message && <span className="text-xs text-ink-muted">{message}</span>}
+      {error && <ErrorState error={error} title="The retention action failed" />}
+    </div>
+  );
+}
+
 function StoragePanel() {
   const storage = useResource("data-storage", (signal) => api.dataStorage({ signal }));
   const [confirming, setConfirming] = useState(false);
@@ -55,6 +187,14 @@ function StoragePanel() {
     { busy: false, message: null, error: null });
   const [fresh, setFresh] = useState<StorageStatus | null>(null);
   const data = fresh ?? storage.data;
+  const location = useLocation();
+  const loaded = !!data;
+  useEffect(() => {       // /data#storage (the disk refusal's link) scrolls here once the panel has rendered
+    if (loaded && location.hash === "#storage") {
+      const node = document.getElementById("storage");
+      if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "start" });
+    }
+  }, [loaded, location.hash]);
 
   const remove = async () => {
     setState({ busy: true, message: null, error: null });
@@ -71,7 +211,7 @@ function StoragePanel() {
   };
 
   return (
-    <Panel kicker="Data volume" title="Storage">
+    <Panel kicker="Data volume" title="Storage" id="storage">
       {storage.loading && !data ? <SkeletonRows rows={4} /> : storage.error && !data
         ? <ErrorState error={storage.error} onRetry={storage.refresh} />
         : data && (
@@ -115,6 +255,7 @@ function StoragePanel() {
               {state.message && <span className="text-xs text-ink-muted">{state.message}</span>}
             </div>
             {state.error && <ErrorState error={state.error} title="The open-data files were not deleted" />}
+            <RetentionSection onFreed={() => { setFresh(null); void storage.refresh(); }} />
           </div>
         )}
     </Panel>

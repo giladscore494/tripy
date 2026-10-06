@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
 import type { RunSummary } from "../../api/types";
-import { formatDateTime, formatDuration, formatRelative } from "../../lib/format";
+import { formatBytes, formatDateTime, formatDuration, formatRelative } from "../../lib/format";
 import { statusTone } from "../../lib/status";
 import { Badge, Mono } from "../ui/primitives";
 
@@ -34,6 +34,9 @@ export function RunRow({ run, profiles, now }: { run: RunSummary; profiles?: { i
             {run.stage && <span>stage {run.stage}</span>}
             <span>{run.record_ids.length} vehicle{run.record_ids.length === 1 ? "" : "s"}</span>
             {run.resolved_fields_text && <span className="tabular-nums">{run.resolved_fields_text} fields</span>}
+            {run.size_bytes != null && <span className="tabular-nums" title="Size on disk">{formatBytes(run.size_bytes)}</span>}
+            {run.pinned && <Badge tone="violet">Kept</Badge>}
+            {run.compacted_at && <Badge>Compacted</Badge>}
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-ink-muted sm:justify-end sm:text-right">

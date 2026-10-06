@@ -201,7 +201,12 @@ export function NewResearchPage() {
         </div>
         {error && (
           <div className="mt-4">
-            {existingRun ? (
+            {error.code === "insufficient_disk" ? (
+              <Notice tone="danger" title="Not enough free space on the data volume" action={
+                <Link to="/data#storage"><Button size="sm">Open Data → Storage</Button></Link>}>
+                {error.message}
+              </Notice>
+            ) : existingRun ? (
               <Notice tone="warn" title="A conflicting run is already active" action={
                 <Link to={`/runs/${encodeURIComponent(existingRun)}`}><Button size="sm">Open that run</Button></Link>}>
                 {error.message}

@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { api, exportsApi, type RunExport } from "../../api/endpoints";
 import type { Failure, Pipeline, RunDetail, Stage, VehicleProgress, VehicleState } from "../../api/types";
-import { formatDateTime, formatDuration, humanize, num } from "../../lib/format";
+import { formatBytes, formatDateTime, formatDuration, humanize, num } from "../../lib/format";
 import { newKey } from "../../lib/idempotency";
 import { stageTone, statusTone } from "../../lib/status";
 import { IconAlert, IconCheck, IconDownload, IconRefresh, IconStop } from "../ui/icons";
@@ -13,9 +13,70 @@ import { profileLabel, StatusBadge } from "./RunBits";
 
 // --- header -----------------------------------------------------------------------------------------------------------
 
-export function RunHeader({ run, active, now, profiles, onCancel, cancelling }: {
+/** Retention in the run view: the run's size, the keep toggle and "Delete run" (two-step inline confirm; refused by the
+ * server while the run is executing). Only <data>/runs/<run_id>/ is deleted. */
+export function RunStorageActions({ run, onChanged, onDeleted }: {
+  run: RunDetail; onChanged?: () => void; onDeleted?: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState<"delete" | "keep" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const executing = run.executing;
+
+  const remove = async () => {
+    setBusy("delete");
+    setError(null);
+    try {
+      await api.deleteRun(run.run_id);
+      setConfirming(false);
+      onDeleted?.();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "The run was not deleted.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const toggleKeep = async () => {
+    setBusy("keep");
+    setError(null);
+    try {
+      await api.keepRun(run.run_id, !run.pinned);
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "The keep mark was not changed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-start gap-2 lg:items-end">
+      <div className="flex flex-wrap items-center gap-2">
+        {run.size_bytes != null && <span className="text-xs text-ink-muted">{formatBytes(run.size_bytes)} on disk</span>}
+        {run.compacted_at && <Badge title={`Compacted ${formatDateTime(run.compacted_at)}`}>Compacted</Badge>}
+        <Button size="sm" variant="ghost" onClick={toggleKeep} busy={busy === "keep"} aria-pressed={!!run.pinned}
+                title="A kept run is never compacted and never deleted by the age rule">
+          {run.pinned ? "Kept ✓" : "Keep"}
+        </Button>
+        {!confirming ? (
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(true)} disabled={executing}
+                  title={executing ? "The run is executing" : "Delete this run's folder"}>Delete run</Button>
+        ) : (
+          <>
+            <span className="text-xs text-ink">Delete <Mono>{run.run_id}</Mono>{run.size_bytes != null ? ` (${formatBytes(run.size_bytes)})` : ""}?</span>
+            <Button size="sm" variant="danger" onClick={remove} busy={busy === "delete"}>Confirm delete</Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          </>
+        )}
+      </div>
+      {error && <span className="text-xs text-danger">{error}</span>}
+    </div>
+  );
+}
+
+export function RunHeader({ run, active, now, profiles, onCancel, cancelling, onChanged, onDeleted }: {
   run: RunDetail; active: boolean; now: number; profiles?: { id: string; label: string }[];
-  onCancel: () => void; cancelling: boolean;
+  onCancel: () => void; cancelling: boolean; onChanged?: () => void; onDeleted?: () => void;
 }) {
   const started = run.started_at ?? run.created_at;
   const elapsed = active && started ? (now - new Date(started).getTime()) / 1000 : run.elapsed_s;
@@ -35,12 +96,13 @@ export function RunHeader({ run, active, now, profiles, onCancel, cancelling }: 
             {active && !run.executing && <Badge tone="warn" title="The durable status is active but no worker of this server executes it">No live worker</Badge>}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col items-start gap-3 lg:items-end">
           {run.executing && active && (
             <Button variant="danger" onClick={onCancel} busy={cancelling} disabled={run.cancel_requested}>
               <IconStop size={15} />{run.cancel_requested ? "Stopping…" : "Cancel run"}
             </Button>
           )}
+          {!run.legacy && <RunStorageActions run={run} onChanged={onChanged} onDeleted={onDeleted} />}
         </div>
       </div>
       <div className="mt-5 border-t border-line pt-4">

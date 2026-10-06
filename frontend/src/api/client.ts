@@ -78,7 +78,7 @@ async function toApiError(response: Response): Promise<ApiError> {
 }
 
 export interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
   query?: Record<string, string | number | boolean | null | undefined | (string | number)[]>;

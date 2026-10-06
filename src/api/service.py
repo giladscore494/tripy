@@ -15,6 +15,7 @@ URLs, Authorization / Bearer values, secret-named keys). Nothing here writes res
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -65,9 +66,27 @@ def executing_ids(ctx: ApiContext) -> set[str]:
     return {r.run_id for r in ctx.manager.active_runs()}
 
 
-def summary(record: RunRecord, executing: set[str]) -> dict:
+def storage_info(ctx: ApiContext, record: RunRecord, pinned: set[str] | None = None) -> dict:
+    """The run's size on disk, whether it is marked keep (retention) and when it was compacted."""
+    from ..storage.retention import COMPACTED_NAME, run_size
+
+    retention = getattr(ctx.manager, "retention", None)
+    if pinned is None:
+        pinned = set(retention.settings()["pinned"]) if retention else set()
+    folder = Path(ctx.runs_dir) / record.run_id
+    compacted = None
+    if (folder / COMPACTED_NAME).is_file():
+        try:
+            compacted = json.loads((folder / COMPACTED_NAME).read_text("utf-8")).get("compacted_at")
+        except (OSError, ValueError):
+            compacted = None
+    return {"size_bytes": run_size(folder) if folder.is_dir() else None, "pinned": record.run_id in pinned,
+            "compacted_at": compacted}
+
+
+def summary(record: RunRecord, executing: set[str], storage: dict | None = None) -> dict:
     duration = elapsed_s(record)
-    return {"run_id": record.run_id, "label": record.label, "scope": record.target.get("scope"),
+    return {**(storage or {}), "run_id": record.run_id, "label": record.label, "scope": record.target.get("scope"),
             "status": record.status, "status_label": STATUS_LABELS.get(record.status, record.status),
             "stage": record.stage, "profile": (record.request or {}).get("run_profile"),
             "record_ids": record.record_ids, "created_at": record.created_at, "updated_at": record.updated_at,
@@ -151,7 +170,7 @@ def progress_counts(vehicles: list[dict]) -> dict:
 def run_detail(ctx: ApiContext, record: RunRecord) -> dict:
     vehicles = [vehicle_state(ctx, record, rid, title) for rid, title in vehicles_of(record)]
     views = [v.pop("_view") for v in vehicles]
-    return {**summary(record, executing_ids(ctx)), "request": dict(record.request or {}),
+    return {**summary(record, executing_ids(ctx), storage_info(ctx, record)), "request": dict(record.request or {}),
             "status_panel": [[label, value] for label, value in run_views.status_panel_rows(record, views)],
             "heartbeat_at": record.heartbeat_at, "error": record.error, "notes": list(record.notes),
             "jobs": list(record.jobs), "terminal": record.terminal, "completed": record.status == COMPLETED,

@@ -15,7 +15,7 @@ import type {
   CatalogPage,
   CatalogQuery,
   CatalogStatus,
-  DatasetsStatus, StorageStatus,
+  DatasetsStatus, OlderThanPlan, RetentionOverview, StorageStatus,
   DerivedIndexStatus,
   LiveView,
   Reachability,
@@ -93,6 +93,11 @@ export const api = {
 
   startRun: (body: StartRun) => request<Started>("/api/runs", { method: "POST", body }),
   cancelRun: (runId: string) => request<ActionAccepted>(`/api/runs/${enc(runId)}/cancel`, { method: "POST" }),
+  // retention: delete a run folder (refused while it executes) / mark it keep
+  deleteRun: (runId: string) =>
+    request<{ run_id: string; deleted: boolean; bytes_freed: number }>(`/api/runs/${enc(runId)}`, { method: "DELETE" }),
+  keepRun: (runId: string, keep: boolean) =>
+    request<{ run_id: string; pinned: boolean }>(`/api/runs/${enc(runId)}/keep`, { method: "POST", body: { keep } }),
   finalizeVehicle: (runId: string, recordId: string) =>
     request<ActionAccepted>(`/api/runs/${enc(runId)}/vehicles/${enc(recordId)}/finalize`, { method: "POST" }),
   restartVehicle: (runId: string, recordId: string, idempotencyKey: string) =>
@@ -133,6 +138,19 @@ export const api = {
   // (src/api/routes/data.py)
   dataDatasets: (o: Opts = {}) => request<DatasetsStatus>("/api/data/datasets", o),
   dataStorage: (o: Opts = {}) => request<StorageStatus>("/api/data/storage", o),
+  dataRetention: (o: Opts = {}) => request<RetentionOverview>("/api/data/retention", o),
+  setRetention: (keepNewest: number) =>
+    request<RetentionOverview["settings"]>("/api/data/retention", { method: "PUT", body: { keep_newest: keepNewest } }),
+  compactRuns: () =>
+    request<{ runs: { run_id: string; bytes_freed: number }[]; bytes_freed: number; storage: StorageStatus }>(
+      "/api/data/retention/compact", { method: "POST", body: { confirm: true } }),
+  olderThan: (days: number) => request<OlderThanPlan>("/api/data/retention/older-than", { query: { days } }),
+  deleteOlder: (days: number) =>
+    request<{ runs: string[]; bytes_freed: number; storage: StorageStatus }>("/api/data/retention/delete-older",
+      { method: "POST", body: { days, confirm: true } }),
+  cleanCache: () =>
+    request<{ documents: number; bytes_freed: number; storage: StorageStatus }>("/api/data/retention/clean-cache",
+      { method: "POST", body: { confirm: true } }),
   deleteOpenData: () =>
     request<{ deleted: boolean; bytes_freed: number; path: string; storage: StorageStatus }>(
       "/api/data/storage/delete-open-data", { method: "POST", body: { confirm: true } }),
