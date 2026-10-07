@@ -251,6 +251,13 @@
                         "body": "BodyClass", "drive": "DriveType"}
     }
   },
+  "research_identity": {
+    "_about": "V1: when the open-data match reaches exact_technical_variant, a deterministic search wave before research turn 1 with the configuration's identity (src/open_data/identity.identity_search_wave): the templates below on the brand's importer domains (data/source_rules.json importer slugs) then its official manufacturer domains (src/tools/search.py), ONLY those the effective source policy (repository file + operator overlay) allows at run time; nothing is searched on a blocked or unlisted domain. Placeholders: {domain}, {model} (EEA Cn), {type_code} (EEA Va / degem_nm), {power_kw}, {type_approval}; a template whose placeholder has no value is skipped.",
+    "max_searches": 4,
+    "max_domains": 3,
+    "templates": ["site:{domain} {model} {type_code}", "site:{domain} {model} {power_kw} kW",
+                  "site:{domain} \"{type_approval}\""]
+  },
   "drive_tokens_model_text": {
     "_about": "M1: the drive a European source row names in its own model / version text (EEA Cn / Va / Ve, ADEME Modele / Description Commerciale), per canonical make plus `any` make; a token matches at the start of a word ('xDrive30e', '4MATIC+'). A row naming AWD is vetoed for a two-wheel-drive target and a row naming two-wheel drive for an AWD target; a row naming neither stays unknown (never a default). Read for the `sources` only (NRCan keeps its own drive_tokens / drive_default).",
     "sources": ["eea_co2_cars", "ademe_car_labelling"],

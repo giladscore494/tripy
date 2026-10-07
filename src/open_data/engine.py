@@ -161,6 +161,13 @@ def run_open_data(ctx, run_log, payload: dict | None, fingerprint: dict, mode: s
             result["level"], result["level_basis"] = match_level(target_keys(fingerprint, payload),
                                                                  result["sources"])
         offers = field_offers(result)
+        # V1-V3: the configuration's identity keys for the web research (exact_technical_variant only)
+        from .identity import apply_to_admission, research_identity
+
+        identity = research_identity(result)
+        out["identity"] = identity
+        if getattr(ctx, "admission", None) is not None:
+            apply_to_admission(ctx.admission, {"identity": identity, "offers": offers})
         allow = ds.admission_allowlist()
         admitted = []
         if mode == "admit":

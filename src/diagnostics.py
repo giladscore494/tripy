@@ -1009,7 +1009,20 @@ def operations_summary(events: list[dict]) -> dict:
             "il_version_searches": il_pages.get("searches"), "il_version_fetches": il_pages.get("fetches"),
             "il_version_pages_found": il_pages.get("found"),
             "gov_registry_evidence": registry.get("stored"),
+            **open_data_research_operations(events),
             **search_operations(events)}
+
+
+def open_data_research_operations(events: list[dict]) -> dict:
+    """V1-V4: the open-data research identity's effect (the `open_data_research` event; the identity searches)."""
+    report = next((e for e in events if e.get("kind") == "open_data_research"), None) or {}
+    wave = next((e for e in events if e.get("kind") == "open_data_identity_search"), None) or {}
+    return {"queries_with_open_data_identity": report.get("queries_with_open_data_identity"),
+            "pages_verified_by_open_data_keys": report.get("pages_verified_by_open_data_keys"),
+            "values_corroborated_by_open_data": report.get("values_corroborated_by_open_data"),
+            "open_data_fields_gained": report.get("fields_gained"),
+            "open_data_identity_searches": wave.get("searches"),
+            "open_data_identity_allowed_domains": wave.get("allowed_domains")}
 
 
 def search_operations(events: list[dict]) -> dict:
@@ -1236,6 +1249,9 @@ def vehicle_row(diag: dict) -> dict:
             "rate_limited_failures": ops.get("rate_limited_failures"),
             # PR #44: Israeli version pages (P2) and government registry evidence (P1)
             "acq_il_version_searches": ops.get("il_version_searches"),
+            "queries_with_open_data_identity": ops.get("queries_with_open_data_identity"),
+            "pages_verified_by_open_data_keys": ops.get("pages_verified_by_open_data_keys"),
+            "values_corroborated_by_open_data": ops.get("values_corroborated_by_open_data"),
             "acq_il_version_fetches": ops.get("il_version_fetches"),
             "acq_il_version_pages_found": ops.get("il_version_pages_found"),
             "gov_registry_evidence": ops.get("gov_registry_evidence"),

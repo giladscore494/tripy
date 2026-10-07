@@ -514,6 +514,23 @@ def search_queries(terms: dict, limit: int | None = None) -> list[tuple[str, str
     return out[:max(0, limit)]
 
 
+def identity_site_queries(terms: dict) -> list[tuple[str, str]]:
+    """V1: (domain, query) of the `identity_templates` on every site, when the terms carry the open-data research
+    identity ({od_model}); [] otherwise."""
+    if not terms.get("od_model"):
+        return []
+    out = []
+    for template in settings().get("identity_templates") or []:
+        for domain in site_domains():
+            query = template
+            for key, value in {"domain": domain, **terms}.items():
+                query = query.replace("{" + key + "}", str(value or ""))
+            query = re.sub(r"\s+", " ", query).strip()
+            if (domain, query) not in out:
+                out.append((domain, query))
+    return out
+
+
 def _site_config(site: str | None) -> dict:
     return next((dict(s) for s in settings().get("sites") or [] if s.get("domain") == site), {})
 
@@ -698,6 +715,10 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
     fetch = fetch or (lambda u: _default_fetch(ctx, u))
     robots = robots or (lambda u: _default_robots(ctx, u))
     terms = target_terms(payload, identity)
+    od = identity.open_data_keys or {}
+    if od.get("model"):
+        # V1: the open-data research identity: its queries run first
+        terms.update(od_model=od["model"], od_type_code=od.get("eea_type_code") or od.get("type_code") or "")
     versions: list[dict] = []          # candidates: {url, score, order, source}
     listings: list[dict] = []          # pages fetched only for their version links
     seen: set[str] = set()
@@ -758,7 +779,7 @@ def resolve(ctx, run_log=None, *, payload: dict | None = None, search=None, fetc
 
     blocked_sites: set[str] = set()
     try:
-        for domain, query in search_queries(terms, limit=10 ** 6):
+        for domain, query in identity_site_queries(terms) + search_queries(terms, limit=10 ** 6):
             if out["searches"] >= max_searches:
                 break
             if not fetch_allowed(f"https://{domain}/"):
@@ -966,6 +987,15 @@ def resolve_spec_sheets(ctx, run_log=None, *, payload: dict | None = None, searc
         model = str(ident.get("commercial_name") or "").strip()
         year = str(ident.get("year") or "").strip()
         max_searches, max_fetches = int(cfg.get("max_searches") or 1), int(cfg.get("max_fetches") or 4)
+        target = getattr(getattr(ctx, "admission", None), "identity", None)
+        od = (getattr(target, "open_data_keys", None) or {}) if target is not None else {}
+        templates = list(cfg.get("search_templates") or [])
+        if od.get("model"):
+            # V1: the open-data research identity: its query first, in one extra search
+            od_code = od.get("eea_type_code") or od.get("type_code") or ""
+            templates = [t.replace("{od_model}", str(od["model"])).replace("{od_type_code}", str(od_code))
+                         for t in cfg.get("identity_templates") or []] + templates
+            max_searches += 1
         search = search or (lambda q, d: _default_search(ctx, q, d))
         fetch = fetch or (lambda u: _default_fetch_any(ctx, u))
         pages: list[str] = []
@@ -992,7 +1022,7 @@ def resolve_spec_sheets(ctx, run_log=None, *, payload: dict | None = None, searc
             (sheets if sheet else pages).append(url)
 
         for domain in allowed:
-            for template in cfg.get("search_templates") or []:
+            for template in templates:
                 if out["searches"] >= max_searches:
                     break
                 query = " ".join(template.replace("{host}", domain).replace("{model}", model)
