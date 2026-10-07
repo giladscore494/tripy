@@ -55,8 +55,8 @@ def _value(row: dict, entry: dict) -> Any:
         number = float(str(raw).replace(",", ""))
     except ValueError:
         return None
-    if number <= 0:
-        return None
+    if number < 0 or (number == 0 and not entry.get("zero_is_value")):
+        return None                                 # `zero_is_value`: a 0 is a value (NEDC CO2 of a battery-electric)
     number *= float(entry.get("scale") or 1)
     return int(round(number)) if float(number).is_integer() or entry.get("unit") in ("mm", "cm", "kg") \
         else round(number, 1)
