@@ -47,6 +47,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -82,6 +83,34 @@ def config(path: Path | str | None = None) -> dict:
 
 def datasets() -> dict[str, dict]:
     return {k: v for k, v in (config().get("datasets") or {}).items() if isinstance(v, dict)}
+
+
+DEFAULT_TEXT_IDENTITY = ("make", "model", "base_model", "type_approval", "variant", "version", "fuel", "fuel_mode")
+
+
+def text_identity_keys() -> tuple[str, ...]:
+    """D0: the text identity columns every dataset normalizes before its local grouping, in its shard / snapshot and
+    in the match (data/open_datasets.json `text_identity_keys`)."""
+    keys = config().get("text_identity_keys")
+    return tuple(str(k) for k in keys) if isinstance(keys, list) and keys else DEFAULT_TEXT_IDENTITY
+
+
+def norm_text(value: Any) -> str | None:
+    """D0: a text identity value as stored and compared: Unicode NFKC, trimmed, internal whitespace collapsed to one
+    space, upper case ('Petrol', 'PETROL  ' and 'PETROL' are one value; DISCODATA's GROUP BY treats them as one and
+    returns an arbitrary spelling per group). None (or blank) stays None; a number is kept as it is."""
+    if value is None or isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    text = " ".join(unicodedata.normalize("NFKC", str(value)).split()).upper()
+    return text or None
+
+
+def normalize_identity(row: dict, keys: Iterable[str] | None = None) -> dict:
+    """The row with its text identity columns normalized (in place; returned for chaining)."""
+    for key in keys if keys is not None else text_identity_keys():
+        if key in row:
+            row[key] = norm_text(row[key])
+    return row
 
 
 def admission_allowlist(path: Path | str | None = None) -> set[tuple[str, str, str]]:
@@ -467,13 +496,13 @@ def _number(value: Any) -> int | float | None:
     return int(number) if float(number).is_integer() else float(number)
 
 
-def _typed(key: str, value: Any, kind: str) -> Any:
+def _typed(key: str, value: Any, kind: str, text_keys: Iterable[str] = ()) -> Any:
     if value is None or value == "":
         return None
-    if key == "make":
-        return " ".join(str(value).split()).upper()
     if kind in ("INTEGER", "REAL"):
         return _number(value)
+    if key == "make" or key in text_keys:
+        return norm_text(value)                     # D0: one spelling per value, whatever the source returned
     return str(value)
 
 
@@ -507,7 +536,8 @@ def write_shard(dataset: str, rows: list[dict], meta: dict, *, year: int, part: 
         if leftover.exists():
             leftover.unlink()
     columns = spec["columns"]
-    values = [tuple(_typed(k, r.get(k), t) for k, t in columns.items()) for r in rows]
+    text_keys = frozenset(text_identity_keys())
+    values = [tuple(_typed(k, r.get(k), t, text_keys) for k, t in columns.items()) for r in rows]
     index = {k: i for i, k in enumerate(columns)}
     values.sort(key=lambda v: (tuple(_order_value(v[index[k]]) for k in spec["order"]),
                                _order_value(v[index["row_id"]])))

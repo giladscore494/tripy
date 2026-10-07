@@ -8,7 +8,7 @@
      "licence": "Israeli government open data", "attribution": null, "bulk_store": true,
      "terms_clause": "Government open data published for re-use on the national data portal.",
      "terms_clause_source": "operator brief", "checked_at": "2026-10-06"},
-    {"id": "eea_co2_cars", "kind": "dataset", "domains": ["discodata.eea.europa.eu", "sdi.eea.europa.eu"], "policy": "allowed",
+    {"id": "eea_co2_cars", "kind": "dataset", "domains": ["discodata.eea.europa.eu", "sdi.eea.europa.eu", "eea.europa.eu", "data.europa.eu"], "policy": "allowed",
      "licence": "CC-BY-4.0",
      "attribution": "European Environment Agency / DG CLIMA, CO2 emissions from new passenger cars, {year}; filtered and aggregated by TRIPY",
      "bulk_store": true, "terms_clause": "Monitoring of CO2 emissions from passenger cars: re-use permitted under CC BY 4.0 with attribution.",
