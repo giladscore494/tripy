@@ -20,7 +20,8 @@ agent. Each dataset's `builder`:
                  identity key; a failing spelling stops only itself, a year whose spellings all fail stops only itself.
                  Y1 / Y2: from `years_from` (2010); a year up to `final_only_through_year` (2021) is built from its
                  final rows only (none: `no_final_rows`, not built, reported); each year's header resolves through the
-                 column map plus that year's `column_aliases_by_year`, and the grouping uses only the keys it maps (a
+                 column map plus that year's `column_aliases_by_year` (`column_sources_by_year` replaces a key's
+                 spellings for a year: co2_nedc = E (g/km) in 2010-2016), and the grouping uses only the keys it maps (a
                  year without Ewltp groups by co2_nedc); each year's report records its live header, the mapping and
                  the Y4 audit statistics (src/open_data/audit.year_stats: computed here, where the registrations are
                  still known). K3: the years from `csv_years.from_year` that DISCODATA does not have ([latest] ends at
@@ -430,22 +431,45 @@ def eea_aggregate(parts: list[tuple[list[str], list[dict]]], mapping: dict[str, 
     return out
 
 
+def _by_year(table: dict | None, year: int | None) -> dict:
+    """The entries of a per-year table (`column_aliases_by_year`, `column_sources_by_year`) for one year: its own key
+    ("2014") merged over every range key that covers it ("2010-2016")."""
+    out: dict = {}
+    if year is None:
+        return out
+    for key, entry in sorted((table or {}).items()):
+        if key.startswith("_") or not isinstance(entry, dict):
+            continue
+        low, _, high = key.partition("-")
+        if low.isdigit() and (high.isdigit() if high else True) and int(low) <= int(year) <= int(high or low):
+            out.update({k: v for k, v in entry.items() if not k.startswith("_")})
+    return out
+
+
 def eea_year_columns(cfg: dict, year: int | None, *, csv_file: bool = False) -> dict:
     """Y2: the column map of one year: `columns` plus that year's `column_aliases_by_year` spellings (and, for the
-    datahub CSV, `csv_years.column_aliases`), each added to the key's accepted `source` spellings."""
+    datahub CSV, `csv_years.column_aliases`), each added to the key's accepted `source` spellings; then that year's
+    `column_sources_by_year` REPLACE a key's accepted spellings (source and fallback) for that year. A replacement is
+    for a year whose header carries the key's usual spelling empty next to the column that holds its values (2010-2016:
+    Enedc empty, E holds the NEDC CO2): an added alias would match both columns and stop the year as `ambiguous`."""
     aliases: dict[str, list[str]] = {}
     sources = [((cfg.get("csv_years") or {}).get("column_aliases") or {}) if csv_file else {},
-               ((cfg.get("column_aliases_by_year") or {}).get(str(year)) or {}) if year is not None else {}]
+               _by_year(cfg.get("column_aliases_by_year"), year)]
     for source in sources:
         for key, spellings in source.items():
             if not key.startswith("_") and isinstance(spellings, list):
                 aliases.setdefault(key, []).extend(str(s) for s in spellings)
+    replaced = {k: [str(s) for s in v] for k, v in _by_year(cfg.get("column_sources_by_year"), year).items()
+                if isinstance(v, list) and v}
     columns = {}
     for key, spec in (cfg.get("columns") or {}).items():
         spec = dict(spec)
         if key in aliases:
             known = list(spec.get("source") or [])
             spec["source"] = known + [a for a in aliases[key] if a not in known]
+        if key in replaced:
+            spec["source"] = replaced[key]
+            spec.pop("fallback", None)
         columns[key] = spec
     return columns
 

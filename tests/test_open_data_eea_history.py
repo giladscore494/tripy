@@ -30,7 +30,9 @@ from test_open_data_repo import _script
 
 ROOT = Path(__file__).resolve().parent.parent
 LIMIT = 50 * 1024 * 1024
-# a 2014 DISCODATA header: no WLTP column, no fuel consumption, no electric energy (the older years carry Enedc only)
+# a 2014 DISCODATA header: no WLTP column, no fuel consumption, no electric energy; "Enedc (g/km)" is present but empty
+# and the NEDC CO2 is in "E (g/km)" (the live [latest] table, final rows 2010-2016: data/open_datasets.json
+# column_sources_by_year)
 NEDC_HEADER = [c for c in H.EEA_2018_HEADER if c not in ("Ewltp (g/km)", "Erwltp (g/km)", "Fc", "Z (Wh/km)")]
 
 
@@ -47,9 +49,12 @@ def _record(record: str) -> dict:
 
 
 def _nedc_rows(year: int = 2014) -> list[dict]:
-    return [H.eea_row(NEDC_HEADER, Year=year, Ve="A1", **{"Enedc (g/km)": 172, "W (mm)": 2910, "R": 3}),
-            H.eea_row(NEDC_HEADER, Year=year, Ve="A1", **{"Enedc (g/km)": 165, "W (mm)": None, "R": 1}),
-            H.eea_row(NEDC_HEADER, Year=year, Ve="A2", **{"Enedc (g/km)": 172, "W (mm)": 2910, "R": 4})]
+    return [H.eea_row(NEDC_HEADER, Year=year, Ve="A1", **{"Enedc (g/km)": None, "E (g/km)": 172, "W (mm)": 2910,
+                                                            "R": 3}),
+            H.eea_row(NEDC_HEADER, Year=year, Ve="A1", **{"Enedc (g/km)": None, "E (g/km)": 165, "W (mm)": None,
+                                                            "R": 1}),
+            H.eea_row(NEDC_HEADER, Year=year, Ve="A2", **{"Enedc (g/km)": None, "E (g/km)": 172, "W (mm)": 2910,
+                                                            "R": 4})]
 
 
 # --- Y1 / Y2: the years and the per-year schema ---------------------------------------------------------------------------
@@ -62,13 +67,48 @@ def test_a_2014_header_without_ewltp_groups_by_co2_nedc_and_records_the_absent_c
     assert {"co2_wltp", "fuel_consumption_l_100km", "energy_wh_km", "electric_range_km"} <= set(
         report["absent_columns"]) and built["absent_columns"]["2014"] == report["absent_columns"]
     grouped = [q for q in queries if "GROUP BY" in q]
-    assert grouped and all("[Enedc (g/km)]" in q.split("GROUP BY", 1)[1] and "Ewltp" not in q for q in grouped)
-    assert report["mapping"]["co2_nedc"] == "Enedc (g/km)" and "co2_wltp" not in report["mapping"]
+    assert grouped and all("[E (g/km)]" in q.split("GROUP BY", 1)[1] and "Ewltp" not in q and "Enedc" not in q
+                           for q in grouped)
+    assert report["mapping"]["co2_nedc"] == "E (g/km)" and "co2_wltp" not in report["mapping"]
     assert report["live_header"] == NEDC_HEADER
     # the two A1 configurations differ only by their NEDC CO2: two rows, never merged
     assert sorted((r["version"], r["co2_nedc"]) for r in built["rows"]) == [("A1", 165), ("A1", 172), ("A2", 172)]
     assert all(r.get("co2_wltp") is None and r["year"] == 2014 for r in built["rows"])
     assert report["audit"]["keys"]["co2_wltp"]["state"] == "absent"
+
+
+def test_2010_2016_co2_nedc_resolves_to_e_not_ambiguous_and_2017_keeps_enedc():
+    """column_sources_by_year REPLACES the spellings of co2_nedc for 2010-2016: both "Enedc (g/km)" (empty there) and
+    "E (g/km)" are in those headers, and an added alias would match both and stop the year as ambiguous."""
+    cfg = ds.datasets()["eea_co2_cars"]
+    assert "Enedc (g/km)" in NEDC_HEADER and "E (g/km)" in NEDC_HEADER
+    for year in range(2010, 2017):
+        resolved = B.resolve_map(NEDC_HEADER, B.eea_year_columns(cfg, year))
+        assert not resolved["ambiguous"] and not resolved["missing"]
+        assert resolved["mapping"]["co2_nedc"] == "E (g/km)"
+    for year in (2009, 2017, 2018):
+        resolved = B.resolve_map(H.EEA_2018_HEADER, B.eea_year_columns(cfg, year))
+        assert not resolved["ambiguous"] and resolved["mapping"]["co2_nedc"] == "Enedc (g/km)"
+    assert B.eea_csv_columns(cfg, 2014)["co2_nedc"]["source"] == ["E (g/km)"]             # the datahub CSV too
+    # an added alias instead of a replacement would be ambiguous (why it is a replacement)
+    added = {**cfg, "column_sources_by_year": {}, "column_aliases_by_year": {"2014": {"co2_nedc": ["E (g/km)"]}}}
+    assert B.resolve_map(NEDC_HEADER, B.eea_year_columns(added, 2014))["ambiguous"][0]["key"] == "co2_nedc"
+
+
+def test_a_zero_nedc_co2_is_kept_as_a_value_not_missing(tmp_path):
+    rows = [H.eea_row(NEDC_HEADER, Year=2015, Mk="TESLA", Cn="MODEL S", Ft="electric", Fm="E", Ve="P85",
+                      **{"Ec (cm3)": 0, "Enedc (g/km)": None, "E (g/km)": 0, "R": 2})]
+    built = build_eea(_eea_fetch([(2015, "F")], {(2015, "F"): rows}, [], header=NEDC_HEADER))
+    (row,) = built["rows"]
+    assert row["co2_nedc"] == 0 and built["years"][0]["audit"]["keys"]["co2_nedc"]["coverage_pct"] == 100.0
+    assert "co2_nedc" not in built["years"][0]["empty_columns"]
+    shard = ds.write_shards("eea_co2_cars", built["rows"], {}, folder=tmp_path)[0]["path"]
+    (stored,), _ = ds.read_shard(shard)
+    assert stored["co2_nedc"] == 0 and row_cycle(stored) == "nedc"
+    entry = next(e for e in ds.config()["field_map"] if e["field"] == "co2_nedc_g_km")
+    offers = field_offers({"route": "european", "level": "exact_technical_variant", "sources": {"eea_co2_cars": {
+        "status": "unique", "survivors": [{**stored, "row_id": "eea-1"}], "configurations": ["x"]}}}, [entry])
+    assert offers[0]["value"] == 0 and offers[0]["status"] == "offered" and offers[0]["n_null"] == 0
 
 
 def test_a_year_with_both_co2_columns_groups_by_both():
@@ -256,7 +296,7 @@ def test_the_audit_writes_the_markdown_and_the_csv_from_the_built_snapshot(tmp_p
     # registrations: A1/172 3, A1/165 1 (no wheelbase), A2/172 4 -> wheelbase 7 / 8
     assert named["status used"] == "F" and named["rows"] == "3" and named["registrations"] == "8"
     assert named["wheelbase_mm"] == "87.5" and named["co2_nedc"] == "100.0" and named["co2_wltp"] == "absent"
-    assert "Live header: `ID, MS" in text and "| co2_nedc | Enedc (g/km) | mapped | INTEGER |" in text
+    assert "Live header: `ID, MS" in text and "| co2_nedc | E (g/km) | mapped | INTEGER |" in text
     assert "| 2014 | 3 | 0 | 0 |" in text                               # sanity: shard rows, other year, HTML
     assert text.rstrip().splitlines()[-1] == "- 2013: skipped (no_final_rows)"   # the summary ends with the failures
     parsed = list(csv.DictReader(io.StringIO(table.read_text("utf-8"))))
