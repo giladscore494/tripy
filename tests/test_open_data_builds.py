@@ -131,17 +131,19 @@ def _eea_fetch(pairs, per_year_rows, queries, header=H.EEA_2018_HEADER, grouped=
 
 
 def test_eea_builds_only_the_years_that_exist_preferring_final_rows():
-    pairs = [(2017, "F"), (2018, "F"), (2018, "P"), (2019, "P"), (2022, "F")]
+    pairs = [(2017, "F"), (2018, "F"), (2018, "P"), (2019, "P"), (2022, "P"), (2021, "F")]
     rows = {(2017, "F"): [H.eea_row(Year=2017)], (2018, "F"): [H.eea_row(Year=2018), H.eea_row(Year=2018, Ve="X")],
-            (2018, "P"): [H.eea_row(Year=2018, Ve="PROVISIONAL")], (2019, "P"): [H.eea_row(Year=2019, Status="P")]}
+            (2018, "P"): [H.eea_row(Year=2018, Ve="PROVISIONAL")], (2019, "P"): [H.eea_row(Year=2019, Status="P")],
+            (2022, "P"): [H.eea_row(Year=2022, Status="P")]}
     queries: list[str] = []
     built = build_eea(_eea_fetch(pairs, rows, queries))
     reports = {r["year"]: r for r in built["years"]}
-    assert sorted(reports) == [2017, 2018, 2019, 2022]            # 2023 (no rows in [latest]) is never queried
+    assert sorted(reports) == [2017, 2018, 2019, 2021, 2022]      # 2023 (no rows in [latest]) is never queried
     assert not any("2023" in q for q in queries)
     assert reports[2018]["status_used"] == "F" and reports[2018]["rows"] == 2
-    assert reports[2019]["status_used"] == "P"                    # provisional only without final rows
-    assert reports[2022] == {"year": 2022, "status": "skipped", "reason": "no_rows", "status_used": "F"}
+    assert reports[2022]["status_used"] == "P"                    # provisional only without final rows, after 2021
+    assert reports[2019] == {"year": 2019, "status": "skipped", "reason": "no_final_rows", "statuses": ["P"]}  # Y1
+    assert reports[2021] == {"year": 2021, "status": "skipped", "reason": "no_rows", "status_used": "F"}
     assert {r["version"] for r in built["rows"]} == {"A1AK1", "X"}   # never the 2018 provisional row
     assert built["rows"][0]["registrations"] == 3 and built["rows"][0]["status"] == "F"
     assert reports[2018]["absent_columns"] == ["electric_range_km"]

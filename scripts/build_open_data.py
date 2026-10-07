@@ -6,7 +6,9 @@ absent columns, units, built_at, the Action run URL). Never run on the server: t
 A sharded dataset (EEA, `snapshot.shard_by: year`) is compressed per year to data/open/<dataset>/<year>.sqlite.gz and
 its manifest entry lists the shards (file, year, part, status_used, rows, bytes, sha256). Every file must be under
 --max-mb (50 MB): a year over it is first split by make initial (<year>-A-L, <year>-M-Z); a file still over it is not
-written (`too_large`; the previous file of that year / dataset stays).
+written (`too_large`; the previous file of that year / dataset stays). Y1 size gate (the dataset's `size_gate`): when the
+compressed shards of 2010-2016 together exceed 60 MB they are still written and the summary prints their sizes with a
+warning. The summary ends with the per-year failure list (a year that was not built, and why).
 
 A dataset whose probe (data/open/probe.json, step 1) did not resolve is not built; a dataset whose build stops or fails
 keeps its previous file and manifest entry (its `last_attempt` records the failure, `build_status` is failed). One
@@ -101,6 +103,48 @@ def shard_table(results: dict) -> list[str]:
     return lines
 
 
+def size_gate(results: dict) -> list[str]:
+    """Y1: the compressed size of the gated years' shards (data/open_datasets.json `size_gate`), with a warning
+    over the limit (the shards are written either way)."""
+    lines = []
+    for name, r in results.items():
+        gate = (ds.datasets().get(name) or {}).get("size_gate")
+        items = [i for i in r.get("shard_items") or [] if i.get("status") == "ok"]
+        if not gate or not items:
+            continue
+        low, high = (int(y) for y in gate["years"])
+        gated = [i for i in items if low <= int(i.get("year") or 0) <= high]
+        if not gated:
+            continue
+        total = sum(int(i.get("bytes") or 0) for i in gated)
+        limit = float(gate.get("max_mb") or 0) * 1024 * 1024
+        per_year = ", ".join(f"{i['year']}{'-' + i['part'] if i.get('part') else ''} {_mb(i.get('bytes'))}"
+                             for i in gated)
+        lines += ["", f"Size gate {name} {low}-{high}: {_mb(total)} compressed in {len(gated)} shard(s) ({per_year}); "
+                      f"limit {gate.get('max_mb')} MB."]
+        if total > limit:
+            lines.append(f"**Warning:** the {low}-{high} shards of {name} exceed {gate.get('max_mb')} MB together "
+                         f"({_mb(total)}); written anyway: the reviewer decides about moving them to a release asset.")
+    return lines
+
+
+def year_failures(results: dict) -> list[str]:
+    """The per-year failure list: every year report of the run that was not built (S3: it never stopped the others)."""
+    lines = ["", "Per-year failures:"]
+    found = []
+    for name, r in results.items():
+        built = {p.get("year") for p in r.get("years") or [] if p.get("status") in ("built", "partial")}
+        for part in r.get("years") or []:
+            status = part.get("status")
+            if status == "partial":
+                found.append(f"- {name} {part.get('year')}: partial ({len(part.get('make_errors') or {})} make "
+                             f"spelling(s) failed)")
+            elif status not in ("built", "partial") and part.get("year") not in built:
+                found.append(f"- {name} {part.get('year')}: {status} ({part.get('reason') or part.get('error') or '—'})"
+                             f"{' [' + str(part['source']) + ']' if part.get('source') else ''}")
+    return lines + (found or ["- none"])
+
+
 def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
     lines = ["## Open-data build", "", "| dataset | status | rows | file | size | build time |", "|---|---|---|---|---|---|"]
     for name, r in results.items():
@@ -112,6 +156,7 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
         lines.append(f"| {name} | {r.get('status')}{' (' + str(r.get('reason')) + ')' if r.get('reason') else ''} | "
                      f"{r.get('rows', '—')} | {file} | {size} | {r.get('duration_s', '—')} s |")
     lines += shard_table(results)
+    lines += size_gate(results)
     lines += makes_table(results, probe or {})
     lines += ["", "Per year / file:"]
     for name, r in results.items():
@@ -120,6 +165,7 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
                          f"rows={part.get('rows', '—')} {part.get('reason') or ''} "
                          f"queries={part.get('queries', '—')} max_query_bytes={part.get('max_query_bytes', '—')}"
                          f"{' split' if part.get('split') else ''} absent={part.get('absent_columns') or []}"
+                         + (f" empty={part['empty_columns']}" if part.get("empty_columns") else "")
                          + (f" errors={len(part['make_errors'])}" if part.get("make_errors") else ""))
         for part in r.get("files") or []:
             lines.append(f"- {name} {str(part.get('url') or '').rsplit('/', 1)[-1]}: {part.get('status')} "
@@ -133,6 +179,7 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
                          f"{c.get('kept_makes')} makes")
         if r.get("status") != "built" and (r.get("report") or r.get("error")):
             lines.append(f"- {name} report: {json.dumps(r.get('report') or r.get('error'), ensure_ascii=False)[:3000]}")
+    lines += year_failures(results)
     return "\n".join(lines) + "\n"
 
 

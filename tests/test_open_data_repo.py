@@ -283,10 +283,11 @@ def test_the_build_script_compresses_records_the_manifest_and_skips_a_failed_pro
 def test_the_coverage_step_reports_every_benchmark_record_and_22010(tmp_path, capsys):
     coverage = _script("open_data_coverage")
     ids = {r["upstream_record_id"] for r in coverage.records()}
-    assert len(ids) == 51 and {"85095", "23678", "38626", "101136", "22010"} <= ids
+    assert len(ids) == 53 and {"85095", "23678", "38626", "101136", "22010", "19931", "59987"} <= ids
     assert coverage.main(["--open", str(tmp_path / "empty"), "--body", str(tmp_path / "body.md")]) == 0
     body = (tmp_path / "body.md").read_text("utf-8")
     assert "| **22010** |" in body and "never built" in body
+    assert "| **19931** |" in body and "| **59987** |" in body and "### 2010-2016 records (NEDC years)" in body
     ds.set_repo_dir(None)
 
 

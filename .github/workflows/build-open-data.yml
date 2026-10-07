@@ -16,9 +16,15 @@ name: build-open-data
 #      years DISCODATA [latest] lacks (2023+) are downloaded from the EEA datahub's CSV, found through its record API; a
 #      year over 50 MB split by make initial); a file still over 50 MB is not written and listed as a warning, the step
 #      fails only when nothing at all was written, and the steps below run either way: one dataset never costs the others
-#   4. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
-#      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010)
-#   5. pull request on automation/open-data with the summaries in its body (always, so the datasets that were written are
+#      EEA: 2010-2022 from DISCODATA (2010-2021 final rows only), a year it lacks and 2023+ from the datahub CSV; the
+#      summary warns when the 2010-2016 shards exceed 60 MB together (written anyway) and ends with the per-year failures
+#   4. EEA schema audit (scripts/audit_eea.py): per year rows, status, live header -> canonical keys, per key type /
+#      null % / distinct / coverage % weighted by registrations, sanity checks and the per-year failure list, written
+#      to data/open/eea_schema_audit.md / .csv (committed with the snapshots) and the step summary
+#   5. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
+#      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010, and the
+#      2010-2016 records 19931 / 59987 with their offers)
+#   6. pull request on automation/open-data with the summaries in its body (always, so the datasets that were written are
 #      never lost to one that was not). Creating it needs the repository setting
 #      "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the
 #      branch is still pushed and the last step writes the compare URL to open the pull request by hand
@@ -67,9 +73,12 @@ jobs:
         run: python scripts/build_make_aliases.py --probe data/open/probe.json --out data/open_data_make_aliases.json --review open-data-makes.md
       - name: Build and compress the snapshots (each file under 50 MB; fails only when nothing was written)
         run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50
+      - name: EEA schema audit (per year; a failed year never stops the others)
+        if: always()
+        run: python scripts/audit_eea.py --open data/open --md data/open/eea_schema_audit.md --csv data/open/eea_schema_audit.csv --summary eea-audit-summary.md
       - name: Coverage report (before the pull request step)
         if: always()
-        run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --makes open-data-makes.md --body open-data-pr-body.md
+        run: python scripts/open_data_coverage.py --open data/open --build open-data-build.md --audit eea-audit-summary.md --makes open-data-makes.md --body open-data-pr-body.md
       - name: Open a pull request
         id: cpr
         if: always()
@@ -85,6 +94,8 @@ jobs:
             data/open/*/*.sqlite.gz
             data/open/manifest.json
             data/open/probe.json
+            data/open/eea_schema_audit.md
+            data/open/eea_schema_audit.csv
             data/open_data_make_aliases.json
       - name: Pull request fallback (the repository does not let Actions create pull requests)
         if: always() && steps.cpr.outcome == 'failure'
