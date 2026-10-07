@@ -26,7 +26,8 @@ from urllib.parse import quote
 
 from . import datasets as ds
 from .build import (BuildStopped, EeaQueryError, Fetcher, _csv_tables, _decode, _file_name, _languages, _resources,
-                    _xls_rows, EEA_PAGE, eea_query_bytes, eea_query_plan, eea_response,
+                    _xls_rows, EEA_PAGE, accepted_status, eea_query_bytes, eea_query_plan, eea_response,
+                    eea_year_columns,
                     dictionary_check, distribution, override_units, resolve_map, unit_scales)
 from .makes import canonical_makes, spelling
 
@@ -100,16 +101,16 @@ def probe_eea(fetch: Fetcher) -> dict:
     years = []
     floor = int(cfg.get("years_from") or 0)
     for year in sorted(y for y in statuses if y >= floor):
-        status = next((s for s in cfg.get("status_preference") or ["F", "P"] if s in statuses[year]), None)
+        status, why = accepted_status(cfg, year, statuses[year])
         if status is None:
-            years.append({"year": year, "status": "skipped", "statuses": sorted(statuses[year])})
+            years.append({"year": year, "status": "skipped", "reason": why, "statuses": sorted(statuses[year])})
             continue
         rows = sql(f"SELECT TOP 1 * FROM {table} WHERE [{year_col}] = {int(year)} AND [{status_col}] = '{status}'")
         year_header = list(rows[0].keys()) if rows else []
         if not year_header:
             years.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status})
             continue
-        resolved = _resolution(year_header, cfg["columns"])
+        resolved = _resolution(year_header, eea_year_columns(cfg, year))
         years.append({"year": year, "status": "ok" if resolved["ok"] else "stopped", "status_used": status,
                       "live_header": year_header, **resolved})
     ok = any(y["status"] == "ok" for y in years)
@@ -123,7 +124,7 @@ def probe_eea(fetch: Fetcher) -> dict:
     test_make = next((m for m in canonical_makes() if m in present), None) or (sorted(present) or [None])[0]
     if latest and test_make:
         year_header = latest["live_header"]
-        mapping = resolve_map(year_header, cfg["columns"])["mapping"]
+        mapping = resolve_map(year_header, eea_year_columns(cfg, latest["year"]))["mapping"]
         registrations = resolve_map(year_header, {"r": cfg["registrations_column"]})["mapping"].get("r")
         where = f"[{year_col}] = {int(latest['year'])} AND [{status_col}] = '{latest['status_used']}'"
         test: dict[str, Any] = {"year": latest["year"], "make": test_make}
@@ -309,10 +310,16 @@ def markdown(report: dict) -> str:
         lines.append(f"| {name} | {item.get('status')} | {item.get('reason') or item.get('error') or ''} |")
     for name, item in (report.get("datasets") or {}).items():
         lines += ["", f"### {name}"]
+        previous = None
         for part in item.get("years") or []:
-            lines.append(f"- {part.get('year')} ({part.get('status_used') or '—'}): {part.get('status')}; missing "
+            lines.append(f"- {part.get('year')} ({part.get('status_used') or '—'}): {part.get('status')}"
+                         f"{' (' + str(part['reason']) + ')' if part.get('reason') else ''}; missing "
                          f"required: {_cols(part.get('missing_required'))}; missing optional: "
                          f"{_cols(part.get('missing_optional'))}")
+            # Y2: a year whose header differs from the year before (the spellings a column_aliases_by_year entry needs)
+            if part.get("live_header") and part["live_header"] != previous:
+                lines.append(f"  - live header: `{' | '.join(map(str, part['live_header'][:80]))}`")
+                previous = part["live_header"]
         for part in item.get("files") or []:
             lines.append(f"- {str(part.get('url') or '').rsplit('/', 1)[-1]} [{part.get('group') or '—'}]: "
                          f"{part.get('status')}; missing required: {_cols(part.get('missing_required'))}; missing "

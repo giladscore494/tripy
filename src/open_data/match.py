@@ -26,6 +26,11 @@ displacement vetoes apply, an equal co2_wltp selects among them when some row st
 match is exact_technical_variant on the european route even without a co2 match (the co2 narrows the measured values;
 the identity is the type code). A make without a rule, or a code no row carries: the match below, unchanged.
 
+NEDC years (Y3, data/open_datasets.json eea_co2_cars.nedc_years: 2010-2016): the target has no CO2 key (MILO 2010-2016:
+co2_wltp 0 %), so the CO2 step is skipped (`co2_key: unavailable`); an EEA row's NEDC CO2 (co2_nedc) is never compared
+with a WLTP value. Such a target is exact_technical_variant only through a type-code match, otherwise at most
+body_powertrain: a level is never raised because an older year has fewer candidates.
+
 Vetoes (data-driven, data/open_datasets.json): displacement (+-1 % or the source's rounding: 2.0 L = 1998 cc), power
 (A4, both definitions of koah_sus), drive (4X2 = FWD / RWD, 4X4 = AWD / 4WD), fuel / propulsion, transmission class,
 body / doors, co2_wltp when both have it, battery token, mass window. A key the source does not state is `unknown`,
@@ -516,6 +521,7 @@ def match(fingerprint: dict, payload: dict | None, identity=None, folder=None,
             else "european_no_co2" if keys["route"] == "european" else keys["route"],
             "keys": {k: keys[k] for k in ("makes", "models", "type_code", "year", "cc", "power", "drivetrain",
                                           "transmission", "propulsion", "body", "co2_wltp", "battery")},
+            "co2_key": "co2_wltp" if keys.get("co2_wltp") else "unavailable", "nedc_target": nedc_target(keys),
             "sources": sources, "level": level, "level_basis": basis,
             "designation": (sources.get(lead) or {}).get("designation") if lead else None, "lead_source": lead}
 
@@ -546,9 +552,18 @@ def type_code_matched(sources: dict) -> bool:
                and (sources.get(s) or {}).get("status") in ("unique", "ambiguous") for s in EUROPEAN_SOURCES)
 
 
+def nedc_target(keys: dict, config: dict | None = None) -> bool:
+    """Y3: a target of an NEDC registration year (eea_co2_cars.nedc_years.through)."""
+    config = ds.config() if config is None else config
+    through = (((config.get("datasets") or {}).get("eea_co2_cars") or {}).get("nedc_years") or {}).get("through")
+    return through is not None and keys.get("year") is not None and int(keys["year"]) <= int(through)
+
+
 def _european_exact(keys: dict, sources: dict) -> bool:
     if type_code_matched(sources):
         return True
+    if nedc_target(keys):
+        return False                            # Y3: only the type code identifies an NEDC-era configuration
     if not keys["bev_or_no_co2"]:
         return any(_unique(sources, s) and "co2_wltp" in ((sources[s].get("keys_matched")) or [])
                    for s in EUROPEAN_SOURCES)

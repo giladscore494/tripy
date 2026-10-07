@@ -18,9 +18,15 @@ agent. Each dataset's `builder`:
                  ORDER BY; its URL-encoded query= value <= EEA_MAX_QUERY_BYTES, else split in two on the measurement
                  columns, else `query_too_long`); the runner computes the registration-weighted median / min / max per
                  identity key; a failing spelling stops only itself, a year whose spellings all fail stops only itself.
-                 K3: the years from `csv_years.from_year` that DISCODATA does not have ([latest] ends at 2022) come
-                 from the EEA datahub's downloadable CSV (`build_eea_csv`: the records read from the datahub API, the
-                 zip streamed to the runner disk and grouped locally exactly like the DISCODATA rows)
+                 Y1 / Y2: from `years_from` (2010); a year up to `final_only_through_year` (2021) is built from its
+                 final rows only (none: `no_final_rows`, not built, reported); each year's header resolves through the
+                 column map plus that year's `column_aliases_by_year`, and the grouping uses only the keys it maps (a
+                 year without Ewltp groups by co2_nedc); each year's report records its live header, the mapping and
+                 the Y4 audit statistics (src/open_data/audit.year_stats: computed here, where the registrations are
+                 still known). K3: the years from `csv_years.from_year` that DISCODATA does not have ([latest] ends at
+                 2022), and an earlier year DISCODATA lacks, come from the EEA datahub's downloadable CSV
+                 (`build_eea_csv`: the records read from the datahub API, the zip streamed to the runner disk and
+                 grouped locally exactly like the DISCODATA rows)
     data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_from_description` rule
                  is read from the schema field's description ("Puissance en kW"); a column without a stated unit is
                  stored raw with unit `unknown` (its p5 / p50 / p95 recorded) and yields nothing until a
@@ -424,10 +430,43 @@ def eea_aggregate(parts: list[tuple[list[str], list[dict]]], mapping: dict[str, 
     return out
 
 
+def eea_year_columns(cfg: dict, year: int | None, *, csv_file: bool = False) -> dict:
+    """Y2: the column map of one year: `columns` plus that year's `column_aliases_by_year` spellings (and, for the
+    datahub CSV, `csv_years.column_aliases`), each added to the key's accepted `source` spellings."""
+    aliases: dict[str, list[str]] = {}
+    sources = [((cfg.get("csv_years") or {}).get("column_aliases") or {}) if csv_file else {},
+               ((cfg.get("column_aliases_by_year") or {}).get(str(year)) or {}) if year is not None else {}]
+    for source in sources:
+        for key, spellings in source.items():
+            if not key.startswith("_") and isinstance(spellings, list):
+                aliases.setdefault(key, []).extend(str(s) for s in spellings)
+    columns = {}
+    for key, spec in (cfg.get("columns") or {}).items():
+        spec = dict(spec)
+        if key in aliases:
+            known = list(spec.get("source") or [])
+            spec["source"] = known + [a for a in aliases[key] if a not in known]
+        columns[key] = spec
+    return columns
+
+
+def accepted_status(cfg: dict, year: int, present: set[str]) -> tuple[str | None, str | None]:
+    """(the status a year is built from, the reason when none): final rows preferred, provisional rows only for a year
+    after `final_only_through_year` without final rows (Y1: up to it, final rows only: `no_final_rows`)."""
+    through = cfg.get("final_only_through_year")
+    final_only = through is not None and int(year) <= int(through)
+    preference = ["F"] if final_only else (cfg.get("status_preference") or ["F", "P"])
+    status = next((s for s in preference if s in present), None)
+    if status is not None:
+        return status, None
+    return None, "no_final_rows" if final_only else "no_preferred_status"
+
+
 def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop) -> dict:
     """Year discovery, then per year its own schema, the make spellings present that year, and per (year, make
     spelling) the E1 query (or its two-part split); a query error is an error, never a year without cars, and a failing
     spelling stops only itself."""
+    from .audit import empty_columns, year_stats
     from .makes import canonical_of, row_filter, spelling
 
     cfg = ds.datasets()["eea_co2_cars"]
@@ -471,11 +510,11 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     for year in ([y for y in (years or []) if y not in statuses] if years else []):
         reports.append({"year": year, "status": "skipped", "reason": "no_rows"})
     for year in wanted:
-        status = next((s for s in cfg.get("status_preference") or ["F", "P"] if s in statuses[year]), None)
+        status, why = accepted_status(cfg, year, statuses[year])
         if status is None:
-            reports.append({"year": year, "status": "skipped", "reason": "no_preferred_status",
-                            "statuses": sorted(statuses[year])})
+            reports.append({"year": year, "status": "skipped", "reason": why, "statuses": sorted(statuses[year])})
             continue
+        year_columns = eea_year_columns(cfg, year)
         progress(f"year {year} (status {status})")
         where = f"{_q(year_col)} = {int(year)} AND {_q(status_col)} = '{status}'"
         try:
@@ -488,7 +527,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
             reports.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status})
             continue
         year_header = list(sample[0].keys())
-        resolved = resolve_map(year_header, columns)
+        resolved = resolve_map(year_header, year_columns)
         if resolved["missing"] or resolved["ambiguous"]:
             reports.append({"year": year, "status": "stopped", "reason": "schema_mismatch", "status_used": status,
                             "missing": resolved["missing"], "ambiguous": resolved["ambiguous"],
@@ -498,7 +537,8 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         registrations = resolve_map(year_header, {"registrations": cfg["registrations_column"]})["mapping"].get(
             "registrations")
         report: dict[str, Any] = {"year": year, "status_used": status, "absent_columns": resolved["absent"],
-                                  "registrations_column": registrations, "mode": "per_make"}
+                                  "registrations_column": registrations, "mode": "per_make",
+                                  "live_header": year_header[:200], "mapping": mapping}
         # the raw make values present this year whose spelling is an alias spelling or normalizes to a canonical make
         # (the server compares the exact value); without that list, the alias spellings themselves
         wanted_makes = set(makes)
@@ -514,7 +554,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         built: list[dict] = []
         errors: dict[str, str] = {}
         sizes: list[int] = []
-        queries = 0
+        queries = source_rows = 0
         for value in values:
             progress(f"year {year} (status {status}): {value}")
             try:
@@ -527,6 +567,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
             except EeaQueryError as exc:
                 errors[spelling(value)] = str(exc)[:500]
                 continue
+            source_rows += len(parts[0][1]) if parts else 0
             if len(plan) > 1:
                 report["split"] = True
             found = [r for r in eea_aggregate(parts, mapping, cfg, status)
@@ -534,7 +575,8 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
             for item in found:
                 item["make"] = spelling(item.get("make"))
             built += found
-        report.update(queries=queries, spellings=len(values), max_query_bytes=max(sizes) if sizes else None)
+        report.update(queries=queries, spellings=len(values), max_query_bytes=max(sizes) if sizes else None,
+                      source_rows=source_rows)
         if errors:
             report["make_errors"] = errors
         if values and len(errors) == len(values):
@@ -546,7 +588,9 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
             by_make[str(item.get("make") or "")] = by_make.get(str(item.get("make") or ""), 0) + 1
         rows += built
         absent_by_year[str(year)] = resolved["absent"]
+        stats = year_stats(built, list(year_columns), mapping)
         reports.append({**report, "status": "partial" if errors else "built", "rows": len(built),
+                        "empty_columns": empty_columns(stats), "audit": stats,
                         "by_make": dict(sorted(by_make.items()))})
     if not any(r["status"] in ("built", "partial") for r in reports):
         raise BuildStopped("no_year_built", years=reports, discovered={str(y): sorted(s) for y, s in statuses.items()})
@@ -737,27 +781,21 @@ def _csv_streams(path: Path):
         yield path.name, io.TextIOWrapper(raw, encoding="utf-8-sig", errors="replace", newline="")
 
 
-def eea_csv_columns(cfg: dict) -> dict:
-    """The column map with the CSV's `column_aliases` added to each key's accepted spellings."""
-    aliases = ((cfg.get("csv_years") or {}).get("column_aliases")) or {}
-    columns = {}
-    for key, spec in (cfg.get("columns") or {}).items():
-        spec = dict(spec)
-        if key in aliases:
-            known = list(spec.get("source") or [])
-            spec["source"] = known + [a for a in aliases[key] if a not in known]
-        columns[key] = spec
-    return columns
+def eea_csv_columns(cfg: dict, year: int | None = None) -> dict:
+    """The column map with the CSV's `column_aliases` (and the year's `column_aliases_by_year`) added to each key's
+    accepted spellings."""
+    return eea_year_columns(cfg, year, csv_file=True)
 
 
 def eea_csv_year(path: Path, year: int, status: str, *, progress: Progress = _noop) -> tuple[list[dict], dict]:
     """(rows, report) of one year's datahub CSV: streamed, filtered to the make values that are alias spellings or
     normalize to a canonical make, grouped exactly like the DISCODATA path (identity + measurement columns with
     SUM(r), then `eea_aggregate`). A header without a required key stops this year (`schema_mismatch`)."""
+    from .audit import empty_columns, year_stats
     from .makes import canonical_of, row_filter, spelling
 
     cfg = ds.datasets()["eea_co2_cars"]
-    columns = eea_csv_columns(cfg)
+    columns = eea_csv_columns(cfg, year)
     wanted_makes = known_makes()
     keep = row_filter()
     report: dict[str, Any] = {"year": year, "status_used": status, "source": "datahub_csv", "mode": "csv"}
@@ -786,6 +824,7 @@ def eea_csv_year(path: Path, year: int, status: str, *, progress: Progress = _no
             measures = [k for k in cfg.get("measure_keys") or [] if k in mapping]
             report["absent_columns"] = resolved["absent"]
             report["live_header"] = header[:200]
+            report["mapping"] = mapping
         reg = resolve_map(header, {"registrations": cfg["registrations_column"]})["mapping"].get("registrations")
         index = {h: i for i, h in enumerate(header)}
         cols = [index[mapping[k]] for k in keys + measures]
@@ -828,7 +867,9 @@ def eea_csv_year(path: Path, year: int, status: str, *, progress: Progress = _no
         item["year"] = ds._int(item.get("year"))       # CSV text; the shard types every other number
         item["row_id"] = f"eea-{year}-{status}-{n + 1}"
         by_make[item["make"]] = by_make.get(item["make"], 0) + 1
+    stats = year_stats(built, list(columns), mapping)
     report.update(status="built", rows=len(built), rows_read=read, other_year_rows=skipped_year,
+                  source_rows=read - skipped_year, empty_columns=empty_columns(stats), audit=stats,
                   by_make=dict(sorted(by_make.items())))
     return built, report
 
@@ -842,9 +883,11 @@ def _rejoin(head: str, stream):
 
 
 def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, download: Downloader | None = None,
-                  work: Path | None = None, progress: Progress = _noop) -> dict:
-    """K3: the years from `csv_years.from_year` that DISCODATA did not build, from the datahub CSV. {rows, years
-    (one report per year), absent_columns, urls, discovery}; a year that fails stops only itself; never raises."""
+                  work: Path | None = None, progress: Progress = _noop, lacking_years: set[int] | None = None) -> dict:
+    """K3: the years from `csv_years.from_year` that DISCODATA did not build, and the earlier `lacking_years` (Y1: the
+    years DISCODATA lacks), from the datahub CSV. {rows, years (one report per year), absent_columns, urls,
+    discovery}; a year up to `final_only_through_year` only from a final record; a year that fails stops only itself;
+    never raises."""
     import shutil
     import tempfile
 
@@ -872,9 +915,12 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
     try:
         for year, record in sorted(by_year.items()):
             base = {"year": year, "status_used": record["status"], "source": "datahub_csv", "record": record["uuid"]}
-            if year < floor or year in (skip_years or set()):
-                out["years"].append({**base, "status": "skipped", "reason": "built from DISCODATA" if year >= floor
-                                     else f"before csv_years.from_year {floor}"})
+            if year in (skip_years or set()) or (year < floor and year not in (lacking_years or set())):
+                out["years"].append({**base, "status": "skipped", "reason": "built from DISCODATA"
+                                     if year in (skip_years or set()) else f"before csv_years.from_year {floor}"})
+                continue
+            if accepted_status(cfg, year, {record["status"]})[0] is None:
+                out["years"].append({**base, "status": "skipped", "reason": "no_final_rows"})
                 continue
             files, seen = csv_candidates(record.get("links") or [], fetch, csv_cfg.get("file_pattern"))
             if len(files) != 1:
@@ -917,7 +963,15 @@ def build_eea_all(fetch: Fetcher, *, download: Downloader | None = None, progres
         built = {"rows": [], "schema": None, "urls": [], "years": list(stop.report.get("years") or []),
                  "absent_columns": {}, "discodata": {"reason": stop.reason}}
     done = {r["year"] for r in built["years"] if r.get("status") in ("built", "partial")}
-    extra = build_eea_csv(fetch, skip_years=done, download=download, work=ds.snapshot_dir(), progress=progress)
+    cfg = ds.datasets()["eea_co2_cars"]
+    floor = int(cfg.get("years_from") or 0)
+    csv_from = int((cfg.get("csv_years") or {}).get("from_year") or floor)
+    # Y1: an earlier year DISCODATA lacks (not discovered, or no rows of the accepted status); a year that failed or
+    # stopped there is reported, never re-read from the CSV
+    handled = {r["year"] for r in built["years"] if r.get("status") != "skipped"}
+    lacking = {y for y in range(floor, csv_from) if y not in handled} if floor else set()
+    extra = build_eea_csv(fetch, skip_years=done, download=download, work=ds.snapshot_dir(), progress=progress,
+                          lacking_years=lacking)
     built["rows"] += extra["rows"]
     built["years"] += [y for y in extra["years"] if y.get("year") not in done or y.get("status") != "skipped"]
     built["urls"] = list(built.get("urls") or []) + extra["urls"]

@@ -3,12 +3,15 @@
 Built by the `build-open-data` GitHub Action (`.github/workflows/build-open-data.yml`), never on the server:
 
 - `<dataset>.sqlite.gz`: the compacted snapshot (`src/open_data/build.py`, `compaction` in `data/open_datasets.json`);
-- `eea_co2_cars/<year>.sqlite.gz`: the EEA snapshot, one shard per registration year (`snapshot` in
+- `eea_co2_cars/<year>.sqlite.gz`: the EEA snapshot, one shard per registration year from 2010 (`snapshot` in
   `data/open_datasets.json`; a year over 50 MB is split by make initial into `<year>-A-L` / `<year>-M-Z`). Each shard has
   its own sha256 in the manifest; an unchanged final year rebuilds to identical bytes, so git stores nothing new;
 - `manifest.json`: per dataset its file, sha256, rows, years / files, absent columns, units, build date and the Action
   run URL;
-- `probe.json`: the Action's last live-schema probe.
+- `probe.json`: the Action's last live-schema probe;
+- `eea_schema_audit.md` / `eea_schema_audit.csv`: the EEA per-year schema audit (`scripts/audit_eea.py`): per year the
+  rows, the status used, the live header and its mapping; per canonical key its type, null %, distinct count and
+  coverage % weighted by registrations; the sanity checks and the per-year failure list.
 
 The server verifies each file against the manifest's sha256 and decompresses it into the container's temporary
 directory at first use (`src/open_data/datasets.py`); a missing file or a mismatch is `no_snapshot` (a missing or

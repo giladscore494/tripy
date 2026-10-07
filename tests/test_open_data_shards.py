@@ -72,8 +72,8 @@ def _commit(tmp_path: Path, rows: list[dict], *, max_bytes: int = LIMIT, previou
 def test_the_eea_build_writes_one_shard_per_year_listed_in_the_manifest(tmp_path, monkeypatch):
     build = _script("build_open_data")
     rows = {(2018, "F"): [H.eea_row(Year=2018), H.eea_row(Year=2018, Ve="X")],
-            (2019, "P"): [H.eea_row(Year=2019, Status="P")]}
-    fetch = _eea_fetch([(2018, "F"), (2019, "P")], rows, [])
+            (2022, "P"): [H.eea_row(Year=2022, Status="P")]}
+    fetch = _eea_fetch([(2018, "F"), (2022, "P")], rows, [])
     monkeypatch.setattr(build, "build_dataset", lambda name, fetch_=None: build_dataset(name, fetch))
     out = tmp_path / "open"
     results, manifest, warnings = build.run(["eea_co2_cars"], out, tmp_path / "work", {}, LIMIT, "https://run/1")
@@ -81,7 +81,7 @@ def test_the_eea_build_writes_one_shard_per_year_listed_in_the_manifest(tmp_path
     entry = manifest["datasets"]["eea_co2_cars"]
     assert entry["sharded"] and entry["build_status"] == "built" and "file" not in entry and entry["rows"] == 3
     assert [(s["file"], s["year"], s["part"], s["status_used"], s["rows"]) for s in entry["shards"]] == [
-        ("eea_co2_cars/2018.sqlite.gz", 2018, None, "F", 2), ("eea_co2_cars/2019.sqlite.gz", 2019, None, "P", 1)]
+        ("eea_co2_cars/2018.sqlite.gz", 2018, None, "F", 2), ("eea_co2_cars/2022.sqlite.gz", 2022, None, "P", 1)]
     for shard in entry["shards"]:
         path = out / shard["file"]
         assert shard["bytes"] == path.stat().st_size < LIMIT and shard["sha256"] == ds.sha256_file(path)
@@ -89,7 +89,7 @@ def test_the_eea_build_writes_one_shard_per_year_listed_in_the_manifest(tmp_path
             assert handle.read(16) == b"SQLite format 3\x00"
     assert not (out / "eea_co2_cars.sqlite.gz").exists()
     text = build.summary(results, manifest)
-    assert "| 2018 | — | ok | F | 2 |" in text and "| 2019 | — | ok | P | 1 |" in text      # per year: rows and size
+    assert "| 2018 | — | ok | F | 2 |" in text and "| 2022 | — | ok | P | 1 |" in text      # per year: rows and size
     assert "eea_co2_cars/ (2 shards)" in text
 
 
@@ -101,8 +101,9 @@ def test_a_shard_stores_only_what_matching_and_offers_read_typed(tmp_path):
                      + conn.execute("SELECT 'kw', typeof(power_kw) FROM rows WHERE power_kw = 81.5 LIMIT 1").fetchall()
                      + conn.execute("SELECT 'wb', typeof(wheelbase_mm) FROM rows LIMIT 1").fetchall())
     for dropped in ("data", "registrations", "status", "track_front_mm", "track_front_mm_min",
-                    "mass_wltp_test_kg", "co2_nedc"):
+                    "mass_wltp_test_kg"):
         assert dropped not in columns
+    assert columns["co2_nedc"] == columns["co2_wltp"] == "REAL"                         # Y2: the NEDC CO2 is kept
     assert columns["type_approval"] == "TEXT"                                          # K2: T is kept
     for key in ("wheelbase_mm", "mass_running_order_kg", "energy_wh_km", "fuel_consumption_l_100km",
                 "electric_range_km"):

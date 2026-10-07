@@ -22,7 +22,9 @@ valid for, identified_by (unique | all_survivors_agree), status}. Status:
 A value is identified without a unique candidate when every surviving candidate that states it states the same value
 (the PR #45 R4 rule applied to dataset rows; M2: a survivor without the value states nothing and is counted in
 `n_null`, never a disagreement). M3: when the match narrowed an `exact_subset` (type code + co2, type code, or co2),
-the offers read only those rows. Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h.
+the offers read only those rows. Never across test cycles: no mpg -> l/100km, no 0-60 mph -> 0-100 km/h. Y3 (EEA):
+an entry with `row_cycle: wltp` never reads an NEDC row and `row_cycle: nedc` (co2_nedc_g_km, standard NEDC) reads only
+NEDC rows (`row_cycle`); the rows it leaves out are counted in `cycle_excluded`, never a disagreement.
 """
 
 from __future__ import annotations
@@ -60,6 +62,27 @@ def _value(row: dict, entry: dict) -> Any:
         else round(number, 1)
 
 
+def row_cycle(row: dict, config: dict | None = None) -> str | None:
+    """Y3: wltp (the row states co2_wltp) | nedc (no co2_wltp, and co2_nedc stated or a year of
+    eea_co2_cars.nedc_years) | None (unknown)."""
+    if row.get("co2_wltp") not in (None, ""):
+        return "wltp"
+    config = ds.config() if config is None else config
+    through = (((config.get("datasets") or {}).get("eea_co2_cars") or {}).get("nedc_years") or {}).get("through")
+    year = ds._int(row.get("year"))
+    if row.get("co2_nedc") not in (None, "") or (through is not None and year is not None and year <= int(through)):
+        return "nedc"
+    return None
+
+
+def _cycle_rows(rows: list[dict], cycle: str | None) -> list[dict]:
+    if cycle == "nedc":
+        return [r for r in rows if row_cycle(r) == "nedc"]
+    if cycle == "wltp":
+        return [r for r in rows if row_cycle(r) != "nedc"]
+    return rows
+
+
 def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict]:
     """Every field offer of a match result (module docstring)."""
     field_map = ds.config().get("field_map") if field_map is None else field_map
@@ -75,6 +98,9 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
         subset = set((src.get("exact_subset") or {}).get("row_ids") or [])
         if subset:                                  # M3: the narrowest exact subset (type code + co2 / type code / co2)
             survivors = [r for r in survivors if r.get("row_id") in subset] or survivors
+        excluded = len(survivors)
+        survivors = _cycle_rows(survivors, entry.get("row_cycle"))   # Y3: never NEDC as WLTP, nor WLTP as NEDC
+        excluded -= len(survivors)
         values = [(_value(r, entry), r) for r in survivors]
         stated = [(v, r) for v, r in values if v is not None]
         if not stated:
@@ -86,6 +112,8 @@ def field_offers(result: dict, field_map: list[dict] | None = None) -> list[dict
                  "n_null": len(survivors) - len(stated)}
         if subset:
             offer["subset"] = (src.get("exact_subset") or {}).get("basis")
+        if excluded:
+            offer["cycle_excluded"] = excluded
         distinct = {v for v, _ in stated}
         if len(distinct) != 1:                      # M2: a null states nothing; only different values disagree
             out.append({**offer, "status": "survivors_disagree", "values": sorted(map(str, distinct))[:10]})
