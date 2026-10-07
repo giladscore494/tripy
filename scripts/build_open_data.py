@@ -10,6 +10,10 @@ written (`too_large`; the previous file of that year / dataset stays). Y1 size g
 compressed shards of 2010-2016 together exceed 60 MB they are still written and the summary prints their sizes with a
 warning. The summary ends with the per-year failure list (a year that was not built, and why).
 
+D3: per sharded year, the row-count delta per canonical make against the shards currently in --out (data/open on
+main); a changed count in a final year (status F) whose source rows are unchanged is a ::warning:: (after D0, two runs
+of the same source give zero deltas).
+
 A dataset whose probe (data/open/probe.json, step 1) did not resolve is not built; a dataset whose build stops or fails
 keeps its previous file and manifest entry (its `last_attempt` records the failure, `build_status` is failed). One
 dataset never costs the others: too-large or failed items are listed in the summary and the manifest and printed as
@@ -40,6 +44,7 @@ from src.open_data.build import build_dataset  # noqa: E402
 
 MANIFEST_VERSION = "open-data-manifest-v1"
 ENTRY_KEYS = ("rows", "years", "files", "absent_columns", "column_units", "unit_unknown_distribution", "csv_discovery",
+              "determinism",
               "last_file_year", "compaction", "make_spellings", "catalogue_date", "catalogue")
 EXPECTED_MAKES = {"epa_fueleconomy": 40, "tc_cvs": 35}      # E4: reported when lower, never a failure
 
@@ -157,6 +162,8 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
                      f"{r.get('rows', '—')} | {file} | {size} | {r.get('duration_s', '—')} s |")
     lines += shard_table(results)
     lines += size_gate(results)
+    lines += determinism_table(results)
+    lines += datahub_section(results)
     lines += makes_table(results, probe or {})
     lines += ["", "Per year / file:"]
     for name, r in results.items():
@@ -171,8 +178,6 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
             lines.append(f"- {name} {str(part.get('url') or '').rsplit('/', 1)[-1]}: {part.get('status')} "
                          f"group={part.get('group') or '—'} rows={part.get('rows', '—')} {part.get('reason') or ''} "
                          f"absent={part.get('absent_columns') or []}")
-        for item in r.get("csv_discovery") or []:              # K3: the datahub records read for the 2023+ years
-            lines.append(f"- {name} datahub: {json.dumps(item, ensure_ascii=False, default=str)[:600]}")
         if r.get("compaction"):
             c = r["compaction"]
             lines.append(f"- {name} compaction: {c.get('rows_before')} -> {c.get('rows_after')} rows, "
@@ -212,6 +217,125 @@ def compress_shard(name: str, shard: dict, staged_dir: Path, max_bytes: int) -> 
             item.update(status="too_large", gz=None)
         out.append(item)
     return out
+
+
+def make_counts(path: Path) -> dict[str, int]:
+    """{canonical make: rows} of a plain shard (one GROUP BY; the canonical make per distinct spelling)."""
+    import sqlite3
+
+    from src.open_data.makes import canonical_of
+
+    out: dict[str, int] = {}
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        for make, count in conn.execute("SELECT make, COUNT(*) FROM rows GROUP BY make"):
+            key = canonical_of(make) or str(make or "")
+            out[key] = out.get(key, 0) + int(count)
+    return out
+
+
+def determinism(name: str, result: dict, out: Path, previous: dict, work: Path) -> list[dict]:
+    """D3: per built year, {year, status_used, source_rows (previous, new), rows (previous, new), deltas {make: [prev,
+    new]}, warning}: the new shard against the shard(s) of that year in `out` (before they are replaced)."""
+    reports = {r.get("year"): r for r in result.get("years") or [] if r.get("status") in ("built", "partial")}
+    before = {r.get("year"): r for r in previous.get("years") or [] if isinstance(r, dict)
+              and r.get("status") in ("built", "partial")}
+    old_shards: dict[int, list[dict]] = {}
+    for shard in previous.get("shards") or []:
+        if isinstance(shard, dict) and shard.get("year") is not None:
+            old_shards.setdefault(int(shard["year"]), []).append(shard)
+    folder = work / "d3"
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for shard in result.get("shards") or []:
+        year = int(shard["year"])
+        new = make_counts(Path(shard["path"]))
+        old: dict[str, int] | None = {} if old_shards.get(year) else None
+        for item in old_shards.get(year) or []:
+            source = out / str(item.get("file") or "")
+            if not source.is_file():
+                old = None
+                break
+            plain = folder / f"{year}-{item.get('part') or 'all'}.sqlite"
+            with gzip.open(source, "rb") as src, open(plain, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            for make, count in make_counts(plain).items():
+                old[make] = old.get(make, 0) + count
+            plain.unlink()
+        report = reports.get(year) or {}
+        src_new = report.get("source_rows")
+        src_old = (before.get(year) or {}).get("source_rows")
+        entry = {"year": year, "status_used": shard.get("status_used"), "source_rows": [src_old, src_new],
+                 "rows": [sum(old.values()) if old is not None else None, sum(new.values())]}
+        if old is None:
+            entry.update(deltas={}, note="no previous shard")
+        else:
+            entry["deltas"] = {m: [old.get(m, 0), new.get(m, 0)] for m in sorted(set(old) | set(new))
+                               if old.get(m, 0) != new.get(m, 0)}
+            entry["warning"] = bool(entry["deltas"] and shard.get("status_used") == "F" and src_old is not None
+                                    and src_old == src_new)
+            if src_old is None:
+                entry["note"] = "previous source rows unknown (built before they were recorded)"
+        rows.append(entry)
+    return rows
+
+
+def determinism_table(results: dict) -> list[str]:
+    lines = []
+    for name, r in results.items():
+        items = r.get("determinism") or []
+        if not items:
+            continue
+        lines += ["", f"Determinism (D3) of {name}: rows per canonical make against the shards on main:", "",
+                  "| year | status | source rows (main -> new) | rows (main -> new) | makes changed | largest deltas | "
+                  "warning |", "|---|---|---|---|---|---|---|"]
+        for i in items:
+            deltas = sorted((i.get("deltas") or {}).items(), key=lambda kv: -abs(kv[1][1] - kv[1][0]))
+            shown = ", ".join(f"{m} {a}->{b}" for m, (a, b) in deltas[:5]) or i.get("note") or "none"
+            src, rows = i.get("source_rows") or [None, None], i.get("rows") or [None, None]
+            lines.append(f"| {i['year']} | {i.get('status_used') or '—'} | {src[0] if src[0] is not None else '—'} -> "
+                         f"{src[1] if src[1] is not None else '—'} | {rows[0] if rows[0] is not None else '—'} -> "
+                         f"{rows[1]} | {len(i.get('deltas') or {})} | {shown} | {'**yes**' if i.get('warning') else ''} |")
+    return lines
+
+
+def datahub_section(results: dict) -> list[str]:
+    """D1 / D2: per datahub record its resources (class) and the file chosen per year; the range join per year."""
+    lines = []
+    for name, r in results.items():
+        discovery = r.get("csv_discovery") or []
+        if not discovery:
+            continue
+        lines += ["", f"Datahub records (D1) of {name}:", ""]
+        for record in discovery:
+            if record.get("kind") == "summary":
+                lines.append(f"- {record.get('records_read')} record(s) read via {record.get('metadata_endpoint')} "
+                             f"(depth <= {record.get('max_depth')}, <= {record.get('max_records')} records); per year: "
+                             + json.dumps(record.get("years"), ensure_ascii=False))
+                continue
+            if record.get("status") == "failed":
+                lines.append(f"- discovery failed: {record.get('error')}")
+                continue
+            lines.append(f"- {record.get('uuid')} [{record.get('kind')}, depth {record.get('depth')}] "
+                         f"{record.get('title') or '—'}: year {record.get('year') or '—'} {record.get('status') or ''} "
+                         f"({record.get('year_basis') or record.get('status_note') or 'no year'}); metadata "
+                         f"{record.get('metadata') or '—'}, related {record.get('related') or '—'}")
+            for resource in (record.get("resources") or [])[:20]:
+                lines.append(f"  - {resource.get('class')}: {resource.get('url')}"
+                             + (f" ({resource.get('protocol')})" if resource.get("protocol") else ""))
+        for part in r.get("years") or []:
+            if part.get("source") == "datahub_csv":
+                lines.append(f"- {part.get('year')} [{part.get('mode') or 'csv'}]: {part.get('status')} "
+                             + (f"{part.get('reason')} " if part.get("reason") else "")
+                             + (f"url {part.get('url')} " if part.get("url") else "")
+                             + (f"candidates {part.get('files')} " if part.get("files") else "")
+                             + (f"join {part.get('join_pct')} % of {part.get('join_rows')} rows, range on "
+                                f"{part.get('values_pct')} % ({part.get('values_pct_registrations')} % of "
+                                f"registrations) " if part.get("mode") == "range_join" and part.get("join_rows")
+                                else ""))
+                if part.get("csv_live_header") or (part.get("live_header") and part.get("mode") != "range_join"):
+                    header = part.get("csv_live_header") or part.get("live_header")
+                    lines.append(f"  - CSV header: `{' | '.join(map(str, header))}`")
+    return lines
 
 
 def write_shards(name: str, result: dict, out: Path, work: Path, previous: dict, max_bytes: int,
@@ -276,6 +400,16 @@ def run(names: list[str], out: Path, work: Path, probe: dict, max_bytes: int, ru
             attempt = {"at": _utc(), "status": result.get("status"), "reason": result.get("reason")
                        or result.get("error"), "run_url": run_url}
             if result.get("status") == "built" and result.get("shards") is not None:
+                try:
+                    result["determinism"] = determinism(name, result, out, entry, work)
+                except Exception as exc:  # noqa: BLE001 - the check never costs the build
+                    result["determinism"] = []
+                    warnings.append(f"{name}: determinism check failed ({type(exc).__name__}: {str(exc)[:200]})")
+                for item in result["determinism"]:
+                    if item.get("warning"):
+                        warnings.append(f"{name} {item['year']}: final year, same source rows "
+                                        f"({item['source_rows'][1]}), but {len(item['deltas'])} make(s) changed row "
+                                        f"count (D3)")
                 entry, items = write_shards(name, result, out, work, entry, max_bytes, run_url)
                 entry = dict(entry)
                 result["shard_items"] = [{k: v for k, v in i.items() if k != "gz"} for i in items]

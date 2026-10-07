@@ -377,7 +377,7 @@ def test_compaction_keeps_the_normalized_spellings_and_reports_the_kept_makes():
             {"make": "Jeep", "model": "Wrangler", "year": 2018}, {"make": "HIUNDAI", "model": "i30", "year": 2018},
             {"make": "Studebaker", "model": "Lark", "year": 2018}]
     out = compact("epa_fueleconomy", {"rows": rows})
-    assert sorted(r["make"] for r in out["rows"]) == ["Ford", "HONDA", "Jeep", "Land Rover", "MINI"]
+    assert sorted(r["make"] for r in out["rows"]) == ["FORD", "HONDA", "JEEP", "LAND ROVER", "MINI"]   # D0
     c = out["compaction"]
     assert (c["rows_before"], c["rows_after"], c["kept_makes"]) == (9, 5, 5)
     assert out["make_spellings"] == {"FORD": ["FORD"], "HONDA": ["HONDA"], "JEEP": ["JEEP"],

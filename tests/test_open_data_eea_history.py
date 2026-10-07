@@ -141,8 +141,8 @@ def test_a_2010_2016_year_with_only_provisional_rows_is_not_built_and_is_reporte
 
 
 def test_the_datahub_csv_never_builds_a_2010_2021_year_from_a_provisional_record(monkeypatch):
-    monkeypatch.setattr(B, "eea_csv_sources", lambda fetch, cfg: ({2013: {"uuid": "u13", "year": 2013, "status": "P",
-                                                                          "links": ["https://x/2013.zip"]}}, []))
+    monkeypatch.setattr(B, "eea_datahub_discover", lambda fetch, cfg: ({2013: {
+        "year": 2013, "status": "P", "record": "u13", "records": ["u13"], "url": "https://x/2013.zip"}}, []))
     downloads = []
     out = build_eea_csv(lambda url: b"", lacking_years={2013},
                         download=lambda url, target: downloads.append(url) or 0)
@@ -298,7 +298,9 @@ def test_the_audit_writes_the_markdown_and_the_csv_from_the_built_snapshot(tmp_p
     assert named["wheelbase_mm"] == "87.5" and named["co2_nedc"] == "100.0" and named["co2_wltp"] == "absent"
     assert "Live header: `ID, MS" in text and "| co2_nedc | E (g/km) | mapped | INTEGER |" in text
     assert "| 2014 | 3 | 0 | 0 |" in text                               # sanity: shard rows, other year, HTML
-    assert text.rstrip().splitlines()[-1] == "- 2013: skipped (no_final_rows)"   # the summary ends with the failures
+    failures = text.rstrip().split("### Per-year failures", 1)[1].strip().splitlines()   # the audit ends with them
+    assert "- 2013: skipped (no_final_rows)" in failures
+    assert failures[-1] == "- 2025: stopped (no_csv_link)"     # the configured 2025 record: nothing readable here
     parsed = list(csv.DictReader(io.StringIO(table.read_text("utf-8"))))
     wheelbase = next(r for r in parsed if r["year"] == "2014" and r["key"] == "wheelbase_mm")
     assert wheelbase["coverage_pct_weighted"] == "87.5" and wheelbase["live_column"] == "W (mm)"

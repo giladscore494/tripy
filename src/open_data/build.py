@@ -117,7 +117,24 @@ def default_fetcher(session=None, timeout_s: float = 120.0) -> Fetcher:
         resp = http.get(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, timeout=(15, timeout_s))
         resp.raise_for_status()
         return resp.content
+
+    def fetch_prefix(url: str, limit: int = 4 << 20) -> bytes:
+        """The first `limit` bytes of a URL (streamed, the connection closed after them): a CSV header, never the
+        file (D2: the probe reads each datahub CSV's header without downloading it)."""
+        if not fetch_allowed(url):
+            raise BuildStopped("policy_blocked", url=url)
+        chunks, size = [], 0
+        with http.get(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}, timeout=(15, timeout_s),
+                      stream=True) as resp:
+            resp.raise_for_status()
+            for chunk in resp.iter_content(1 << 16):
+                chunks.append(chunk)
+                size += len(chunk)
+                if size >= limit:
+                    break
+        return b"".join(chunks)[:limit]
     fetch.json = fetch_json
+    fetch.prefix = fetch_prefix
     return fetch
 
 
@@ -409,11 +426,25 @@ def eea_aggregate(parts: list[tuple[list[str], list[dict]]], mapping: dict[str, 
                   status: str) -> list[dict]:
     """G2 locally: the server rows of one (year, make) (distinct configurations with a registration count `r`) ->
     one row per identity key with the registration-weighted median, min and max of each measurement and the summed
-    registrations; the parts of a split query are joined on the identity key."""
+    registrations; the parts of a split query are joined on the identity key. D0: the identity values are normalized
+    first (text: NFKC, trimmed, whitespace collapsed, upper case; numbers: one numeric type), so the spellings
+    DISCODATA's case- and trailing-space-insensitive GROUP BY returns arbitrarily ('Petrol' / 'PETROL  ') are one
+    configuration: summed registrations, the weighted median / min / max recomputed from all their inputs."""
     keys = [k for k in cfg.get("group_by_keys") or [] if k in mapping]
+    text_keys = [k for k in keys if k in ds.text_identity_keys()]
+    numeric = {k for k, kind in ((ds.shard_spec("eea_co2_cars") or {}).get("columns") or {}).items()
+               if kind in ("INTEGER", "REAL")} & set(keys)
     merged: dict[tuple, dict] = {}
     for p, (measures, server_rows) in enumerate(parts):
-        rows = [{**{k: raw.get(mapping[k]) for k in keys + measures}, "r": raw.get("r")} for raw in server_rows]
+        rows = []
+        for raw in server_rows:
+            row = {**{k: raw.get(mapping[k]) for k in keys + measures}, "r": raw.get("r")}
+            for k in text_keys:
+                row[k] = ds.norm_text(row[k])
+            for k in numeric:
+                number = ds._number(row[k]) if row[k] not in (None, "") else None
+                row[k] = number if number is not None or row[k] in (None, "") else row[k]
+            rows.append(row)
         for item in group_configurations(rows, keys, measures, "r"):
             ident = tuple(str(item.get(k)) for k in keys)
             target = merged.setdefault(ident, {k: item.get(k) for k in keys})
@@ -732,58 +763,301 @@ def csv_candidates(links: list[str], fetch: Fetcher, file_pattern: str | None = 
     return sorted(set(files)), seen
 
 
-def eea_csv_sources(fetch: Fetcher, csv_cfg: dict) -> tuple[dict[int, dict], list[dict]]:
-    """({year: {uuid, status, title, links}} preferring final records, the discovery report): the series' children and
-    the listed records, read from the datahub API (`api` + uuid + `/related`). A record that cannot be read is
-    reported, never fatal."""
+RECORD_API = re.compile(r"/api/records/([0-9A-Za-z][0-9A-Za-z_-]{0,63})(?:[/?#]|$)")
+NOT_DATA = ("accdb", "mdb", "xlsx", "xls", "sqlite", "pdf", "json", "xml", "png", "jpg", "jpeg", "gif", "svg", "doc",
+            "docx", "ppt", "pptx")
+DOWNLOAD_FORMATS = ("zip", "csv", "text/csv", "application/zip", "application/x-zip-compressed")
+RELATION_KEYS = ("children", "parent", "siblings", "brothersandsisters", "associated", "datasets", "services",
+                 "sources", "hassources", "related")
+METADATA_ENDPOINT = "{api}{uuid} (Accept: application/json)"
+
+
+def _local(key: Any) -> str:
+    """A JSON key without its namespace prefix, lower case ('gmd:CI_OnlineResource' -> 'ci_onlineresource')."""
+    return str(key).rsplit(":", 1)[-1].lower()
+
+
+def _deep_text(value: Any) -> str:
+    """The first text of a datahub field however deeply it is wrapped ({'gmd:URL': ...}, {'gco:CharacterString':
+    {'#text': ...}}, {language: text}, a list)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("eng", "en", "default", "#text", "value", "$"):
+            if isinstance(value.get(key), str):
+                return value[key]
+        for item in value.values():
+            text = _deep_text(item)
+            if text:
+                return text
+    if isinstance(value, list):
+        for item in value:
+            text = _deep_text(item)
+            if text:
+                return text
+    return ""
+
+
+def record_metadata(data: Any) -> dict:
+    """D1: {title, resources: [{url, protocol, name, description, format}], temporal_year} of a datahub record's own
+    metadata (the record API in JSON, read defensively: ISO 19139 / 19115-3 converted to JSON or a flat record). A
+    resource is an online linkage / url under the distribution part (a key naming distribution, transfer options or
+    online resources), never a contact's website; the title is the citation's title."""
+    out: dict[str, Any] = {"title": None, "resources": {}, "begin": None, "end": None}
+
+    def walk(node: Any, path: tuple[str, ...]) -> None:
+        if isinstance(node, dict):
+            keys = {_local(k): k for k in node}
+            if out["title"] is None and "title" in keys and any("citation" in p for p in path):
+                out["title"] = _deep_text(node[keys["title"]]).strip()[:300] or None
+            distribution = any(w in p for p in path for w in ("distribution", "transferoption", "online"))
+            contact = any(w in p for p in path for w in ("contact", "party", "responsib", "thumbnail", "overview"))
+            for name in ("linkage", "url"):
+                if name in keys and distribution and not contact:
+                    url = _deep_text(node[keys[name]]).strip()
+                    if url.startswith(("http://", "https://")) and url not in out["resources"]:
+                        out["resources"][url] = {
+                            "url": url, **{field: _deep_text(node[keys[field]]).strip()[:200] if field in keys else ""
+                                           for field in ("protocol", "name", "description")},
+                            "format": next((_deep_text(node[keys[f]]).strip()[:80] for f in
+                                            ("format", "mimetype", "applicationprofile") if f in keys), "")}
+            for name, slot in (("beginposition", "begin"), ("endposition", "end")):
+                if name in keys and out[slot] is None:
+                    out[slot] = _deep_text(node[keys[name]])
+            for key, value in node.items():
+                walk(value, path + (_local(key),))
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, path)
+    walk(data, ())
+    years = [re.search(r"(?<!\d)(19|20)\d\d(?!\d)", str(v or "")) for v in (out["begin"], out["end"])]
+    temporal = None
+    if all(years) and years[0].group(0) == years[1].group(0):
+        temporal = int(years[0].group(0))
+    return {"title": out["title"], "resources": list(out["resources"].values()), "temporal_year": temporal}
+
+
+def datahub_related_records(data: Any) -> list[dict]:
+    """[{uuid, title, relation}] of every record a datahub `/related` answer names (children, parent, siblings,
+    associated, ...), plus the record-API URLs among its online links."""
+    found: dict[str, dict] = {}
+
+    def walk(node: Any, relation: str | None) -> None:
+        if isinstance(node, dict):
+            if relation:                            # an item of a relation list names a record
+                uuid = _text_of(node.get("id") or node.get("uuid") or node.get("metadataUuid")).strip()
+                if uuid:
+                    found.setdefault(uuid, {"uuid": uuid, "title": _text_of(node.get("title"))[:300],
+                                            "relation": relation})
+            for key, value in node.items():
+                local = _local(key)
+                walk(value, local if local in RELATION_KEYS else None)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, relation)
+    walk(data, None)
+    for online in datahub_related(data)["onlines"]:
+        m = RECORD_API.search(urlparse(online["url"]).path + "/")
+        if m:
+            found.setdefault(m.group(1), {"uuid": m.group(1), "title": online.get("title") or "", "relation": "link"})
+    return list(found.values())
+
+
+def _allowed_host(url: str, hosts: list[str]) -> bool:
+    host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def classify_resource(resource: dict, hosts: list[str]) -> str:
+    """D1: download | landing | record | excluded. A download states it (protocol WWW:DOWNLOAD*, format zip / csv /
+    text/csv) or its URL path ends in .zip / .csv / .csv.gz; a table definition, document, image or DOI is never one;
+    only EEA hosts and data.europa.eu (`hosts`)."""
+    url = str(resource.get("url") or "")
+    parsed = urlparse(url)
+    name = parsed.path.lower().rsplit("/", 1)[-1]
+    extensions = name.split(".")[1:]
+    if parsed.netloc.lower().endswith("doi.org") or any(t in extensions for t in NOT_DATA):
+        return "excluded"
+    if not _allowed_host(url, hosts):
+        return "excluded"
+    if RECORD_API.search(parsed.path + "/"):
+        return "record"
+    protocol = str(resource.get("protocol") or "").lower()
+    fmt = str(resource.get("format") or "").lower().strip()
+    if name.endswith(FILE_SUFFIXES) or "download" in protocol or fmt in DOWNLOAD_FORMATS:
+        return "download"
+    return "landing"
+
+
+def _record_year_status(title: str | None, temporal: int | None, pattern: str) -> tuple[int | None, str | None, str]:
+    """(year, F | P, basis) from a record title (`title_pattern`) or its temporal extent (the status then from the
+    title's own words); never from a file name."""
+    parsed = title_year_status(title or "", pattern) if title else None
+    if parsed:
+        return parsed[0], parsed[1], "title"
+    words = re.search(r"\b(final|provisional)\b", title or "", re.I)
+    if temporal and words:
+        return temporal, "F" if words.group(1).lower() == "final" else "P", "temporal_extent"
+    return None, None, ""
+
+
+def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None = None,
+                         max_records: int | None = None) -> tuple[dict[int, dict], list[dict]]:
+    """D1: ({year: choice}, per-record report). From the series and the listed records, every record a related answer
+    or a record-API link names, at most `max_depth` levels deep and `max_records` records per run (a record is read
+    once: a cycle is not followed twice). Per record its own metadata (the record API in JSON) and its `/related`
+    answer; their online resources classified (`classify_resource`). Year and status from the record's title or
+    temporal extent (a listed record's configured year / status, the reviewer's, last). Per year, final records
+    preferred: their download resources (none: the EEA landing pages read once for same-host file links); exactly one
+    -> chosen, several -> `file_pattern`, still several -> `ambiguous_download` with every candidate; none ->
+    `no_csv_link`. A provisional child whose year has a final child in a listing is not read. Never a guessed URL."""
     fetch_json = getattr(fetch, "json", fetch)
     api, pattern = str(csv_cfg.get("api") or ""), str(csv_cfg.get("title_pattern") or "")
-    report: list[dict] = []
-    records: dict[str, dict] = {}
-
-    def related(uuid: str) -> dict | None:
-        url = f"{api}{uuid}/related"
-        try:
-            data = json.loads(_decode(fetch_json(url)))
-        except BuildStopped as stop:
-            report.append({"uuid": uuid, "url": url, "status": "stopped", "reason": stop.reason})
-            return None
-        except Exception as exc:  # noqa: BLE001 - one record never costs the others
-            report.append({"uuid": uuid, "url": url, "status": "failed", "error": f"{type(exc).__name__}: "
-                                                                                f"{str(exc)[:200]}"})
-            return None
-        return datahub_related(data)
-
-    for series in csv_cfg.get("series") or []:
-        found = related(str(series.get("uuid")))
-        if found is None:
-            continue
-        report.append({"uuid": series.get("uuid"), "kind": "series", "children": len(found["children"])})
-        for child in found["children"]:
-            parsed = title_year_status(child["title"], pattern)
-            entry = {"uuid": child["uuid"], "kind": "child", "title": child["title"]}
-            if parsed:
-                records.setdefault(child["uuid"], {**entry, "year": parsed[0], "status": parsed[1]})
-            else:
-                report.append({**entry, "status": "skipped", "reason": "title without year / status"})
+    hosts = [str(h).lower() for h in csv_cfg.get("allowed_hosts") or ["eea.europa.eu", "data.europa.eu"]]
+    max_depth = int(csv_cfg.get("max_depth") or 2) if max_depth is None else max_depth
+    max_records = int(csv_cfg.get("max_records") or 40) if max_records is None else max_records
+    queue: list[dict] = [{"uuid": str(s.get("uuid")), "kind": "series", "depth": 0, "via": None}
+                         for s in csv_cfg.get("series") or [] if s.get("uuid")]
+    configured: dict[str, dict] = {}
     for record in csv_cfg.get("records") or []:
-        if record.get("uuid") and record.get("year") and record.get("status"):
-            records.setdefault(str(record["uuid"]), {"uuid": str(record["uuid"]), "kind": "listed",
-                                                     "year": int(record["year"]), "status": str(record["status"]),
-                                                     "title": record.get("note")})
-    by_year: dict[int, dict] = {}
-    for record in sorted(records.values(), key=lambda r: (r["year"], r["status"] != "F")):
-        if record["year"] in by_year:
-            report.append({**record, "status_note": "superseded (final preferred)"})
+        if record.get("uuid"):
+            configured[str(record["uuid"])] = record
+            queue.append({"uuid": str(record["uuid"]), "kind": "listed", "depth": 0, "via": None})
+    listed_titles: dict[str, str] = {}
+    seen: set[str] = set()
+    reports: list[dict] = []
+    records: list[dict] = []
+
+    def read(url: str) -> tuple[Any, str | None]:
+        try:
+            return json.loads(_decode(fetch_json(url))), None
+        except BuildStopped as stop:
+            return None, stop.reason
+        except Exception as exc:  # noqa: BLE001 - one record never costs the others
+            return None, f"{type(exc).__name__}: {str(exc)[:200]}"
+
+    while queue:
+        item = queue.pop(0)
+        uuid = item["uuid"]
+        if uuid in seen:
             continue
-        found = related(record["uuid"])
-        if found is None:
+        seen.add(uuid)
+        listed = title_year_status(listed_titles.get(uuid, ""), pattern) if listed_titles.get(uuid) else None
+        if listed and listed[1] == "P" and any(title_year_status(t, pattern) == (listed[0], "F")
+                                               for t in listed_titles.values()):
+            reports.append({**item, "title": listed_titles[uuid], "year": listed[0], "status": "P",
+                            "status_note": "superseded (final preferred); not read"})
             continue
-        record["links"] = [o["url"] for o in found["onlines"]]
-        report.append({k: record.get(k) for k in ("uuid", "kind", "year", "status", "title")} | {
-            "links": record["links"][:20]})
-        by_year[record["year"]] = record
-    return by_year, report
+        if len(records) >= max_records:
+            reports.append({**item, "status_note": f"not read: record limit {max_records}"})
+            continue
+        meta_data, meta_error = read(f"{api}{uuid}")
+        related_data, related_error = read(f"{api}{uuid}/related")
+        meta = record_metadata(meta_data) if meta_data is not None else {"title": None, "resources": [],
+                                                                          "temporal_year": None}
+        related = datahub_related(related_data) if related_data is not None else {"children": [], "onlines": []}
+        references = datahub_related_records(related_data) if related_data is not None else []
+        for child in related["children"]:
+            listed_titles.setdefault(child["uuid"], child["title"])
+        resources = {r["url"]: dict(r) for r in meta["resources"]}
+        for online in related["onlines"]:
+            resources.setdefault(online["url"], {"url": online["url"], "protocol": online.get("protocol") or "",
+                                                 "name": online.get("title") or "", "description": "",
+                                                 "format": ""})
+        for resource in resources.values():
+            resource["class"] = classify_resource(resource, hosts)
+            m = RECORD_API.search(urlparse(resource["url"]).path + "/")
+            if resource["class"] == "record" and m and all(m.group(1) != r["uuid"] for r in references):
+                references.append({"uuid": m.group(1), "title": "", "relation": "link"})
+        title = meta["title"] or listed_titles.get(uuid) or None
+        year, status, basis = _record_year_status(title, meta["temporal_year"], pattern)
+        if year is None and uuid in configured and configured[uuid].get("year") and configured[uuid].get("status"):
+            year, status, basis = int(configured[uuid]["year"]), str(configured[uuid]["status"]), "configured"
+        record = {**item, "title": title, "year": year, "status": status, "year_basis": basis or None,
+                  "metadata": "ok" if meta_data is not None else f"failed: {meta_error}",
+                  "related": "ok" if related_data is not None else f"failed: {related_error}",
+                  "resources": [{k: r.get(k) for k in ("url", "class", "protocol", "format", "name")}
+                                for r in resources.values()][:40],
+                  "references": [r["uuid"] for r in references][:40]}
+        if item["kind"] == "series":
+            record["children"] = len(related["children"])
+        records.append(record)
+        reports.append(record)
+        if item["depth"] < max_depth:
+            for ref in references:
+                if ref["uuid"] not in seen:
+                    queue.append({"uuid": ref["uuid"], "kind": "child" if ref["relation"] == "children" else "related",
+                                  "depth": item["depth"] + 1, "via": uuid})
+    choices: dict[int, dict] = {}
+    pages: dict[str, list[str]] = {}
+    for year in sorted({r["year"] for r in records if r["year"] and r["status"]}):
+        status = "F" if any(r["year"] == year and r["status"] == "F" for r in records) else "P"
+        holders = [r for r in records if r["year"] == year and r["status"] == status]
+        candidates: dict[str, str] = {}
+        for record in holders:
+            for resource in record["resources"]:
+                if resource["class"] == "download":
+                    candidates.setdefault(resource["url"], record["uuid"])
+        links_seen = [res["url"] for record in holders for res in record["resources"]]
+        if not candidates:
+            for record in holders:
+                for resource in record["resources"]:
+                    if resource["class"] != "landing" or "eea.europa.eu" not in urlparse(resource["url"]).netloc:
+                        continue
+                    if resource["url"] not in pages:
+                        pages[resource["url"]] = csv_candidates([resource["url"]], fetch)[0]
+                    for found in pages[resource["url"]]:
+                        candidates.setdefault(found, record["uuid"])
+                        links_seen.append(found)
+        files = sorted(u for u in candidates if not any(t in u.lower().rsplit("/", 1)[-1] for t in NOT_CSV)
+                       and _allowed_host(u, hosts))
+        if csv_cfg.get("file_pattern"):
+            files = [u for u in files if re.search(csv_cfg["file_pattern"], u, re.I)]
+        choice = {"year": year, "status": status, "records": [r["uuid"] for r in holders],
+                  "record": candidates.get(files[0]) if len(files) == 1 else holders[0]["uuid"],
+                  "url": files[0] if len(files) == 1 else None, "candidates": files[:20],
+                  "links": list(dict.fromkeys(links_seen))[:40]}
+        if len(files) != 1:
+            choice["reason"] = "no_csv_link" if not files else "ambiguous_download"
+        choices[year] = choice
+    summary = {"kind": "summary", "metadata_endpoint": METADATA_ENDPOINT, "records_read": len(records),
+               "max_depth": max_depth, "max_records": max_records,
+               "years": {str(y): {k: c.get(k) for k in ("status", "url", "reason")} for y, c in choices.items()}}
+    return choices, reports + [summary]
+
+
+def csv_header_from_prefix(body: bytes) -> dict:
+    """D2: {header, file, compression} of the first bytes of a CSV, a .csv.gz or a zip (its first entry's local header
+    and the start of its deflated data; no central directory needed), or {error}."""
+    import struct
+    import zlib
+
+    name, text = None, b""
+    try:
+        if body[:4] == b"PK\x03\x04":
+            _, _, flag, method, _, _, _, _, _, nlen, xlen = struct.unpack("<IHHHHHIIIHH", body[:30])
+            name = body[30:30 + nlen].decode("utf-8", errors="replace")
+            data = body[30 + nlen + xlen:]
+            if method == 8:
+                text = zlib.decompressobj(-15).decompress(data, 1 << 20)
+            elif method == 0:
+                text = data
+            else:
+                return {"error": f"zip compression method {method}", "file": name}
+        elif body[:2] == b"\x1f\x8b":
+            text = zlib.decompressobj(16 + 15).decompress(body, 1 << 20)
+        else:
+            text = body
+    except (zlib.error, struct.error) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}", "file": name}
+    line = _decode(text.split(b"\n", 1)[0]).strip("\r\ufeff")
+    if not line:
+        return {"error": "no header line in the first bytes", "file": name}
+    try:
+        dialect = csv.Sniffer().sniff(line, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    return {"header": next(csv.reader([line], dialect)), "file": name}
 
 
 def _bigint(value: Any) -> int | None:
@@ -907,11 +1181,13 @@ def _rejoin(head: str, stream):
 
 
 def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, download: Downloader | None = None,
-                  work: Path | None = None, progress: Progress = _noop, lacking_years: set[int] | None = None) -> dict:
+                  work: Path | None = None, progress: Progress = _noop, lacking_years: set[int] | None = None,
+                  join_years: set[int] | None = None) -> dict:
     """K3: the years from `csv_years.from_year` that DISCODATA did not build, and the earlier `lacking_years` (Y1: the
-    years DISCODATA lacks), from the datahub CSV. {rows, years (one report per year), absent_columns, urls,
-    discovery}; a year up to `final_only_through_year` only from a final record; a year that fails stops only itself;
-    never raises."""
+    years DISCODATA lacks), from the datahub CSV found by `eea_datahub_discover` (D1). {rows, years (one report per
+    year), absent_columns, urls, discovery, join}; a year up to `final_only_through_year` only from a final record; a
+    year that fails stops only itself; never raises. D2: the `join_years` (built from DISCODATA) are downloaded and
+    grouped too, returned in `join` ({year: {rows, report, url, record}}) for the range join, never as rows."""
     import shutil
     import tempfile
 
@@ -920,9 +1196,10 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
     out: dict[str, Any] = {"rows": [], "years": [], "absent_columns": {}, "urls": [], "discovery": []}
     if not csv_cfg:
         return out
-    progress("datahub records (2023+)")
+    out["join"] = {}
+    progress("datahub records (record metadata, D1)")
     try:
-        by_year, out["discovery"] = eea_csv_sources(fetch, csv_cfg)
+        by_year, out["discovery"] = eea_datahub_discover(fetch, csv_cfg)
     except Exception as exc:  # noqa: BLE001 - the CSV years never cost the DISCODATA years
         out["discovery"] = [{"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}]
         return out
@@ -937,26 +1214,29 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
         Path(work).mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="eea-csv-", dir=str(work) if work else None))
     try:
-        for year, record in sorted(by_year.items()):
-            base = {"year": year, "status_used": record["status"], "source": "datahub_csv", "record": record["uuid"]}
-            if year in (skip_years or set()) or (year < floor and year not in (lacking_years or set())):
+        for year, choice in sorted(by_year.items()):
+            base = {"year": year, "status_used": choice["status"], "source": "datahub_csv", "record": choice["record"]}
+            joining = year in (join_years or set())
+            if joining:
+                base.update(mode="range_join_source", csv_status=choice["status"])
+            elif year in (skip_years or set()) or (year < floor and year not in (lacking_years or set())):
                 out["years"].append({**base, "status": "skipped", "reason": "built from DISCODATA"
                                      if year in (skip_years or set()) else f"before csv_years.from_year {floor}"})
                 continue
-            if accepted_status(cfg, year, {record["status"]})[0] is None:
+            if accepted_status(cfg, year, {choice["status"]})[0] is None:
                 out["years"].append({**base, "status": "skipped", "reason": "no_final_rows"})
                 continue
-            files, seen = csv_candidates(record.get("links") or [], fetch, csv_cfg.get("file_pattern"))
-            if len(files) != 1:
-                out["years"].append({**base, "status": "stopped", "reason": "no_csv_link" if not files
-                                     else "ambiguous_download", "files": files[:20], "links": seen[:40]})
+            if not choice.get("url"):
+                out["years"].append({**base, "status": "stopped", "reason": choice.get("reason") or "no_csv_link",
+                                     "files": choice.get("candidates") or [], "links": choice.get("links") or [],
+                                     "records": choice.get("records")})
                 continue
-            url = files[0]
+            url = choice["url"]
             target = folder / f"{year}{''.join(Path(urlparse(url).path).suffixes[-2:]) or '.zip'}"
             progress(f"year {year} (csv): download {url.rsplit('/', 1)[-1]}")
             try:
                 size = download(url, target)
-                rows, report = eea_csv_year(target, year, record["status"], progress=progress)
+                rows, report = eea_csv_year(target, year, choice["status"], progress=progress)
             except BuildStopped as stop:
                 out["years"].append({**base, "status": "stopped", "reason": stop.reason, "url": url, **stop.report})
                 continue
@@ -967,6 +1247,13 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
             finally:
                 if target.exists():
                     target.unlink()
+            if joining:
+                if report.get("status") == "built":
+                    out["join"][year] = {"rows": rows, "report": {**base, **report, "url": url,
+                                                                  "download_bytes": size}}
+                else:
+                    out["years"].append({**base, **report, "url": url, "download_bytes": size})
+                continue
             out["years"].append({**base, **report, "url": url, "download_bytes": size})
             if report.get("status") == "built":
                 out["rows"] += rows
@@ -977,8 +1264,63 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
     return out
 
 
+def range_join(disco_rows: list[dict], csv_rows: list[dict], keys: list[str], columns: list[str]) -> dict:
+    """D2: the CSV-only `columns` (electric_range_km with its _min / _max) added to the DISCODATA rows of one year from
+    the datahub CSV rows of the same year, joined on the full identity key `keys` (normalized: text as stored,
+    numbers as numbers). A key without an exact join, or a key two CSV rows share, gets nothing. In place; the join
+    statistics."""
+    text = set(ds.text_identity_keys())
+
+    def value(key: str, raw: Any) -> Any:
+        if raw is None or raw == "":
+            return None
+        if key in text:
+            return ds.norm_text(raw)
+        number = ds._number(raw)
+        return float(number) if number is not None else ds.norm_text(raw)
+
+    index: dict[tuple, dict | None] = {}
+    duplicates = 0
+    for row in csv_rows:
+        key = tuple(value(k, row.get(k)) for k in keys)
+        if key in index:
+            duplicates += 1
+            index[key] = None
+        else:
+            index[key] = row
+    matched = with_values = 0
+    weight = weight_values = 0.0
+    for row in disco_rows:
+        w = float(ds._number(row.get("registrations")) or 0)
+        weight += w
+        hit = index.get(tuple(value(k, row.get(k)) for k in keys))
+        if not hit:
+            continue
+        matched += 1
+        added = False
+        for column in columns:
+            for suffix in ("", "_min", "_max"):
+                if hit.get(f"{column}{suffix}") is not None:
+                    row[f"{column}{suffix}"] = hit[f"{column}{suffix}"]
+                    added = True
+        if added:
+            with_values += 1
+            weight_values += w
+
+    def pct(part: float, whole: float) -> float | None:
+        return round(100.0 * part / whole, 1) if whole else None
+    return {"join_rows": len(disco_rows), "csv_rows": len(csv_rows), "csv_duplicate_keys": duplicates,
+            "matched": matched, "join_pct": pct(matched, len(disco_rows)), "with_values": with_values,
+            "values_pct": pct(with_values, len(disco_rows)), "values_pct_registrations": pct(weight_values, weight)}
+
+
 def build_eea_all(fetch: Fetcher, *, download: Downloader | None = None, progress: Progress = _noop) -> dict:
-    """The DISCODATA years, then the datahub CSV years DISCODATA does not have (K3); stops only when no year built."""
+    """The DISCODATA years, then the datahub CSV years DISCODATA does not have (K3, found by D1); stops only when no
+    year built. D2: for the `csv_years.range_join_years` built from DISCODATA (it stays the base), the CSV-only
+    columns (`range_join_columns`: electric_range_km) are added from the datahub CSV of the same year, joined on the
+    full identity key; the year's audit statistics are recomputed and a `range_join` report gives the join %."""
+    from .audit import empty_columns, year_stats
+
     stopped = None
     try:
         built = build_eea(fetch, progress=progress)
@@ -994,10 +1336,40 @@ def build_eea_all(fetch: Fetcher, *, download: Downloader | None = None, progres
     # stopped there is reported, never re-read from the CSV
     handled = {r["year"] for r in built["years"] if r.get("status") != "skipped"}
     lacking = {y for y in range(floor, csv_from) if y not in handled} if floor else set()
+    csv_cfg = cfg.get("csv_years") or {}
+    join_years = {int(y) for y in csv_cfg.get("range_join_years") or []} & done
     extra = build_eea_csv(fetch, skip_years=done, download=download, work=ds.snapshot_dir(), progress=progress,
-                          lacking_years=lacking)
+                          lacking_years=lacking, join_years=join_years)
     built["rows"] += extra["rows"]
     built["years"] += [y for y in extra["years"] if y.get("year") not in done or y.get("status") != "skipped"]
+    join_columns = [str(c) for c in csv_cfg.get("range_join_columns") or ["electric_range_km"]]
+    for year, joined in sorted((extra.get("join") or {}).items()):
+        disco = next(r for r in built["years"] if r.get("year") == year and r.get("status") in ("built", "partial"))
+        source = joined["report"]
+        csv_map = source.get("mapping") or {}
+        columns = [c for c in join_columns if c in csv_map]
+        keys = [k for k in cfg.get("group_by_keys") or [] if k in (disco.get("mapping") or {})]
+        entry: dict[str, Any] = {
+            "year": year, "source": "datahub_csv", "mode": "range_join", "status_used": disco.get("status_used"),
+            "csv_status": source.get("csv_status"), "record": source.get("record"), "url": source.get("url"),
+            "csv_rows_read": source.get("rows_read"), "csv_live_header": source.get("live_header"),
+            "join_keys": keys, "columns": columns}
+        missing = [k for k in keys if k not in csv_map]
+        if not columns:
+            entry.update(status="no_range_column", reason=f"none of {join_columns} in the CSV header")
+        elif missing:
+            entry.update(status="join_keys_missing", missing=missing)
+        else:
+            year_rows = [r for r in built["rows"] if ds._int(r.get("year")) == year]
+            entry.update(status="joined", **range_join(year_rows, joined["rows"], keys, columns))
+            if entry["with_values"]:
+                for column in columns:
+                    disco["mapping"][column] = f"{csv_map[column]} (datahub CSV join)"
+                disco["absent_columns"] = [c for c in disco.get("absent_columns") or [] if c not in columns]
+                built.setdefault("absent_columns", {})[str(year)] = disco["absent_columns"]
+                disco["audit"] = year_stats(year_rows, list(eea_year_columns(cfg, year)), disco["mapping"])
+                disco["empty_columns"] = empty_columns(disco["audit"])
+        built["years"].append(entry)
     built["urls"] = list(built.get("urls") or []) + extra["urls"]
     built["absent_columns"] = {**(built.get("absent_columns") or {}), **extra["absent_columns"]}
     built["csv_discovery"] = extra["discovery"]
@@ -1348,6 +1720,12 @@ def compact(dataset: str, built: dict) -> dict:
     rules = (ds.datasets().get(dataset) or {}).get("compaction") or {}
     rows = built["rows"]
     before = len(rows)
+    if not ds.shard_spec(dataset):
+        # D0: the text identity columns as stored and compared (a sharded dataset is normalized before its own
+        # grouping and again by the shard writer)
+        keys = ds.text_identity_keys()
+        for row in rows:
+            ds.normalize_identity(row, keys)
     if rules.get("makes") == "vocabulary":
         keep = row_filter()
         rows = [r for r in rows if keep(r.get("make"), " ".join(str(r.get(k) or "") for k in
@@ -1425,7 +1803,8 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
         shards = None
         if ds.shard_spec(dataset):
             # S1: one shard per year; its meta holds no timestamp (an unchanged year gives the same bytes)
-            status_used = {r["year"]: r.get("status_used") for r in built.get("years") or [] if r.get("year")}
+            status_used = {r["year"]: r.get("status_used") for r in built.get("years") or [] if r.get("year")
+                           and r.get("status") in ("built", "partial")}
             shard_meta = {"source_url": cfg.get("source_url"), "licence": policy.get("licence"),
                           "attribution": policy.get("attribution")}
             shards = ds.write_shards(dataset, built["rows"], {k: v for k, v in shard_meta.items() if v is not None},

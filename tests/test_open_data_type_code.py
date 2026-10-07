@@ -154,7 +154,7 @@ def test_t_is_kept_in_a_compacted_shard(tmp_path):
     assert built["status"] == "built"
     with sqlite3.connect(tmp_path / "open" / "eea_co2_cars" / "2018.sqlite") as conn:
         values = {r[0] for r in conn.execute("SELECT type_approval FROM rows")}
-    assert values == {"e4"}
+    assert values == {"E4"}                                                   # D0: stored upper case
 
 
 # --- K3: the 2023+ years from the datahub CSV ------------------------------------------------------------------------------

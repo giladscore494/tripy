@@ -154,7 +154,41 @@ def probe_eea(fetch: Fetcher) -> dict:
                         url_length=max(p["url_length"] for p in parts), response_head=parts[0]["response_head"],
                         parts=parts)
         out["grouped_test"] = {k: v for k, v in test.items() if v is not None}
+    out["datahub"] = probe_datahub(fetch, cfg)
     return out
+
+
+def probe_datahub(fetch: Fetcher, cfg: dict) -> dict:
+    """D1 / D2: the datahub records the build would read (record metadata, related records, their classified
+    resources, the file chosen per year or why none) and, for every chosen file of a year from `header_from_year`
+    (2021), its CSV header read from the first bytes (`fetch.prefix`; nothing downloaded). Never fatal for EEA."""
+    from .build import csv_header_from_prefix, eea_datahub_discover
+
+    csv_cfg = cfg.get("csv_years") or {}
+    if not csv_cfg:
+        return {}
+    try:
+        choices, records = eea_datahub_discover(fetch, csv_cfg)
+    except Exception as exc:  # noqa: BLE001 - the datahub never stops the DISCODATA probe
+        return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    headers = {}
+    prefix = getattr(fetch, "prefix", None)
+    for year, choice in sorted(choices.items()):
+        if not choice.get("url") or year < int(csv_cfg.get("header_from_year") or 2021):
+            continue
+        if prefix is None:
+            headers[str(year)] = {"url": choice["url"], "error": "no prefix reader"}
+            continue
+        try:
+            headers[str(year)] = {"url": choice["url"], **csv_header_from_prefix(prefix(choice["url"]))}
+        except Exception as exc:  # noqa: BLE001
+            headers[str(year)] = {"url": choice["url"], "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    range_spellings = [s.lower() for s in (cfg.get("columns") or {}).get("electric_range_km", {}).get("source") or []]
+    for item in headers.values():
+        item["range_columns"] = [c for c in item.get("header") or []
+                                 if c.strip().lower() in range_spellings or re.search(r"range|\baer\b", c, re.I)]
+    return {"status": "ok", "records": records, "choices": {str(y): c for y, c in choices.items()},
+            "headers": headers}
 
 
 def probe_ademe(fetch: Fetcher) -> dict:
@@ -347,6 +381,7 @@ def markdown(report: dict) -> str:
                          + (f", URL length {test.get('url_length')}" if test.get("url_length") else "")
                          + (f" — {test.get('error')}" if test.get("error") else ""))
             lines.append(f"  - response head: `{(test.get('response_head') or '')[:300].replace('`', chr(39))}`")
+        lines += datahub_markdown(item.get("datahub"))
         if item.get("unit_overrides"):
             lines.append(f"- unit overrides: {json.dumps(item['unit_overrides'], ensure_ascii=False)}")
         if item.get("dictionary"):
@@ -360,3 +395,34 @@ def markdown(report: dict) -> str:
                 if dist:
                     lines.append(f"  - {key}: p5 {dist['p5']}, p50 {dist['p50']}, p95 {dist['p95']} (n {dist['n']})")
     return "\n".join(lines) + "\n"
+
+
+def datahub_markdown(datahub: dict | None) -> list[str]:
+    """D1 / D2: per datahub record its resources (class) and per year the chosen file or the reason; each CSV header."""
+    if not datahub:
+        return []
+    if datahub.get("status") != "ok":
+        return [f"- datahub discovery: {datahub.get('status')} {datahub.get('error') or ''}"]
+    lines = ["- datahub records (D1):"]
+    for record in datahub.get("records") or []:
+        if record.get("kind") == "summary":
+            lines.append(f"  - read {record.get('records_read')} record(s) via {record.get('metadata_endpoint')}")
+            continue
+        lines.append(f"  - {record.get('uuid')} [{record.get('kind')}, depth {record.get('depth')}] "
+                     f"{record.get('title') or '—'}: year {record.get('year') or '—'} {record.get('status') or ''} "
+                     f"({record.get('year_basis') or record.get('status_note') or 'no year'}); metadata "
+                     f"{record.get('metadata') or '—'}")
+        for resource in record.get("resources") or []:
+            lines.append(f"    - {resource.get('class')}: {resource.get('url')}"
+                         + (f" ({resource.get('protocol')})" if resource.get("protocol") else ""))
+    for year, choice in (datahub.get("choices") or {}).items():
+        lines.append(f"- datahub {year} ({choice.get('status')}): "
+                     + (f"chosen {choice['url']}" if choice.get("url") else
+                        f"{choice.get('reason')}; candidates {choice.get('candidates') or []}"))
+    for year, head in (datahub.get("headers") or {}).items():
+        if head.get("header"):
+            lines.append(f"- datahub {year} CSV header ({head.get('file') or head.get('url')}): "
+                         f"`{' | '.join(head['header'])}`; range columns: {head.get('range_columns') or 'none'}")
+        else:
+            lines.append(f"- datahub {year} CSV header: {head.get('error')}")
+    return lines

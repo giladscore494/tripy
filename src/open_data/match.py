@@ -94,7 +94,7 @@ def target_keys(fingerprint: dict, payload: dict | None, identity=None) -> dict:
     battery = [float(w) for w in words if w.isdigit() and 30 <= int(w) <= 150]
     type_code = str(fingerprint.get("type_code") or ident.get("model_code") or "").strip() or None
     return {"manufacturer": manufacturer, "makes": makes, "type_code": type_code,
-            "models": [str(m).upper() for m in models if m],
+            "models": [ds.norm_text(str(m)) for m in models if m and ds.norm_text(str(m))],
             "family": family, "year": int(_num(ident.get("year"))) if _num(ident.get("year")) else None,
             "cc": _num(engine.get("engine_cc")),
             "power": _num(engine.get("power_hp")), "propulsion": propulsion,
@@ -112,7 +112,7 @@ def _values(config: dict, group: str) -> dict[str, list[str]]:
 
 
 def _classify(text: Any, table: dict[str, list[str]]) -> set[str]:
-    low = str(text or "").strip().lower()
+    low = (ds.norm_text(text) or "").lower() if isinstance(text, str) else str(text or "").strip().lower()
     return {key for key, values in table.items() if low and low in values}
 
 
@@ -132,7 +132,7 @@ def transmission_of(code: Any, config: dict | None = None) -> dict | None:
 
 
 def _model_matches(row: dict, keys: dict) -> bool:
-    text = " ".join(str(row.get(k) or "") for k in ("model", "base_model", "variant", "version")).upper()
+    text = ds.norm_text(" ".join(str(row.get(k) or "") for k in ("model", "base_model", "variant", "version"))) or ""
     return any(re.search(rf"(?<![A-Z0-9]){re.escape(m)}(?![A-Z0-9])", text) for m in keys["models"])
 
 
@@ -284,8 +284,14 @@ PAREN_SUFFIX = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 def _type_code(value: Any) -> str:
-    """A type code as compared: trimmed, upper case, inner whitespace as '-' ('ZWE211L DEXGBW' = 'ZWE211L-DEXGBW')."""
-    return re.sub(r"\s+", "-", str(value or "").strip().upper())
+    """A type code as compared (D0: as stored): NFKC, trimmed, upper case, inner whitespace as '-' ('ZWE211L DEXGBW' =
+    'ZWE211L-DEXGBW')."""
+    return re.sub(r"\s+", "-", ds.norm_text(str(value or "")) or "")
+
+
+def _code_field(value: Any) -> str:
+    """An EEA Va / Ve / T value as compared (D0): NFKC, trimmed, whitespace collapsed, upper case ('wx31' = 'WX31')."""
+    return ds.norm_text(str(value or "")) or ""
 
 
 def type_code_rule(rule: str, code: Any, row: dict) -> bool:
@@ -294,7 +300,7 @@ def type_code_rule(rule: str, code: Any, row: dict) -> bool:
     if len(code) < 2:
         return False
     if rule == "exact_va":
-        return code == str(row.get("variant") or "").strip().upper()
+        return code == _code_field(row.get("variant"))
     if rule == "toyota_style":
         return any(code == _type_code(PAREN_SUFFIX.sub("", str(row.get(k) or ""))) for k in ("version", "variant"))
     return False                                # an unknown rule name never matches
@@ -431,16 +437,16 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
     if typed:
         # V2: the other type codes (Va) of the same model in the year window: a page naming only those is another
         # variant
-        own = {str(r.get("variant") or "").strip().upper() for r in by_code["rows"]}
+        own = {_code_field(r.get("variant")) for r in by_code["rows"]}
         siblings = sorted(
-            {v for v in (str(r.get("variant") or "").strip().upper() for r in rows if _model_matches(r, keys))
+            {v for v in (_code_field(r.get("variant")) for r in rows if _model_matches(r, keys))
              if re.fullmatch(r"[A-Z0-9]{3,10}", v) and re.search(r"\d", v)} - own)[:40]
         out["type_code"]["siblings"] = siblings
         # V2: the power (kW) of those sibling configurations: a stated kW is evidence of another configuration only
         # when it is one of these
         out["type_code"]["sibling_power_kw"] = sorted(
             {_num(r.get("power_kw")) for r in rows if _model_matches(r, keys)
-             and str(r.get("variant") or "").strip().upper() in set(siblings) and _num(r.get("power_kw"))})
+             and _code_field(r.get("variant")) in set(siblings) and _num(r.get("power_kw"))})
     rows = by_code["rows"] if typed else [r for r in rows if _model_matches(r, keys)]
     out["candidates"] = len(rows)
     hard = set(rules.get("hard_vetoes") or ["power", "displacement"])
