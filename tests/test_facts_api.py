@@ -16,6 +16,7 @@ from src.api.auth import RateLimiter
 from src.facts import record as R
 from src.facts import service as S
 from src.facts import versions as V
+from src.facts import versions as V
 from src.facts.service import FactsService, SnapshotsUnavailable
 from src.open_data import datasets as ds
 from test_api import ACCESS, data_root, gate  # noqa: F401  (the API fixtures)
@@ -147,6 +148,34 @@ def test_zero_semantics_drop_unknown_zeros_and_keep_values():
     assert "airbags" not in no_bags and "co2_wltp" not in no_bags and "nox_wltp" not in no_bags
     manual = one(service(rows=[{**row, "automatic_ind": 0}]), "22010")["facts"]
     assert manual["automatic"]["value"] is False                            # zero_means value: a manual gearbox
+
+
+def test_zero_is_unknown_for_power_counts_and_ratings():
+    row = {**ROWS["22010"], "koah_sus": 0, "nikud_betihut": 0}
+    record = one(service(rows=[row]), "22010")
+    assert "horsepower" not in record["facts"] and "safety_score" not in record["facts"]
+    zero = {w["field"] for w in record["withheld"] if w["reason"] == "zero_means_unknown"}
+    assert {"horsepower", "safety_score"} <= zero
+    rules = V.zero_semantics()["fields"]
+    for name in ("horsepower", "seats", "doors", "gross_weight_kg", "pollution_group", "green_index", "safety_score",
+                 "safety_equipment_level"):
+        assert rules[name]["zero_means"] == "unknown", name
+    assert rules["abs"]["zero_means"] == rules["esc"]["zero_means"] == "value"
+    no_abs = one(service(rows=[{**row, "abs_ind": 0, "bakarat_yatzivut_ind": 0}]), "22010")["facts"]
+    assert no_abs["abs"]["value"] is False and no_abs["esc"]["value"] is False
+
+
+def test_engine_cc_zero_is_a_value_only_for_a_battery_electric_car():
+    ev = one(service(rows=[{**ROWS["22010"], "nefah_manoa": 0, "norm_propulsion_technology": "battery_electric"}]),
+             "22010")
+    assert ev["facts"]["engine_cc"]["value"] == 0
+    petrol = one(service(rows=[{**ROWS["22010"], "nefah_manoa": 0, "norm_propulsion_technology": "conventional"}]),
+                 "22010")
+    assert "engine_cc" not in petrol["facts"]
+    assert {"source": "government", "field": "engine_cc", "reason": "zero_means_unknown"} in petrol["withheld"]
+    unknown_propulsion = one(service(rows=[{**ROWS["22010"], "nefah_manoa": 0, "norm_propulsion_technology": None}]),
+                             "22010")
+    assert "engine_cc" not in unknown_propulsion["facts"]
 
 
 def test_an_adas_flag_appears_only_when_stated():
@@ -542,8 +571,13 @@ def test_the_rate_limit_is_60_per_minute_per_token(api):
 def test_every_call_is_logged_without_values(caplog):
     import logging
 
-    with caplog.at_level(logging.INFO, logger="tripy.facts"):
-        service().records([KEY["22010"], "missing"])
+    logger = logging.getLogger("tripy.facts")
+    logger.addHandler(caplog.handler)                   # the `tripy` logger does not propagate (server_logging)
+    try:
+        with caplog.at_level(logging.INFO, logger="tripy.facts"):
+            service().records([KEY["22010"], "missing"])
+    finally:
+        logger.removeHandler(caplog.handler)
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("facts call "))
     data = json.loads(line[len("facts call "):])
     assert set(data) == {"time", "keys", "debug", "status", "cache", "facts", "withheld", "latency_ms"}

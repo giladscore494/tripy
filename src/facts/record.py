@@ -2,7 +2,8 @@
 
 Government facts (the Level 1.5 row; source `government`): the canonical names yeda-rechev's
 level15.GOVERNMENT_FACT_FIELDS and its 19 ADAS flags use (`adas.<flag>`). Only a field with a value appears: a null
-column is left out, and a 0 is left out when data/facts_zero_semantics.json says the field's 0 means `unknown`. An ADAS
+column is left out, and a 0 is left out when data/facts_zero_semantics.json says the field's 0 means `unknown` (for
+engine_cc a 0 is the value only for a battery-electric car: `value_when`). An ADAS
 flag appears only when decode_equipment reports it as stated (equipment_stated); a flag that is not stated is unknown.
 
 Open-data facts (source = the dataset; data/facts_admission.json):
@@ -97,6 +98,19 @@ def _government_provenance(row: dict) -> dict:
             "licence": policy.get("licence"), "attribution": policy.get("attribution")}
 
 
+def _zero_is_value(rule: dict, row: dict) -> bool:
+    """A 0 is the value under `zero_means: value`, or under `value_when` when the row's own government field has one
+    of the listed values (engine_cc: battery_electric); otherwise it is unknown."""
+    if rule.get("zero_means", "unknown") == "value":
+        return True
+    columns = {name: column for name, column, *_ in GOVERNMENT_FIELDS}
+    for field, allowed in (rule.get("value_when") or {}).items():
+        raw = row.get(columns.get(field, field))
+        if raw is not None and str(raw).strip() in {str(a) for a in allowed}:
+            return True
+    return False
+
+
 def government_facts(row: dict, zero: dict | None = None) -> tuple[dict[str, dict], list[dict]]:
     """({name: fact}, withheld) of the Level 1.5 row under the zero semantics (module docstring)."""
     from ..db import EQUIPMENT_BITS, decode_equipment
@@ -116,7 +130,7 @@ def government_facts(row: dict, zero: dict | None = None) -> tuple[dict[str, dic
             value = _number(raw)
             if value is None:
                 continue
-            if value == 0 and (rules.get(name) or {}).get("zero_means", "unknown") != "value":
+            if value == 0 and not _zero_is_value(rules.get(name) or {}, row):
                 withheld.append({"source": "government", "field": name, "reason": "zero_means_unknown"})
                 continue
             if kind == "bool":
