@@ -1,0 +1,310 @@
+"""The build-gov-datasets GitHub Action: data.gov.il government datasets -> committed, aggregated snapshots in data/gov/.
+
+    new_car_prices   data/gov/new_car_prices.sqlite.gz   (G1)
+    road_survival    data/gov/road_survival.sqlite.gz    (G3; built before G2, which reads its registry names)
+    recall_notices   data/gov/recall_notices.sqlite.gz   (G2) + data/gov/recall_model_map.json (proposals)
+
+plus data/gov/manifest.json (per dataset: file, sha256, bytes, rows, provenance per resource, stats, last_attempt),
+data/gov/build_status.json (one {dataset, status, ...} per selected dataset) and data/gov/report.md (the pull-request
+body). Each dataset is all-or-nothing: any fail-safe stop (src/gov_data/provenance.py) keeps the previous snapshot and
+manifest entry and records {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}; the other
+datasets continue. Raw files only ever live in --work (the runner's disk), never in git. Never run on the server.
+
+    python scripts/build_gov_datasets.py [--datasets all|new_car_prices,...] [--out data/gov] [--work DIR]
+                                         [--report data/gov/report.md] [--body gov-pr-body.md]
+
+Exit 0 when at least one dataset was built, 1 when every selected dataset failed (the report is written either way).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.gov_data import INGESTION_VERSION, SOURCES  # noqa: E402
+from src.gov_data import prices as G1  # noqa: E402
+from src.gov_data import provenance as P  # noqa: E402
+from src.gov_data import recalls as G2  # noqa: E402
+from src.gov_data import schemas as S  # noqa: E402
+from src.gov_data import snapshot as SN  # noqa: E402
+from src.gov_data import survival as G3  # noqa: E402
+from src.gov_data.ckan import Http  # noqa: E402
+from src.gov_data.ingest import Context, read_resource  # noqa: E402
+from src.gov_data.names import ym_of  # noqa: E402
+
+ORDER = ("new_car_prices", "road_survival", "recall_notices")
+REGISTRY_INDEX = ROOT / "data" / "gov_registry_index.json"
+BODY_LIMIT = 55000
+
+
+def registry_keys(path: Path) -> set[str] | None:
+    data = SN.read_json(path)
+    years = data.get("model_years")
+    return set(years) if isinstance(years, dict) and years else None
+
+
+def _committed(out: Path, previous: dict, dataset: str, work: Path) -> Path | None:
+    """The committed snapshot of a dataset decompressed into the work folder (the inputs of a later dataset when that
+    one is not rebuilt in this run)."""
+    import gzip
+    import shutil
+
+    entry = (previous.get("datasets") or {}).get(dataset) or {}
+    source = out / str(entry.get("file") or "")
+    if not entry.get("file") or not source.is_file() or SN.sha256_file(source) != entry.get("sha256"):
+        return None
+    target = work / f"committed-{dataset}.sqlite"
+    with gzip.open(source, "rb") as src, open(target, "wb") as dst:
+        shutil.copyfileobj(src, dst, 1 << 20)
+    return target
+
+
+def _ingest(ctx: Context, name: str, spec: dict, previous_entry: dict, sink) -> list[dict]:
+    return [read_resource(ctx, name, spec, resource, previous_entry, sink) for resource in spec["resources"]]
+
+
+def _write(out: Path, work: Path, name: str, tables: dict, meta: dict) -> dict:
+    raw = SN.write_sqlite(work / f"{name}.sqlite", tables, meta)
+    target = out / f"{name}.sqlite.gz"
+    SN.gzip_file(raw, target)
+    raw.unlink()
+    return {"file": target.name, "sha256": SN.sha256_file(target), "bytes": target.stat().st_size}
+
+
+def _licence_and_attribution(spec: dict, resources: list[dict], date: str) -> dict:
+    licences = sorted({str(r.get("license")) for r in resources if r.get("license") is not None})
+    first = resources[0]["resource_id"] if resources else ""
+    attribution = str(spec.get("attribution") or "").format(title_he=spec.get("title_he") or "", resource_id=first,
+                                                             date=date[:10])
+    return {"licence": " / ".join(licences) or None, "stated_licence": spec.get("stated_licence"),
+            "attribution": attribution, "title": spec.get("title"), "title_he": spec.get("title_he"),
+            "ministry": spec.get("ministry")}
+
+
+def build_prices(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
+    agg = G1.Prices()
+    resources = _ingest(ctx, name, spec, prev, agg.add)
+    state["prices"] = agg
+    lines, stats = G1.report(agg, registry_keys(state["registry_index"]))
+    written = _write(out, work, name, G1.tables(agg), {"dataset": name, "rows": agg.rows, "keys": stats["keys"],
+                                                       "unkeyed_rows": agg.unkeyed, "source": SOURCES[name]})
+    return {**written, "rows": agg.rows, "resources": resources, "stats": stats}, lines
+
+
+def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
+    agg = G3.Survival()
+    resources = _ingest(ctx, name, spec, prev, agg.add)
+    state["survival"] = agg
+    coverage = agg.year_coverage()
+    basis = G3.BASIS_MODEL_YEAR if coverage >= float(spec.get("year_coverage_min", 0.95)) else G3.BASIS_FIRST_ROAD
+    active = next((r for r in resources if r.get("role") == "active"), {})
+    ref = ym_of(active.get("source_last_modified"))
+    if ref:
+        ref_ym = ref[0] * 12 + ref[1] - 1
+    else:
+        dated = [k[4] for k in agg.cancelled if k[4] is not None]
+        ref_ym = max(dated) if dated else 0
+    low, high = (int(a) for a in spec.get("ages") or (3, 20))
+    min_size = int(spec.get("min_cohort_size", 200))
+    rows, stats = G3.cohorts(agg, basis, ref_ym, min_size, (low, high))
+    map_rows = G3.model_year_map(agg)
+    min_share = float(spec.get("model_year_min_share", 0.9))
+    lines, summary = G3.report(agg, coverage, basis, rows, stats, map_rows, min_size, min_share, ref_ym)
+    meta = {"dataset": name, "cohort_basis": basis, "shnat_yitzur_coverage": coverage, "reference_month":
+            summary["reference_month"], "min_cohort_size": min_size, "ages": [low, high],
+            "model_year_min_share": min_share, "exclusion": G3.EXCLUSION, "definition_he": G3.DEFINITION_HE[basis],
+            "source": SOURCES[name]}
+    written = _write(out, work, name, G3.table_payload(rows, map_rows, agg), meta)
+    return {**written, "rows": sum(agg.rows.values()), "resources": resources, "stats": summary}, lines
+
+
+def _registry_inputs(state: dict, out: Path, previous: dict, work: Path) -> tuple[dict[int, Counter], Counter, list[str]]:
+    """{tozeret_cd: Counter(tozeret_nm)} and Counter((tozeret_nm, kinuy_mishari)) from this run's G1 / G3, else from
+    their committed snapshots; the sources used are listed."""
+    names: dict[int, Counter] = {}
+    models: Counter = Counter()
+    used = []
+    survival = state.get("survival")
+    if survival is not None:
+        for code, counter in survival.makes().items():
+            names.setdefault(code, Counter()).update(counter)
+        models.update(survival.model_names())
+        used.append("road_survival (this build: the active registry)")
+    else:
+        path = _committed(out, previous, "road_survival", work)
+        if path:
+            for r in SN.query(path, "SELECT tozeret_cd, tozeret_nm, kinuy_mishari, n FROM models"):
+                names.setdefault(int(r["tozeret_cd"]), Counter())[r["tozeret_nm"]] += int(r["n"])
+                models[(r["tozeret_nm"], r["kinuy_mishari"])] += int(r["n"])
+            used.append("road_survival (committed snapshot: the active registry)")
+    prices = state.get("prices")
+    if prices is not None:
+        for code, counter in prices.makes().items():
+            names.setdefault(code, Counter()).update(counter)
+        models.update(prices.models())
+        used.append("new_car_prices (this build)")
+    else:
+        path = _committed(out, previous, "new_car_prices", work)
+        if path:
+            for r in SN.query(path, "SELECT tozeret_cd, tozeret_nm, kinuy_mishari, SUM(rows) AS n FROM prices "
+                                    "GROUP BY tozeret_cd, tozeret_nm, kinuy_mishari"):
+                if r["tozeret_nm"]:
+                    names.setdefault(int(r["tozeret_cd"]), Counter())[r["tozeret_nm"]] += int(r["n"])
+                    if r["kinuy_mishari"]:
+                        models[(r["tozeret_nm"], r["kinuy_mishari"])] += int(r["n"])
+            used.append("new_car_prices (committed snapshot)")
+    return names, models, used
+
+
+def build_recalls(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
+    agg = G2.Recalls()
+    resources = _ingest(ctx, name, spec, prev, agg.add)
+    names, models, used = _registry_inputs(state, out, state["previous"], work)
+    agreement = G2.code_agreement(agg, names)
+    min_rate = float(spec.get("tozar_cd_key_min_agreement", 0.98))
+    code_key = bool(agreement["codes"]) and agreement["rate"] >= min_rate
+    map_path = out / SN.MAP_NAME
+    new_map = G2.propose_map(agg, G2.load_map(map_path), G2.catalogue_models(models))
+    map_path.write_text(json.dumps(new_map, ensure_ascii=False, indent=1) + "\n", "utf-8")
+    pairs = G2.map_pairs(new_map)
+    lines, stats = G2.report(agg, agreement, code_key, new_map, min_rate)
+    lines.insert(0, f"- registry names / catalogue models read from: {', '.join(used) or 'nothing (no G1 / G3 data)'}")
+    stats["tozar_cd_disagreeing_sample"] = agreement["disagreeing"][:20]
+    meta = {"dataset": name, "tozar_cd_agreement": agreement["rate"], "tozar_cd_codes": agreement["codes"],
+            "tozar_cd_used_as_key": code_key, "min_agreement": min_rate, "source": SOURCES[name]}
+    written = _write(out, work, name, {"recalls": (G2.COLUMNS, G2.table_rows(agg, pairs, code_key))}, meta)
+    return {**written, "rows": agg.count, "resources": resources, "stats": stats}, lines
+
+
+BUILDERS = {"new_car_prices": build_prices, "road_survival": build_survival, "recall_notices": build_recalls}
+
+
+def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, run_url: str | None = None,
+        registry_index: Path = REGISTRY_INDEX, cfg: dict | None = None) -> dict:
+    """Build the selected datasets. {results: {name: {status, ...}}, manifest, status: [...], sections: {name: lines}}."""
+    cfg = S.config() if cfg is None else cfg
+    specs = S.datasets(cfg)
+    out.mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True, exist_ok=True)
+    previous = SN.manifest(out)
+    entries = dict(previous.get("datasets") or {})
+    ctx = Context(http=http or Http(), base=str(cfg.get("ckan_base")), accepted_formats=list(cfg.get("formats") or []),
+                  min_row_ratio=float(cfg.get("min_row_ratio", 0.7)),
+                  ingestion_version=str(cfg.get("ingestion_version") or INGESTION_VERSION), work_dir=work / "raw",
+                  now=now)
+    state: dict[str, Any] = {"previous": previous, "registry_index": registry_index}
+    results, statuses, sections = {}, [], {}
+    for name in [n for n in ORDER if n in names]:
+        spec = specs[name]
+        prev_entry = dict(entries.get(name) or {})
+        attempt_at = now()
+        try:
+            built, lines = BUILDERS[name](ctx, name, spec, prev_entry, out, work, state)
+        except P.DatasetFailed as exc:
+            record = P.failure(name, exc, previous_exists=bool(prev_entry.get("file")))
+            statuses.append(record)
+            results[name] = record
+            sections[name] = [f"- **failed**: {exc.reason}" + (f" ({exc.detail})" if exc.detail else "")
+                              + (f" [resource {exc.resource_id}]" if exc.resource_id else ""),
+                              "- the previous snapshot and its manifest entry are kept"]
+            if prev_entry:
+                prev_entry["build_status"] = "failed"
+            prev_entry["last_attempt"] = {"at": attempt_at, "status": "failed", "reason": exc.reason,
+                                          "detail": exc.detail[:300] or None, "run_url": run_url}
+            entries[name] = prev_entry
+            continue
+        finally:
+            for leftover in (work / "raw").glob(f"{name}-*.raw") if (work / "raw").is_dir() else []:
+                leftover.unlink()                       # raw files never outlive their dataset's build
+        entry = {**built, **_licence_and_attribution(spec, built["resources"], attempt_at), "built_at": attempt_at,
+                 "run_url": run_url, "build_status": "built", "source": SOURCES[name],
+                 "last_attempt": {"at": attempt_at, "status": "built", "run_url": run_url}}
+        entries[name] = entry
+        statuses.append({"dataset": name, "status": "built", "rows": built["rows"], "sha256": built["sha256"]})
+        results[name] = {"status": "built", **entry}
+        sections[name] = lines
+    manifest = {"version": SN.MANIFEST_VERSION, "built_at": now(), "run_url": run_url,
+                "config_version": cfg.get("version"), "ingestion_version": ctx.ingestion_version,
+                "datasets": {k: entries[k] for k in sorted(entries)}}
+    (out / SN.MANIFEST_NAME).write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=str) + "\n", "utf-8")
+    (out / "build_status.json").write_text(json.dumps(statuses, ensure_ascii=False, indent=1) + "\n", "utf-8")
+    return {"results": results, "manifest": manifest, "status": statuses, "sections": sections,
+            "samples": ctx.samples}
+
+
+def report(outcome: dict, cfg: dict | None = None) -> str:
+    """data/gov/report.md and the pull-request body: per dataset its status, row counts and schema per resource, and
+    its section (G1 multi-price stats and the registry join, G2 code agreement and unresolved models, G3 year coverage,
+    cohort basis and the largest cohorts)."""
+    specs = S.datasets(S.config() if cfg is None else cfg)
+    manifest = outcome["manifest"]
+    lines = ["## Government datasets build", "",
+             "Aggregates only (model / model-year level); no per-vehicle record is stored. Raw files never enter git.",
+             "", "| dataset | status | rows | file | sha256 |", "|---|---|---|---|---|"]
+    for name, result in outcome["results"].items():
+        entry = (manifest.get("datasets") or {}).get(name) or {}
+        status = result.get("status")
+        if status == "failed":
+            status = f"failed: {result.get('reason')} (previous snapshot kept)"
+        lines.append(f"| {name} | {status} | {entry.get('rows', '—') if result.get('status') == 'built' else '—'} | "
+                     f"{entry.get('file') or '—'} | {str(entry.get('sha256') or '—')[:12]} |")
+    for name, section in outcome["sections"].items():
+        spec = specs.get(name) or {}
+        entry = (manifest.get("datasets") or {}).get(name) or {}
+        lines += ["", f"### {name} — {spec.get('title')}", ""]
+        if (outcome["results"].get(name) or {}).get("status") == "built":
+            lines.append(f"- licence as stated by the package: {entry.get('licence')!r} (brief: "
+                         f"{spec.get('stated_licence')!r})")
+            for res in entry.get("resources") or []:
+                lines.append(f"- resource `{res['resource_id']}` ({res.get('role')}): {res['row_count']} rows, "
+                             f"{res['file_size']} bytes, sha256 {res['sha256'][:12]}, last modified "
+                             f"{res.get('source_last_modified')}, schema hash {res['schema_hash'][:12]}")
+                lines.append(f"  - schema: `{' | '.join(res.get('schema') or [])}`")
+        lines += section
+        samples = [s for rid, s in (outcome.get("samples") or {}).items()
+                   if any(r["resource_id"] == rid for r in spec.get("resources") or [])]
+        if samples and (outcome["results"].get(name) or {}).get("status") == "built":
+            lines += ["", "<details><summary>QA sample (datastore_search, projected)</summary>", "", "```json",
+                      json.dumps(samples, ensure_ascii=False, indent=1)[:4000], "```", "", "</details>"]
+    text = "\n".join(lines) + "\n"
+    return text if len(text) <= BODY_LIMIT else text[:BODY_LIMIT - 80] + "\n\n_(cut at the body limit: see data/gov/report.md)_\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--datasets", default="all")
+    parser.add_argument("--out", default=str(ROOT / "data" / "gov"))
+    parser.add_argument("--work", default="")
+    parser.add_argument("--report", default="")
+    parser.add_argument("--body", default="")
+    args = parser.parse_args(argv)
+    names = S.selected(args.datasets)
+    work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="gov-data-"))
+    outcome = run(names, Path(args.out), work, run_url=os.environ.get("GOV_DATA_RUN_URL") or None)
+    full = report(outcome)
+    if args.report:
+        Path(args.report).write_text(full, "utf-8")
+    if args.body:
+        Path(args.body).write_text(full, "utf-8")
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+            handle.write(full)
+    print(full)
+    for status in outcome["status"]:
+        if status["status"] == "failed":
+            print(f"::warning::{status['dataset']}: {status['reason']}; the previous snapshot is kept", file=sys.stderr)
+    built = sum(1 for s in outcome["status"] if s["status"] == "built")
+    return 0 if built else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
