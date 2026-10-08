@@ -105,6 +105,15 @@ def _csv_cfg(**extra) -> dict:
     return {**ds.datasets()["eea_co2_cars"]["csv_years"], **extra}
 
 
+def _with_range_join_years(monkeypatch, years: list[int]) -> None:
+    """The config with `csv_years.range_join_years` set (the shipped config has none since T2)."""
+    config = ds.config()
+    eea = config["datasets"]["eea_co2_cars"]
+    patched = {**config, "datasets": {**config["datasets"], "eea_co2_cars": {
+        **eea, "csv_years": {**eea["csv_years"], "range_join_years": years}}}}
+    monkeypatch.setattr(ds, "config", lambda path=None: patched)
+
+
 # --- D0: text identity normalization -----------------------------------------------------------------------------------
 
 def test_case_and_space_variants_of_one_configuration_are_one_row_with_summed_registrations(tmp_path):
@@ -542,6 +551,7 @@ def test_discodata_stays_the_base_for_2021_and_the_range_comes_from_the_datahub_
     def fetch(url: str) -> bytes:
         return hub(url) if "sdi.eea.europa.eu" in url else disco(url)
     ds.set_snapshot_dir(tmp_path / "work")
+    _with_range_join_years(monkeypatch, [2021])          # T2: the shipped config has none; the D2 join code is kept
     built = build_eea_all(fetch)
     years = [y for y in built["years"] if y["year"] == 2021]
     base = next(y for y in years if y.get("mode") == "per_make")
