@@ -1752,6 +1752,18 @@ def compact(dataset: str, built: dict) -> dict:
 
 # --- one dataset -----------------------------------------------------------------------------------------------------------
 
+def build_month() -> str:
+    """D4: the build month (UTC, 'YYYY-MM') a monthly dataset's snapshot is named by."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _month_row_id(row_id: Any, month: str) -> str:
+    """'ademe-17' -> 'ademe-2026-10-17': a row id unique across the months of a monthly dataset."""
+    text = str(row_id or "")
+    prefix, _, rest = text.partition("-")
+    return f"{prefix}-{month}-{rest}" if rest else f"{month}-{text}"
+
+
 def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress | None = None,
                   download: Downloader | None = None) -> dict:
     """Build one snapshot. {status: built | stopped | failed, rows, built_at, report, ...}; never raises."""
@@ -1800,7 +1812,7 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
                     "unit_unknown_distribution"), "compaction": built.get("compaction"),
                 "make_spellings": built.get("make_spellings"), "catalogue_date": built.get("catalogue_date"),
                 "catalogue": built.get("catalogue")}
-        shards = None
+        shards = months = None
         if ds.shard_spec(dataset):
             # S1: one shard per year; its meta holds no timestamp (an unchanged year gives the same bytes)
             status_used = {r["year"]: r.get("status_used") for r in built.get("years") or [] if r.get("year")
@@ -1813,11 +1825,24 @@ def build_dataset(dataset: str, fetch: Fetcher | None = None, progress: Progress
             shards = [{**{k: v for k, v in s.items() if k != "path"}, "path": str(s["path"]),
                        "absent_columns": (built.get("absent_columns") or {}).get(str(s["year"]))
                        if isinstance(built.get("absent_columns"), dict) else None} for s in shards]
+        elif ds.history_spec(dataset):
+            # D4: one snapshot per build month (<dataset>/<YYYY-MM>.sqlite); its meta holds no timestamp, so the same
+            # catalogue rebuilt in the same month gives the same bytes; the row ids carry the month
+            month = build_month()
+            rows = [{**r, "row_id": _month_row_id(r.get("row_id"), month)} for r in built["rows"]]
+            month_meta = {k: v for k, v in meta.items() if v is not None and k not in (
+                "built_at", "build_duration_s", "years", "files", "compaction", "make_spellings", "urls")}
+            path = ds.write_month_snapshot(dataset, rows, month_meta, month=month)
+            size = path.stat().st_size
+            catalogue = built.get("catalogue_date") or meta["built_at"]
+            months = [{"file": f"{dataset}/{path.name}", "month": month, "catalogue_date": catalogue,
+                       "year": ds._int(str(catalogue)[:4]), "part": None, "rows": len(rows), "path": str(path)}]
         else:
             path = ds.write_snapshot(dataset, built["rows"], {k: v for k, v in meta.items() if v is not None})
             size = path.stat().st_size if path and path.exists() else None
         return {"status": "built", "rows": len(built["rows"]), "built_at": meta["built_at"], "duration_s": duration,
                 "size_bytes": size, "shards": shards, "years": built.get("years"), "files": built.get("files"),
+                **({"months": months} if months is not None else {}),
                 "absent_columns": built.get("absent_columns"), "last_file_year": built.get("last_file_year"),
                 "column_units": built.get("column_units"),
                 "unit_unknown_distribution": built.get("unit_unknown_distribution"),

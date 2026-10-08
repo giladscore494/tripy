@@ -164,6 +164,7 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
     lines += size_gate(results)
     lines += determinism_table(results)
     lines += datahub_section(results)
+    lines += months_table(manifest)
     lines += makes_table(results, probe or {})
     lines += ["", "Per year / file:"]
     for name, r in results.items():
@@ -338,6 +339,79 @@ def datahub_section(results: dict) -> list[str]:
     return lines
 
 
+def write_months(name: str, result: dict, out: Path, work: Path, previous: dict, max_bytes: int,
+                 run_url: str | None) -> tuple[dict, list[dict]]:
+    """D4: (the manifest entry, the month items) of a monthly dataset (ADEME): the build month compressed to
+    data/open/<dataset>/<YYYY-MM>.sqlite.gz (deterministic gzip). Earlier months stay untouched; a rebuild in the same
+    month replaces only that month. The former single file (data/open/<dataset>.sqlite.gz) is never moved or deleted:
+    it stays listed as `legacy` (read as the month of its catalogue date, else its built_at, until a monthly snapshot
+    of that month exists)."""
+    staged_dir = work / "gz" / name
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    items = []
+    for month in result.get("months") or []:
+        raw = Path(month["path"])
+        staged = staged_dir / f"{raw.name}.gz"
+        gzip_file(raw, staged)
+        size = staged.stat().st_size
+        item = {**{k: month.get(k) for k in ("month", "catalogue_date", "year", "part", "rows")},
+                "file": f"{month['file']}.gz", "bytes": size, "raw_bytes": raw.stat().st_size, "gz": staged,
+                "status": "ok" if size <= max_bytes else "too_large"}
+        items.append(item)
+    ok = [i for i in items if i["status"] == "ok"]
+    if not ok:
+        return previous, items
+    written = {i["month"] for i in ok}
+    kept = [s for s in previous.get("shards") or [] if isinstance(s, dict) and s.get("month")
+            and s["month"] not in written and (out / str(s.get("file") or "")).is_file()]
+    shards = []
+    for item in ok:
+        target = out / item["file"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(item.pop("gz")), target)
+        shards.append({**{k: item.get(k) for k in ("file", "month", "catalogue_date", "year", "part", "rows",
+                                                   "bytes")}, "sha256": ds.sha256_file(target)})
+    shards = sorted(kept + shards, key=lambda s: str(s.get("month")))
+    legacy = previous.get("legacy")
+    if not legacy and previous.get("file") and (out / str(previous["file"])).is_file():
+        legacy = {k: previous.get(k) for k in ("file", "sha256", "bytes", "rows", "built_at", "catalogue_date",
+                                               "run_url") if previous.get(k) is not None}
+        legacy["month"] = ds.month_of(previous.get("catalogue_date") or previous.get("built_at"))
+    entry = {"monthly": True, "shards": shards, "rows": sum(int(i.get("rows") or 0) for i in ok),
+             "bytes": sum(int(s.get("bytes") or 0) for s in shards) + int((legacy or {}).get("bytes") or 0),
+             "built_at": result.get("built_at"), "run_url": run_url, "build_status": "built",
+             **{k: result.get(k) for k in ENTRY_KEYS if k != "rows" and result.get(k) is not None}}
+    if legacy:
+        entry["legacy"] = legacy
+    return entry, items
+
+
+def months_table(manifest: dict) -> list[str]:
+    """D4: per monthly dataset, the months present (the former single file included), rows per month, total bytes."""
+    lines = []
+    for name, entry in (manifest.get("datasets") or {}).items():
+        if not entry.get("monthly") and not ds.history_spec(name):
+            continue
+        months = [s for s in entry.get("shards") or [] if isinstance(s, dict) and s.get("month")]
+        legacy = entry.get("legacy") or ({k: entry.get(k) for k in ("file", "rows", "bytes", "built_at",
+                                                                     "catalogue_date")} if entry.get("file") else None)
+        lines += ["", f"Monthly snapshots of {name} (D4, data/open/{name}/):", "",
+                  "| month | file | catalogue date | rows | compressed |", "|---|---|---|---|---|"]
+        for s in months:
+            lines.append(f"| {s['month']} | {s.get('file')} | {s.get('catalogue_date') or '—'} | {s.get('rows', '—')} | "
+                         f"{_mb(s.get('bytes'))} |")
+        if legacy:
+            month = legacy.get("month") or ds.month_of(legacy.get("catalogue_date") or legacy.get("built_at"))
+            shadowed = any(s["month"] == month for s in months)
+            lines.append(f"| {month or '—'} | {legacy.get('file')} (former single file"
+                         f"{', superseded by the monthly snapshot of that month' if shadowed else ''}) | "
+                         f"{legacy.get('catalogue_date') or legacy.get('built_at') or '—'} | {legacy.get('rows', '—')} | "
+                         f"{_mb(legacy.get('bytes'))} |")
+        total = sum(int(s.get("bytes") or 0) for s in months) + int((legacy or {}).get("bytes") or 0)
+        lines.append(f"\n{name}: {len(months) + (1 if legacy else 0)} month(s), {_mb(total)} in total.")
+    return lines
+
+
 def write_shards(name: str, result: dict, out: Path, work: Path, previous: dict, max_bytes: int,
                  run_url: str | None) -> tuple[dict, list[dict]]:
     """(the dataset's manifest entry, the shard items) of a sharded build: each year compressed (split when over the
@@ -426,6 +500,18 @@ def run(names: list[str], out: Path, work: Path, probe: dict, max_bytes: int, ru
                         warnings.append(f"{name}: built without rows, nothing written; the previous snapshot stays")
                 attempt.update(status=result["status"],
                                reason=f"{len(too_large)} shard(s) over {limit}" if too_large else None)
+            elif result.get("status") == "built" and result.get("months") is not None:
+                entry, items = write_months(name, result, out, work, entry, max_bytes, run_url)
+                entry = dict(entry)
+                result["month_items"] = [{k: v for k, v in i.items() if k != "gz"} for i in items]
+                result["written"] = sum(1 for i in items if i["status"] == "ok")
+                for item in items:
+                    if item["status"] == "too_large":
+                        warnings.append(f"{name} {item['month']}: {_mb(item['bytes'])} compressed, over the {limit} "
+                                        f"limit (not written)")
+                if not result["written"]:
+                    result["status"] = entry["build_status"] = "too_large"
+                    attempt.update(status="too_large", reason=f"month over {limit}")
             elif result.get("status") == "built":
                 target = out / f"{name}.sqlite.gz"
                 staged = work / f"{name}.sqlite.gz"
