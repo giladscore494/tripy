@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import os
 import time
 
@@ -536,7 +537,9 @@ def test_multi_run_benchmark_exports_are_the_canonical_bytes(client, ctx):
     for name, text in expected.items():
         response = client.get(f"/api/benchmark/export/{name}", params={"run_id": RUN})
         assert response.status_code == 200, name
-        assert response.content == text.encode("utf-8"), name
+        # benchmark.json carries generated_at (whole seconds): the response and `expected` may straddle a second
+        stamp = re.compile(rb'"generated_at": "[^"]*"')
+        assert stamp.sub(b"", response.content) == stamp.sub(b"", text.encode("utf-8")), name
         assert "attachment" in response.headers["content-disposition"]
     gaps = client.get("/api/benchmark/export/parser_gaps.jsonl", params={"run_id": RUN})
     assert gaps.status_code in (200, 404)

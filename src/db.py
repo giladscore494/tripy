@@ -37,6 +37,21 @@ WHERE v.upstream_record_id = ANY(%(ids)s::text[])
 ORDER BY array_position(%(ids)s::text[], v.upstream_record_id)
 """
 
+# The vehicle facts API (src/facts): the Level 1.5 rows of variant identity keys (catalog_variants_identity_idx), the
+# private segment only. One short read-only query per call.
+LEVEL15_BY_KEY_SQL = """
+SELECT
+  v.*,
+  public.catalog_variant_equipment(
+    v.equipment_stated,
+    v.equipment_on,
+    v.equipment_sources
+  ) AS equipment
+FROM public.catalog_variants_current AS v
+WHERE v.variant_identity_key = ANY(%(keys)s::text[])
+  AND v.vehicle_segment = 'private'
+"""
+
 # Order matches public.catalog_variant_equipment_keys(): 19 indicator bits, then
 # the 5 installation-source fields.
 EQUIPMENT_BITS: list[tuple[str, str, str]] = [
@@ -122,6 +137,14 @@ def load_from_database(ids: list[str], dsn: str) -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(LEVEL15_SQL, {"ids": list(ids)})
             return [_jsonable(dict(row)) for row in cur.fetchall()]
+
+
+def load_level15_by_keys(keys: list[str], query) -> dict[str, dict]:
+    """{variant_identity_key: Level 1.5 row} through a read-only query function (src/catalog.database_query); unknown
+    keys are simply absent. Never the snapshot: the 50 benchmark records are not the catalogue."""
+    keys = [str(k) for k in keys]
+    rows = query(LEVEL15_BY_KEY_SQL, {"keys": keys}) if keys else []
+    return {str(r["variant_identity_key"]): _jsonable(dict(r)) for r in rows if r.get("variant_identity_key")}
 
 
 def load_snapshot(ids: list[str], path: Path = SNAPSHOT_PATH) -> list[dict]:

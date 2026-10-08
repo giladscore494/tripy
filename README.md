@@ -22,6 +22,7 @@ Browser
 FastAPI / ASGI — ONE Uvicorn process (scripts/start.sh)
    ├── React SPA ............ frontend/dist (built in the Docker image; never Node at runtime)
    ├── /api/* ............... the HTTP API (Bearer TRIPY_ACCESS_TOKEN in production)
+   ├── /api/facts/v1/* ...... the vehicle facts API for yeda-rechev (Bearer TRIPY_FACTS_TOKEN or TRIPY_ACCESS_TOKEN)
    ├── /health .............. public, constant, no I/O
    └── /mcp/<token> ......... the read-only MCP, only when TRIPY_MCP_TOKEN is set
          │
@@ -297,6 +298,7 @@ process environment (Railway variables in production).
 | `GLM_API_KEY` | Z.ai / GLM API key (secret). Also used by the default `glm` web search backend. |
 | `GLM_MODEL` | Research model id (e.g. `glm-5.3-flash`), sent unchanged as the API `model`. |
 | `TRIPY_ACCESS_TOKEN` | **Production:** the private workspace access secret (a long random string), sent by the React workspace as a Bearer header. Without it every production `/api` route answers 503 (fails closed). Optional in local development (not enforced). |
+| `TRIPY_FACTS_TOKEN` | Optional: the vehicle facts API's token for yeda-rechev (a long random string). Accepted only on `/api/facts/v1/*` (where the operator token works too); a 401 on every other `/api` route. |
 
 ### Deployment
 
@@ -2184,3 +2186,38 @@ Tests use fake HTTP sessions and a scripted GLM client and never touch the netwo
 `.github/workflows/tests.yml` runs them on every push and pull request (no secrets, no deployment), together with the
 frontend (`npm ci`, typecheck, Vitest, production build) and a production Docker image build whose container must
 answer `/health`, serve the SPA, gate `/api`, run exactly one Uvicorn process and launch Chromium.
+
+## Vehicle facts API (yeda-rechev)
+
+Every vehicle data source is ingested, organized and identity-matched in TRIPY: yeda-rechev (the comparison feature of
+`giladscore494/reliabilityAIModelsR2`) never reads MILO, EEA, EPA, CVS, NRCan or ADEME itself. It asks TRIPY, which
+returns ONE merged, provenance-tagged `vehicle-facts/1` record per exact variant (`src/facts`,
+`src/api/routes/facts.py`): the government Level 1.5 row (MILO, read-only, one short query by `variant_identity_key`
+on every call) plus the open-data facts of the committed snapshots (`data/open/`). Deterministic: no model, no web, no
+run, no paid call, no vPIC, never a write to MILO.
+
+| Method | Path | |
+| --- | --- | --- |
+| GET | `/api/facts/v1/catalog/manufacturers`, `/models?manufacturer=`, `/years?manufacturer=&model=`, `/trims?manufacturer=&model=&year=` | the picker (the `/api/catalog` browser and cache, private segment only); a trim item is one variant with its `variant_identity_key` and a label |
+| POST | `/api/facts/v1/vehicles` | `{"variant_identity_keys": [1-3 keys]}` → `{"contract": "vehicle-facts/1", "vehicles": [...]}`; an unknown key is `status: not_found` (`http_status` 404) and the others still return; `?debug=1` with the operator token adds `withheld` |
+| GET | `/api/facts/v1/contract` | the JSON schema (`data/facts_contract.json`), the admission / zero-semantics versions, the snapshot manifest sha and built_at |
+
+- **Only fields with a value appear**: never a null, a placeholder or an "unknown". Government facts use yeda-rechev's
+  `level15.GOVERNMENT_FACT_FIELDS` names and `adas.<flag>`; `data/facts_zero_semantics.json` says per field whether a
+  registry 0 is a value or unknown (unknown: left out); an ADAS flag appears only when stated.
+- **Open-data facts** pass `data/facts_admission.json` (consumer `yeda_rechev`, separate from the run allowlist
+  `data/open_data_admission.json`: runs stay in shadow): an `offered` offer whose (source, field, route) has an entry,
+  at the entry's level, every `require` holding. Never: EPA cargo, EPA / NRCan consumption, an American-source gearbox
+  or CVS dimensions for a European target, an ADEME catalogue out of period. Government wins (an open value of a field
+  the government row has is never returned). Two open sources for one field: equal within D1 → the admitted one with
+  the other as `corroborated_by`; different → neither (`source_conflict`).
+- **Errors**: MILO unreachable (or no `DATABASE_URL`) → 503 `catalog_unavailable` (never the 50-record benchmark
+  snapshot); a shard the free-space guard refuses to decompress → 503 `snapshots_unavailable`; more than 60 requests per
+  minute per token → 429 `rate_limited`.
+- **Cache**: the open-data part per (key, row content, snapshot manifest sha, matcher, admission and zero-semantics
+  versions) in an in-process LRU (2,000) and `<TRIPY_DATA_DIR>/derived/facts_cache/` (free-space guarded); the
+  government row is read on every call. Responses are canonical JSON (sorted keys): the same versions give
+  byte-identical bodies. Every call is logged (keys, status, latency, cache hits, facts count, withheld counts by
+  reason; never a value). The MCP's `facts_preview(variant_identity_key)` returns the same record plus `withheld`.
+- **Setup (one time)**: Railway → TRIPY → Variables → add `TRIPY_FACTS_TOKEN` (`openssl rand -hex 32`) and give the
+  same value to yeda-rechev.
