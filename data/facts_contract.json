@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tripy/contracts/vehicle-facts/1",
+  "title": "vehicle-facts/1",
+  "description": "One merged, provenance-tagged record per exact variant (POST /api/facts/v1/vehicles). Only fields with a value appear: never a null, a placeholder or an 'unknown' entry. Government facts use yeda-rechev's level15.GOVERNMENT_FACT_FIELDS names and adas.<flag> for its 19 ADAS flags; open-data facts use the offer field names of data/open_datasets.json field_map. Deterministic: the same data and versions give byte-identical JSON (sorted keys).",
+  "type": "object",
+  "required": ["contract", "vehicles"],
+  "properties": {
+    "contract": {"const": "vehicle-facts/1"},
+    "vehicles": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/record"}}
+  },
+  "$defs": {
+    "record": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["variant_identity_key", "status", "identity", "facts", "open_data_match", "versions"],
+          "properties": {
+            "variant_identity_key": {"type": "string"},
+            "status": {"const": "ok"},
+            "identity": {"$ref": "#/$defs/identity"},
+            "facts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/fact"}},
+            "open_data_match": {
+              "type": "object",
+              "properties": {
+                "route": {"enum": ["european", "american", "unknown"]},
+                "level": {"enum": ["model_family", "generation", "body_powertrain", "exact_technical_variant", "exact_market_trim"]},
+                "designation": {"type": "string"}
+              }
+            },
+            "versions": {"$ref": "#/$defs/versions"},
+            "withheld": {"type": "array", "description": "Owner diagnostics only: ?debug=1 with the operator token, or the MCP facts_preview.", "items": {"type": "object", "required": ["source", "field", "reason"]}},
+            "withheld_counts": {"type": "object", "additionalProperties": {"type": "integer"}}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["variant_identity_key", "status", "http_status"],
+          "properties": {
+            "variant_identity_key": {"type": "string"},
+            "status": {"const": "not_found"},
+            "http_status": {"const": 404},
+            "versions": {"type": "object"}
+          }
+        }
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "manufacturer": {"type": "string"}, "model": {"type": "string"}, "model_year": {"type": "integer"},
+        "trim": {"type": "string"}, "degem_nm": {"type": "string"},
+        "sug_tkina": {"enum": ["european", "american", "unknown"]},
+        "body_style": {"type": "string"}, "fuel_type": {"type": "string"}, "propulsion": {"type": "string"},
+        "drivetrain": {"type": "string"}, "engine_cc": {"type": "number"}, "horsepower": {"type": "number"},
+        "automatic": {"type": "boolean"}, "upstream_record_id": {"type": "string"}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": ["value", "source", "source_level", "identity_level", "row_ids"],
+      "properties": {
+        "value": {"type": ["number", "string", "boolean"]},
+        "unit": {"type": "string"},
+        "standard": {"type": "string", "description": "WLTP / NEDC when the value belongs to a test cycle; absent otherwise"},
+        "definition": {"type": "string", "description": "the open-data field definition (e.g. eu_running_order, na_curb)"},
+        "source": {"enum": ["government", "eea_co2_cars", "epa_fueleconomy", "tc_cvs", "nrcan_fuel_ratings", "ademe_car_labelling"]},
+        "source_level": {"enum": ["government", "open_data"]},
+        "identity_level": {"enum": ["body_powertrain", "exact_technical_variant", "exact_market_trim"]},
+        "basis": {"type": "string", "description": "government: variant_identity_key; open data: type_code_match+co2 | type_code_match | co2_match | unique | all_survivors_agree"},
+        "row_ids": {"type": "array", "items": {"type": "string"}},
+        "dataset_year": {"oneOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
+        "attribution": {"type": "string"},
+        "licence": {"type": "string"},
+        "corroborated_by": {"type": "array", "items": {"type": "object", "required": ["source", "value"]}}
+      }
+    },
+    "versions": {
+      "type": "object",
+      "required": ["contract", "admission", "zero_semantics", "snapshots_sha", "matcher"],
+      "properties": {
+        "contract": {"const": "vehicle-facts/1"}, "admission": {"type": "string"}, "zero_semantics": {"type": "string"},
+        "snapshots_sha": {"type": "string"}, "matcher": {"type": "string"}
+      }
+    }
+  }
+}

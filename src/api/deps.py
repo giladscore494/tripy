@@ -17,6 +17,7 @@ from typing import Callable
 from fastapi import Request
 
 from ..catalog import CatalogBrowser, database_query
+from ..facts.service import FactsService
 from ..jobs.manager import RunManager, get_manager, shared_controller
 from ..research_targets import VehicleCatalog
 from ..runstate.pipeline import PipelineCache
@@ -39,6 +40,8 @@ class ApiContext:
     owns_manager: bool = False
     # PR #47 (B1): the live MILO catalog (read-only over DATABASE_URL); unavailable without it (snapshot mode)
     catalog_browser: CatalogBrowser = field(default_factory=lambda: CatalogBrowser(None))
+    # the vehicle facts API (src/facts): the same read-only query; unavailable without it (503, never the snapshot)
+    facts: FactsService = field(default_factory=lambda: FactsService(None))
 
     @property
     def runs_dir(self):
@@ -50,10 +53,12 @@ def build_context(secret: Callable[[str], str] = env_secret) -> ApiContext:
     catalog = VehicleCatalog.load()
     manager = get_manager(paths, controller=shared_controller(secret), vehicle_label=catalog.title)
     dsn = (secret("DATABASE_URL") or secret("SUPABASE_DB_URL") or "").strip()
-    browser = CatalogBrowser(database_query(dsn) if dsn else None)
+    query = database_query(dsn) if dsn else None
+    browser = CatalogBrowser(query)
     manager.derived_index.start()          # PR #47 (B2): the weekly derived catalog trim index (no-op without a DSN)
+    facts = FactsService(query, paths.data_dir / "derived" / "facts_cache")
     return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True,
-                      catalog_browser=browser)
+                      catalog_browser=browser, facts=facts)
 
 
 def get_context(request: Request) -> ApiContext:

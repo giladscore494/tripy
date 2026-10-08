@@ -10,6 +10,7 @@ server against the same data directory.
 
     /health      public, constant, no I/O
     /api/*       `Authorization: Bearer <TRIPY_ACCESS_TOKEN>` in production (auth.py)
+    /api/facts/v1/*  the vehicle facts API for yeda-rechev: TRIPY_FACTS_TOKEN or TRIPY_ACCESS_TOKEN (auth.py)
     /mcp/<token> the read-only MCP, only when TRIPY_MCP_TOKEN is set (src/mcp_server/asgi.py)
     everything else: the React production bundle (frontend/dist, frontend.py) with its SPA fallback; required in
                  production, optional elsewhere (Python tests, the Vite dev server in front of the API)
@@ -28,11 +29,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..app_config import is_production
 from ..server_logging import get_logger, redact_server_logs
-from .auth import require_access
+from .auth import require_access, require_facts_access
 from .deps import ApiContext, build_context, env_secret
 from .errors import ApiError
 from .frontend import FRONTEND_DIST, SecurityHeaders, frontend_routes
-from .routes import bakeoffs, catalog, config, data, documents, exports, health, runs, series, technical
+from .routes import bakeoffs, catalog, config, data, documents, exports, facts, health, runs, series, technical
 
 log = get_logger("api")
 
@@ -122,6 +123,7 @@ def create_app(*, context: ApiContext | None = None, secret: Callable[[str], str
     protected = [Depends(require_access)]
     for module in (runs, exports, config, series, documents, technical, bakeoffs, catalog, data):
         app.include_router(module.router, dependencies=protected)
+    app.include_router(facts.router, dependencies=[Depends(require_facts_access)])
     app.router.routes.extend(mcp_routes)
     if dist is not None:          # last: the SPA fallback never shadows /api, /health, /mcp or /assets
         app.router.routes.extend(frontend_routes(dist))

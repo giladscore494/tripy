@@ -1,0 +1,68 @@
+{
+  "_about": "The facts admission of the vehicle facts API (src/facts, GET/POST /api/facts/v1): which open-data offers (src/open_data/offers.py, status `offered`) become facts in a `vehicle-facts/1` record. Separate from the run allowlist data/open_data_admission.json (runs stay in shadow). An offer becomes a fact only when an entry names its (source, field, route), the match level reaches min_level and every `require` holds; everything else is withheld (owner diagnostics, never in the record). `field` is the offer field name of data/open_datasets.json field_map; `named` is the descriptive name the PR used. `require` is a list, or {wltp: [...], nedc: [...]} chosen by the target's cycle (match.nedc_target: an EEA NEDC registration year). Reviewer-edited data: the code infers nothing beyond it.",
+  "version": "facts-admission-v1",
+  "consumer": "yeda_rechev",
+  "requires": {
+    "all_survivors_agree": "every surviving row that states the value states the same value (offer identified_by unique | all_survivors_agree)",
+    "co2_selected": "the source's exact subset was narrowed by an exact co2_wltp match (exact_subset basis type_code+co2 | co2)",
+    "type_code_match": "the source's candidates are the rows carrying the government type code (match type_code.status match)"
+  },
+  "entries": [
+    {"source": "eea_co2_cars", "field": "wheelbase_mm", "route": "european", "min_level": "body_powertrain",
+     "require": ["all_survivors_agree"]},
+    {"source": "eea_co2_cars", "field": "curb_weight_kg", "named": "mass_running_order_kg", "definition": "eu_running_order",
+     "route": "european", "min_level": "exact_technical_variant",
+     "require": {"wltp": ["all_survivors_agree", "co2_selected"], "nedc": ["all_survivors_agree", "type_code_match"]}},
+    {"source": "eea_co2_cars", "field": "fuel_consumption_combined_l_100km", "named": "fuel_consumption_l_100km",
+     "route": "european", "min_level": "exact_technical_variant", "require": ["all_survivors_agree", "co2_selected"]},
+    {"source": "eea_co2_cars", "field": "energy_consumption_kwh_100km", "named": "energy_wh_km (/10)",
+     "route": "european", "min_level": "exact_technical_variant", "require": ["all_survivors_agree", "co2_selected"]},
+    {"source": "eea_co2_cars", "field": "electric_range_km", "route": "european", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree", "co2_selected"]},
+    {"source": "eea_co2_cars", "field": "co2_nedc_g_km", "route": "european", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree", "type_code_match"]},
+    {"source": "tc_cvs", "field": "length_mm", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]},
+    {"source": "tc_cvs", "field": "width_mm", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]},
+    {"source": "tc_cvs", "field": "height_mm", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]},
+    {"source": "tc_cvs", "field": "wheelbase_mm", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]},
+    {"source": "tc_cvs", "field": "curb_weight_kg", "definition": "na_curb", "route": "american",
+     "min_level": "exact_technical_variant", "require": ["all_survivors_agree"]},
+    {"source": "epa_fueleconomy", "field": "gearbox_type", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]},
+    {"source": "epa_fueleconomy", "field": "gear_count", "route": "american", "min_level": "exact_technical_variant",
+     "require": ["all_survivors_agree"]}
+  ],
+  "never": [
+    {"sources": ["epa_fueleconomy"], "fields": ["cargo_volume_l"], "reason": "SAE luggage volume (cu ft), not the VDA cargo definition"},
+    {"sources": ["epa_fueleconomy", "nrcan_fuel_ratings"], "fields": ["fuel_consumption_combined_l_100km"], "reason": "US / Canadian test cycle, not comparable with WLTP"},
+    {"sources": ["epa_fueleconomy", "nrcan_fuel_ratings", "tc_cvs"], "fields": ["gearbox_type", "gear_count"], "routes": ["european"], "reason": "an American-source gearbox for a European-approval target"},
+    {"sources": ["tc_cvs"], "fields": ["length_mm", "width_mm", "height_mm", "wheelbase_mm", "curb_weight_kg"], "routes": ["european"], "reason": "CVS dimensions for a European-approval target"},
+    {"sources": ["ademe_car_labelling"], "catalogue_status": "out_of_period", "reason": "an ADEME catalogue outside the target's period"}
+  ],
+  "fields": {
+    "wheelbase_mm": {"unit": "mm"},
+    "length_mm": {"unit": "mm"},
+    "width_mm": {"unit": "mm"},
+    "height_mm": {"unit": "mm"},
+    "curb_weight_kg": {"unit": "kg"},
+    "fuel_consumption_combined_l_100km": {"unit": "l/100km", "standard": "WLTP"},
+    "energy_consumption_kwh_100km": {"unit": "kWh/100km", "standard": "WLTP"},
+    "electric_range_km": {"unit": "km", "standard": "WLTP"},
+    "co2_nedc_g_km": {"unit": "g/km", "standard": "NEDC"},
+    "gearbox_type": {},
+    "gear_count": {"unit": "count"}
+  },
+  "government_overlap": {
+    "_about": "Government wins: an open-data column the government row also states is never returned. A survivor row of an offer's source that states a different value is counted in withheld as contradicts_government (diagnostics only).",
+    "checks": [
+      {"column": "power_kw", "government_field": "horsepower", "compare": "power_anchor"},
+      {"column": "displacement_cc", "government_field": "engine_cc", "compare": "relative", "tolerance": 0.01},
+      {"column": "co2_wltp", "government_field": "co2_wltp", "compare": "exact"},
+      {"column": "seats", "government_field": "seats", "compare": "exact"}
+    ]
+  }
+}

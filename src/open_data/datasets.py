@@ -195,7 +195,8 @@ def _verified(source: Path, expected: str) -> bool:
 
 def _materialize_file(label: str, file: str, expected: str) -> tuple[Path | None, str | None]:
     """(decompressed path, problem) of one committed .sqlite.gz (a whole snapshot or one shard): verified against its
-    sha256, decompressed once into the temp dir. problem: missing_file | sha256_mismatch | decompress_failed."""
+    sha256, decompressed once into the temp dir. problem: missing_file | sha256_mismatch | decompress_failed |
+    insufficient_disk (the free-space guard: not remembered, retried)."""
     cached = _MATERIALIZED.get(f"{label}|{file}")
     if cached and cached[0] == expected and (cached[1] is None or cached[1].exists()):
         return cached[1], cached[2]
@@ -210,6 +211,8 @@ def _materialize_file(label: str, file: str, expected: str) -> tuple[Path | None
     stem = Path(file).name.removesuffix(".gz").removesuffix(".sqlite")
     target = _temp_dir() / f"{label}-{stem}-{expected[:16]}.sqlite"
     if not target.exists():
+        if not _room_for(source, target.parent, f"open data {label} {file}"):
+            return None, "insufficient_disk"            # not remembered: retried once there is room again
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
@@ -222,6 +225,35 @@ def _materialize_file(label: str, file: str, expected: str) -> tuple[Path | None
             return None, "decompress_failed"
     _MATERIALIZED[f"{label}|{file}"] = (expected, target, None)
     return target, None
+
+
+def gzip_size(path: Path) -> int:
+    """The uncompressed size a .gz states in its trailer (ISIZE, modulo 2**32); 0 when unreadable."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(-4, os.SEEK_END)
+            return int.from_bytes(handle.read(4), "little")
+    except OSError:
+        return 0
+
+
+def disk_refusals() -> int:
+    """How many decompressions the free-space guard refused in this process (the facts API compares it before and
+    after a match: a refusal there is `snapshots_unavailable`, never a smaller answer)."""
+    return int(_STATE.get("disk_refusals") or 0)
+
+
+def _room_for(source: Path, folder: Path, what: str) -> bool:
+    """The existing free-space guard (storage.disk.check_free) applied to a decompression: refused when the temp dir's
+    free space would drop under MIN_FREE_BYTES once the file is decompressed."""
+    from ..storage.disk import MIN_FREE_BYTES, InsufficientDisk, check_free
+
+    try:
+        check_free(folder, what, MIN_FREE_BYTES + gzip_size(source))
+    except InsufficientDisk:
+        _STATE["disk_refusals"] = disk_refusals() + 1
+        return False
+    return True
 
 
 def materialize(dataset: str) -> tuple[Path | None, str | None]:

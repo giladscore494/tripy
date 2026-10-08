@@ -33,14 +33,16 @@ from .safety import ToolInputError, clamp, page
 
 MAX_RUN_IDS = 20
 _PIPELINES = PipelineCache()          # in-memory incremental event readers (never written anywhere)
+_FACTS: tuple[str, Any] | None = None  # (DATABASE_URL, the in-memory FactsService of the MCP's facts_preview)
 
 
 class Observer:
     """The tools over one data root (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR, as the application resolves)."""
 
-    def __init__(self, paths: DataPaths | None = None, catalog=None):
+    def __init__(self, paths: DataPaths | None = None, catalog=None, facts=None):
         self.paths = paths or resolve_paths()
         self._catalog = catalog                 # PR #47 (B3): a src.catalog.CatalogBrowser (tests); default DATABASE_URL
+        self._facts = facts                     # a src.facts.service.FactsService (tests); default DATABASE_URL
         self.runs_dir = Path(self.paths.runs_dir)
         self.cache_dir = Path(self.paths.cache_dir)
         self.repository = FileRunRepository(self.runs_dir)
@@ -172,6 +174,35 @@ class Observer:
             return {"available": False, "error": str(exc)}
         except CatalogQueryRefused as exc:
             raise ToolInputError(str(exc)) from None
+
+    # -- the vehicle facts API (src/facts): the same record plus `withheld` -------------------------------------------
+    def _facts_service(self):
+        if self._facts is None:
+            global _FACTS
+            from ..catalog import database_query
+            from ..db import database_url
+            from ..facts.service import FactsService
+
+            dsn = database_url()
+            if _FACTS is None or _FACTS[0] != dsn:
+                # in memory only: the MCP never writes (no derived/facts_cache file from here)
+                _FACTS = (dsn, FactsService(database_query(dsn) if dsn else None))
+            self._facts = _FACTS[1]
+        return self._facts
+
+    def facts_preview(self, variant_identity_key: Any) -> dict:
+        from ..catalog import CatalogUnavailable
+        from ..facts.service import SnapshotsUnavailable
+
+        key = str(variant_identity_key or "").strip()
+        if not key or len(key) > 128:
+            raise ToolInputError("variant_identity_key is required (at most 128 characters)")
+        try:
+            return self._facts_service().preview(key)
+        except CatalogUnavailable as exc:
+            return {"available": False, "error": "catalog_unavailable", "message": str(exc)}
+        except SnapshotsUnavailable as exc:
+            return {"available": False, "error": "snapshots_unavailable", "message": str(exc)}
 
     def list_runs(self, limit: Any = 20, offset: Any = 0) -> dict:
         from ..runstate.report import elapsed_s

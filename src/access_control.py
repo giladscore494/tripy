@@ -26,6 +26,9 @@ import hmac
 from .app_config import Lookup, is_production
 
 ACCESS_TOKEN_VAR = "TRIPY_ACCESS_TOKEN"
+# The vehicle facts API's own token (yeda-rechev): accepted ONLY on /api/facts/v1/* (src/api/auth.require_facts_access),
+# where the operator token works too. Same rules: opaque, constant-time, header only, redacted.
+FACTS_TOKEN_VAR = "TRIPY_FACTS_TOKEN"
 
 MISSING_TITLE = "Production access control is not configured."
 MISSING_DETAIL = "Set TRIPY_ACCESS_TOKEN in the deployment environment."
@@ -46,6 +49,12 @@ def access_required(lookup: Lookup) -> bool:
 def expected_token(lookup: Lookup) -> str:
     """The configured token, opaque (whitespace-only counts as not configured)."""
     value = _get(lookup, ACCESS_TOKEN_VAR)
+    return value if value.strip() else ""
+
+
+def facts_token(lookup: Lookup) -> str:
+    """The configured facts token, opaque (whitespace-only counts as not configured)."""
+    value = _get(lookup, FACTS_TOKEN_VAR)
     return value if value.strip() else ""
 
 

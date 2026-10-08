@@ -110,26 +110,31 @@ class CatalogBrowser:
         return value
 
     # -- cascading lists (cached) -------------------------------------------------------------------------------------
-    def manufacturers(self) -> list[dict]:
-        return self._cached(("manufacturers",), lambda: [
+    # `segment` (the facts API: "private") narrows every list to one vehicle_segment; the cache keys carry it.
+    def manufacturers(self, *, segment: str | None = None) -> list[dict]:
+        seg, params = _segment(segment)
+        return self._cached(("manufacturers", segment), lambda: [
             {"manufacturer": r["tozar"], "variants": int(r["n"])} for r in self._run(
-                f"SELECT tozar, count(*) AS n FROM {VIEW} WHERE tozar IS NOT NULL GROUP BY tozar ORDER BY tozar", {})])
+                f"SELECT tozar, count(*) AS n FROM {VIEW} WHERE tozar IS NOT NULL{seg} GROUP BY tozar ORDER BY tozar",
+                params)])
 
-    def models(self, manufacturer: str) -> list[dict]:
+    def models(self, manufacturer: str, *, segment: str | None = None) -> list[dict]:
         _need(manufacturer=manufacturer)
-        return self._cached(("models", manufacturer), lambda: [
+        seg, params = _segment(segment)
+        return self._cached(("models", manufacturer, segment), lambda: [
             {"model": r["kinuy_mishari"], "variants": int(r["n"])} for r in self._run(
                 f"SELECT kinuy_mishari, count(*) AS n FROM {VIEW} WHERE tozar = %(manufacturer)s "
-                "AND kinuy_mishari IS NOT NULL GROUP BY kinuy_mishari ORDER BY kinuy_mishari",
-                {"manufacturer": manufacturer})])
+                f"AND kinuy_mishari IS NOT NULL{seg} GROUP BY kinuy_mishari ORDER BY kinuy_mishari",
+                {"manufacturer": manufacturer, **params})])
 
-    def years(self, manufacturer: str, model: str) -> list[dict]:
+    def years(self, manufacturer: str, model: str, *, segment: str | None = None) -> list[dict]:
         _need(manufacturer=manufacturer, model=model)
-        return self._cached(("years", manufacturer, model), lambda: [
+        seg, params = _segment(segment)
+        return self._cached(("years", manufacturer, model, segment), lambda: [
             {"year": r["shnat_yitzur"], "variants": int(r["n"])} for r in self._run(
                 f"SELECT shnat_yitzur, count(*) AS n FROM {VIEW} WHERE tozar = %(manufacturer)s "
-                "AND kinuy_mishari = %(model)s GROUP BY shnat_yitzur ORDER BY shnat_yitzur DESC",
-                {"manufacturer": manufacturer, "model": model})])
+                f"AND kinuy_mishari = %(model)s{seg} GROUP BY shnat_yitzur ORDER BY shnat_yitzur DESC",
+                {"manufacturer": manufacturer, "model": model, **params})])
 
     def trims(self, manufacturer: str, model: str, year: int) -> list[dict]:
         _need(manufacturer=manufacturer, model=model, year=year)
@@ -138,6 +143,18 @@ class CatalogBrowser:
                 f"SELECT ramat_gimur, count(*) AS n FROM {VIEW} WHERE tozar = %(manufacturer)s "
                 "AND kinuy_mishari = %(model)s AND shnat_yitzur = %(year)s GROUP BY ramat_gimur ORDER BY ramat_gimur",
                 {"manufacturer": manufacturer, "model": model, "year": int(year)})])
+
+    def variants(self, manufacturer: str, model: str, year: int, *, segment: str | None = None) -> list[dict]:
+        """One item per variant of a manufacturer / model / year (the facts API's trim picker): its
+        variant_identity_key and a display label. Variants without a key are left out (nothing to ask for)."""
+        _need(manufacturer=manufacturer, model=model, year=year)
+        seg, params = _segment(segment)
+        return self._cached(("variants", manufacturer, model, int(year), segment), lambda: [
+            variant_item(r) for r in self._run(
+                f"SELECT variant_identity_key, {', '.join(COLUMNS)}, automatic_ind FROM {VIEW} "
+                f"WHERE tozar = %(manufacturer)s AND kinuy_mishari = %(model)s AND shnat_yitzur = %(year)s{seg} "
+                "AND variant_identity_key IS NOT NULL ORDER BY ramat_gimur, koah_sus, nefah_manoa, degem_nm, "
+                "upstream_record_id", {"manufacturer": manufacturer, "model": model, "year": int(year), **params})])
 
     # -- the filtered list -------------------------------------------------------------------------------------------
     def search(self, *, manufacturer: str | None = None, model: str | None = None, year: int | None = None,
@@ -166,6 +183,24 @@ class CatalogBrowser:
                          {"ids": ids})
         by_id = {str(r["upstream_record_id"]): r for r in rows}
         return [{**vehicle_of(by_id[i]), "ordinal": n} for n, i in enumerate(ids, start=1) if i in by_id]
+
+
+def _segment(segment: str | None) -> tuple[str, dict]:
+    return (" AND vehicle_segment = %(segment)s", {"segment": segment}) if segment else ("", {})
+
+
+def variant_item(row: dict) -> dict:
+    """A catalog row as the facts API's trim picker lists it: the key, a display label and what tells variants of
+    one trim apart."""
+    parts = [row.get("ramat_gimur") or "", f"{row['koah_sus']} hp" if row.get("koah_sus") else "",
+             f"{row['nefah_manoa']} cc" if row.get("nefah_manoa") else "", row.get("norm_propulsion_technology") or "",
+             row.get("degem_nm") or ""]
+    item = {"variant_identity_key": row.get("variant_identity_key"), "label": " · ".join(p for p in parts if p),
+            "trim": row.get("ramat_gimur"), "degem_nm": row.get("degem_nm"), "horsepower": row.get("koah_sus"),
+            "engine_cc": row.get("nefah_manoa"), "propulsion": row.get("norm_propulsion_technology"),
+            "drivetrain": row.get("norm_drivetrain"), "body_style": row.get("norm_body_style"),
+            "upstream_record_id": str(row.get("upstream_record_id"))}
+    return {k: v for k, v in item.items() if v not in (None, "")}
 
 
 def _need(**values: Any) -> None:

@@ -240,6 +240,15 @@ def build(observer_factory: Callable[[], Observer] = Observer):
                          lambda: observer_factory().catalog_search(manufacturer, model, year, trim, q, limit))
 
     @tool
+    async def facts_preview(variant_identity_key: str) -> str:
+        """The vehicle facts API's record (`vehicle-facts/1`, POST /api/facts/v1/vehicles) of one variant identity
+        key: the government Level 1.5 facts merged with the admitted open-data facts, plus `withheld` (every offer or
+        government value left out, with its reason) and its counts. Read-only: one query on the MILO catalogue (no
+        write, no vPIC, no web)."""
+        return await run("facts_preview", {"variant_identity_key": variant_identity_key},
+                         lambda: observer_factory().facts_preview(variant_identity_key))
+
+    @tool
     async def server_log_tail(lines: int = 200, grep: str | None = None) -> str:
         """The last lines of the server log (the rotating data/logs/tripy.log), optionally only lines containing
         `grep` (case-insensitive substring). lines max 2000."""
@@ -251,4 +260,5 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
-              "open_data_coverage", "open_data_status", "open_data_shadow_report", "list_bakeoffs", "bakeoff_result", "catalog_search", "server_log_tail")
+              "open_data_coverage", "open_data_status", "open_data_shadow_report", "list_bakeoffs", "bakeoff_result",
+              "catalog_search", "facts_preview", "server_log_tail")
