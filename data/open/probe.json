@@ -1,6 +1,6 @@
 {
  "version": "open-data-probe-v1",
- "probed_at": "2026-10-06T18:13:19+00:00",
+ "probed_at": "2026-10-08T00:00:47+00:00",
  "config_version": "open-datasets-v4",
  "datasets": {
   "eea_co2_cars": {
@@ -61,6 +61,566 @@
     ]
    },
    "years": [
+    {
+     "year": 2010,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2011,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2012,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2013,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2014,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2015,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
+    {
+     "year": 2016,
+     "status": "ok",
+     "status_used": "F",
+     "live_header": [
+      "ID",
+      "MS",
+      "Mp",
+      "VFN",
+      "Mh",
+      "Man",
+      "MMS",
+      "TAN",
+      "T",
+      "Va",
+      "Ve",
+      "Mk",
+      "Cn",
+      "Ct",
+      "Cr",
+      "M (kg)",
+      "Mt",
+      "Enedc (g/km)",
+      "Ewltp (g/km)",
+      "W (mm)",
+      "At1 (mm)",
+      "At2 (mm)",
+      "Ft",
+      "Fm",
+      "Ec (cm3)",
+      "Ep (KW)",
+      "Z (Wh/km)",
+      "IT",
+      "Ernedc (g/km)",
+      "Erwltp (g/km)",
+      "De",
+      "Vf",
+      "R",
+      "Year",
+      "Status",
+      "Version_file",
+      "E (g/km)",
+      "Er (g/km)",
+      "Zr",
+      "Dr",
+      "Fc"
+     ],
+     "matched": {
+      "make": "Mk",
+      "model": "Cn",
+      "type_approval": "T",
+      "variant": "Va",
+      "version": "Ve",
+      "fuel": "Ft",
+      "fuel_mode": "Fm",
+      "displacement_cc": "Ec (cm3)",
+      "power_kw": "Ep (KW)",
+      "co2_wltp": "Ewltp (g/km)",
+      "co2_nedc": "E (g/km)",
+      "wheelbase_mm": "W (mm)",
+      "mass_running_order_kg": "M (kg)",
+      "energy_wh_km": "Z (Wh/km)",
+      "fuel_consumption_l_100km": "Fc",
+      "year": "Year"
+     },
+     "missing_required": [],
+     "missing_optional": [
+      "electric_range_km"
+     ],
+     "ambiguous": [],
+     "required_keys": [
+      "make",
+      "model",
+      "fuel",
+      "displacement_cc",
+      "power_kw",
+      "year"
+     ],
+     "ok": true
+    },
     {
      "year": 2017,
      "status": "ok",
@@ -3379,19 +3939,3137 @@
     "status": "ok",
     "queries": 1,
     "rows": 719,
-    "query": "SELECT [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc],SUM(TRY_CAST([R] AS bigint)) AS r FROM [CO2Emission].[latest].[co2cars] WHERE [Year] = 2022 AND [Status] = 'P' AND [Mk]='ALFA ROMEO' GROUP BY [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc]",
-    "url_length": 775,
-    "response_head": "{\"results\":[{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXA2A\",\"Ve\":\"NDAA2B\",\"Ft\":\"PETROL\",\"Fm\":\"H\",\"Ec (cm3)\":1995,\"Ep (KW)\":206,\"Ewltp (g\\/km)\":199,\"Year\":2022,\"M (kg)\":1755,\"W (mm)\":2818,\"Z (Wh\\/km)\":null,\"Fc\":null,\"r\":1},{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXR2A\",\"Ve\":\"NEAA1B\",\"Ft\":\"PETROL",
+    "query": "SELECT [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[Enedc (g/km)],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc],SUM(TRY_CAST([R] AS bigint)) AS r FROM [CO2Emission].[latest].[co2cars] WHERE [Year] = 2022 AND [Status] = 'P' AND [Mk]='ALFA ROMEO' GROUP BY [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[Enedc (g/km)],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc]",
+    "url_length": 829,
+    "response_head": "{\"results\":[{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXA2A\",\"Ve\":\"NDAA2B\",\"Ft\":\"PETROL\",\"Fm\":\"H\",\"Ec (cm3)\":1995,\"Ep (KW)\":206,\"Ewltp (g\\/km)\":199,\"Year\":2022,\"Enedc (g\\/km)\":null,\"M (kg)\":1755,\"W (mm)\":2818,\"Z (Wh\\/km)\":null,\"Fc\":null,\"r\":1},{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXR2A\",\"Ve\":",
     "parts": [
      {
-      "query": "SELECT [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc],SUM(TRY_CAST([R] AS bigint)) AS r FROM [CO2Emission].[latest].[co2cars] WHERE [Year] = 2022 AND [Status] = 'P' AND [Mk]='ALFA ROMEO' GROUP BY [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc]",
-      "query_bytes": 714,
-      "url_length": 775,
-      "response_head": "{\"results\":[{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXA2A\",\"Ve\":\"NDAA2B\",\"Ft\":\"PETROL\",\"Fm\":\"H\",\"Ec (cm3)\":1995,\"Ep (KW)\":206,\"Ewltp (g\\/km)\":199,\"Year\":2022,\"M (kg)\":1755,\"W (mm)\":2818,\"Z (Wh\\/km)\":null,\"Fc\":null,\"r\":1},{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXR2A\",\"Ve\":\"NEAA1B\",\"Ft\":\"PETROL",
+      "query": "SELECT [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[Enedc (g/km)],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc],SUM(TRY_CAST([R] AS bigint)) AS r FROM [CO2Emission].[latest].[co2cars] WHERE [Year] = 2022 AND [Status] = 'P' AND [Mk]='ALFA ROMEO' GROUP BY [Mk],[Cn],[T],[Va],[Ve],[Ft],[Fm],[Ec (cm3)],[Ep (KW)],[Ewltp (g/km)],[Year],[Enedc (g/km)],[M (kg)],[W (mm)],[Z (Wh/km)],[Fc]",
+      "query_bytes": 768,
+      "url_length": 829,
+      "response_head": "{\"results\":[{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXA2A\",\"Ve\":\"NDAA2B\",\"Ft\":\"PETROL\",\"Fm\":\"H\",\"Ec (cm3)\":1995,\"Ep (KW)\":206,\"Ewltp (g\\/km)\":199,\"Year\":2022,\"Enedc (g\\/km)\":null,\"M (kg)\":1755,\"W (mm)\":2818,\"Z (Wh\\/km)\":null,\"Fc\":null,\"r\":1},{\"Mk\":\"ALFA ROMEO\",\"Cn\":\"\",\"T\":\"949\",\"Va\":\"AXR2A\",\"Ve\":",
       "status": "ok",
       "rows": 719
      }
     ]
+   },
+   "datahub": {
+    "status": "ok",
+    "records": [
+     {
+      "uuid": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "kind": "series",
+      "depth": 0,
+      "via": null,
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/2af60353-0af6-494e-9766-a17056da8a00",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2020 Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/770aa0a5-83ce-4663-93fa-78507f1990d6",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2015 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/bbf87016-2cb2-41ad-8b83-80df429572ae",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2012 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/992616f8-158f-4ecc-b978-814b81629db6",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2022 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/e9cbe623-001a-4a76-ad40-562556be3025",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2017 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2023 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2025 - Provisional version"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/3456c805-32c1-4bf7-82cb-767247635c7a",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2011 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5380e9bd-18e9-4bf9-b26b-f985f2c5f99e",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2012 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/b319cb95-2c93-4635-8177-e5e0e4f48c1b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2018 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5814203d-f36d-4fee-90d4-64bb348d15a6",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2024 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/baa86df2-86b4-4339-b709-25d9b20f9301",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2010 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/665f2a8b-2993-4071-92f5-dde5a47dfd42",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2011 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/bcfe6665-23eb-4dbc-9b01-dedc586859d0",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2015 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/a0da862c-0bed-460f-808a-0bae489b12b9",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2019 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/87fd2bce-6ad5-46d8-af41-f27cfd2e45a8",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2023 - Final"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/aec4c4b0-a1ab-406d-83bf-1e3c53d9e821",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2021 Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/af267be7-eebd-4c1a-ba24-b10a51201f47",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2014 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/1c7f57b3-83a0-44a3-973e-0a5bfa811d87",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2010 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/0172c621-9e03-4756-ac5f-47cc3e241201",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2021 Final"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/3510b140-f4e2-4332-a6ef-8f2dff9fa1ec",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2019 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/dea50f36-57b8-4dde-bc55-c56059364ef0",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2018 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/47a7277f-d111-47ba-8438-d669b1057b6d",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2020 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/2940e31f-e050-4925-b99d-2f9e90a92233",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2019 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/8f3ba8b7-8910-45b7-ab99-f348df693189",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2014 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/0a8985f6-af2d-44b7-ac88-a749da19a155",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2017 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/38341455-1298-4d72-a990-b256e0902128",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2022 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/37fc9eff-9a33-47dc-9b69-831334d5aa14",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2013 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d263314-5e4b-4eac-a012-e6a156a9ee08",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2016 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2016 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/b9de889e-1434-4a8f-a93a-c17ef6a07527",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2013 - Final data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5018ec17-2348-4c92-8761-6f2377bbd1c0",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2024 - Final"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/e886c8ea-3137-4208-be9d-f6250f5ee16e",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2023)"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "2af60353-0af6-494e-9766-a17056da8a00",
+       "770aa0a5-83ce-4663-93fa-78507f1990d6",
+       "bbf87016-2cb2-41ad-8b83-80df429572ae",
+       "992616f8-158f-4ecc-b978-814b81629db6",
+       "e9cbe623-001a-4a76-ad40-562556be3025",
+       "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+       "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+       "3456c805-32c1-4bf7-82cb-767247635c7a",
+       "5380e9bd-18e9-4bf9-b26b-f985f2c5f99e",
+       "b319cb95-2c93-4635-8177-e5e0e4f48c1b",
+       "5814203d-f36d-4fee-90d4-64bb348d15a6",
+       "baa86df2-86b4-4339-b709-25d9b20f9301",
+       "665f2a8b-2993-4071-92f5-dde5a47dfd42",
+       "bcfe6665-23eb-4dbc-9b01-dedc586859d0",
+       "a0da862c-0bed-460f-808a-0bae489b12b9",
+       "87fd2bce-6ad5-46d8-af41-f27cfd2e45a8",
+       "aec4c4b0-a1ab-406d-83bf-1e3c53d9e821",
+       "af267be7-eebd-4c1a-ba24-b10a51201f47",
+       "1c7f57b3-83a0-44a3-973e-0a5bfa811d87",
+       "0172c621-9e03-4756-ac5f-47cc3e241201",
+       "3510b140-f4e2-4332-a6ef-8f2dff9fa1ec",
+       "dea50f36-57b8-4dde-bc55-c56059364ef0",
+       "47a7277f-d111-47ba-8438-d669b1057b6d",
+       "2940e31f-e050-4925-b99d-2f9e90a92233",
+       "8f3ba8b7-8910-45b7-ab99-f348df693189",
+       "0a8985f6-af2d-44b7-ac88-a749da19a155",
+       "38341455-1298-4d72-a990-b256e0902128",
+       "37fc9eff-9a33-47dc-9b69-831334d5aa14",
+       "5d263314-5e4b-4eac-a012-e6a156a9ee08",
+       "1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3",
+       "b9de889e-1434-4a8f-a93a-c17ef6a07527",
+       "5018ec17-2348-4c92-8761-6f2377bbd1c0",
+       "e886c8ea-3137-4208-be9d-f6250f5ee16e",
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b"
+      ],
+      "children": 0
+     },
+     {
+      "uuid": "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+      "kind": "listed",
+      "depth": 0,
+      "via": null,
+      "title": "ISO 19115-3:2018",
+      "year": 2025,
+      "status": "P",
+      "year_basis": "configured",
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint ([CO2Emission].[latest].[co2cars_2025Pv31])"
+       },
+       {
+        "url": "https://www.eea.europa.eu/en/analysis/indicators/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "CO2 emissions performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/CO2%20from%20cars%20and%20vans_Stastical%20metadata_2025P.pdf",
+        "class": "excluded",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "CO2 from cars and vans - statistical metadata 2025P"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/Table-definition-cars-2025-Provisional.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/3e1600f1-ef3f-4d52-9431-569a8920573d",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars_superseded (2000-2025provisional)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2025provisional)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/Cars.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "3e1600f1-ef3f-4d52-9431-569a8920573d",
+       "d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+       "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd"
+      ]
+     },
+     {
+      "uuid": "2af60353-0af6-494e-9766-a17056da8a00",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/2af60353-0af6-494e-9766-a17056da8a00?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 Emission Cars - SQL Rest Endpoint (version_file='v21', year=2020, status='P')"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "2af60353-0af6-494e-9766-a17056da8a00"
+      ]
+     },
+     {
+      "uuid": "770aa0a5-83ce-4663-93fa-78507f1990d6",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/770aa0a5-83ce-4663-93fa-78507f1990d6?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2015_p_2015_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/770aa0a5-83ce-4663-93fa-78507f1990d6",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=c08c88c4-3e3e-46cb-8b98-0b9509921700",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2015 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "770aa0a5-83ce-4663-93fa-78507f1990d6"
+      ]
+     },
+     {
+      "uuid": "bbf87016-2cb2-41ad-8b83-80df429572ae",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/bbf87016-2cb2-41ad-8b83-80df429572ae?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2012_p_2012_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/bbf87016-2cb2-41ad-8b83-80df429572ae",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=4cbbdd74-5342-4eaf-8d99-5632561e9b46",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2012 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "bbf87016-2cb2-41ad-8b83-80df429572ae"
+      ]
+     },
+     {
+      "uuid": "992616f8-158f-4ecc-b978-814b81629db6",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/992616f8-158f-4ecc-b978-814b81629db6",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2022Pv25)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/992616f8-158f-4ecc-b978-814b81629db6/attachments/Table-definition-CO2-emissions-from-cars2024.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/992616f8-158f-4ecc-b978-814b81629db6/attachments/VANS.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/992616f8-158f-4ecc-b978-814b81629db6/attachments/CARS.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "992616f8-158f-4ecc-b978-814b81629db6"
+      ]
+     },
+     {
+      "uuid": "e9cbe623-001a-4a76-ad40-562556be3025",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/e9cbe623-001a-4a76-ad40-562556be3025?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2017_p_2017_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/e9cbe623-001a-4a76-ad40-562556be3025",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=40f1805f-bf37-492b-8459-f4fcc830c6bd",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2017 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "e9cbe623-001a-4a76-ad40-562556be3025"
+      ]
+     },
+     {
+      "uuid": "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2023Pv27)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2/attachments/Table-definition.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2/attachments/CO2%20from%20cars%20and%20vans_Stastical%20metadata_2024.pdf",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 from cars and vans - statistical metadata 2024"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/f788b75b-1803-47ec-968e-abe59075f8f5",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2023provisional)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/946dbd33-3802-4307-8b0c-4d9500f7839d",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars_superseded (2000-2023provisional)"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "f788b75b-1803-47ec-968e-abe59075f8f5",
+       "946dbd33-3802-4307-8b0c-4d9500f7839d",
+       "4f12cb7a-2789-4020-8ae6-a49b305a66c2"
+      ]
+     },
+     {
+      "uuid": "3456c805-32c1-4bf7-82cb-767247635c7a",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/3456c805-32c1-4bf7-82cb-767247635c7a?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2011_p_2011_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/3456c805-32c1-4bf7-82cb-767247635c7a",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=155539a4-19bc-4312-9be3-f5ac9cef31cb",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2011 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "3456c805-32c1-4bf7-82cb-767247635c7a"
+      ]
+     },
+     {
+      "uuid": "5380e9bd-18e9-4bf9-b26b-f985f2c5f99e",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/5380e9bd-18e9-4bf9-b26b-f985f2c5f99e?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2012_p_2012_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/5380e9bd-18e9-4bf9-b26b-f985f2c5f99e",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=eb7fe796-50f1-47d3-883b-7940c1276d46",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2012 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "5380e9bd-18e9-4bf9-b26b-f985f2c5f99e"
+      ]
+     },
+     {
+      "uuid": "b319cb95-2c93-4635-8177-e5e0e4f48c1b",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/b319cb95-2c93-4635-8177-e5e0e4f48c1b?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2018_p_2018_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/b319cb95-2c93-4635-8177-e5e0e4f48c1b",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 passenger cars v18 (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 Emission Cars - SQL Rest Endpoint"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=62a9c4de-496c-4173-9258-7a35938e8dff",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2018 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "b319cb95-2c93-4635-8177-e5e0e4f48c1b"
+      ]
+     },
+     {
+      "uuid": "5814203d-f36d-4fee-90d4-64bb348d15a6",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/5814203d-f36d-4fee-90d4-64bb348d15a6",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2024Pv29)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/5814203d-f36d-4fee-90d4-64bb348d15a6/attachments/Table-definition.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/5814203d-f36d-4fee-90d4-64bb348d15a6/attachments/CO2%20from%20cars%20and%20vans_Statistical%20metadata_2024.pdf",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 from cars and vans - statistical metadata 2024"
+       },
+       {
+        "url": "https://www.eea.europa.eu/en/analysis/indicators/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "CO2 emissions performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fd5b0c90-8781-49ca-934e-60e13e6a046d",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2024provisional)"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "fd5b0c90-8781-49ca-934e-60e13e6a046d",
+       "5814203d-f36d-4fee-90d4-64bb348d15a6"
+      ]
+     },
+     {
+      "uuid": "baa86df2-86b4-4339-b709-25d9b20f9301",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/baa86df2-86b4-4339-b709-25d9b20f9301?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2010_p_2010_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/baa86df2-86b4-4339-b709-25d9b20f9301",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=f3043e5a-9432-4d42-9503-e86e08363e7e",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2010 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "baa86df2-86b4-4339-b709-25d9b20f9301"
+      ]
+     },
+     {
+      "uuid": "665f2a8b-2993-4071-92f5-dde5a47dfd42",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/665f2a8b-2993-4071-92f5-dde5a47dfd42?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2011_p_2011_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/665f2a8b-2993-4071-92f5-dde5a47dfd42",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=3105c489-76a3-489a-810b-72adfee1449d",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2011 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "665f2a8b-2993-4071-92f5-dde5a47dfd42"
+      ]
+     },
+     {
+      "uuid": "bcfe6665-23eb-4dbc-9b01-dedc586859d0",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/bcfe6665-23eb-4dbc-9b01-dedc586859d0?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2015_p_2015_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/bcfe6665-23eb-4dbc-9b01-dedc586859d0",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=a70f2058-431e-464f-95f5-9a3ce264a871",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2015 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "bcfe6665-23eb-4dbc-9b01-dedc586859d0"
+      ]
+     },
+     {
+      "uuid": "a0da862c-0bed-460f-808a-0bae489b12b9",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/a0da862c-0bed-460f-808a-0bae489b12b9?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2019_p_2019_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 Emission Cars - SQL Rest Endpoint (version_file='v20', year=2019, status='F')"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/a0da862c-0bed-460f-808a-0bae489b12b9",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=6a4b5e45-8dfb-46c5-baf6-ce65de92e704",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2019 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "a0da862c-0bed-460f-808a-0bae489b12b9"
+      ]
+     },
+     {
+      "uuid": "87fd2bce-6ad5-46d8-af41-f27cfd2e45a8",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/87fd2bce-6ad5-46d8-af41-f27cfd2e45a8?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint - [CO2Emission].[latest].[co2cars_2023Fv28]"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/87fd2bce-6ad5-46d8-af41-f27cfd2e45a8/attachments/Table-definition.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/87fd2bce-6ad5-46d8-af41-f27cfd2e45a8/attachments/CO2%20from%20cars%20and%20vans_Stastical%20metadata_2024.pdf",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 from cars and vans - statistical metadata 2024"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "87fd2bce-6ad5-46d8-af41-f27cfd2e45a8"
+      ]
+     },
+     {
+      "uuid": "aec4c4b0-a1ab-406d-83bf-1e3c53d9e821",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/aec4c4b0-a1ab-406d-83bf-1e3c53d9e821?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2021Pv23)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "aec4c4b0-a1ab-406d-83bf-1e3c53d9e821"
+      ]
+     },
+     {
+      "uuid": "af267be7-eebd-4c1a-ba24-b10a51201f47",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/af267be7-eebd-4c1a-ba24-b10a51201f47?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2014_p_2014_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/af267be7-eebd-4c1a-ba24-b10a51201f47",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=c92e1614-a706-4c47-8ad3-8c5879ba8c31",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2014 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "af267be7-eebd-4c1a-ba24-b10a51201f47"
+      ]
+     },
+     {
+      "uuid": "1c7f57b3-83a0-44a3-973e-0a5bfa811d87",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/1c7f57b3-83a0-44a3-973e-0a5bfa811d87?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2010_p_2010_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/1c7f57b3-83a0-44a3-973e-0a5bfa811d87",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "1c7f57b3-83a0-44a3-973e-0a5bfa811d87"
+      ]
+     },
+     {
+      "uuid": "0172c621-9e03-4756-ac5f-47cc3e241201",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/0172c621-9e03-4756-ac5f-47cc3e241201?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2021Fv24)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/0172c621-9e03-4756-ac5f-47cc3e241201/attachments/Monitoring%20of%20CO2%20emissions%20from%20passenger%20cars%20table-definition.xlsx?approved=true",
+        "class": "excluded",
+        "protocol": "WWW:DOWNLOAD-1.0-http--download",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator: CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/ac129a74-6f4a-4cac-8fcc-f09a7237a3be",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2022provisional)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/1cf874c0-4d54-4995-8117-abae2e846e9c",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars_superseded (2000-2022p)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/3ccc0c76-1c6e-415d-b771-82181e6b3032",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars (2000-2022)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/f4b6d223-744d-46f7-a19f-bbbdd673855e",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars_Superseded (2000-2022)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/0172c621-9e03-4756-ac5f-47cc3e241201/attachments/CARS.png?approved=true",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "ac129a74-6f4a-4cac-8fcc-f09a7237a3be",
+       "1cf874c0-4d54-4995-8117-abae2e846e9c",
+       "3ccc0c76-1c6e-415d-b771-82181e6b3032",
+       "f4b6d223-744d-46f7-a19f-bbbdd673855e",
+       "0172c621-9e03-4756-ac5f-47cc3e241201"
+      ]
+     },
+     {
+      "uuid": "3510b140-f4e2-4332-a6ef-8f2dff9fa1ec",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/3510b140-f4e2-4332-a6ef-8f2dff9fa1ec?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars v19 (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 Emission Cars - SQL Rest Endpoint (version_file='v19', year=2019, status='P')"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=4d8cdbd1-e300-4af7-8e69-edca35837221",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2019 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "3510b140-f4e2-4332-a6ef-8f2dff9fa1ec"
+      ]
+     },
+     {
+      "uuid": "dea50f36-57b8-4dde-bc55-c56059364ef0",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/dea50f36-57b8-4dde-bc55-c56059364ef0?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2018_p_2018_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/dea50f36-57b8-4dde-bc55-c56059364ef0",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=40a572b3-d0b2-4e89-9c1b-fa1fbe81ad02",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2018 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "dea50f36-57b8-4dde-bc55-c56059364ef0"
+      ]
+     },
+     {
+      "uuid": "47a7277f-d111-47ba-8438-d669b1057b6d",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/47a7277f-d111-47ba-8438-d669b1057b6d?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2020Fv22)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "47a7277f-d111-47ba-8438-d669b1057b6d"
+      ]
+     },
+     {
+      "uuid": "2940e31f-e050-4925-b99d-2f9e90a92233",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/2940e31f-e050-4925-b99d-2f9e90a92233?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2019_p_2019_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars v19 (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 Emission Cars - SQL Rest Endpoint (version_file='v19', year=2019, status='P')"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/2940e31f-e050-4925-b99d-2f9e90a92233",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=4d8cdbd1-e300-4af7-8e69-edca35837221",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2019 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "2940e31f-e050-4925-b99d-2f9e90a92233"
+      ]
+     },
+     {
+      "uuid": "8f3ba8b7-8910-45b7-ab99-f348df693189",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/8f3ba8b7-8910-45b7-ab99-f348df693189?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2014_p_2014_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/8f3ba8b7-8910-45b7-ab99-f348df693189",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "8f3ba8b7-8910-45b7-ab99-f348df693189"
+      ]
+     },
+     {
+      "uuid": "0a8985f6-af2d-44b7-ac88-a749da19a155",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/0a8985f6-af2d-44b7-ac88-a749da19a155?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2017_p_2017_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/0a8985f6-af2d-44b7-ac88-a749da19a155",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=c43afb5d-a3ed-45bc-af78-9892e2a06d54",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2017 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "0a8985f6-af2d-44b7-ac88-a749da19a155"
+      ]
+     },
+     {
+      "uuid": "38341455-1298-4d72-a990-b256e0902128",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/38341455-1298-4d72-a990-b256e0902128?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL Rest Endpoint (CO2Emission - latest - co2cars_2022Pv25)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "38341455-1298-4d72-a990-b256e0902128"
+      ]
+     },
+     {
+      "uuid": "37fc9eff-9a33-47dc-9b69-831334d5aa14",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/37fc9eff-9a33-47dc-9b69-831334d5aa14?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2013_p_2013_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/37fc9eff-9a33-47dc-9b69-831334d5aa14",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=fe64d45e-9de1-47c3-bcb2-2313eabea16a",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2013 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "37fc9eff-9a33-47dc-9b69-831334d5aa14"
+      ]
+     },
+     {
+      "uuid": "5d263314-5e4b-4eac-a012-e6a156a9ee08",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/5d263314-5e4b-4eac-a012-e6a156a9ee08?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-prov-2016_p_2016_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/5d263314-5e4b-4eac-a012-e6a156a9ee08",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=ffea6ad8-a0ad-42d0-b841-34984021b5e2",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2016 - Provisional data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "5d263314-5e4b-4eac-a012-e6a156a9ee08"
+      ]
+     },
+     {
+      "uuid": "1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2016_p_2016_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=2d07e1ea-25fd-464b-bef3-0a13bde545cc",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2016 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3"
+      ]
+     },
+     {
+      "uuid": "b9de889e-1434-4a8f-a93a-c17ef6a07527",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/b9de889e-1434-4a8f-a93a-c17ef6a07527?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2013_p_2013_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/b9de889e-1434-4a8f-a93a-c17ef6a07527",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://galliwasp.eea.europa.eu/catalogue/srv/eng/csw?service=CSW&request=GetRecordById&version=2.0.2&outputSchema=http://www.isotc211.org/2005/gmd&elementSetName=full&id=f32c437f-78af-48ac-b818-c64012561103",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars - Data 2013 - Final data - feature catalogue"
+       },
+       {
+        "url": "http://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-20/image_large",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "b9de889e-1434-4a8f-a93a-c17ef6a07527"
+      ]
+     },
+     {
+      "uuid": "5018ec17-2348-4c92-8761-6f2377bbd1c0",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115-3:2018",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/5018ec17-2348-4c92-8761-6f2377bbd1c0",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (elastic data viewer)"
+       },
+       {
+        "url": "https://www.eea.europa.eu/en/analysis/indicators/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "",
+        "format": "",
+        "name": "CO2 emissions performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/5018ec17-2348-4c92-8761-6f2377bbd1c0/attachments/CO2%20from%20cars%20and%20vans_Stastical%20metadata_2024.pdf",
+        "class": "excluded",
+        "protocol": "http://standards.iso.org/iso/19115/-3/gco/1.0",
+        "format": "",
+        "name": "CO2 from cars and vans - statistical metadata (2024)"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "REST",
+        "format": "",
+        "name": "SQL Rest Endpoint ([CO2Emission].[latest].[co2cars_2024Fv30])"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/5018ec17-2348-4c92-8761-6f2377bbd1c0/attachments/Table-definition-cars-2024-Final.xlsx",
+        "class": "excluded",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "Table definition"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/bf025777-a278-41c3-8404-bbec333ca3fb",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Average CO2 emissions per km from new passenger cars_superseded (2000-2024)"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/5018ec17-2348-4c92-8761-6f2377bbd1c0/attachments/thumbnail.jpg",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "bf025777-a278-41c3-8404-bbec333ca3fb",
+       "5018ec17-2348-4c92-8761-6f2377bbd1c0"
+      ]
+     },
+     {
+      "uuid": "e886c8ea-3137-4208-be9d-f6250f5ee16e",
+      "kind": "related",
+      "depth": 1,
+      "via": "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/e886c8ea-3137-4208-be9d-f6250f5ee16e",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_s_eu-sdg-13-31_p_2000-2023_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/e886c8ea-3137-4208-be9d-f6250f5ee16e",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/cache/metadata/en/sdg_13_31_esmsip2.htm",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat indicator: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/e886c8ea-3137-4208-be9d-f6250f5ee16e/attachments/e886c8ea-3137-4208-be9d-f6250f5ee16e.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "e886c8ea-3137-4208-be9d-f6250f5ee16e"
+      ]
+     },
+     {
+      "uuid": "3e1600f1-ef3f-4d52-9431-569a8920573d",
+      "kind": "related",
+      "depth": 1,
+      "via": "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/3e1600f1-ef3f-4d52-9431-569a8920573d",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/3e1600f1-ef3f-4d52-9431-569a8920573d",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator TERM017:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/eng/catalog.search#/metadata/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/databrowser/view/sdg_13_31/default/table?lang=en&category=sdg.sdg_13",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat SDG_13_31: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "CO2 emissions from new passenger cars registered in EU27, Iceland (from 2018) and Norway (from 2019) – Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2025 - Provisional version"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/3e1600f1-ef3f-4d52-9431-569a8920573d/attachments/fd5b0c90-8781-49ca-934e-60e13e6a046d.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+       "3e1600f1-ef3f-4d52-9431-569a8920573d"
+      ]
+     },
+     {
+      "uuid": "d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+      "kind": "related",
+      "depth": 1,
+      "via": "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_s_eu-sdg-13-31-provisional_p_2000-2025_v02_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator TERM017: CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/cache/metadata/en/sdg_13_31_esmsip2.htm",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat SDG_13_31: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "CO2 emissions from new passenger cars registered in EU27, Iceland (from 2018) and Norway (from 2019) – Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2025 - Provisional version"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13/attachments/3e1600f1-ef3f-4d52-9431-569a8920573d.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+       "d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13"
+      ]
+     },
+     {
+      "uuid": "f788b75b-1803-47ec-968e-abe59075f8f5",
+      "kind": "related",
+      "depth": 2,
+      "via": "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/f788b75b-1803-47ec-968e-abe59075f8f5?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_s_eu-sdg-13-31-provisional_p_2000-2023_v02_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/f788b75b-1803-47ec-968e-abe59075f8f5",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/eng/catalog.search#/metadata/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/cache/metadata/en/sdg_13_31_esmsip2.htm",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat indicator: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2023 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/eea-statistical-data/api/records/f788b75b-1803-47ec-968e-abe59075f8f5/attachments/f788b75b-1803-47ec-968e-abe59075f8f5.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+       "f788b75b-1803-47ec-968e-abe59075f8f5"
+      ]
+     },
+     {
+      "uuid": "946dbd33-3802-4307-8b0c-4d9500f7839d",
+      "kind": "related",
+      "depth": 2,
+      "via": "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/946dbd33-3802-4307-8b0c-4d9500f7839d?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_s_eu-sdg-13-31-provisional_p_2000-2023_v01_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/946dbd33-3802-4307-8b0c-4d9500f7839d",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/eng/catalog.search#/metadata/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/databrowser/view/sdg_13_31/default/table?lang=en&category=sdg.sdg_13",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat SDG_13_31: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2023 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/946dbd33-3802-4307-8b0c-4d9500f7839d/attachments/946dbd33-3802-4307-8b0c-4d9500f7839d.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+       "946dbd33-3802-4307-8b0c-4d9500f7839d"
+      ]
+     },
+     {
+      "uuid": "fd5b0c90-8781-49ca-934e-60e13e6a046d",
+      "kind": "related",
+      "depth": 2,
+      "via": "5814203d-f36d-4fee-90d4-64bb348d15a6",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://doi.org/10.2909/fd5b0c90-8781-49ca-934e-60e13e6a046d",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/fd5b0c90-8781-49ca-934e-60e13e6a046d",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator TERM017:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/eng/catalog.search#/metadata/4f12cb7a-2789-4020-8ae6-a49b305a66c2",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/databrowser/view/sdg_13_31/default/table?lang=en&category=sdg.sdg_13",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat SDG_13_31: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK",
+        "format": "",
+        "name": "CO2 emissions from new passenger cars registered in EU27, Iceland (from 2018) and Norway (from 2019) – Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5814203d-f36d-4fee-90d4-64bb348d15a6",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2024 - Provisional data"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/api/records/fd5b0c90-8781-49ca-934e-60e13e6a046d/attachments/fd5b0c90-8781-49ca-934e-60e13e6a046d.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "5814203d-f36d-4fee-90d4-64bb348d15a6",
+       "fd5b0c90-8781-49ca-934e-60e13e6a046d"
+      ]
+     },
+     {
+      "uuid": "ac129a74-6f4a-4cac-8fcc-f09a7237a3be",
+      "kind": "related",
+      "depth": 2,
+      "via": "0172c621-9e03-4756-ac5f-47cc3e241201",
+      "title": "ISO 19115/19139",
+      "year": null,
+      "status": null,
+      "year_basis": null,
+      "metadata": "ok",
+      "related": "ok",
+      "resources": [
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/api/records/ac129a74-6f4a-4cac-8fcc-f09a7237a3be?language=all",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/webdav/datastore/public/eea_s_eu-sdg-12-30_p_2000-2022_v02_r00",
+        "class": "landing",
+        "protocol": "EEA:FOLDERPATH",
+        "format": "",
+        "name": ""
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/data/ac129a74-6f4a-4cac-8fcc-f09a7237a3be",
+        "class": "landing",
+        "protocol": "WWW:URL",
+        "format": "",
+        "name": "Direct download"
+       },
+       {
+        "url": "https://www.eea.europa.eu/ims/co2-performance-of-new-passenger",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "EEA Indicator:CO2 performance of new passenger cars in Europe"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/srv/eng/catalog.search#/metadata/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631"
+       },
+       {
+        "url": "https://circabc.europa.eu/ui/group/4cf23472-88e0-4a52-9dfb-544e8c4c7631/library/6c4cb908-ea46-4276-9f1f-e21374d4b2fb",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "List of CO2 Monitoring Decisions"
+       },
+       {
+        "url": "https://discodata.eea.europa.eu/download/CO2Emission/latest/co2cars_2022Pv25",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "SQL REST Endpoint (CO2Emission/latest/co2cars_2022Pv25)"
+       },
+       {
+        "url": "http://co2cars.apps.eea.europa.eu/",
+        "class": "landing",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "CO2 passenger cars (Elastic Data Viewer)"
+       },
+       {
+        "url": "https://ec.europa.eu/eurostat/databrowser/view/sdg_12_30/default/table?lang=en",
+        "class": "excluded",
+        "protocol": "WWW:LINK-1.0-http--link",
+        "format": "",
+        "name": "Eurostat SDG_12_30: Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/5d252092-d328-40d8-bca2-c0734bd6143b",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "[EU SDG 13_31] Average CO2 emissions per km from new passenger cars"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/datahub/api/records/0172c621-9e03-4756-ac5f-47cc3e241201",
+        "class": "record",
+        "protocol": "",
+        "format": "",
+        "name": "Monitoring of CO2 emissions from passenger cars, 2021 Final"
+       },
+       {
+        "url": "https://sdi.eea.europa.eu/catalogue/eea-statistical-data/api/records/ac129a74-6f4a-4cac-8fcc-f09a7237a3be/attachments/ac129a74-6f4a-4cac-8fcc-f09a7237a3be.png",
+        "class": "excluded",
+        "protocol": "",
+        "format": "",
+        "name": ""
+       }
+      ],
+      "references": [
+       "5d252092-d328-40d8-bca2-c0734bd6143b",
+       "0172c621-9e03-4756-ac5f-47cc3e241201",
+       "ac129a74-6f4a-4cac-8fcc-f09a7237a3be"
+      ]
+     },
+     {
+      "uuid": "1cf874c0-4d54-4995-8117-abae2e846e9c",
+      "kind": "related",
+      "depth": 2,
+      "via": "0172c621-9e03-4756-ac5f-47cc3e241201",
+      "status_note": "not read: record limit 40"
+     },
+     {
+      "uuid": "3ccc0c76-1c6e-415d-b771-82181e6b3032",
+      "kind": "related",
+      "depth": 2,
+      "via": "0172c621-9e03-4756-ac5f-47cc3e241201",
+      "status_note": "not read: record limit 40"
+     },
+     {
+      "uuid": "f4b6d223-744d-46f7-a19f-bbbdd673855e",
+      "kind": "related",
+      "depth": 2,
+      "via": "0172c621-9e03-4756-ac5f-47cc3e241201",
+      "status_note": "not read: record limit 40"
+     },
+     {
+      "uuid": "bf025777-a278-41c3-8404-bbec333ca3fb",
+      "kind": "related",
+      "depth": 2,
+      "via": "5018ec17-2348-4c92-8761-6f2377bbd1c0",
+      "status_note": "not read: record limit 40"
+     },
+     {
+      "uuid": "5d252092-d328-40d8-bca2-c0734bd6143b",
+      "kind": "related",
+      "depth": 2,
+      "via": "e886c8ea-3137-4208-be9d-f6250f5ee16e",
+      "status_note": "not read: record limit 40"
+     },
+     {
+      "kind": "summary",
+      "metadata_endpoint": "{api}{uuid} (Accept: application/json)",
+      "records_read": 40,
+      "max_depth": 2,
+      "max_records": 40,
+      "years": {
+       "2025": {
+        "status": "P",
+        "url": null,
+        "reason": "no_csv_link"
+       }
+      }
+     }
+    ],
+    "choices": {
+     "2025": {
+      "year": 2025,
+      "status": "P",
+      "records": [
+       "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd"
+      ],
+      "record": "b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+      "url": null,
+      "candidates": [],
+      "links": [
+       "https://doi.org/10.2909/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd",
+       "https://co2cars.apps.eea.europa.eu/",
+       "https://discodata.eea.europa.eu/",
+       "https://www.eea.europa.eu/en/analysis/indicators/co2-performance-of-new-passenger",
+       "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/CO2%20from%20cars%20and%20vans_Stastical%20metadata_2025P.pdf",
+       "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/Table-definition-cars-2025-Provisional.xlsx",
+       "https://sdi.eea.europa.eu/catalogue/datahub/api/records/fa8b1229-3db6-495d-b18e-9c9b3267c02b",
+       "https://sdi.eea.europa.eu/catalogue/datahub/api/records/3e1600f1-ef3f-4d52-9431-569a8920573d",
+       "https://sdi.eea.europa.eu/catalogue/datahub/api/records/d3f32b6f-d06d-4a00-82d6-53e9a4cbcf13",
+       "https://sdi.eea.europa.eu/catalogue/api/records/b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd/attachments/Cars.png"
+      ],
+      "reason": "no_csv_link"
+     }
+    },
+    "headers": {}
    }
   },
   "ademe_car_labelling": {
@@ -4533,7 +8211,7 @@
     {
      "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/026e45b4-eb63-451f-b34f-d9308ea3a3d9/download/my2012-2026-battery-electric-vehicles.csv",
      "group": "bev",
-     "status": "map_pending",
+     "status": "ok",
      "live_header": [
       "Model year",
       "Make",
@@ -4553,12 +8231,32 @@
       "CO2 rating ",
       "Smog rating",
       "Recharge time (h)"
-     ]
+     ],
+     "matched": {
+      "year": "Model year",
+      "make": "Make",
+      "model": "Model",
+      "vehicle_class": "Vehicle class",
+      "motor_kw": "Motor (kW)",
+      "transmission": "Transmission",
+      "fuel": "Fuel type",
+      "energy_kwh_100km": "Combined (kWh/100 km)",
+      "electric_range_km": "Range (km)"
+     },
+     "missing_required": [],
+     "missing_optional": [],
+     "ambiguous": [],
+     "required_keys": [
+      "year",
+      "make",
+      "model"
+     ],
+     "ok": true
     },
     {
      "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/8812228b-a6aa-4303-b3d0-66489225120d/download/my2012-2026-plug-in-hybrid-electric-vehicles.csv",
      "group": "phev",
-     "status": "map_pending",
+     "status": "ok",
      "live_header": [
       "Model year",
       "Make",
@@ -4580,7 +8278,31 @@
       "CO2 emissions (g/km)",
       "CO2 rating",
       "Smog rating"
-     ]
+     ],
+     "matched": {
+      "year": "Model year",
+      "make": "Make",
+      "model": "Model",
+      "vehicle_class": "Vehicle class",
+      "motor_kw": "Motor (kW)",
+      "displacement_l": "Engine size (L)",
+      "cylinders": "Cylinders",
+      "transmission": "Transmission",
+      "fuel": "Fuel type 2",
+      "electric_range_km": "Range 1 (km)",
+      "combined_l_100km": "Combined (L/100 km)"
+     },
+     "missing_required": [],
+     "missing_optional": [],
+     "ambiguous": [],
+     "required_keys": [
+      "year",
+      "make",
+      "model",
+      "displacement_l",
+      "transmission"
+     ],
+     "ok": true
     },
     {
      "url": "https://open.canada.ca/data/dataset/98f1a129-f628-4ce4-b24d-6f16bf24dd64/resource/9df1b18d-d036-4783-a61c-99f1f75b3ac5/download/my2026-fuel-consumption-ratings.csv",
@@ -4780,6 +8502,7 @@
     "EAGLE",
     "FERRARI",
     "FIAT",
+    "FISKER",
     "FORD",
     "GENESIS",
     "GEO",
@@ -4792,11 +8515,14 @@
     "ISUZU",
     "JAGUAR",
     "JEEP",
+    "KARMA",
     "KIA",
     "LAMBORGHINI",
     "LAND ROVER",
     "LEXUS",
     "LINCOLN",
+    "LOTUS",
+    "LUCID",
     "MASERATI",
     "MAZDA",
     "MERCEDES-BENZ",
@@ -4806,65 +8532,79 @@
     "NISSAN",
     "OLDSMOBILE",
     "PLYMOUTH",
+    "POLESTAR",
     "PONTIAC",
     "PORSCHE",
     "RAM",
+    "RIVIAN",
     "ROLLS-ROYCE",
     "SAAB",
     "SATURN",
     "SCION",
     "SMART",
+    "SMART EQ",
     "SRT",
     "SUBARU",
     "SUZUKI",
+    "TESLA",
     "TOYOTA",
+    "VINFAST",
     "VOLKSWAGEN",
     "VOLVO"
    ],
    "make_rows": {
-    "ACURA": 339,
-    "ALFA ROMEO": 66,
-    "ASTON MARTIN": 129,
-    "AUDI": 1024,
-    "BENTLEY": 175,
-    "BMW": 1813,
+    "MITSUBISHI": 360,
+    "NISSAN": 1004,
+    "FORD": 2429,
+    "SMART": 32,
+    "TESLA": 193,
+    "CHEVROLET": 2760,
+    "BMW": 2002,
+    "KIA": 686,
+    "HYUNDAI": 773,
+    "VOLKSWAGEN": 986,
+    "AUDI": 1098,
+    "JAGUAR": 444,
+    "SMART EQ": 2,
+    "MINI": 484,
+    "PORSCHE": 1351,
+    "POLESTAR": 36,
+    "VOLVO": 704,
+    "LUCID": 33,
+    "MAZDA": 829,
+    "MERCEDES-BENZ": 1645,
+    "RIVIAN": 160,
+    "CADILLAC": 589,
+    "FISKER": 8,
+    "GENESIS": 95,
+    "LEXUS": 606,
+    "SUBARU": 669,
+    "TOYOTA": 1431,
+    "VINFAST": 17,
+    "ACURA": 341,
+    "DODGE": 1291,
+    "FIAT": 89,
+    "GMC": 1761,
+    "HONDA": 740,
+    "JEEP": 703,
+    "ROLLS-ROYCE": 159,
+    "LOTUS": 4,
+    "CHRYSLER": 520,
+    "KARMA": 7,
+    "BENTLEY": 193,
+    "LINCOLN": 272,
+    "ALFA ROMEO": 68,
+    "FERRARI": 120,
+    "LAMBORGHINI": 129,
+    "LAND ROVER": 326,
+    "ASTON MARTIN": 130,
     "BUICK": 349,
-    "CADILLAC": 556,
-    "CHEVROLET": 2706,
-    "CHRYSLER": 510,
-    "DODGE": 1272,
-    "FERRARI": 104,
-    "FORD": 2349,
-    "GENESIS": 80,
-    "GMC": 1741,
-    "HONDA": 733,
-    "HYUNDAI": 710,
     "INEOS": 16,
     "INFINITI": 319,
-    "JAGUAR": 439,
-    "JEEP": 687,
-    "KIA": 611,
-    "LAND ROVER": 323,
-    "LEXUS": 584,
-    "LINCOLN": 262,
-    "MAZDA": 820,
-    "MERCEDES-BENZ": 1565,
-    "MINI": 469,
-    "MITSUBISHI": 345,
-    "NISSAN": 960,
-    "PORSCHE": 1232,
     "RAM": 179,
-    "ROLLS-ROYCE": 147,
-    "SUBARU": 658,
-    "TOYOTA": 1390,
-    "VOLKSWAGEN": 959,
-    "VOLVO": 631,
     "BUGATTI": 17,
     "MASERATI": 168,
-    "FIAT": 86,
-    "LAMBORGHINI": 123,
     "SCION": 44,
-    "SMART": 22,
     "EAGLE": 41,
     "GEO": 19,
     "ISUZU": 47,
