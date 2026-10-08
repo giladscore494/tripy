@@ -11,7 +11,11 @@
       "label": "EEA CO2 emissions from new passenger cars (monitoring)",
       "source_url": "https://discodata.eea.europa.eu/sql",
       "table": "[CO2Emission].[latest].[co2cars]", "years_from": 2010, "year_semantics": "registration_year",
-      "year_discovery": "SELECT DISTINCT year, status first; only the years present are built (2023 had no rows in [latest] on 2026-10-06); per year the final rows (status F) are preferred, the provisional rows (P) used only for a year without final rows, and the schema is read per year (SELECT TOP 1 * of that year and status)",
+      "year_discovery": "SELECT DISTINCT year, status first; only the years present are built (2023 had no rows in [latest] on 2026-10-06); per year the final rows (status F) are preferred, the provisional rows (P) used only for a year without final rows, and the schema is read per year (SELECT TOP 1 * of that year and status); after final_only_through_year a validated year table named by the datahub records (`year_tables`) replaces [latest] for its year when its status is better (2022 F) or [latest] lacks the year (2023+)",
+      "year_tables": {
+        "_about": "T1 / T2 (2026-10-08): DISCODATA holds one table per registration year and status besides [latest] ([latest] ends at 2022 P). The names come ONLY from the datahub yearly records (INFORMATION_SCHEMA is refused: 'system tables are not allowed'): the D1 discovery matches `pattern` exactly in each record's metadata JSON text (title, abstract, lineage, resource descriptions), e.g. the 2023 Final record 87fd2bce-6ad5-46d8-af41-f27cfd2e45a8 names [CO2Emission].[latest].[co2cars_2023Fv28] and the 2025 provisional record b4044b06-2e6b-4f8e-a6e6-66e0e98bb0dd names [CO2Emission].[latest].[co2cars_2025Pv31]. A table is accepted only when its year and F / P agree with the record's (else rejected with the reason); several versions of one (year, status): the highest v, all recorded. Before use: SELECT TOP 1 * FROM <table>, its header resolved through the year's column map (column_sources_by_year, aliases; Ech / RLFI are not mapped) and the row's Year equal to the table year; a failure stops only that year. Used only for a year after final_only_through_year: 2022 from a validated F table instead of the [latest] P rows (else [latest] P as before); 2023+ from the validated table of the best status (F over P), with the same per-(year, make) machinery (WHERE year and status). The datahub CSV is read only for a year with neither [latest] rows nor a validated table. Per-vehicle rows (R = 1, ID); no electric-range column.",
+        "pattern": "\\[CO2Emission\\]\\.\\[latest\\]\\.\\[co2cars_(\\d{4})([FP])v(\\d+)\\]"
+      },
       "status_column": {"source": ["Status"], "required": true},
       "status_preference": ["F", "P"],
       "final_only_through_year": 2021,
@@ -56,9 +60,9 @@
         "max_depth": 2,
         "max_records": 120,
         "header_from_year": 2021,
-        "range_join_years": [2021, 2022],
+        "range_join_years": [],
         "range_join_columns": ["electric_range_km"],
-        "_range_join": "D2: DISCODATA [latest] has no electric-range column in any year (its 2021-2022 header, 41 columns, has none; Er / Zr / Dr are eco-innovation fields). For `range_join_years` DISCODATA stays the base and `range_join_columns` come from the datahub CSV of the same year, joined on the full identity key (group_by_keys, normalized); a key without an exact join keeps no range; the year report `range_join` gives the join %. From 2023 the CSV year carries the column itself. Only spellings in `columns` (written from what the probe prints) are read.",
+        "_range_join": "D2: DISCODATA [latest] has no electric-range column in any year (its 2021-2022 header, 41 columns, has none; Er / Zr / Dr are eco-innovation fields). For `range_join_years` DISCODATA stays the base and `range_join_columns` come from the datahub CSV of the same year, joined on the full identity key (group_by_keys, normalized); a key without an exact join keeps no range; the year report `range_join` gives the join %. From 2023 the CSV year carries the column itself. Only spellings in `columns` (written from what the probe prints) are read. T2 (2026-10-08): `range_join_years` is empty: no DISCODATA table has a range column ([latest] and the per-year tables alike: the live `SELECT TOP 1 *` of co2cars_2025Pv31 has none) and no datahub record lists a downloadable CSV (build run of PR #74: `no_csv_link` for every year), so no range join is attempted and `electric_range_km` stays absent; the join code is kept for a year whose CSV appears.",
         "file_pattern": null,
         "column_aliases": {"fuel_consumption_l_100km": ["Fuel consumption"]},
         "max_download_mb": 6000

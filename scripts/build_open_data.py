@@ -177,6 +177,7 @@ def summary(results: dict, manifest: dict, probe: dict | None = None) -> str:
             lines.append(f"- {name} {part.get('year')}: {part.get('status')} status={part.get('status_used')} "
                          f"rows={part.get('rows', '—')} {part.get('reason') or ''} "
                          f"queries={part.get('queries', '—')} max_query_bytes={part.get('max_query_bytes', '—')}"
+                         + (f" table={part['table']}" if part.get("table") else "") +
                          f"{' split' if part.get('split') else ''} absent={part.get('absent_columns') or []}"
                          + (f" empty={part['empty_columns']}" if part.get("empty_columns") else "")
                          + (f" errors={len(part['make_errors'])}" if part.get("make_errors") else ""))
@@ -341,6 +342,7 @@ def datahub_section(results: dict) -> list[str]:
                              f"{_cell(choice.get('title'))} | {_cell(folders)} | {_cell(outcome)} | {_cell(classes)} |")
             if not summary.get("years"):
                 lines.append("| — | — | — | — | — | no year found | — |")
+        lines += year_tables_section(r)
         for part in r.get("years") or []:
             if part.get("source") == "datahub_csv":
                 files = part.get("files") or []
@@ -356,6 +358,32 @@ def datahub_section(results: dict) -> list[str]:
                 if part.get("csv_live_header") or (part.get("live_header") and part.get("mode") != "range_join"):
                     header = part.get("csv_live_header") or part.get("live_header")
                     lines.append(f"  - CSV header: `{' | '.join(map(str, header))}`")
+    return lines
+
+
+def year_tables_section(result: dict) -> list[str]:
+    """T1 / T2 for the pull-request body: per year after final_only_through_year whose datahub records name DISCODATA
+    year tables, per status the record, every table name found, the table chosen (highest version), the rejections,
+    the validation (`SELECT TOP 1 *`) and what the year was built from."""
+    parts = [p for p in result.get("years") or [] if p.get("discodata_table")]
+    if not parts:
+        return []
+    lines = ["", "DISCODATA year tables (T1 / T2) named in the datahub records:", "",
+             "| year | status | record | tables found | table chosen | rejected | validation | year built from |",
+             "|---|---|---|---|---|---|---|---|"]
+    for part in sorted(parts, key=lambda p: p.get("year") or 0):
+        info = part["discodata_table"]
+        checks = {(v.get("status"), v.get("table")): v for v in info.get("validation") or []}
+        used = f"{info.get('used') or '—'} ({part.get('status')}{', ' + part['reason'] if part.get('reason') else ''})"
+        for status, block in (info.get("tables") or {}).items():
+            check = checks.get((status, block.get("chosen")))
+            verdict = ("ok" if check["ok"] else f"failed: {check.get('reason')}") if check else \
+                "not validated (status not better than [latest])" if block.get("chosen") else "—"
+            rejected = "; ".join(f"{x.get('table')} ({x.get('reason')})" for x in block.get("rejected") or [])
+            record = block.get("record") or ", ".join(block.get("records") or [])
+            lines.append(f"| {part.get('year')} | {status} | {_cell(record)} | "
+                         f"{_cell(', '.join(block.get('found') or []))} | {_cell(block.get('chosen'))} | "
+                         f"{_cell(rejected)} | {_cell(verdict)} | {_cell(used)} |")
     return lines
 
 
