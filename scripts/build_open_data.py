@@ -21,6 +21,11 @@ dataset never costs the others: too-large or failed items are listed in the summ
 
     python scripts/build_open_data.py [--datasets all|eea_co2_cars,...] [--out data/open] [--probe data/open/probe.json]
                                       [--work DIR] [--summary open-data-build.md] [--max-mb 50]
+                                      [--discovery open-data-discovery.md]
+
+F4: the summary (the pull-request body's build part) carries D1 per year only (record, title, status, the folder
+listed, the file chosen or the reason, resources by class); every record and resource goes to the manifest
+(`csv_discovery`), the step summary and --discovery (uploaded as the `open-data-build` artifact).
 """
 
 from __future__ import annotations
@@ -299,36 +304,51 @@ def determinism_table(results: dict) -> list[str]:
     return lines
 
 
+def _cell(value: Any) -> str:
+    return "—" if value in (None, "", [], {}) else str(value).replace("|", "/").replace("\n", " ")
+
+
 def datahub_section(results: dict) -> list[str]:
-    """D1 / D2: per datahub record its resources (class) and the file chosen per year; the range join per year."""
+    """D1 / D2 for the pull-request body (F4): per year the record (uuid, title), status, the folder listed (and how),
+    the chosen file or the reason and the counts of resources by class; the range join per year. The per-record and
+    per-resource lines go to the manifest (`csv_discovery`) and the step summary / artifact (`datahub_detail`)."""
     lines = []
     for name, r in results.items():
         discovery = r.get("csv_discovery") or []
         if not discovery:
             continue
-        lines += ["", f"Datahub records (D1) of {name}:", ""]
+        lines += ["", f"Datahub discovery (D1) of {name}:", ""]
         for record in discovery:
-            if record.get("kind") == "summary":
-                lines.append(f"- {record.get('records_read')} record(s) read via {record.get('metadata_endpoint')} "
-                             f"(depth <= {record.get('max_depth')}, <= {record.get('max_records')} records); per year: "
-                             + json.dumps(record.get("years"), ensure_ascii=False))
-                continue
             if record.get("status") == "failed":
                 lines.append(f"- discovery failed: {record.get('error')}")
-                continue
-            lines.append(f"- {record.get('uuid')} [{record.get('kind')}, depth {record.get('depth')}] "
-                         f"{record.get('title') or '—'}: year {record.get('year') or '—'} {record.get('status') or ''} "
-                         f"({record.get('year_basis') or record.get('status_note') or 'no year'}); metadata "
-                         f"{record.get('metadata') or '—'}, related {record.get('related') or '—'}")
-            for resource in (record.get("resources") or [])[:20]:
-                lines.append(f"  - {resource.get('class')}: {resource.get('url')}"
-                             + (f" ({resource.get('protocol')})" if resource.get("protocol") else ""))
+        summary = next((d for d in discovery if d.get("kind") == "summary"), None)
+        if summary:
+            lines += [f"{summary.get('records_read')} record(s) read via {summary.get('metadata_endpoint')} (depth <= "
+                      f"{summary.get('max_depth')}, <= {summary.get('max_records')} records; "
+                      f"{summary.get('not_read') or 0} not read for the limit). Per-resource lines: the manifest "
+                      "(`csv_discovery`) and the step summary / `open-data-build` artifact.", "",
+                      "| year | status | record | title | folder listed | file chosen / reason | resources by class |",
+                      "|---|---|---|---|---|---|---|"]
+            for year, choice in (summary.get("years") or {}).items():
+                folders = "; ".join(f"{f.get('url')} ({f.get('method') or 'no listing'}, {f.get('files', 0)} file(s))"
+                                    for f in choice.get("folders") or [])
+                outcome = choice.get("url") or choice.get("reason")
+                if choice.get("mismatch"):
+                    outcome += " (" + "; ".join(f"year {m.get('year')} ({m.get('basis')}) vs folder "
+                                                f"{m.get('folder_year')}" for m in choice["mismatch"]) + ")"
+                classes = ", ".join(f"{c} {n}" for c, n in (choice.get("classes") or {}).items())
+                lines.append(f"| {year} | {_cell(choice.get('status'))} | {_cell(choice.get('record'))} | "
+                             f"{_cell(choice.get('title'))} | {_cell(folders)} | {_cell(outcome)} | {_cell(classes)} |")
+            if not summary.get("years"):
+                lines.append("| — | — | — | — | — | no year found | — |")
         for part in r.get("years") or []:
             if part.get("source") == "datahub_csv":
+                files = part.get("files") or []
                 lines.append(f"- {part.get('year')} [{part.get('mode') or 'csv'}]: {part.get('status')} "
                              + (f"{part.get('reason')} " if part.get("reason") else "")
                              + (f"url {part.get('url')} " if part.get("url") else "")
-                             + (f"candidates {part.get('files')} " if part.get("files") else "")
+                             + (f"{len(files)} candidate(s) {files[:3]}{' ...' if len(files) > 3 else ''} "
+                                if files else "")
                              + (f"join {part.get('join_pct')} % of {part.get('join_rows')} rows, range on "
                                 f"{part.get('values_pct')} % ({part.get('values_pct_registrations')} % of "
                                 f"registrations) " if part.get("mode") == "range_join" and part.get("join_rows")
@@ -336,6 +356,51 @@ def datahub_section(results: dict) -> list[str]:
                 if part.get("csv_live_header") or (part.get("live_header") and part.get("mode") != "range_join"):
                     header = part.get("csv_live_header") or part.get("live_header")
                     lines.append(f"  - CSV header: `{' | '.join(map(str, header))}`")
+    return lines
+
+
+def datahub_detail(results: dict) -> list[str]:
+    """D1 in full (the step summary and the `open-data-build` artifact, never the pull-request body): per datahub
+    record its kind, depth, title and the path that gave it, year, status and every resource (class); per folder the
+    listing method and its entries."""
+    lines = []
+    for name, r in results.items():
+        discovery = r.get("csv_discovery") or []
+        if not discovery:
+            continue
+        lines += ["", f"## Datahub records (D1) of {name}: every record and resource", ""]
+        for record in discovery:
+            kind = record.get("kind")
+            if kind == "summary":
+                lines.append(f"- {record.get('records_read')} record(s) read via {record.get('metadata_endpoint')} "
+                             f"(depth <= {record.get('max_depth')}, <= {record.get('max_records')} records); per year: "
+                             + json.dumps(record.get("years"), ensure_ascii=False))
+                continue
+            if kind == "folder":
+                lines.append(f"- folder {record.get('url')}: {record.get('method') or 'no listing'}"
+                             + (f" ({record.get('error')})" if record.get("error") else "")
+                             + f", {len(record.get('files') or [])} file(s), {len(record.get('excluded') or [])} "
+                               f"excluded, {len(record.get('subfolders') or [])} subfolder(s)")
+                for url in record.get("files") or []:
+                    lines.append(f"  - download: {url}")
+                for url in record.get("excluded") or []:
+                    lines.append(f"  - excluded: {url}")
+                for sub in record.get("subfolders") or []:
+                    lines.append(f"  - subfolder: {sub.get('url')} ({sub.get('method') or sub.get('note') or '—'})")
+                continue
+            if record.get("status") == "failed":
+                lines.append(f"- discovery failed: {record.get('error')}")
+                continue
+            lines.append(f"- {record.get('uuid')} [{kind}, depth {record.get('depth')}] "
+                         f"{record.get('title') or '—'} (title from {record.get('title_path') or '—'}): year "
+                         f"{record.get('year') or '—'} {record.get('status') or ''} "
+                         f"({record.get('year_basis') or record.get('status_note') or 'no year'}); metadata "
+                         f"{record.get('metadata') or '—'}, related {record.get('related') or '—'}"
+                         + (f"; folder year {record['folder_years']}" if record.get("folder_years") else "")
+                         + ("; not followed further" if record.get("followed") is False else ""))
+            for resource in record.get("resources") or []:
+                lines.append(f"  - {resource.get('class')}: {resource.get('url')}"
+                             + (f" ({resource.get('protocol')})" if resource.get("protocol") else ""))
     return lines
 
 
@@ -555,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--probe", default=str(ROOT / "data" / "open" / "probe.json"))
     parser.add_argument("--work", default="")
     parser.add_argument("--summary", default="")
+    parser.add_argument("--discovery", default="", help="D1 in full: every datahub record and resource (artifact)")
     parser.add_argument("--max-mb", type=float, default=50.0)
     args = parser.parse_args(argv)
     probe = ds._read_json(Path(args.probe)) if args.probe else {}
@@ -567,11 +633,14 @@ def main(argv: list[str] | None = None) -> int:
     text = summary(results, manifest, probe) + "".join(f"\n**Not written:** {w}\n" for w in warnings)
     if not written:
         text += "\n**Nothing was written** (no dataset or shard built under the limit).\n"
+    detail = "\n".join(datahub_detail(results)) + "\n"
     if args.summary:
         Path(args.summary).write_text(text, "utf-8")
+    if args.discovery:
+        Path(args.discovery).write_text(detail, "utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-            handle.write(text)
+            handle.write(text + detail)
     print(text)
     for warning in warnings:
         print(f"::warning::{warning}", file=sys.stderr)

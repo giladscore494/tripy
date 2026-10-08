@@ -408,6 +408,12 @@ def datahub_markdown(datahub: dict | None) -> list[str]:
         if record.get("kind") == "summary":
             lines.append(f"  - read {record.get('records_read')} record(s) via {record.get('metadata_endpoint')}")
             continue
+        if record.get("kind") == "folder":
+            lines.append(f"  - folder {record.get('url')}: {record.get('method') or 'no listing'}"
+                         + (f" ({record.get('error')})" if record.get("error") else "")
+                         + f", {len(record.get('files') or [])} file(s), {len(record.get('excluded') or [])} excluded")
+            lines += [f"    - download: {url}" for url in record.get("files") or []]
+            continue
         lines.append(f"  - {record.get('uuid')} [{record.get('kind')}, depth {record.get('depth')}] "
                      f"{record.get('title') or '—'}: year {record.get('year') or '—'} {record.get('status') or ''} "
                      f"({record.get('year_basis') or record.get('status_note') or 'no year'}); metadata "

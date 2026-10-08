@@ -18,13 +18,16 @@ name: build-open-data
 #      fails only when nothing at all was written, and the steps below run either way: one dataset never costs the others
 #      EEA: 2010-2022 from DISCODATA (2010-2021 final rows only), a year it lacks and 2023+ from the datahub CSV; the
 #      summary warns when the 2010-2016 shards exceed 60 MB together (written anyway) and ends with the per-year failures
+#      D1 in the PR body: per year only; every datahub record and resource: the manifest (csv_discovery), the step
+#      summary and the open-data-build artifact
 #   4. EEA schema audit (scripts/audit_eea.py): per year rows, status, live header -> canonical keys, per key type /
 #      null % / distinct / coverage % weighted by registrations, sanity checks and the per-year failure list, written
 #      to data/open/eea_schema_audit.md / .csv (committed with the snapshots) and the step summary
 #   5. coverage BEFORE the pull-request step (create-pull-request resets the checkout to main): rows per dataset / year /
 #      file, absent columns, and the route / match per benchmark record (+ 85095, 23678, 38626, 101136, 22010, and the
 #      2010-2016 records 19931 / 59987 with their offers)
-#   6. pull request on automation/open-data with the summaries in its body (always, so the datasets that were written are
+#   6. pull request on automation/open-data with the summaries in its body (at most 55,000 characters: sections cut from
+#      the bottom up with a marker, the per-record coverage never cut; always, so the datasets that were written are
 #      never lost to one that was not). Creating it needs the repository setting
 #      "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the
 #      branch is still pushed and the last step writes the compare URL to open the pull request by hand
@@ -72,7 +75,16 @@ jobs:
       - name: Make aliases from the canonical make table (spellings per dataset, rows kept vs total)
         run: python scripts/build_make_aliases.py --probe data/open/probe.json --out data/open_data_make_aliases.json --review open-data-makes.md
       - name: Build and compress the snapshots (each file under 50 MB; fails only when nothing was written)
-        run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --max-mb 50
+        run: python scripts/build_open_data.py --datasets "$DATASETS" --out data/open --probe data/open/probe.json --summary open-data-build.md --discovery open-data-discovery.md --max-mb 50
+      - name: Upload the build summary and every datahub record / resource (D1; the PR body carries D1 per year only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-data-build
+          path: |
+            open-data-build.md
+            open-data-discovery.md
+          if-no-files-found: ignore
       - name: EEA schema audit (per year; a failed year never stops the others)
         if: always()
         run: python scripts/audit_eea.py --open data/open --md data/open/eea_schema_audit.md --csv data/open/eea_schema_audit.csv --summary eea-audit-summary.md
