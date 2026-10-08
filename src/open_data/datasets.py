@@ -61,6 +61,7 @@ _STATE: dict[str, Any] = {"snapshot_dir": None, "repo_dir": None, "temp_dir": No
 _MATERIALIZED: dict[str, tuple[str, Path | None, str | None]] = {}      # dataset | file -> (sha256, path, problem)
 _VERIFIED: dict[tuple[str, int, int], str] = {}                          # (path, size, mtime_ns) -> sha256
 SHARD_FILE = re.compile(r"^(\d{4})(?:-([A-Z]-[A-Z]))?\.sqlite$")
+MONTH_FILE = re.compile(r"^(\d{4})-(\d{2})\.sqlite$")                   # D4: <dataset>/<YYYY-MM>.sqlite
 SPLIT_PARTS = {"A-L": (None, "M"), "M-Z": ("M", None)}                  # make initial: [low, high)
 log = logging.getLogger("tripy.open_data")
 _CONFIG: dict[str, tuple[float, dict]] = {}
@@ -270,6 +271,8 @@ def shard_files(dataset: str, *, years: Iterable[int] | None = None, makes: Iter
     """The readable snapshot files of a dataset for a query: the single snapshot, or the shards of the asked years /
     make parts (each verified by its own sha256 and decompressed; a missing or mismatched shard is skipped and listed in
     report["skipped_shards"], the others still load)."""
+    if history_spec(dataset):                  # D4: every readable month (the match selects its window itself)
+        return [item["path"] for item in month_files(dataset, folder=folder, report=report)]
     years_list = sorted({int(y) for y in years}) if years is not None else None
     makes_list = sorted({str(m) for m in makes}) if makes is not None else None
     folder = folder or snapshot_dir()
@@ -361,7 +364,8 @@ def snapshot_meta(dataset: str, folder: Path | None = None) -> dict:
 def available(dataset: str, folder: Path | None = None) -> bool:
     folder = folder or snapshot_dir()
     if folder:
-        return (folder / f"{dataset}.sqlite").exists() or bool(_folder_shards(dataset, folder))
+        return (folder / f"{dataset}.sqlite").exists() or bool(_folder_shards(dataset, folder)) or \
+            bool(history_spec(dataset) and _folder_months(dataset, folder))
     entry = _entry(dataset)
     if entry.get("shards"):
         problems = shard_problems(dataset)
@@ -648,3 +652,127 @@ def status() -> dict:
                                                   "shards", "last_attempt")}})
     return {"repo_dir": str(repo_dir()), "manifest_built_at": man.get("built_at"), "run_url": man.get("run_url"),
             "config_version": config().get("version"), "datasets": rows}
+
+
+# --- D4: monthly history (a catalogue without a model year: ADEME) ---------------------------------------------------------
+
+def history_spec(dataset: str) -> dict | None:
+    """The dataset's `history` config when it keeps one snapshot per build month (`layout: monthly`), else None."""
+    spec = (datasets().get(dataset) or {}).get("history") or {}
+    return spec if spec.get("layout") == "monthly" else None
+
+
+def month_of(value: Any) -> str | None:
+    """'YYYY-MM' of a date / timestamp text, or None."""
+    m = re.match(r"^\s*(\d{4})-(\d{2})", str(value or ""))
+    return f"{m.group(1)}-{m.group(2)}" if m else None
+
+
+def write_month_snapshot(dataset: str, rows: list[dict], meta: dict, *, month: str, folder: Path | None = None) -> Path:
+    """D4: one build month's snapshot (<folder>/<dataset>/<YYYY-MM>.sqlite), the layout of `write_snapshot` (rows with
+    the canonical columns as JSON) written deterministically: the rows in row-id order, JSON with sorted keys, the
+    meta as given (no timestamp), VACUUMed: the same rows give the same bytes."""
+    if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
+        raise ValueError(f"not a month: {month!r}")
+    folder = folder or snapshot_dir()
+    if folder is None:
+        raise ValueError("no snapshot directory")
+    target_dir = folder / dataset
+    target_dir.mkdir(parents=True, exist_ok=True)
+    final, tmp = target_dir / f"{month}.sqlite", target_dir / f".{month}.sqlite.tmp"
+    for leftover in (tmp, tmp.with_name(tmp.name + "-journal")):
+        if leftover.exists():
+            leftover.unlink()
+    values = sorted(((str(r["row_id"]), " ".join(str(r.get("make") or "").split()).upper(), str(r.get("model") or ""),
+                      _int(r.get("year")), json.dumps({k: v for k, v in r.items() if k != "row_id"},
+                                                      ensure_ascii=False, sort_keys=True, default=str))
+                     for r in rows), key=lambda v: v[0])
+    info = {**meta, "dataset": dataset, "month": month, "rows": len(values)}
+    with _LOCK:
+        conn = sqlite3.connect(tmp)
+        try:
+            conn.execute("CREATE TABLE rows (row_id TEXT PRIMARY KEY, make TEXT, model TEXT, year INTEGER, data TEXT)")
+            conn.execute("CREATE INDEX rows_make_year ON rows (make, year)")
+            conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+            conn.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?)", values)
+            conn.executemany("INSERT INTO meta VALUES (?, ?)", [
+                (k, json.dumps(info[k], ensure_ascii=False, sort_keys=True, default=str)) for k in sorted(info)])
+            conn.commit()
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+        tmp.replace(final)
+    return final
+
+
+def _folder_months(dataset: str, folder: Path) -> list[Path]:
+    month_dir = folder / dataset
+    return sorted(p for p in month_dir.iterdir() if MONTH_FILE.match(p.name) and p.is_file()) \
+        if month_dir.is_dir() else []
+
+
+def _month_item(month: str | None, catalogue_date: Any, path: Path, basis: str, legacy: bool = False) -> dict | None:
+    date = str(catalogue_date) if catalogue_date else None
+    month = month or month_of(date)
+    year = _int((date or month or "")[:4])
+    if not month or year is None:
+        return None
+    return {"month": month, "catalogue_date": date or month, "year": year, "path": path, "basis": basis,
+            "legacy": legacy}
+
+
+def month_files(dataset: str, *, folder: Path | None = None, report: dict | None = None) -> list[dict]:
+    """D4: [{month, catalogue_date, year (the catalogue year), path, basis, legacy}] of a monthly dataset's readable
+    snapshots, newest month first. The monthly snapshots, plus the single-file snapshot of the former layout as the
+    month of its catalogue date (else its built_at) unless a monthly snapshot of that month exists. A plain folder
+    (the build, the tests) or the committed files (each verified by its sha256; a missing or mismatched file is
+    skipped and listed in report["skipped_shards"])."""
+    folder = folder or snapshot_dir()
+    items: list[dict] = []
+    legacy: dict | None = None
+    if folder:
+        for path in _folder_months(dataset, folder):
+            meta = _read_meta(path)
+            item = _month_item(path.name[:7], meta.get("catalogue_date"), path,
+                               "catalogue_date" if meta.get("catalogue_date") else "month")
+            if item:
+                items.append(item)
+        single = folder / f"{dataset}.sqlite"
+        if single.exists():
+            meta = _read_meta(single)
+            date = meta.get("catalogue_date") or meta.get("built_at")
+            legacy = _month_item(None, date, single, "catalogue_date" if meta.get("catalogue_date") else "built_at",
+                                 legacy=True)
+    else:
+        entry = _entry(dataset)
+        for shard in entry.get("shards") or []:
+            if not isinstance(shard, dict) or not shard.get("month"):
+                continue
+            path, problem = _materialize_file(dataset, str(shard.get("file") or ""), str(shard.get("sha256") or ""))
+            if path is None:
+                if report is not None:
+                    report.setdefault("skipped_shards", []).append({"file": shard.get("file"),
+                                                                    "month": shard.get("month"), "problem": problem})
+                continue
+            item = _month_item(str(shard["month"]), shard.get("catalogue_date"), path,
+                               "catalogue_date" if shard.get("catalogue_date") else "month")
+            if item:
+                items.append(item)
+        old = entry.get("legacy") or (entry if entry.get("file") else None)
+        if isinstance(old, dict) and old.get("file") and old.get("sha256"):
+            path, problem = _materialize_file(dataset, str(old["file"]), str(old["sha256"]))
+            if path is not None:
+                date = old.get("catalogue_date") or old.get("built_at")
+                legacy = _month_item(None, date, path, "catalogue_date" if old.get("catalogue_date") else "built_at",
+                                     legacy=True)
+            elif report is not None:
+                report.setdefault("skipped_shards", []).append({"file": old.get("file"), "problem": problem})
+    if legacy and all(i["month"] != legacy["month"] for i in items):
+        items.append(legacy)
+    return sorted(items, key=lambda i: i["month"], reverse=True)
+
+
+def query_files(dataset: str, paths: Iterable[Path], makes: Iterable[str]) -> list[list[dict]]:
+    """The rows of `makes` (as `query_rows` reads them) per snapshot file, in the order given."""
+    makes = sorted({" ".join(str(m).split()).upper() for m in makes if str(m or "").strip()})
+    return [_query_file(dataset, Path(p), makes, None) if makes else [] for p in paths]

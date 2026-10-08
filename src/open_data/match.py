@@ -409,6 +409,62 @@ def catalogue_period(source: str, keys: dict, dataset: dict, rows: list[dict] | 
             "target_year": int(keys["year"]), "window_years": window}
 
 
+def _history_key(row: dict, keys: list[str]) -> tuple:
+    """D4: a configuration's identity across months (D0-normalized text, numbers as numbers)."""
+    out = []
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str):
+            number = ds._number(value) if re.fullmatch(r"\s*-?\d+(?:[.,]\d+)?\s*", value) else None
+            out.append(float(number) if number is not None else ds.norm_text(value))
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            out.append(float(value))
+        else:
+            out.append(value)
+    return tuple(out)
+
+
+def catalogue_months(source: str, keys: dict, history: dict, folder=None, report: dict | None = None
+                     ) -> tuple[dict | None, list[dict]]:
+    """D4: (period, rows) of a catalogue kept per build month (ADEME): the months whose catalogue date lies within
+    [model year - before, model year + after] (year granularity; every month without a target year); none ->
+    out_of_period. Rows of several months that are the same configuration (`history.identity_keys`, normalized)
+    count once, with the newest month's values; rows of one month are never merged with each other."""
+    files = ds.month_files(source, folder=folder, report=report)
+    if not files:
+        return None, []
+    window = history.get("window_years") or {}
+    before, after = int(window.get("before", 1)), int(window.get("after", 1))
+    year = int(keys["year"]) if keys.get("year") else None
+    chosen = files if year is None else [f for f in files if year - before <= f["year"] <= year + after]
+    period: dict[str, Any] = {
+        "status": "in_period" if chosen else "out_of_period", "layout": "monthly",
+        "basis": (chosen or files)[0]["basis"],        # where the newest relevant month's date comes from
+        "months": [f["month"] for f in chosen], "catalogue_dates": [f["catalogue_date"] for f in chosen],
+        "available_months": [f["month"] for f in files], "target_year": year,
+        "window": [year - before, year + after] if year is not None else None}
+    if any(f.get("legacy") for f in chosen):
+        period["legacy_month"] = next(f["month"] for f in chosen if f.get("legacy"))
+    if not chosen:
+        return period, []
+    identity = [str(k) for k in history.get("identity_keys") or ["make", "model", "version"]]
+    rows: list[dict] = []
+    seen: set[tuple] = set()
+    duplicates = 0
+    for item, month_rows in zip(chosen, ds.query_files(source, [f["path"] for f in chosen], keys["makes"])):
+        added: set[tuple] = set()
+        for row in month_rows:                     # newest month first: an older month's copy is dropped
+            key = _history_key(row, identity)
+            if key in seen:
+                duplicates += 1
+                continue
+            added.add(key)
+            rows.append({**row, "catalogue_month": item["month"]})
+        seen |= added
+    period.update(rows=len(rows), duplicates_dropped=duplicates)
+    return period, rows
+
+
 def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None = None) -> dict:
     """The `international_variant` of one source."""
     config = ds.config()
@@ -416,7 +472,14 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
     out: dict[str, Any] = {"source": source, "status": "none", "candidates": 0}
     if rows is None and not ds.available(source, folder):
         return {**out, "status": "no_snapshot"}
-    period = catalogue_period(source, keys, dataset, rows, folder)
+    history = ds.history_spec(source) if rows is None else None
+    if history:
+        read = {}
+        period, rows = catalogue_months(source, keys, history, folder, read)    # D4: the monthly snapshots
+        if read.get("skipped_shards"):
+            out["skipped_shards"] = read["skipped_shards"]
+    else:
+        period = catalogue_period(source, keys, dataset, rows, folder)
     if period:
         out["catalogue"] = period
         if period["status"] == "out_of_period":
