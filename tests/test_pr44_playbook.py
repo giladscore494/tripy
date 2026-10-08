@@ -251,15 +251,13 @@ def test_a_full_page_and_a_large_403_are_not_shells(make_ctx, monkeypatch):
     assert not ctx.unreadable_domains
 
 
-def test_render_page_logs_one_line_per_call(make_ctx, monkeypatch, caplog):
-    import logging
-
+def test_render_page_logs_one_line_per_call(make_ctx, monkeypatch, caplog, tripy_log):
     from src.tools import dispatch, render as render_module
 
     ctx, _, _ = _shell_ctx(make_ctx, monkeypatch, {})
     monkeypatch.setattr(render_module, "_render", lambda url, wait_ms, timeout_s: {
         "status": 200, "final_url": url, "html": "<html><body><p>" + "x " * 400 + "</p></body></html>", "links": []})
-    with caplog.at_level(logging.INFO, logger="tripy.render"):
+    with tripy_log("tripy.render"):
         dispatch(ctx, "render_page", {"url": "https://www.cartube.co.il/q8"})
     lines = [r.getMessage() for r in caplog.records if r.name == "tripy.render"]
     assert len(lines) == 1 and "url=https://www.cartube.co.il/q8 status=200" in lines[0]

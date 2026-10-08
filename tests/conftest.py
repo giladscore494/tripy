@@ -1,4 +1,6 @@
+import contextlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -56,6 +58,34 @@ def _source_policy(request, monkeypatch):
         monkeypatch.setattr(source_authority, "_TEST_OVERRIDE", None)
         monkeypatch.setitem(source_authority._POLICY_STATE, "overlay_dir", None)
         source_authority._POLICY_CACHE.clear()
+
+
+@pytest.fixture
+def tripy_log(caplog):
+    """`caplog` for the `tripy*` loggers: `with tripy_log("tripy.render"):` then read `caplog.records`.
+
+    The `tripy` logger does not propagate (src/server_logging.configure_logging), so the capture handler pytest puts on
+    the root logger never sees its records. pytest 9 also attaches it to the non-propagating loggers that exist when a
+    test phase starts, but not to one configured during the test, and pytest 8 not at all: whether a line was captured
+    depended on test order and pytest version. This configures `tripy` (as any `get_logger` call does) and attaches the
+    handler to it for the block, once (a handler pytest already attached is left to pytest), so every `tripy*` record
+    is captured exactly once."""
+    from src.server_logging import configure_logging
+
+    @contextlib.contextmanager
+    def capture(name: str = "tripy", level: int = logging.INFO):
+        top = configure_logging()
+        added = caplog.handler not in top.handlers
+        if added:
+            top.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(level, logger=name):
+                yield caplog
+        finally:
+            if added:
+                top.removeHandler(caplog.handler)
+
+    return capture
 
 
 @pytest.fixture(autouse=True)
