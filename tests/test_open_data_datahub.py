@@ -249,23 +249,247 @@ def test_two_zips_for_one_year_without_file_pattern_stop_that_year_with_both_lis
 
 def test_the_recursion_has_a_depth_limit_a_record_limit_and_reads_a_cycle_once():
     chain = [f"r{n}" for n in range(5)]
-    records = {u: iso_record(f"chain {u}", []) for u in [SERIES] + chain}
+    records = {u: iso_record(f"chain {u}, 201{n} - Final data", []) for n, u in enumerate(chain)}
+    records[SERIES] = iso_record("series", [])
     relations = {SERIES: related(links=[f"{API}{chain[0]}"])}
     for n, uuid in enumerate(chain):
         relations[uuid] = related(links=[f"{API}{chain[n + 1]}"] if n + 1 < len(chain) else [] + [f"{API}{SERIES}"])
     relations[chain[1]] = related(links=[f"{API}{chain[2]}", f"{API}{chain[0]}", f"{API}{SERIES}"])      # a cycle
     fetch, calls = datahub(records, relations)
     _, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
-    read = [r["uuid"] for r in reports if r.get("kind") not in ("summary",) and "status_note" not in r]
+    read = [r["uuid"] for r in reports if r.get("kind") not in ("summary", "folder") and "status_note" not in r]
     assert read == [SERIES, "r0", "r1"]                                   # depth 0, 1, 2; r2 (depth 3) never read
     assert calls.count(f"{API}r0") == 1 and calls.count(f"{API}{SERIES}") == 1
     star = {SERIES: iso_record("series", [])}
-    star_rel = {SERIES: related(links=[f"{API}s{n}" for n in range(50)])}
-    star.update({f"s{n}": iso_record(f"s{n}", []) for n in range(50)})
+    star_rel = {SERIES: related(links=[f"{API}s{n}" for n in range(150)])}
+    star.update({f"s{n}": iso_record(f"s{n}", []) for n in range(150)})
     fetch, calls = datahub(star, star_rel)
     _, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
-    assert sum(1 for c in calls if c.startswith(API) and not c.endswith("/related")) == 40
-    assert sum(1 for r in reports if "record limit" in str(r.get("status_note"))) == 11
+    assert _csv_cfg()["max_records"] == 120
+    assert sum(1 for c in calls if c.startswith(API) and not c.endswith("/related")) == 120
+    assert sum(1 for r in reports if "record limit" in str(r.get("status_note"))) == 31
+    assert reports[-1]["not_read"] == 31 and reports[-1]["records_read"] == 120
+
+
+def test_a_record_without_a_year_or_a_folder_or_download_is_not_followed_further():
+    records = {SERIES: iso_record("series", []), "lost": iso_record("an index page", []),
+               "deep": iso_record("x, 2019 - Final data", [])}
+    relations = {SERIES: related(links=[f"{API}lost"]), "lost": related(links=[f"{API}deep"])}
+    fetch, calls = datahub(records, relations)
+    _, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    lost = next(r for r in reports if r.get("uuid") == "lost")
+    assert lost["followed"] is False and f"{API}deep" not in calls
+
+
+# --- D1 fix: the identification title (F1), EEA folders (F2), the record budget (F3) ----------------------------------
+
+R2016 = "1129c5fc-5af5-4c8f-b31e-dc740bd6e0f3"
+FOLDER_2016 = "https://sdi.eea.europa.eu/webdav/datastore/public/eea_t_co2-emissions-cars-final-2016_p_2016_v01_r00"
+
+
+def iso_19115_3(title: str, resources: list[dict]) -> dict:
+    """An ISO 19115-3 record as the datahub record API answers it in JSON (build run 37705406002): the metadata
+    standard's citation comes first ("ISO 19115-3:2018"), a keyword thesaurus has its own citation, the resource's
+    own title is identificationInfo -> citation -> title."""
+    return {"mdb:MD_Metadata": {
+        "mdb:metadataStandard": {"cit:CI_Citation": {"cit:title": {"gco:CharacterString": "ISO 19115-3:2018"}}},
+        "mdb:identificationInfo": {"mri:MD_DataIdentification": {
+            "mri:descriptiveKeywords": {"mri:MD_Keywords": {"mri:thesaurusName": {"cit:CI_Citation": {
+                "cit:title": {"gco:CharacterString": "GEMET - INSPIRE themes, version 1.0"}}}}},
+            "mri:citation": {"cit:CI_Citation": {"cit:title": {"gco:CharacterString": title}}}}},
+        "mdb:distributionInfo": {"mrd:MD_Distribution": {"mrd:transferOptions": {"mrd:MD_DigitalTransferOptions": {
+            "mrd:onLine": [{"cit:CI_OnlineResource": {
+                "cit:linkage": {"gco:CharacterString": r["url"]},
+                **({"cit:protocol": {"gco:CharacterString": r["protocol"]}} if r.get("protocol") else {}),
+                **({"cit:name": {"gco:CharacterString": r["name"]}} if r.get("name") else {})}} for r in resources]}}}}}}
+
+
+def _index(*hrefs: str) -> str:
+    return "<html><body><a href=\"../\">Parent</a><a href=\"?C=N;O=D\">Name</a>" + "".join(
+        f"<a href=\"{h}\">{h}</a>" for h in hrefs) + "</body></html>"
+
+
+def _multistatus(folder: str, entries: list[tuple[str, bool]]) -> str:
+    path = folder.split("sdi.eea.europa.eu", 1)[1].rstrip("/") + "/"
+    rows = [(path, True)] + [(path + name, collection) for name, collection in entries]
+    return '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">' + "".join(
+        f"<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:resourcetype>"
+        f"{'<d:collection/>' if collection else ''}</d:resourcetype></d:prop></d:propstat></d:response>"
+        for href, collection in rows) + "</d:multistatus>"
+
+
+def _series_with_2016(record: dict, pages: dict[str, str] | None = None):
+    records = {SERIES: iso_19115_3("Monitoring of CO2 emissions from passenger cars Regulation (EU) 2019/631", [
+        {"url": f"{API}{R2016}", "name": "Monitoring of CO2 emissions from passenger cars, 2016 - Final data"}]),
+        R2016: record}
+    return datahub(records, {SERIES: related(), R2016: related()}, pages=pages)
+
+
+def test_f1_the_title_is_the_identification_citation_never_the_metadata_standard():
+    meta = record_metadata(iso_19115_3("Monitoring of CO2 emissions from passenger cars, 2016 - Final version", []))
+    assert meta["title"] == "Monitoring of CO2 emissions from passenger cars, 2016 - Final version"
+    assert meta["title_path"] == ("mdb:MD_Metadata/mdb:identificationInfo/mri:MD_DataIdentification/mri:citation/"
+                                  "cit:CI_Citation/cit:title")
+    iso = record_metadata(iso_record("x, 2015 - Final data", []))
+    assert iso["title"] == "x, 2015 - Final data" and iso["title_path"].startswith("gmd:MD_Metadata/gmd:identificationInfo")
+    only_standard = {"mdb:MD_Metadata": {"mdb:metadataStandard": {"cit:CI_Citation": {"cit:title": "ISO 19115-3:2018"}},
+                                         "mdb:metadataStandardName": {"gco:CharacterString": "ISO 19115-3:2018"}}}
+    assert record_metadata(only_standard)["title"] is None
+    flat = record_metadata({"resourceTitleObject": {"default": "x, 2020 - Final data"}, "uuid": "u"})
+    assert flat["title"] == "x, 2020 - Final data" and flat["title_path"] == "resourceTitleObject"
+    assert record_metadata({"title": "y"})["title_path"] == "title"
+
+
+def test_f1_an_iso_19115_3_record_gives_2016_final_and_reports_the_title_path():
+    zip_url = FOLDER_2016 + "/CO2_passenger_cars_v12.zip"
+    fetch, _ = _series_with_2016(iso_19115_3("Monitoring of CO2 emissions from passenger cars, 2016 - Final version", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}]), pages={FOLDER_2016 + "/": _index(zip_url)})
+    choices, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    record = next(r for r in reports if r.get("uuid") == R2016)
+    assert (record["year"], record["status"], record["year_basis"]) == (2016, "F", "title")
+    assert "identificationInfo" in record["title_path"] and record["folder_years"] == [2016]
+    assert choices[2016]["url"] == zip_url and choices[2016]["status"] == "F"
+    series = next(r for r in reports if r.get("uuid") == SERIES)
+    assert series["year"] is None and "ISO" not in str(series["title"])
+
+
+def test_f1_a_folder_year_that_disagrees_with_the_title_year_stops_the_year_with_both():
+    folder = FOLDER_2016.replace("2016", "2017")
+    fetch, calls = _series_with_2016(iso_19115_3("Monitoring of CO2 emissions from passenger cars, 2016 - Final", [
+        {"url": folder, "protocol": "EEA:FOLDERPATH"}]), pages={folder + "/": _index("cars.zip")})
+    choices, _ = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    choice = choices[2016]
+    assert choice["url"] is None and choice["reason"] == "year_mismatch"
+    assert choice["mismatch"] == [{"record": R2016, "year": 2016, "basis": "title", "folder_year": [2017]}]
+    assert 2017 not in choices                                       # the folder name never gives a year
+
+
+def test_f2_an_index_with_only_page_links_is_no_listing_and_one_propfind_follows():
+    fetch, calls = _series_with_2016(iso_19115_3("x, 2016 - Final data", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}]),
+        pages={FOLDER_2016 + "/": _index("/catalogue/", "/static/site.css", "https://www.eea.europa.eu/")})
+    fetch.propfind = lambda url: _multistatus(url, [("Data", True)]).encode() if url == FOLDER_2016 + "/" else \
+        _multistatus(url, [("CO2_cars_2016.zip", False)]).encode()
+    choices, _ = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    assert choices[2016]["folders"][0]["method"] == "propfind"
+    assert choices[2016]["url"] == FOLDER_2016 + "/Data/CO2_cars_2016.zip"
+    assert FOLDER_2016 + "/Data/" in calls                           # the subfolder: GET first (empty), then PROPFIND
+
+
+def test_f2_folder_resources_are_classified_folder():
+    assert classify_resource({"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}, HOSTS) == "folder"
+    assert classify_resource({"url": f"https://sdi.eea.europa.eu/data/{R2016}", "protocol": "WWW:URL"}, HOSTS) == \
+        "folder"
+    assert classify_resource({"url": "https://data.europa.eu/x/folder", "protocol": "EEA:FOLDERPATH"}, HOSTS) == \
+        "landing"                                                     # folders: *.eea.europa.eu only
+    assert classify_resource({"url": "https://sdi.eea.europa.eu/data/2024/a.zip"}, HOSTS) == "download"
+
+
+def test_f2_an_html_index_with_a_zip_and_an_xlsx_chooses_the_zip():
+    fetch, calls = _series_with_2016(iso_19115_3("x, 2016 - Final data", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"},
+        {"url": f"https://sdi.eea.europa.eu/data/{R2016}", "protocol": "WWW:URL", "name": "Direct download"}]),
+        pages={FOLDER_2016 + "/": _index("CO2_cars_2016.zip", "Table-definition.xlsx"),
+               f"https://sdi.eea.europa.eu/data/{R2016}/": _index()})
+    choices, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    assert choices[2016]["url"] == FOLDER_2016 + "/CO2_cars_2016.zip"
+    listed = {f["url"]: f for f in choices[2016]["folders"]}
+    assert listed[FOLDER_2016 + "/"]["method"] == "get" and listed[FOLDER_2016 + "/"]["excluded"] == 1
+    folder = next(r for r in reports if r.get("kind") == "folder" and r["url"] == FOLDER_2016 + "/")
+    assert folder["excluded"] == [FOLDER_2016 + "/Table-definition.xlsx"]
+    assert calls.count(FOLDER_2016 + "/") == 1 and FOLDER_2016 + "/CO2_cars_2016.zip" not in calls   # listed, never read
+
+
+def test_f2_an_empty_get_then_one_propfind_chooses_the_zip():
+    fetch, calls = _series_with_2016(iso_19115_3("x, 2016 - Final data", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}]), pages={FOLDER_2016 + "/": "<html></html>"})
+    dav: list[str] = []
+
+    def propfind(url: str) -> bytes:
+        dav.append(url)
+        return _multistatus(url, [("CO2_cars_2016.zip", False), ("Table-definition.xlsx", False)]).encode()
+    fetch.propfind = propfind
+    choices, _ = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    assert choices[2016]["url"] == FOLDER_2016 + "/CO2_cars_2016.zip"
+    assert choices[2016]["folders"][0]["method"] == "propfind" and dav == [FOLDER_2016 + "/"]
+
+
+def test_f2_a_subfolder_is_followed_one_level_only():
+    sub, deeper = FOLDER_2016 + "/Data/", FOLDER_2016 + "/Data/Archive/"
+    fetch, calls = _series_with_2016(iso_19115_3("x, 2016 - Final data", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}]),
+        pages={FOLDER_2016 + "/": _index("Data/", "readme.pdf"), sub: _index("Archive/", "CO2_cars_2016.csv.gz"),
+               deeper: _index("old.zip")})
+    choices, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    assert choices[2016]["url"] == sub + "CO2_cars_2016.csv.gz"
+    assert sub in calls and deeper not in calls
+    folder = next(r for r in reports if r.get("kind") == "folder" and r["url"] == FOLDER_2016 + "/")
+    assert folder["subfolders"][0]["url"] == sub and folder["subfolders"][0]["files"] == 1
+
+
+def test_f3_the_series_children_are_read_before_any_depth_2_record_and_the_budget_holds():
+    children = [f"y{year}" for year in range(2000, 2031)]                     # 31 yearly datasets
+    records = {SERIES: iso_19115_3("series", [{"url": f"{API}{c}", "name": f"x, {c[1:]} - Final data"}
+                                              for c in children]),
+               P2025: iso_19115_3("x, 2025 - Provisional data", [])}
+    relations = {SERIES: related()}
+    for c in children:
+        records[c] = iso_record(None, [])                                       # the listing's title gives the year
+        relations[c] = related(links=[f"{API}{c}-{n}" for n in range(3)])     # 93 depth-2 records
+        records.update({f"{c}-{n}": iso_19115_3(f"z, {c[1:]} - Final data", []) for n in range(3)})
+    fetch, calls = datahub(records, relations)
+    choices, reports = eea_datahub_discover(fetch, _csv_cfg())
+    read = [c[len(API):] for c in calls if c.startswith(API) and not c.endswith("/related")]
+    assert read[0] == SERIES and read[1:32] == children and read[32] == P2025
+    assert all("-" in u for u in read[33:])                                     # depth 2 only after
+    assert len(read) == 120 and reports[-1]["records_read"] == 120 and reports[-1]["not_read"] == 6
+    child = next(r for r in reports if r.get("uuid") == children[0])
+    assert child["kind"] == "child" and child["title_path"].startswith("listing") and child["year"] == 2000
+
+
+# --- F4: the pull-request body ------------------------------------------------------------------------------------------
+
+def test_f4_the_build_summary_carries_d1_per_year_and_every_resource_goes_to_the_detail():
+    build = _script("build_open_data")
+    zip_url = FOLDER_2016 + "/CO2_cars_2016.zip"
+    fetch, _ = _series_with_2016(iso_19115_3("Monitoring of CO2 emissions from passenger cars, 2016 - Final data", [
+        {"url": FOLDER_2016, "protocol": "EEA:FOLDERPATH"}, {"url": "https://www.eea.europa.eu/en/datahub"},
+        {"url": "https://sdi.eea.europa.eu/x/Table-definition.xlsx"}]), pages={FOLDER_2016 + "/": _index(zip_url)})
+    _, reports = eea_datahub_discover(fetch, _csv_cfg(records=[]))
+    results = {"eea_co2_cars": {"status": "built", "csv_discovery": reports, "years": []}}
+    text = build.summary(results, {"datasets": {}})
+    row = next(line for line in text.splitlines() if line.startswith("| 2016 |"))
+    assert row == (f"| 2016 | F | {R2016} | Monitoring of CO2 emissions from passenger cars, 2016 - Final data | "
+                   f"{FOLDER_2016}/ (get, 1 file(s)) | {zip_url} | folder 1, landing 1, excluded 1 |")
+    assert "Table-definition.xlsx" not in text and "  - landing:" not in text          # no per-resource line
+    detail = "\n".join(build.datahub_detail(results))
+    assert "  - excluded: https://sdi.eea.europa.eu/x/Table-definition.xlsx" in detail
+    assert f"- folder {FOLDER_2016}/: get, 1 file(s)" in detail and "title from mdb:MD_Metadata/" in detail
+
+
+def test_f4_an_over_cap_body_is_cut_from_the_bottom_up_and_the_records_section_stays_whole(tmp_path):
+    coverage = _script("open_data_coverage")
+    build_md, audit_md, makes_md = tmp_path / "build.md", tmp_path / "audit.md", tmp_path / "makes.md"
+    build_md.write_text("## Open-data build\n" + "".join(f"- build line {n} {'x' * 80}\n" for n in range(900)), "utf-8")
+    audit_md.write_text("## EEA schema audit (per year)\n" + "| audit |\n" * 2000, "utf-8")
+    makes_md.write_text("## Make aliases\n" + "- make\n" * 3000, "utf-8")
+    body_path = tmp_path / "body.md"
+    assert coverage.main(["--open", str(tmp_path / "empty"), "--body", str(body_path), "--build", str(build_md),
+                          "--audit", str(audit_md), "--makes", str(makes_md)]) == 0
+    body = body_path.read_text("utf-8")
+    ds.set_repo_dir(None)
+    assert len(body) <= 55_000
+    assert body.startswith("Regenerated by the build-open-data workflow")
+    assert "_[make aliases: " in body and "_[snapshots: " in body and "_[EEA schema audit: " in body
+    assert "_[build summary: " in body and "- build line 0 " in body and "- build line 899 " not in body
+    start = body.index("Records: 53; by route:")
+    records = body[start:body.index("_[make aliases: ")]
+    assert "### Route and match per record" in records and "### 2010-2016 records (NEDC years)" in records
+    assert records.count("| **") >= 7 and "_[" not in records                        # the records section: never cut
+    assert all(f"| {r['upstream_record_id']} |" in records or f"| **{r['upstream_record_id']}** |" in records
+               for r in coverage.records())
+    sections = [("intro", "i\n", False), ("records", "r" * 60_000, True)]
+    assert coverage.pr_body(sections) == "i\n" + "r" * 60_000                       # never cut, even over the cap
 
 
 # --- D2: electric range from the datahub CSV -------------------------------------------------------------------------------

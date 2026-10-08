@@ -133,8 +133,32 @@ def default_fetcher(session=None, timeout_s: float = 120.0) -> Fetcher:
                 if size >= limit:
                     break
         return b"".join(chunks)[:limit]
+
+    def fetch_index(url: str) -> tuple[str, bytes]:
+        """F2: (the URL the answer came from after redirects, the body) of a folder index (GET <folder>/)."""
+        if not fetch_allowed(url):
+            raise BuildStopped("policy_blocked", url=url)
+        resp = http.get(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}, timeout=(15, timeout_s))
+        resp.raise_for_status()
+        if not fetch_allowed(resp.url):
+            raise BuildStopped("policy_blocked", url=resp.url)
+        return resp.url, resp.content[:MAX_DOWNLOAD_BYTES]
+
+    def fetch_propfind(url: str) -> bytes:
+        """F2: one WebDAV PROPFIND (Depth: 1) of a folder: the multistatus XML naming its entries."""
+        if not fetch_allowed(url):
+            raise BuildStopped("policy_blocked", url=url)
+        resp = http.request("PROPFIND", url, headers={"User-Agent": USER_AGENT, "Depth": "1",
+                                                      "Content-Type": "application/xml"},
+                            data=b'<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/>'
+                                 b'<getcontentlength/></prop></propfind>', timeout=(15, timeout_s),
+                            allow_redirects=False)
+        resp.raise_for_status()
+        return resp.content[:MAX_DOWNLOAD_BYTES]
     fetch.json = fetch_json
     fetch.prefix = fetch_prefix
+    fetch.index = fetch_index
+    fetch.propfind = fetch_propfind
     return fetch
 
 
@@ -770,6 +794,14 @@ DOWNLOAD_FORMATS = ("zip", "csv", "text/csv", "application/zip", "application/x-
 RELATION_KEYS = ("children", "parent", "siblings", "brothersandsisters", "associated", "datasets", "services",
                  "sources", "hassources", "related")
 METADATA_ENDPOINT = "{api}{uuid} (Accept: application/json)"
+FOLDER_HOSTS = ["eea.europa.eu"]
+DATA_FOLDER = re.compile(r"^https://sdi\.eea\.europa\.eu/data/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                         r"[0-9a-f]{12}/?$", re.I)
+FOLDER_YEAR = re.compile(r"(?:final|provisional)[-_](20\d\d)(?!\d)|_p_(20\d\d)(?!\d)", re.I)
+DAV_RESPONSE = re.compile(r"<(?:[\w-]+:)?response\b.*?</(?:[\w-]+:)?response\s*>", re.I | re.S)
+DAV_HREF = re.compile(r"<(?:[\w-]+:)?href\s*>\s*([^<]+?)\s*</(?:[\w-]+:)?href\s*>", re.I)
+DAV_COLLECTION = re.compile(r"<(?:[\w-]+:)?collection\s*/?>", re.I)
+MAX_SUBFOLDERS = 20
 
 
 def _local(key: Any) -> str:
@@ -798,18 +830,45 @@ def _deep_text(value: Any) -> str:
     return ""
 
 
-def record_metadata(data: Any) -> dict:
-    """D1: {title, resources: [{url, protocol, name, description, format}], temporal_year} of a datahub record's own
-    metadata (the record API in JSON, read defensively: ISO 19139 / 19115-3 converted to JSON or a flat record). A
-    resource is an online linkage / url under the distribution part (a key naming distribution, transfer options or
-    online resources), never a contact's website; the title is the citation's title."""
-    out: dict[str, Any] = {"title": None, "resources": {}, "begin": None, "end": None}
+FLAT_TITLE_KEYS = ("resourcetitleobject", "title")
+FLAT_WRAPPERS = ("_source", "metadata", "record")
 
-    def walk(node: Any, path: tuple[str, ...]) -> None:
+
+def _identification_title(path: tuple[str, ...]) -> bool:
+    """F1: True for the path of the resource's own citation: identificationInfo -> (an *_Identification class) ->
+    citation -> (CI_Citation): ISO 19115-3 (mri:) and ISO 19139 (gmd:) alike. A class name holds an underscore, a
+    property never does; the metadata standard's citation (metadataStandard / metadataStandardName) and any other
+    citation (a thesaurus, a source) never qualify."""
+    if "identificationinfo" not in path or any(p.startswith("metadatastandard") for p in path):
+        return False
+    tail = path[len(path) - 1 - path[::-1].index("identificationinfo") + 1:]
+    return [t for t in tail if "_" not in t] == ["citation"]
+
+
+def record_metadata(data: Any) -> dict:
+    """D1: {title, title_path, resources: [{url, protocol, name, description, format}], temporal_year} of a datahub
+    record's own metadata (the record API in JSON, read defensively: ISO 19139 / 19115-3 converted to JSON or a flat
+    record). A resource is an online linkage / url under the distribution part (a key naming distribution, transfer
+    options or online resources), never a contact's website. F1: the title is the identification part's citation
+    title (19115-3 identificationInfo -> citation -> title; 19139 gmd:identificationInfo/*/gmd:citation/*/gmd:title),
+    never the metadata standard's; a flat record's own `title` / `resourceTitleObject` otherwise. `title_path` names
+    the keys that gave it."""
+    out: dict[str, Any] = {"title": None, "title_path": None, "flat": None, "resources": {}, "begin": None,
+                           "end": None}
+
+    def walk(node: Any, path: tuple[str, ...], raw: tuple[str, ...]) -> None:
         if isinstance(node, dict):
             keys = {_local(k): k for k in node}
-            if out["title"] is None and "title" in keys and any("citation" in p for p in path):
-                out["title"] = _deep_text(node[keys["title"]]).strip()[:300] or None
+            if out["title"] is None and "title" in keys and _identification_title(path):
+                title = _deep_text(node[keys["title"]]).strip()[:300]
+                if title:
+                    out["title"], out["title_path"] = title, "/".join(raw + (str(keys["title"]),))
+            if out["flat"] is None and (not path or (len(path) == 1 and path[0] in FLAT_WRAPPERS)):
+                for name in FLAT_TITLE_KEYS:
+                    title = _deep_text(node[keys[name]]).strip()[:300] if name in keys else ""
+                    if title:
+                        out["flat"] = (title, "/".join(raw + (str(keys[name]),)))
+                        break
             distribution = any(w in p for p in path for w in ("distribution", "transferoption", "online"))
             contact = any(w in p for p in path for w in ("contact", "party", "responsib", "thumbnail", "overview"))
             for name in ("linkage", "url"):
@@ -825,16 +884,19 @@ def record_metadata(data: Any) -> dict:
                 if name in keys and out[slot] is None:
                     out[slot] = _deep_text(node[keys[name]])
             for key, value in node.items():
-                walk(value, path + (_local(key),))
+                walk(value, path + (_local(key),), raw + (str(key),))
         elif isinstance(node, list):
             for item in node:
-                walk(item, path)
-    walk(data, ())
+                walk(item, path, raw)
+    walk(data, (), ())
+    if out["title"] is None and out["flat"]:
+        out["title"], out["title_path"] = out["flat"]
     years = [re.search(r"(?<!\d)(19|20)\d\d(?!\d)", str(v or "")) for v in (out["begin"], out["end"])]
     temporal = None
     if all(years) and years[0].group(0) == years[1].group(0):
         temporal = int(years[0].group(0))
-    return {"title": out["title"], "resources": list(out["resources"].values()), "temporal_year": temporal}
+    return {"title": out["title"], "title_path": out["title_path"], "resources": list(out["resources"].values()),
+            "temporal_year": temporal}
 
 
 def datahub_related_records(data: Any) -> list[dict]:
@@ -869,9 +931,10 @@ def _allowed_host(url: str, hosts: list[str]) -> bool:
 
 
 def classify_resource(resource: dict, hosts: list[str]) -> str:
-    """D1: download | landing | record | excluded. A download states it (protocol WWW:DOWNLOAD*, format zip / csv /
-    text/csv) or its URL path ends in .zip / .csv / .csv.gz; a table definition, document, image or DOI is never one;
-    only EEA hosts and data.europa.eu (`hosts`)."""
+    """D1: download | folder | landing | record | excluded. A download states it (protocol WWW:DOWNLOAD*, format zip /
+    csv / text/csv) or its URL path ends in .zip / .csv / .csv.gz; a table definition, document, image or DOI is never
+    one; only EEA hosts and data.europa.eu (`hosts`). F2: an `EEA:FOLDERPATH` resource and
+    https://sdi.eea.europa.eu/data/<uuid> are folders (listed by `list_folder`; only *.eea.europa.eu)."""
     url = str(resource.get("url") or "")
     parsed = urlparse(url)
     name = parsed.path.lower().rsplit("/", 1)[-1]
@@ -883,10 +946,123 @@ def classify_resource(resource: dict, hosts: list[str]) -> str:
     if RECORD_API.search(parsed.path + "/"):
         return "record"
     protocol = str(resource.get("protocol") or "").lower()
+    if _allowed_host(url, FOLDER_HOSTS) and (protocol == "eea:folderpath" or DATA_FOLDER.match(url)):
+        return "folder"
     fmt = str(resource.get("format") or "").lower().strip()
     if name.endswith(FILE_SUFFIXES) or "download" in protocol or fmt in DOWNLOAD_FORMATS:
         return "download"
     return "landing"
+
+
+def folder_years(url: str) -> list[int]:
+    """F1: the years an EEA folder name states (`...-final-2016_p_2016_v01_r00`): corroboration only, never the year."""
+    name = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
+    return sorted({int(a or b) for a, b in FOLDER_YEAR.findall(name)})
+
+
+def _same_host(url: str, host: str) -> bool:
+    return urlparse(url).netloc.lower() == host.lower()
+
+
+def _under(target: str, base: str) -> bool:
+    """True when `target` is a path below the folder `base` (never the folder itself or a parent)."""
+    t, b = urlparse(target).path.rstrip("/") + "/", urlparse(base).path.rstrip("/") + "/"
+    return t != b and t.startswith(b)
+
+
+def _folder_get(url: str, fetch: Fetcher) -> tuple[list[str], list[str], str | None]:
+    """(file links, subfolder links, error) of a folder's HTTP index (GET <folder>/; `fetch.index` gives the URL the
+    answer came from after a redirect): its same-host links to data files and documents (a page or style link is not
+    an entry: an index without entries is no listing); a subfolder is a link ending in / below the folder."""
+    index = getattr(fetch, "index", None)
+    try:
+        if index is not None:
+            base, body = index(url)
+        else:
+            base, body = url, fetch(url)
+    except BuildStopped as stop:
+        return [], [], stop.reason
+    except Exception as exc:  # noqa: BLE001 - an index that cannot be read is listed, not fatal
+        return [], [], f"{type(exc).__name__}: {str(exc)[:200]}"
+    base = base if base.endswith("/") else base + "/"
+    files, folders = [], []
+    for href in HREF.findall(_decode(body)):
+        if "?" in href:                                         # a sort link of the index, never an entry
+            continue
+        target = urljoin(base, href.strip())
+        if not _same_host(target, urlparse(base).netloc):
+            continue
+        path = urlparse(target).path
+        if path.endswith("/"):
+            if _under(target, base) and target not in folders:
+                folders.append(target)
+        elif (_is_file(target) or any(t in path.lower().rsplit("/", 1)[-1].split(".")[1:] for t in NOT_DATA)) \
+                and target not in files:                        # a data file or document; never a page / style link
+            files.append(target)
+    return files, folders, None
+
+
+def _folder_propfind(url: str, fetch: Fetcher) -> tuple[list[str], list[str], str | None]:
+    """(file links, subfolder links, error) of one WebDAV PROPFIND (Depth: 1) of a folder (`fetch.propfind`)."""
+    propfind = getattr(fetch, "propfind", None)
+    if propfind is None:
+        return [], [], "no PROPFIND reader"
+    try:
+        body = _decode(propfind(url))
+    except BuildStopped as stop:
+        return [], [], stop.reason
+    except Exception as exc:  # noqa: BLE001
+        return [], [], f"{type(exc).__name__}: {str(exc)[:200]}"
+    files, folders = [], []
+    for block in DAV_RESPONSE.findall(body):
+        href = DAV_HREF.search(block)
+        if not href:
+            continue
+        target = urljoin(url, href.group(1))
+        if not _same_host(target, urlparse(url).netloc) or not _under(target, url):
+            continue
+        if DAV_COLLECTION.search(block) or urlparse(target).path.endswith("/"):
+            folders.append(target if target.endswith("/") else target + "/")
+        else:
+            files.append(target)
+    return files, folders, None
+
+
+def list_folder(url: str, fetch: Fetcher, hosts: list[str], cache: dict[str, dict], *, depth: int = 0) -> dict:
+    """F2: {url, method get | propfind | None, files (the download-class entries), excluded (the other entries: XLSX,
+    PDF, ...), subfolders, error} of one EEA folder, listed once per run (`cache`): an HTTP GET of <folder>/ (its
+    index's same-host links); when that gives no listing, one WebDAV PROPFIND with Depth: 1. A subfolder is followed one
+    level (its own subfolders are reported, never read). Files are classified with the download rule; a file name is
+    never guessed."""
+    key = url.rstrip("/")
+    if key in cache:
+        return cache[key]
+    listing: dict[str, Any] = {"url": key + "/", "method": None, "files": [], "excluded": [], "subfolders": [],
+                               "error": None}
+    cache[key] = listing
+    if not _allowed_host(url, FOLDER_HOSTS):
+        listing["error"] = "not an EEA host"
+        return listing
+    files, folders, error = _folder_get(key + "/", fetch)
+    method = "get" if files or folders else None
+    if method is None:
+        files, folders, dav_error = _folder_propfind(key + "/", fetch)
+        method = "propfind" if files or folders else None
+        error = None if method else f"GET: {error or 'no listing'}; PROPFIND: {dav_error or 'no listing'}"
+    listing.update(method=method, error=error)
+    for file in files:
+        cls = classify_resource({"url": file}, hosts)
+        (listing["files"] if cls == "download" else listing["excluded"]).append(file)
+    for folder in folders[:MAX_SUBFOLDERS]:
+        if depth >= 1:
+            listing["subfolders"].append({"url": folder, "method": None, "note": "not followed (one level only)"})
+            continue
+        sub = list_folder(folder, fetch, hosts, cache, depth=depth + 1)
+        listing["subfolders"].append({k: sub[k] for k in ("url", "method", "error")} | {
+            "files": len(sub["files"]), "excluded": len(sub["excluded"])})
+        listing["files"] += [f for f in sub["files"] if f not in listing["files"]]
+        listing["excluded"] += [f for f in sub["excluded"] if f not in listing["excluded"]]
+    return listing
 
 
 def _record_year_status(title: str | None, temporal: int | None, pattern: str) -> tuple[int | None, str | None, str]:
@@ -901,32 +1077,43 @@ def _record_year_status(title: str | None, temporal: int | None, pattern: str) -
     return None, None, ""
 
 
+RESOURCE_CLASSES = ("download", "folder", "landing", "record", "excluded")
+
+
 def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None = None,
                          max_records: int | None = None) -> tuple[dict[int, dict], list[dict]]:
     """D1: ({year: choice}, per-record report). From the series and the listed records, every record a related answer
     or a record-API link names, at most `max_depth` levels deep and `max_records` records per run (a record is read
-    once: a cycle is not followed twice). Per record its own metadata (the record API in JSON) and its `/related`
-    answer; their online resources classified (`classify_resource`). Year and status from the record's title or
-    temporal extent (a listed record's configured year / status, the reviewer's, last). Per year, final records
-    preferred: their download resources (none: the EEA landing pages read once for same-host file links); exactly one
-    -> chosen, several -> `file_pattern`, still several -> `ambiguous_download` with every candidate; none ->
-    `no_csv_link`. A provisional child whose year has a final child in a listing is not read. Never a guessed URL."""
+    once: a cycle is not followed twice). F3: the series first, then its children (the yearly datasets), then the
+    configured records, then the other related records while the budget lasts; a record (other than a series) with
+    neither a year nor a folder / download resource is not followed further. Per record its own metadata (the record
+    API in JSON) and its `/related` answer; their online resources classified (`classify_resource`). Year and status
+    from the record's title (F1: the identification citation; a listing's title for the record otherwise) or temporal
+    extent (a listed record's configured year / status, the reviewer's, last); the folder name's year is corroboration
+    only: a record whose year and folder year disagree stops that year (`year_mismatch`, both values). Per year, final
+    records preferred: their download resources; none -> their folders listed (`list_folder`, F2); none -> the EEA
+    landing pages read once for same-host file links; exactly one -> chosen, several -> `file_pattern`, still several
+    -> `ambiguous_download` with every candidate; none -> `no_csv_link`. A provisional child whose year has a final
+    child in a listing is not read. Never a guessed URL."""
     fetch_json = getattr(fetch, "json", fetch)
     api, pattern = str(csv_cfg.get("api") or ""), str(csv_cfg.get("title_pattern") or "")
     hosts = [str(h).lower() for h in csv_cfg.get("allowed_hosts") or ["eea.europa.eu", "data.europa.eu"]]
     max_depth = int(csv_cfg.get("max_depth") or 2) if max_depth is None else max_depth
-    max_records = int(csv_cfg.get("max_records") or 40) if max_records is None else max_records
-    queue: list[dict] = [{"uuid": str(s.get("uuid")), "kind": "series", "depth": 0, "via": None}
-                         for s in csv_cfg.get("series") or [] if s.get("uuid")]
+    max_records = int(csv_cfg.get("max_records") or 120) if max_records is None else max_records
+    order = iter(range(1 << 30))
+    queue: list[dict] = [{"uuid": str(s.get("uuid")), "kind": "series", "depth": 0, "via": None, "tier": 0,
+                          "seq": next(order)} for s in csv_cfg.get("series") or [] if s.get("uuid")]
     configured: dict[str, dict] = {}
     for record in csv_cfg.get("records") or []:
         if record.get("uuid"):
             configured[str(record["uuid"])] = record
-            queue.append({"uuid": str(record["uuid"]), "kind": "listed", "depth": 0, "via": None})
+            queue.append({"uuid": str(record["uuid"]), "kind": "listed", "depth": 0, "via": None, "tier": 2,
+                          "seq": next(order)})
     listed_titles: dict[str, str] = {}
     seen: set[str] = set()
     reports: list[dict] = []
     records: list[dict] = []
+    resources_of: dict[str, list[dict]] = {}
 
     def read(url: str) -> tuple[Any, str | None]:
         try:
@@ -937,11 +1124,13 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
             return None, f"{type(exc).__name__}: {str(exc)[:200]}"
 
     while queue:
-        item = queue.pop(0)
+        item = min(queue, key=lambda q: (q["tier"], q["depth"], q["seq"]))
+        queue.remove(item)
         uuid = item["uuid"]
         if uuid in seen:
             continue
         seen.add(uuid)
+        item = {k: v for k, v in item.items() if k not in ("tier", "seq")}
         listed = title_year_status(listed_titles.get(uuid, ""), pattern) if listed_titles.get(uuid) else None
         if listed and listed[1] == "P" and any(title_year_status(t, pattern) == (listed[0], "F")
                                                for t in listed_titles.values()):
@@ -953,12 +1142,13 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
             continue
         meta_data, meta_error = read(f"{api}{uuid}")
         related_data, related_error = read(f"{api}{uuid}/related")
-        meta = record_metadata(meta_data) if meta_data is not None else {"title": None, "resources": [],
-                                                                          "temporal_year": None}
+        meta = record_metadata(meta_data) if meta_data is not None else {"title": None, "title_path": None,
+                                                                          "resources": [], "temporal_year": None}
         related = datahub_related(related_data) if related_data is not None else {"children": [], "onlines": []}
         references = datahub_related_records(related_data) if related_data is not None else []
         for child in related["children"]:
-            listed_titles.setdefault(child["uuid"], child["title"])
+            if child["title"]:
+                listed_titles.setdefault(child["uuid"], child["title"])
         resources = {r["url"]: dict(r) for r in meta["resources"]}
         for online in related["onlines"]:
             resources.setdefault(online["url"], {"url": online["url"], "protocol": online.get("protocol") or "",
@@ -967,41 +1157,76 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
         for resource in resources.values():
             resource["class"] = classify_resource(resource, hosts)
             m = RECORD_API.search(urlparse(resource["url"]).path + "/")
-            if resource["class"] == "record" and m and all(m.group(1) != r["uuid"] for r in references):
-                references.append({"uuid": m.group(1), "title": "", "relation": "link"})
-        title = meta["title"] or listed_titles.get(uuid) or None
+            if resource["class"] == "record" and m:
+                if resource.get("name"):                       # a series lists its yearly datasets by title
+                    listed_titles.setdefault(m.group(1), resource["name"])
+                if all(m.group(1) != r["uuid"] for r in references):
+                    references.append({"uuid": m.group(1), "title": "", "relation": "link"})
+        title, title_path = meta["title"], meta.get("title_path")
+        if not title and listed_titles.get(uuid):
+            title, title_path = listed_titles[uuid], f"listing ({item.get('via') or 'a related answer'})"
         year, status, basis = _record_year_status(title, meta["temporal_year"], pattern)
         if year is None and uuid in configured and configured[uuid].get("year") and configured[uuid].get("status"):
             year, status, basis = int(configured[uuid]["year"]), str(configured[uuid]["status"]), "configured"
-        record = {**item, "title": title, "year": year, "status": status, "year_basis": basis or None,
+        counts = {c: sum(1 for r in resources.values() if r["class"] == c) for c in RESOURCE_CLASSES}
+        folders = [r["url"] for r in resources.values() if r["class"] == "folder"]
+        named = sorted({y for f in folders for y in folder_years(f)})
+        record = {**item, "title": title, "title_path": title_path or None, "year": year, "status": status,
+                  "year_basis": basis or None,
                   "metadata": "ok" if meta_data is not None else f"failed: {meta_error}",
                   "related": "ok" if related_data is not None else f"failed: {related_error}",
+                  "classes": {c: n for c, n in counts.items() if n},
                   "resources": [{k: r.get(k) for k in ("url", "class", "protocol", "format", "name")}
                                 for r in resources.values()][:40],
                   "references": [r["uuid"] for r in references][:40]}
+        if named:
+            record["folder_years"] = named
+            if year and year not in named:
+                record["year_mismatch"] = {"year": year, "basis": basis, "folder_year": named}
+        follow = item["kind"] == "series" or year is not None or counts["folder"] or counts["download"]
+        if not follow:
+            record["followed"] = False
         if item["kind"] == "series":
-            record["children"] = len(related["children"])
+            record["children"] = len(references)
+        resources_of[uuid] = list(resources.values())
         records.append(record)
         reports.append(record)
-        if item["depth"] < max_depth:
+        if follow and item["depth"] < max_depth:
             for ref in references:
                 if ref["uuid"] not in seen:
-                    queue.append({"uuid": ref["uuid"], "kind": "child" if ref["relation"] == "children" else "related",
-                                  "depth": item["depth"] + 1, "via": uuid})
+                    queue.append({"uuid": ref["uuid"],
+                                  "kind": "child" if item["kind"] == "series" or ref["relation"] == "children"
+                                  else "related", "depth": item["depth"] + 1, "via": uuid,
+                                  "tier": 1 if item["kind"] == "series" else 3, "seq": next(order)})
     choices: dict[int, dict] = {}
     pages: dict[str, list[str]] = {}
+    listings: dict[str, dict] = {}
     for year in sorted({r["year"] for r in records if r["year"] and r["status"]}):
         status = "F" if any(r["year"] == year and r["status"] == "F" for r in records) else "P"
         holders = [r for r in records if r["year"] == year and r["status"] == status]
         candidates: dict[str, str] = {}
         for record in holders:
-            for resource in record["resources"]:
+            for resource in resources_of[record["uuid"]]:
                 if resource["class"] == "download":
                     candidates.setdefault(resource["url"], record["uuid"])
-        links_seen = [res["url"] for record in holders for res in record["resources"]]
+        links_seen = [res["url"] for record in holders for res in resources_of[record["uuid"]]]
+        folders_listed: list[dict] = []
         if not candidates:
             for record in holders:
-                for resource in record["resources"]:
+                for resource in resources_of[record["uuid"]]:
+                    if resource["class"] != "folder":
+                        continue
+                    listing = list_folder(resource["url"], fetch, hosts, listings)
+                    folders_listed.append({"url": listing["url"], "method": listing["method"],
+                                           "files": len(listing["files"]), "excluded": len(listing["excluded"]),
+                                           "subfolders": len(listing["subfolders"]), "error": listing["error"],
+                                           "record": record["uuid"]})
+                    for found in listing["files"]:
+                        candidates.setdefault(found, record["uuid"])
+                        links_seen.append(found)
+        if not candidates:
+            for record in holders:
+                for resource in resources_of[record["uuid"]]:
                     if resource["class"] != "landing" or "eea.europa.eu" not in urlparse(resource["url"]).netloc:
                         continue
                     if resource["url"] not in pages:
@@ -1013,16 +1238,29 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
                        and _allowed_host(u, hosts))
         if csv_cfg.get("file_pattern"):
             files = [u for u in files if re.search(csv_cfg["file_pattern"], u, re.I)]
+        mismatches = [{"record": r["uuid"], **r["year_mismatch"]} for r in holders if r.get("year_mismatch")]
+        chosen = files[0] if len(files) == 1 and not mismatches else None
+        lead = next((r for r in holders if r["uuid"] == candidates.get(chosen or "")), holders[0])
         choice = {"year": year, "status": status, "records": [r["uuid"] for r in holders],
-                  "record": candidates.get(files[0]) if len(files) == 1 else holders[0]["uuid"],
-                  "url": files[0] if len(files) == 1 else None, "candidates": files[:20],
-                  "links": list(dict.fromkeys(links_seen))[:40]}
-        if len(files) != 1:
+                  "record": lead["uuid"], "title": lead.get("title"), "url": chosen, "candidates": files[:20],
+                  "folders": folders_listed, "links": list(dict.fromkeys(links_seen))[:40],
+                  "classes": {c: sum((r.get("classes") or {}).get(c, 0) for r in holders) for c in RESOURCE_CLASSES
+                              if any((r.get("classes") or {}).get(c) for r in holders)}}
+        if mismatches:
+            choice["reason"], choice["mismatch"] = "year_mismatch", mismatches
+        elif len(files) != 1:
             choice["reason"] = "no_csv_link" if not files else "ambiguous_download"
         choices[year] = choice
+    for listing in listings.values():
+        reports.append({"kind": "folder", **{k: listing[k] for k in ("url", "method", "error", "subfolders")},
+                        "files": listing["files"][:200], "excluded": listing["excluded"][:200]})
     summary = {"kind": "summary", "metadata_endpoint": METADATA_ENDPOINT, "records_read": len(records),
                "max_depth": max_depth, "max_records": max_records,
-               "years": {str(y): {k: c.get(k) for k in ("status", "url", "reason")} for y, c in choices.items()}}
+               "not_read": sum(1 for r in reports if "record limit" in str(r.get("status_note"))),
+               "years": {str(y): {k: c.get(k) for k in ("status", "record", "title", "url", "reason", "classes",
+                                                       "mismatch") if c.get(k) is not None}
+                         | {"folders": [{k: f[k] for k in ("url", "method", "files", "error") if f.get(k) is not None}
+                                        for f in c["folders"]]} for y, c in choices.items()}}
     return choices, reports + [summary]
 
 
@@ -1229,7 +1467,8 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
             if not choice.get("url"):
                 out["years"].append({**base, "status": "stopped", "reason": choice.get("reason") or "no_csv_link",
                                      "files": choice.get("candidates") or [], "links": choice.get("links") or [],
-                                     "records": choice.get("records")})
+                                     "records": choice.get("records"),
+                                     **({"mismatch": choice["mismatch"]} if choice.get("mismatch") else {})})
                 continue
             url = choice["url"]
             target = folder / f"{year}{''.join(Path(urlparse(url).path).suffixes[-2:]) or '.zip'}"
