@@ -572,6 +572,16 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
             out["skipped_shards"] = read["skipped_shards"]          # a missing / mismatched shard: reported, skipped
     elif coded:
         by_code = type_code_match(rows, keys.get("type_code"), config)
+    from .makes import tozar_gate
+
+    gate = tozar_gate(keys.get("manufacturer"))
+    if gate is not None:
+        # a make with a tozar of its own (MINI, CUPRA) stays model-gated under the tozar that gates it (ב מ וו, סיאט)
+        rows = [r for r in rows if gate(r)]
+        if by_code["rows"]:
+            by_code = {**by_code, "rows": [r for r in by_code["rows"] if gate(r)]}
+            if by_code["status"] == "match" and not by_code["rows"]:
+                by_code = {"status": "no_match", "rules": [by_code.get("rule")], "rows": []}
     if by_code["status"] != "no_code":
         out["type_code"] = {**{k: v for k, v in by_code.items() if k != "rows"}, "code": keys.get("type_code"),
                             "rows": len(by_code["rows"])}

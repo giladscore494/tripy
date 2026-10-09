@@ -39,10 +39,11 @@ _FACTS: tuple[str, Any] | None = None  # (DATABASE_URL, the in-memory FactsServi
 class Observer:
     """The tools over one data root (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR, as the application resolves)."""
 
-    def __init__(self, paths: DataPaths | None = None, catalog=None, facts=None):
+    def __init__(self, paths: DataPaths | None = None, catalog=None, facts=None, query=None):
         self.paths = paths or resolve_paths()
         self._catalog = catalog                 # PR #47 (B3): a src.catalog.CatalogBrowser (tests); default DATABASE_URL
         self._facts = facts                     # a src.facts.service.FactsService (tests); default DATABASE_URL
+        self._query = query                     # a read-only query function (tests); default DATABASE_URL
         self.runs_dir = Path(self.paths.runs_dir)
         self.cache_dir = Path(self.paths.cache_dir)
         self.repository = FileRunRepository(self.runs_dir)
@@ -212,6 +213,23 @@ class Observer:
         try:
             return facts_coverage(self._facts_service(), model_year_from, model_year_to, per_year, manufacturer)
         except CoverageInputError as exc:
+            raise ToolInputError(str(exc)) from None
+        except CatalogUnavailable as exc:
+            return {"available": False, "error": "catalog_unavailable", "message": str(exc)}
+
+    # -- the type-code probe (src/open_data/type_code_probe): one read-only catalogue query + the local EEA snapshot ----
+    def type_code_probe(self, make: Any, model_year_from: Any, model_year_to: Any, per_year: Any = 60) -> dict:
+        from ..catalog import CatalogUnavailable, database_query
+        from ..db import database_url
+        from ..open_data.type_code_probe import ProbeInputError, type_code_probe
+
+        query = self._query
+        if query is None:
+            dsn = database_url()
+            query = database_query(dsn) if dsn else None
+        try:
+            return type_code_probe(query, make, model_year_from, model_year_to, per_year)
+        except ProbeInputError as exc:
             raise ToolInputError(str(exc)) from None
         except CatalogUnavailable as exc:
             return {"available": False, "error": "catalog_unavailable", "message": str(exc)}

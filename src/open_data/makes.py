@@ -12,6 +12,8 @@
                        spellings of identity_vocabulary `open_data_make_aliases`
     row_filter()       whether a dataset row counts: its spelling normalizes to a plain make, or to a model-gated make
                        and its model matches a catalog model family of that tozar (never by make alone)
+    tozar_gate()       the match-time gate of one target tozar: a make with an `own_tozar_only` tozar of its own (MINI,
+                       CUPRA) counts by make alone for that tozar's rows only; under ב מ וו / סיאט it stays model-gated
 """
 
 from __future__ import annotations
@@ -203,6 +205,52 @@ def model_gates(table: dict | None = None) -> dict[str, dict[str, list[str]]]:
             for make in gated:
                 out.setdefault(make, {})[tozar] = families
     return out
+
+
+_TOZAR_GATES: dict[tuple[int, str], tuple[dict, Callable[[dict], bool] | None]] = {}
+
+
+def own_tozar_only_makes(table: dict | None = None) -> set[str]:
+    """The model-gated makes every plain mapping of which is an `own_tozar_only` tozar (מיני -> MINI, קופרה -> CUPRA):
+    by make alone for the rows of that tozar only. CHRYSLER / DODGE / JEEP stay out (plain under קרייזלר / דודג' /
+    ג'יפ, not flagged): the gate of דיימלר קרייזלר never applied at match time and still does not."""
+    table = canonical() if table is None else table
+    entries = table.get("tozar") or {}
+    gated = {m for t in entries for m in tozar_makes(t, table)[1]}
+    out = set()
+    for make in gated:
+        owners = [t for t in entries if make in tozar_makes(t, table)[0]]
+        if owners and all((entries.get(t) or {}).get("own_tozar_only") for t in owners):
+            out.add(make)
+    return out
+
+
+def tozar_gate(tozar: Any, table: dict | None = None) -> Callable[[dict], bool] | None:
+    """keep(row) at match time for a target of one tozar, None when nothing is gated there: a row of a model-gated make
+    of this tozar that is `own_tozar_only` elsewhere (MINI under ב מ וו, CUPRA under סיאט) counts only when its model
+    text matches a catalog model family of this tozar (gate_families), exactly as the build's row_filter kept it before
+    that make had a tozar of its own; every other row passes."""
+    table = canonical() if table is None else table
+    key = (id(table), str(tozar or ""))
+    hit = _TOZAR_GATES.get(key)
+    if hit is not None and hit[0] is table:
+        return hit[1]
+    if len(_TOZAR_GATES) > 256:
+        _TOZAR_GATES.clear()
+    plain, gated = tozar_makes(str(tozar or ""), table)
+    strict = [m for m in gated if m in own_tozar_only_makes(table)]
+    gate = None
+    if strict:
+        families = gate_families(catalog_families(str(tozar)), plain + gated, table)
+        makes = set(strict)
+
+        def gate(row: dict) -> bool:
+            if canonical_of(row.get("make"), table) not in makes:
+                return True
+            text = " ".join(str(row.get(k) or "") for k in ("model", "variant", "version"))
+            return model_matches(text, families)
+    _TOZAR_GATES[key] = (table, gate)
+    return gate
 
 
 def _manifest_spellings() -> dict[str, list[str]]:

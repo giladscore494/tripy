@@ -1188,8 +1188,10 @@ and field maps are data (`data/identity_vocabulary.json`, `data/source_rules.jso
   years before the target year is reference-only); the catalog's makes), (3) `data/open/<dataset>.sqlite.gz` (each
   under 50 MB) + `data/open/manifest.json` (with the spellings kept per make), (4) a coverage report before (5) the
   pull request on `automation/open-data`. Makes: `data/make_canonical.json` is the reviewed table catalog tozar ->
-  canonical Latin make(s) (a model-gated make such as MINI under ב מ וו counts only when the row's model matches a
-  catalog model family of the tozar); a dataset spelling belongs to a make only when both normalize to the same key
+  canonical Latin make(s) (a model-gated make such as RAM under קרייזלר counts only when the row's model matches a
+  catalog model family of the tozar; MINI and CUPRA count by make alone since their own tozar מיני / קופרה were mapped,
+  2026-10-09: 112 tozar mapped, 16 listed as unmapped, the rest of the 138 catalogue tozar reported by the catalogue-list
+  check); a dataset spelling belongs to a make only when both normalize to the same key
   (upper case, punctuation stripped, legal-form words and address tails dropped, spaces collapsed: `B.M.W.` = BMW,
   `LANDROVER` = LAND ROVER, `1OYOTA` and `HIUNDAI` are nothing), never fuzzy. `scripts/build_make_aliases.py`
   generates `data/open_data_make_aliases.json` from it and the probe's distinct makes, and reports per make the
@@ -2228,5 +2230,14 @@ run, no paid call, no vPIC, never a write to MILO.
   each computed exactly as the API: route split, match levels, % with an open-data fact, per admitted field % returned
   and withheld counts by reason, the EEA `co2_selection` aggregate; per manufacturer (top 15) % with an EEA fact. At most
   90 s per call (`truncated: true` returns what is done).
+- **Type-code probe** (MCP `type_code_probe(make, model_year_from, model_year_to, per_year=60)`, read-only; it adds no
+  rule and changes no matching): per canonical make, the first `per_year` (max 200) private keys per model year of the
+  make's tozar by `md5(variant_identity_key)` (one MILO query), against the make's EEA rows of the registration years
+  `model_year_from` .. `model_year_to + 1`. Per catalogue row, the relation of `degem_nm` (NFKC, upper case, no spaces /
+  dots / dashes) to EEA `type_approval` / `variant` / `version`: equal, prefix or contains (>= 4 characters), none; per
+  (relation, field) the consistency rate (power within 1 kW of hp x 0.7355 and cc within 20 agree on a related row),
+  the CO2 agreement (equal, when both state it) and 10 examples; 10 rows without a relation with the closest EEA values
+  of the same model text. At most 60 s per call (`truncated: true`). The numbers decide whether a make can have a rule
+  in `eea_type_code_rules`.
 - **Setup (one time)**: Railway → TRIPY → Variables → add `TRIPY_FACTS_TOKEN` (`openssl rand -hex 32`) and give the
   same value to yeda-rechev.

@@ -182,27 +182,39 @@ def test_a_spelling_belongs_to_a_make_only_when_it_normalizes_to_it(spelling, ma
     assert mk.canonical_of(spelling) == make
 
 
+UNMAPPED = ["גמס", "דאבל יו אם איי", "דאיון", "גיאיוואן", "איויאיסי", "ריהיי", "אקסלנטיקס", "גופל", "מודרן", "בואו",
+            "סנטרו", "לינקסיס", "טלקו", "אמ.סי.סי", ".ג'י.אמ", "אל.טי.איי."]
+FLAGGED = ["בורג", "טי אי סי", "מאן", "מובימטיק", "פאריזון", "פוטון", "פיאג'ו", "צ'אנג יאנג", "קוואן"]
+
+
 def test_the_canonical_table_maps_every_catalog_tozar_or_lists_it_for_review():
     table = mk.canonical()
     catalog = mk.catalog_manufacturers()
     unmapped = table["unmapped"]["tozar"]
-    assert len(catalog) == 62 and sorted(unmapped) == sorted(["גמס", "דאבל יו אם איי", "דאיון"])
-    assert all(t in table["tozar"] or t in unmapped for t in catalog) and len(table["tozar"]) == 59
+    assert len(catalog) == 138 and sorted(unmapped) == sorted(UNMAPPED)
+    # the live catalogue (2026-10-09) values neither mapped nor listed: flagged by the catalogue-list check for review
+    assert sorted(t for t in catalog if t not in table["tozar"] and t not in unmapped) == sorted(FLAGGED)
+    assert len(table["tozar"]) == 113 and mk.tozar_makes("אסטון מרטין") == (["ASTON MARTIN"], [])
     assert mk.tozar_makes("הונדה") == (["HONDA"], []) and mk.tozar_makes("ג'יפ") == (["JEEP"], [])
     assert mk.tozar_makes("ב מ וו") == (["BMW"], ["MINI"]) and mk.tozar_makes("סיאט") == (["SEAT"], ["CUPRA"])
     assert mk.tozar_makes("דיימלר קרייזלר") == ([], ["CHRYSLER", "DODGE", "JEEP"])
     assert mk.tozar_makes("רובר") == mk.tozar_makes("לנדרובר") == (["LAND ROVER"], [])
 
 
-def test_a_mini_row_counts_for_bmw_only_when_its_model_is_a_catalog_model_of_that_tozar():
+def test_a_model_gated_row_counts_only_with_a_catalog_model_until_its_make_has_a_tozar_of_its_own():
     keep = mk.row_filter()
     families = mk.model_gates()["MINI"]["ב מ וו"]
     assert "COOPER" in families and "COUNTRYMAN" in families and "MINI" not in families   # never the make itself
     assert keep("MINI", "COOPER S") and keep("MINI", "MINI ONE D COUNTRYMAN")
-    assert not keep("MINI", "MINI") and not keep("MINI", "PACEMAN")
+    # MINI (מיני) and CUPRA (קופרה) have their own tozar since 2026-10-09: a plain make, kept by make alone in the
+    # snapshots (for those tozar's rows; under ב מ וו / סיאט the match keeps the gate: tests/test_type_code_probe.py)
+    assert mk.tozar_makes("מיני") == (["MINI"], []) and mk.tozar_makes("קופרה") == (["CUPRA"], [])
+    assert keep("MINI", "MINI") and keep("MINI", "PACEMAN") and keep("CUPRA", "CUPRA")
     assert keep("BMW", "X5") and keep("B.M.W.", "SERIE 3") and keep("BMW I", "I3")        # plain / reviewed
-    assert not keep("CUPRA", "CUPRA") and keep("CUPRA", "FORMENTOR")
+    assert keep("CUPRA", "FORMENTOR")
+    # RAM / VAUXHALL still have no tozar of their own: the model gate holds
     assert not keep("RAM", "1500") and keep("JEEP", "WRANGLER") and keep("DODGE", "CHALLENGER")
+    assert not keep("VAUXHALL", "VAUXHALL") and keep("VAUXHALL", "ASTRA")
     assert not keep("HIUNDAI", "I30") and not keep("JEPP", "WRANGLER")
 
 
@@ -244,11 +256,11 @@ def test_the_alias_script_reports_spellings_per_dataset_and_rows_kept(tmp_path):
     assert not any("HIUNDAI" in v or "1OYOTA" in v for v in data["aliases"].values())
     assert data["rows"]["eea_co2_cars"] == {"kept": 22, "total": 25, "spellings_kept": 4, "spellings_total": 6}
     assert data["model_gated"]["ב מ וו"]["spellings"] == ["MINI"] and "COOPER" in data["model_gated"]["ב מ וו"]["models"]
-    assert data["review"]["unmapped"] == sorted(["גמס", "דאבל יו אם איי", "דאיון"])
-    assert data["review"]["not_in_canonical"] == [] and data["manufacturers"] == 62
+    assert data["review"]["unmapped"] == sorted(UNMAPPED)
+    assert data["review"]["not_in_canonical"] == sorted(FLAGGED) and data["manufacturers"] == 138
     assert data["sources"] == {"eea_co2_cars": 6, "epa_fueleconomy": 2}
     text = review.read_text("utf-8")
-    assert "| eea_co2_cars | 22 / 25 | 4 / 6 |" in text and "HIUNDAI (2)" in text and "Review: unmapped tozar (3)" in text
+    assert "| eea_co2_cars | 22 / 25 | 4 / 6 |" in text and "HIUNDAI (2)" in text and "Review: unmapped tozar (16)" in text
 
 
 # --- H4 -------------------------------------------------------------------------------------------------------------------
@@ -377,9 +389,10 @@ def test_compaction_keeps_the_normalized_spellings_and_reports_the_kept_makes():
             {"make": "Jeep", "model": "Wrangler", "year": 2018}, {"make": "HIUNDAI", "model": "i30", "year": 2018},
             {"make": "Studebaker", "model": "Lark", "year": 2018}]
     out = compact("epa_fueleconomy", {"rows": rows})
-    assert sorted(r["make"] for r in out["rows"]) == ["FORD", "HONDA", "JEEP", "LAND ROVER", "MINI"]   # D0
+    # D0; both MINI rows: MINI has its own tozar (מיני), so the Paceman counts by make alone
+    assert sorted(r["make"] for r in out["rows"]) == ["FORD", "HONDA", "JEEP", "LAND ROVER", "MINI", "MINI"]
     c = out["compaction"]
-    assert (c["rows_before"], c["rows_after"], c["kept_makes"]) == (9, 5, 5)
+    assert (c["rows_before"], c["rows_after"], c["kept_makes"]) == (9, 6, 5)
     assert out["make_spellings"] == {"FORD": ["FORD"], "HONDA": ["HONDA"], "JEEP": ["JEEP"],
                                      "LAND ROVER": ["LAND ROVER"], "MINI": ["MINI"]}
 
