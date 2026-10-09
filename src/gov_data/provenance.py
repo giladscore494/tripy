@@ -6,9 +6,9 @@ ingestion_version, access_method (+ format, the package title and organization).
 resource file, sha256 / file_size of its bytes, schema_hash of its header. access_method `datastore_api` (the file
 download failed and the resource is in the datastore): source_url is the datastore_search endpoint, sha256 is over the
 canonical JSON lines of the projected rows in `_id` order, file_size is null and schema_hash is of the datastore fields;
-`file_attempt` records why the file failed (HTTP status, host, reason); datastore_total, total_was_estimated and
-total_check (exact_total / exact_count / estimate_within_2pct) record how the rows were checked against the server's
-count.
+`file_attempt` records why the file failed (HTTP status, host, redirect_host for a refused redirect, reason);
+datastore_total, total_was_estimated and total_check (exact_total / exact_count / estimate_within_2pct) record how the
+rows were checked against the server's count.
 
 Any of these stops the whole dataset (DatasetFailed); the previous committed snapshot and its manifest entry stay,
 and the build writes {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}:

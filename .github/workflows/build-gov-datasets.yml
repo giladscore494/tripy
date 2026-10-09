@@ -13,8 +13,8 @@ name: build-gov-datasets
 #      disk at all: it is projected and aggregated while the stream is read)
 #   1. build (scripts/build_gov_datasets.py): every file URL from resource_show (downloaded with
 #      User-Agent datagov-external-client, one retry after 10 s on 429 / 5xx, redirects only to *.gov.il; a failure
-#      names the HTTP status, the host and the start of the body); a file that fails with an HTTP error or an HTML body
-#      is read through the CKAN datastore instead when resource_show reports datastore_active (datastore_search pages,
+#      names the HTTP status, the host and the start of the body); a file that fails with an HTTP error, a redirect off
+#      *.gov.il (never followed) or an HTML body is read through the CKAN datastore instead when resource_show reports datastore_active (datastore_search pages,
 #      the projected fields only); a dataset whose resource is unavailable, whose licence text or format changed, whose required column is missing, whose row count fell
 #      under 70 % of the previous build or whose body is an HTML / error page stops ALONE: its previous snapshot and
 #      manifest entry stay and build_status.json records {"dataset", "status": "failed", "reason",

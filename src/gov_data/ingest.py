@@ -2,15 +2,17 @@
 projected rows (each passed to the dataset's aggregation) -> the provenance record. Any failure raises
 provenance.DatasetFailed; the caller discards the dataset's aggregation and keeps its previous snapshot.
 
-The rows come from the resource file (`file_download`). When the file cannot be had (an HTTP error status, or an HTML /
-error body instead of the data) and resource_show reports `datastore_active: true`, they come from the CKAN datastore
-instead (`datastore_api`): `datastore_search` pages of 32000 rows sorted by `_id`, only the projected fields requested
-(a `never` column is never asked for), at most 4 requests per second. The datastore keeps every fail-safe: a required
+The rows come from the resource file (`file_download`). When the file cannot be had (an HTTP error status, a redirect
+off *.gov.il — never followed — or an HTML / error body instead of the data) and resource_show reports
+`datastore_active: true`, they come from the CKAN datastore instead (`datastore_api`): `datastore_search` pages of
+32000 rows sorted by `_id`, only the projected fields requested (a `never` column is never asked for), at most 4
+requests per second. When the datastore is not active, or fails too, the failure carries both reasons
+(`file: ...; datastore: ...`). The datastore keeps every fail-safe: a required
 field missing, the row-count drop and `total` != the rows read (`datastore_incomplete`). When the first page's
 `total` is an estimate (`total_was_estimated`), one exact `datastore_search_sql` COUNT(*) is tried; without it the read
 is accepted only when the last page was short, no page failed and the rows are within 2 % of the estimate
-(`total_check: estimate_within_2pct`). No raw file is written for it. A redirect off *.gov.il or a download with
-no HTTP answer stops the resource without the fallback.
+(`total_check: estimate_within_2pct`). No raw file is written for it. A download with no HTTP answer (or too
+many redirects) stops the resource without the fallback.
 """
 
 from __future__ import annotations
@@ -47,14 +49,38 @@ class Context:
 class _FileFailed(Exception):
     """The file path failed before any row reached the aggregation; `fallback` when the datastore may take over."""
 
-    def __init__(self, failure: P.DatasetFailed, fallback: bool, status: int | None = None, host: str | None = None):
+    def __init__(self, failure: P.DatasetFailed, fallback: bool, status: int | None = None, host: str | None = None,
+                 redirect_host: str | None = None):
         super().__init__(failure.detail)
         self.failure, self.fallback, self.status, self.host = failure, fallback, status, host
+        self.redirect_host = redirect_host
+
+    def file_attempt(self) -> dict:
+        out = {"http_status": self.status}
+        if self.redirect_host:
+            out["redirect_host"] = self.redirect_host
+        out.update({"host": self.host, "reason": self.failure.reason, "detail": self.failure.detail[:500]})
+        return out
 
 
 def read_resource(ctx: Context, dataset: str, spec: dict, resource: dict, previous_entry: dict | None,
                   on_row: Callable[[dict], None]) -> dict:
-    """Stream one resource into `on_row` (projected rows) and return its provenance record."""
+    """Stream one resource into `on_row` (projected rows) and return its provenance record. Every resource leaves
+    one entry in ctx.attempts (its status, access method, file attempt, rows and, when it failed, the reason)."""
+    resource_id = str(resource["resource_id"])
+    attempt: dict[str, Any] = {"dataset": dataset, "resource_id": resource_id, "role": resource.get("role"),
+                               "status": "failed", "access_method": FILE_DOWNLOAD, "file_http_status": None,
+                               "file_error": None, "datastore_active": None, "rows": None}
+    ctx.attempts.append(attempt)
+    try:
+        return _read_resource(ctx, dataset, spec, resource, previous_entry, on_row, attempt)
+    except P.DatasetFailed as exc:
+        attempt["reason"], attempt["detail"] = exc.reason, exc.detail[:500]
+        raise
+
+
+def _read_resource(ctx: Context, dataset: str, spec: dict, resource: dict, previous_entry: dict | None,
+                   on_row: Callable[[dict], None], attempt: dict) -> dict:
     resource_id = str(resource["resource_id"])
     role = resource.get("role")
     previous = P.previous_resource(previous_entry, resource_id)
@@ -66,10 +92,7 @@ def read_resource(ctx: Context, dataset: str, spec: dict, resource: dict, previo
     licence = package.get("license")
     P.check_licence(previous, licence, resource_id)
     P.check_format(previous, meta.get("format"), ctx.accepted_formats, resource_id)
-    attempt: dict[str, Any] = {"dataset": dataset, "resource_id": resource_id, "role": role, "status": "failed",
-                               "access_method": FILE_DOWNLOAD, "file_http_status": None, "file_error": None,
-                               "datastore_active": meta.get("datastore_active"), "rows": None}
-    ctx.attempts.append(attempt)
+    attempt["datastore_active"] = meta.get("datastore_active")
     downloaded_at = ctx.now()
     common = {"resource_id": resource_id, "downloaded_at": downloaded_at,
               "source_last_modified": meta.get("last_modified"), "license": licence,
@@ -79,19 +102,20 @@ def read_resource(ctx: Context, dataset: str, spec: dict, resource: dict, previo
         fields, columns = _from_file(ctx, dataset, spec, resource_id, role, meta, on_row, attempt)
     except _FileFailed as failed:
         attempt["file_http_status"], attempt["file_error"] = failed.status, failed.failure.detail
+        if failed.redirect_host:
+            attempt["file_redirect_host"] = failed.redirect_host
         if not failed.fallback:
             raise failed.failure from None
         if not meta.get("datastore_active"):
-            raise P.DatasetFailed(failed.failure.reason, f"{failed.failure.detail}; no datastore fallback "
+            raise P.DatasetFailed(failed.failure.reason, f"file: {failed.failure.detail}; datastore: not used "
                                   "(datastore_active is not true)", resource_id) from None
         attempt["access_method"] = DATASTORE_API
-        file_attempt = {"http_status": failed.status, "host": failed.host, "reason": failed.failure.reason,
-                        "detail": failed.failure.detail[:500]}
+        file_attempt = failed.file_attempt()
         try:
             fields, columns = _from_datastore(ctx, spec, resource_id, role, on_row, attempt)
             P.check_row_count(previous, fields["row_count"], ctx.min_row_ratio, resource_id)
         except P.DatasetFailed as exc:
-            raise P.DatasetFailed(exc.reason, f"datastore: {exc.detail}; file: {failed.failure.detail}",
+            raise P.DatasetFailed(exc.reason, f"file: {failed.failure.detail}; datastore: {exc.detail}",
                                   resource_id) from None
         fields["file_attempt"] = file_attempt
     else:
@@ -116,7 +140,7 @@ def _from_file(ctx: Context, dataset: str, spec: dict, resource_id: str, role: s
         source = ctx.http.open(meta["url"])
     except ckan.DownloadError as exc:
         failure = P.DatasetFailed("resource_unavailable", f"download: {exc}", resource_id)
-        raise _FileFailed(failure, exc.kind == "http", exc.status, exc.host) from None
+        raise _FileFailed(failure, exc.fallback, exc.status, exc.host, exc.redirect_host) from None
     except Exception as exc:  # noqa: BLE001
         failure = P.DatasetFailed("resource_unavailable", f"download: {type(exc).__name__} from "
                                   f"{ckan.host_of(meta['url'])}: {ckan.body_snippet(str(exc))}", resource_id)

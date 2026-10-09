@@ -74,7 +74,22 @@ def _committed(out: Path, previous: dict, dataset: str, work: Path) -> Path | No
 
 
 def _ingest(ctx: Context, name: str, spec: dict, previous_entry: dict, sink) -> list[dict]:
-    return [read_resource(ctx, name, spec, resource, previous_entry, sink) for resource in spec["resources"]]
+    """Every resource is tried, even after one failed, so each one's outcome is reported (ctx.attempts); the dataset
+    is built only when all of them succeed (the aggregation of a failed dataset is discarded)."""
+    records, failures = [], []
+    for resource in spec["resources"]:
+        try:
+            records.append(read_resource(ctx, name, spec, resource, previous_entry, sink))
+        except P.DatasetFailed as exc:
+            failures.append(exc)
+    if not failures:
+        return records
+    if len(failures) == 1 and len(spec["resources"]) == 1:
+        raise failures[0]
+    first = failures[0]
+    detail = "; ".join(f"[{f.resource_id}] {f.reason}: {f.detail}" for f in failures)
+    raise P.DatasetFailed(first.reason, f"{len(failures)} of {len(spec['resources'])} resources failed: {detail}",
+                          first.resource_id)
 
 
 def _write(out: Path, work: Path, name: str, tables: dict, meta: dict) -> dict:
@@ -272,7 +287,8 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
               "|---|---|---|---|---|---|---|"]
     for item in outcome["status"]:
         for res in item.get("resources") or []:
-            lines.append(f"| {item['dataset']} | `{res['resource_id']}` ({res.get('role')}) | {res.get('status')} | "
+            status = res.get("status") if res.get("status") != "failed" else f"failed: {res.get('reason')}"
+            lines.append(f"| {item['dataset']} | `{res['resource_id']}` ({res.get('role')}) | {status} | "
                          f"{res.get('access_method')} | {res.get('file_http_status') or '—'} | "
                          f"{res.get('rows') if res.get('rows') is not None else '—'} | "
                          f"{res.get('total_check') or '—'} |")
@@ -330,7 +346,9 @@ def exit_summary(statuses: list[dict] | None) -> dict:
             lines.append(f"  - `{res.get('resource_id')}` ({res.get('role')}): {res.get('status')} via "
                          f"{res.get('access_method')}, file HTTP status {res.get('file_http_status') or '—'}, "
                          f"rows {res.get('rows') if res.get('rows') is not None else '—'}"
-                         + (f", total check {res['total_check']}" if res.get("total_check") else ""))
+                         + (f", total check {res['total_check']}" if res.get("total_check") else "")
+                         + (f", redirect to {res['file_redirect_host']}" if res.get("file_redirect_host") else "")
+                         + (f": {res.get('reason')} ({res.get('detail')})" if res.get("status") == "failed" else ""))
     return {"create_pr": bool(built), "built": len(built), "failed": len(failed), "text": "\n".join(lines) + "\n"}
 
 

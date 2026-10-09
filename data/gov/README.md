@@ -20,7 +20,7 @@ per-vehicle record is stored or served, and raw downloads never enter git.
   file) or `datastore_api` (the file download failed with an HTTP error or an HTML body and the resource is in the CKAN
   datastore: `source_url` is the `datastore_search` endpoint, `sha256` is over the canonical JSON lines of the projected
   rows in `_id` order, `file_size` is null, `schema_hash` is of the datastore fields, `file_attempt` says why the file
-  failed). Its sha256 is the facts record's `versions.gov_datasets` and part of
+  failed: HTTP status, host, `redirect_host` when it redirected off *.gov.il — a redirect that is never followed). Its sha256 is the facts record's `versions.gov_datasets` and part of
   the facts cache key;
 - `build_status.json`: the last build's outcome per dataset (`{"dataset", "status": "failed", "reason",
   "previous_snapshot_preserved": true}` for a stopped one), with per resource its status, access method, the HTTP

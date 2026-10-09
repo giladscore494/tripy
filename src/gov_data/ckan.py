@@ -9,7 +9,8 @@ the test suite). A failed request names `HTTP <status>`, the URL host (never the
 characters of the response body, control characters stripped (`describe_http_error`).
 
 The file download (`Http.open`): `User-Agent: datagov-external-client`, `Accept: text/csv,*/*`; one retry after 10 s
-on 429 / 5xx; redirects are followed by hand and only to `*.gov.il` hosts (`DownloadError`, kind `redirect`, otherwise).
+on 429 / 5xx; redirects are followed by hand and only to `*.gov.il` hosts (a redirect elsewhere is never followed:
+`DownloadError`, kind `redirect_off_gov`, which lets the datastore fallback take over like an HTTP error).
 """
 
 from __future__ import annotations
@@ -40,12 +41,18 @@ class CkanError(RuntimeError):
 
 
 class DownloadError(RuntimeError):
-    """The file download failed. `kind`: http (an HTTP error status: the datastore fallback may take over), redirect
-    (a redirect off *.gov.il, or too many) or network (no HTTP answer)."""
+    """The file download failed. `kind`: http (an HTTP error status), redirect_off_gov (a redirect to a host off
+    *.gov.il, never followed: `redirect_host` names it) — the datastore fallback may take over after either —
+    redirect (no Location, or too many redirects) or network (no HTTP answer)."""
 
-    def __init__(self, kind: str, message: str, status: int | None = None, host: str | None = None):
+    def __init__(self, kind: str, message: str, status: int | None = None, host: str | None = None,
+                 redirect_host: str | None = None):
         super().__init__(message)
-        self.kind, self.status, self.host = kind, status, host
+        self.kind, self.status, self.host, self.redirect_host = kind, status, host, redirect_host
+
+    @property
+    def fallback(self) -> bool:
+        return self.kind in ("http", "redirect_off_gov")
 
 
 def host_of(url: str) -> str:
@@ -142,9 +149,9 @@ class Http:
                         raise DownloadError("redirect", f"HTTP {exc.code} from {host_of(current)} without a "
                                             "Location", exc.code, host_of(current)) from None
                     if not gov_host(host_of(target)):
-                        raise DownloadError("redirect", f"HTTP {exc.code} from {host_of(current)}: redirect to a "
-                                            f"non-gov host {host_of(target)} refused", exc.code,
-                                            host_of(target)) from None
+                        raise DownloadError("redirect_off_gov", f"HTTP {exc.code} from {host_of(current)}: redirect "
+                                            f"to a non-gov host {host_of(target)} refused", exc.code,
+                                            host_of(current), host_of(target)) from None
                     hops += 1
                     if hops > MAX_REDIRECTS:
                         raise DownloadError("redirect", f"more than {MAX_REDIRECTS} redirects (last host "
