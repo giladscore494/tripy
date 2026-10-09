@@ -6,12 +6,12 @@ data.gov.il terms permit copying, storage, processing, derived works, commercial
 
 | publisher | portal | dataset | resource id / source | licence (as stated) | retrieved |
 |---|---|---|---|---|---|
-| Ministry of Transport and Road Safety | data.gov.il | מחירון רכב חדש (New-car price list) — new_car_prices, prices | `39f455bf-6db0-4926-859d-017f34eacbcb` | Other (Open) (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | קריאות שירות (ריקול) (Vehicle recall notices) — recall_notices, recalls | `2c33523f-87aa-44ec-a736-edbb0a82975e` | CC BY (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `851ecab1-0622-4dbe-a6c7-f950cf82abf9` | Other (Open) (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `4e6b9724-4c1e-43f0-909a-154d4cc4e046` | Other (Open) (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `ec8cbc34-72e1-4b69-9c48-22821ba0bd6c` | Other (Open) (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, active | `053cea08-09bc-40ec-8f7a-156f0677aff3` | Other (Open) (as briefed; not built yet) | not built yet |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | יבואנים ומחירוני רכב חדש — new_car_prices, prices | `39f455bf-6db0-4926-859d-017f34eacbcb` | Other (Open) | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | הודעות יצרני הרכב RECALL — recall_notices, recalls | `2c33523f-87aa-44ec-a736-edbb0a82975e` | Creative Commons Attribution | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | כלי רכב שירדו מהכביש ובסטטוס ביטול סופי — road_survival, cancelled | `851ecab1-0622-4dbe-a6c7-f950cf82abf9` | Other (Open) | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | כלי רכב שירדו מהכביש ובסטטוס ביטול סופי — road_survival, cancelled | `4e6b9724-4c1e-43f0-909a-154d4cc4e046` | Other (Open) | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | כלי רכב שירדו מהכביש ובסטטוס ביטול סופי — road_survival, cancelled | `ec8cbc34-72e1-4b69-9c48-22821ba0bd6c` | Other (Open) | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | מספרי רישוי של כלי רכב פרטיים ומסחריים — road_survival, active | `053cea08-09bc-40ec-8f7a-156f0677aff3` | Other (Open) | 2026-10-09 |
 | Ministry of Transport and Road Safety | data.gov.il | מספרי רישוי של כלי רכב פרטיים ומסחריים (tyre-size index, data/gov_registry_index.json) | `053cea08-09bc-40ec-8f7a-156f0677aff3` | Israeli government open data (data.gov.il terms) | 2026-10-05 |
 | European Environment Agency (EEA) | DISCODATA / EEA datahub | EEA CO2 emissions from new passenger cars (monitoring) (eea_co2_cars) | https://discodata.eea.europa.eu/sql | CC-BY-4.0 | 2026-10-08 |
 | ADEME (Agence de la transition écologique), France | data.ademe.fr | ADEME Car Labelling (ademe_car_labelling) | https://data.ademe.fr/data-fair/api/v1/datasets/ademe-car-labelling | Licence Ouverte 2.0 | 2026-10-08 |

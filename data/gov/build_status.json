@@ -1,0 +1,98 @@
+[
+ {
+  "dataset": "new_car_prices",
+  "status": "built",
+  "rows": 101824,
+  "sha256": "f2cd4060c37f9203f2dfa1df9e2a2120b9548adec0c11ce6a1d58bb1d481a995",
+  "resources": [
+   {
+    "resource_id": "39f455bf-6db0-4926-859d-017f34eacbcb",
+    "role": "prices",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 101824,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   }
+  ]
+ },
+ {
+  "dataset": "road_survival",
+  "status": "built",
+  "rows": 6576055,
+  "sha256": "8b693480f11357d6ae8b7e7a947074cf289446032a8dd842c947ba3b489db3e3",
+  "resources": [
+   {
+    "resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 1218960,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   },
+   {
+    "resource_id": "4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 670293,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   },
+   {
+    "resource_id": "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 499791,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   },
+   {
+    "resource_id": "053cea08-09bc-40ec-8f7a-156f0677aff3",
+    "role": "active",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 4187011,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   }
+  ]
+ },
+ {
+  "dataset": "recall_notices",
+  "status": "built",
+  "rows": 3628,
+  "sha256": "089b18819dcaa8c27326538c62c3ee97495c1a0ceff5c26a1f240dac87dd22d7",
+  "resources": [
+   {
+    "resource_id": "2c33523f-87aa-44ec-a736-edbb0a82975e",
+    "role": "recalls",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 3628,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "exact_total"
+   }
+  ]
+ }
+]
