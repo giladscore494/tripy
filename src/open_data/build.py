@@ -27,7 +27,12 @@ agent. Each dataset's `builder`:
                  still known). K3: the years from `csv_years.from_year` that DISCODATA does not have ([latest] ends at
                  2022), and an earlier year DISCODATA lacks, come from the EEA datahub's downloadable CSV
                  (`build_eea_csv`: the records read from the datahub API, the zip streamed to the runner disk and
-                 grouped locally exactly like the DISCODATA rows)
+                 grouped locally exactly like the DISCODATA rows). T1 / T2: the datahub records are read first; the
+                 DISCODATA year tables they name (`year_tables.pattern`:
+                 [CO2Emission].[latest].[co2cars_<year><F|P>v<n>], year and status agreeing with the record's, the highest v) are validated (`SELECT TOP 1 *`: the header
+                 resolves through the year's map, the row's year is the table's) and, after
+                 `final_only_through_year`, replace [latest] for a year when their status is better (2022 F) or
+                 [latest] lacks the year (2023+); the datahub CSV only for a year with neither
     data_fair    ADEME: the raw CSV and the field schema; the unit of every column with a `unit_from_description` rule
                  is read from the schema field's description ("Puissance en kW"); a column without a stated unit is
                  stored raw with unit `unknown` (its p5 / p50 / p95 recorded) and yields nothing until a
@@ -541,10 +546,42 @@ def accepted_status(cfg: dict, year: int, present: set[str]) -> tuple[str | None
     return None, "no_final_rows" if final_only else "no_preferred_status"
 
 
-def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop) -> dict:
+def validate_year_table(sql: Callable[[str], list[dict]], table: str, year: int, cfg: dict) -> dict:
+    """T1: `SELECT TOP 1 * FROM <table>` before a DISCODATA year table is used: its header must resolve through the
+    year's column map (`eea_year_columns`: the same per-year rules, aliases and replacements; no missing required key,
+    no ambiguous key), its year and status columns resolve, and the row's year equals the table's year. {ok, reason,
+    header, year_column, status_column}; a failure stops only that year."""
+    out: dict[str, Any] = {"table": table, "query": f"SELECT TOP 1 * FROM {table}", "ok": False}
+    try:
+        sample = sql(out["query"])
+    except EeaQueryError as exc:
+        return {**out, "reason": f"query_error: {str(exc)[:300]}"}
+    if not sample:
+        return {**out, "reason": "no_rows"}
+    header = list(sample[0].keys())
+    out["header"] = header[:200]
+    resolved = resolve_map(header, eea_year_columns(cfg, year))
+    head = resolve_map(header, {"status": cfg["status_column"]})
+    if resolved["missing"] or resolved["ambiguous"] or head["missing"] or head["ambiguous"]:
+        return {**out, "reason": "schema_mismatch", "missing": resolved["missing"] + head["missing"],
+                "ambiguous": resolved["ambiguous"] + head["ambiguous"]}
+    year_col, status_col = resolved["mapping"]["year"], head["mapping"]["status"]
+    row_year = ds._int(sample[0].get(year_col))
+    if row_year != int(year):
+        return {**out, "reason": f"year_mismatch: row {year_col} = {sample[0].get(year_col)!r}, table year {year}"}
+    return {**out, "ok": True, "reason": None, "year_column": year_col, "status_column": status_col,
+            "row_status": sample[0].get(status_col)}
+
+
+def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progress = _noop,
+              year_tables: dict[int, dict] | None = None) -> dict:
     """Year discovery, then per year its own schema, the make spellings present that year, and per (year, make
     spelling) the E1 query (or its two-part split); a query error is an error, never a year without cars, and a failing
-    spelling stops only itself."""
+    spelling stops only itself. T2: `year_tables` ({year: {F | P: the table chosen from the datahub records (T1)}})
+    for a year after `final_only_through_year`: its tables of a better status than the [latest] rows of that year (F
+    over P; any status for a year [latest] lacks), best first, are validated (`validate_year_table`) and the first that
+    passes replaces [latest] for that year, with the same machinery (the WHERE still filters year and status); none
+    passes -> [latest] as before, or the year stops (`table_validation_failed`) when [latest] lacks it."""
     from .audit import empty_columns, year_stats
     from .makes import canonical_of, row_filter, spelling
 
@@ -588,42 +625,74 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
     absent_by_year: dict[str, list[str]] = {}
     for year in ([y for y in (years or []) if y not in statuses] if years else []):
         reports.append({"year": year, "status": "skipped", "reason": "no_rows"})
-    for year in wanted:
-        status, why = accepted_status(cfg, year, statuses[year])
+    # T2: the DISCODATA year tables the datahub records name, for the years after final_only_through_year only
+    through = cfg.get("final_only_through_year")
+    tables_of = {int(y): t for y, t in (year_tables or {}).items()
+                 if t and (through is None or int(y) > int(through)) and int(y) >= floor
+                 and (years is None or int(y) in years)}
+    rank = {s: i for i, s in enumerate(cfg.get("status_preference") or ["F", "P"])}
+    for year in sorted(set(wanted) | set(tables_of)):
+        status, why = accepted_status(cfg, year, statuses[year]) if year in statuses else (None, "no_rows")
+        source, y_col, s_col = table, year_col, status_col
+        table_report: dict[str, Any] | None = None
+        if year in tables_of:
+            named = tables_of[year]
+            candidates = [(s, named[s]) for s in sorted(named, key=lambda s: rank.get(s, 99))
+                          if named[s].get("chosen") and (status is None or rank.get(s, 99) < rank.get(status, 99))]
+            table_report = {"tables": {s: {k: named[s].get(k) for k in ("records", "found", "chosen", "record",
+                                                                         "versions", "rejected")}
+                                       for s in sorted(named, key=lambda s: rank.get(s, 99))},
+                            "latest_status": status, "validation": []}
+            for s, choice in candidates:
+                progress(f"year {year}: validate {choice['chosen']}")
+                check = validate_year_table(sql, choice["chosen"], year, cfg)
+                table_report["validation"].append({"status": s, "record": choice.get("record"),
+                                                   **{k: check[k] for k in ("table", "ok", "reason", "missing",
+                                                                            "ambiguous", "row_status") if k in check}})
+                if check["ok"]:
+                    source, y_col, s_col, status = choice["chosen"], check["year_column"], check["status_column"], s
+                    break
+            table_report["used"] = source if source != table else (f"{table} (status {status})" if status else None)
+            if status is None:
+                reports.append({"year": year, "status": "stopped", "source": "discodata_year_table",
+                                "reason": "table_validation_failed" if candidates else "no_accepted_table",
+                                "discodata_table": table_report})
+                continue
         if status is None:
             reports.append({"year": year, "status": "skipped", "reason": why, "statuses": sorted(statuses[year])})
             continue
         year_columns = eea_year_columns(cfg, year)
-        progress(f"year {year} (status {status})")
-        where = f"{_q(year_col)} = {int(year)} AND {_q(status_col)} = '{status}'"
+        progress(f"year {year} (status {status}{', ' + source if source != table else ''})")
+        where = f"{_q(y_col)} = {int(year)} AND {_q(s_col)} = '{status}'"
+        extra = {"table": source, "discodata_table": table_report} if table_report is not None else {}
         try:
-            sample = sql(f"SELECT TOP 1 * FROM {table} WHERE {where}")
+            sample = sql(f"SELECT TOP 1 * FROM {source} WHERE {where}")
         except EeaQueryError as exc:
             reports.append({"year": year, "status": "failed", "status_used": status, "stage": "schema",
-                            "error": str(exc)[:500]})
+                            "error": str(exc)[:500], **extra})
             continue
         if not sample:
-            reports.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status})
+            reports.append({"year": year, "status": "skipped", "reason": "no_rows", "status_used": status, **extra})
             continue
         year_header = list(sample[0].keys())
         resolved = resolve_map(year_header, year_columns)
         if resolved["missing"] or resolved["ambiguous"]:
             reports.append({"year": year, "status": "stopped", "reason": "schema_mismatch", "status_used": status,
                             "missing": resolved["missing"], "ambiguous": resolved["ambiguous"],
-                            "live_header": year_header[:200]})
+                            "live_header": year_header[:200], **extra})
             continue
         mapping = resolved["mapping"]
         registrations = resolve_map(year_header, {"registrations": cfg["registrations_column"]})["mapping"].get(
             "registrations")
         report: dict[str, Any] = {"year": year, "status_used": status, "absent_columns": resolved["absent"],
                                   "registrations_column": registrations, "mode": "per_make",
-                                  "live_header": year_header[:200], "mapping": mapping}
+                                  "live_header": year_header[:200], "mapping": mapping, **extra}
         # the raw make values present this year whose spelling is an alias spelling or normalizes to a canonical make
         # (the server compares the exact value); without that list, the alias spellings themselves
         wanted_makes = set(makes)
         try:
             present = [str(r.get(mapping["make"])) for r in
-                       sql_all(f"SELECT DISTINCT {_q(mapping['make'])} FROM {table} WHERE {where}")
+                       sql_all(f"SELECT DISTINCT {_q(mapping['make'])} FROM {source} WHERE {where}")
                        if r.get(mapping["make"]) not in (None, "")]
             values = sorted({v for v in present if spelling(v) in wanted_makes or canonical_of(v)})
             report["spelling_source"] = "year_distinct"
@@ -637,7 +706,7 @@ def build_eea(fetch: Fetcher, *, years: list[int] | None = None, progress: Progr
         for value in values:
             progress(f"year {year} (status {status}): {value}")
             try:
-                plan = eea_query_plan(table, mapping, cfg, registrations, where, value)
+                plan = eea_query_plan(source, mapping, cfg, registrations, where, value)
                 parts = []
                 for measures, query in plan:
                     sizes.append(eea_query_bytes(query))
@@ -1078,6 +1147,43 @@ def _record_year_status(title: str | None, temporal: int | None, pattern: str) -
 
 
 RESOURCE_CLASSES = ("download", "folder", "landing", "record", "excluded")
+DISCODATA_TABLE = r"\[CO2Emission\]\.\[latest\]\.\[co2cars_(\d{4})([FP])v(\d+)\]"
+
+
+def record_tables(text: str, year: int | None, status: str | None, pattern: str | None = None) -> dict:
+    """T1: {found, accepted, rejected} of the DISCODATA year tables a datahub record names in its metadata text (title,
+    abstract, lineage, resource descriptions: the full metadata JSON), matched by the exact pattern
+    `year_tables.pattern` ([CO2Emission].[latest].[co2cars_<year><F|P>v<version>]); never a guessed name. A table is
+    accepted only when its year and F / P agree with the record's; any other is rejected with the reason."""
+    found: dict[str, tuple[int, str, int]] = {}
+    for m in re.finditer(pattern or DISCODATA_TABLE, text or ""):
+        found.setdefault(m.group(0), (int(m.group(1)), m.group(2), int(m.group(3))))
+    accepted, rejected = [], []
+    for name, (t_year, t_status, version) in found.items():
+        entry = {"table": name, "year": t_year, "status": t_status, "version": version}
+        if year is None or status is None:
+            rejected.append({**entry, "reason": "record_without_year_status"})
+        elif (t_year, t_status) != (int(year), str(status)):
+            rejected.append({**entry, "reason": f"table_record_mismatch: table {t_year}{t_status} vs record "
+                                                f"{year}{status}"})
+        else:
+            accepted.append(entry)
+    return {"found": list(found), "accepted": accepted, "rejected": rejected}
+
+
+def year_table_choice(records: list[dict]) -> dict:
+    """T1: per (year, status) the table chosen among the records' accepted tables: the highest version (`v`); every
+    name found and every rejection is kept for the report."""
+    accepted = [t | {"record": r["uuid"]} for r in records for t in (r.get("discodata_tables") or {}).get("accepted")
+                or []]
+    best = max(accepted, key=lambda t: (t["version"], t["table"]), default=None)
+    return {"records": [r["uuid"] for r in records],
+            "found": list(dict.fromkeys(n for r in records for n in (r.get("discodata_tables") or {}).get("found")
+                                        or [])),
+            "rejected": [t | {"record": r["uuid"]} for r in records
+                         for t in (r.get("discodata_tables") or {}).get("rejected") or []],
+            "chosen": best["table"] if best else None, "record": best["record"] if best else None,
+            "versions": sorted({t["version"] for t in accepted})}
 
 
 def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None = None,
@@ -1094,7 +1200,8 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
     records preferred: their download resources; none -> their folders listed (`list_folder`, F2); none -> the EEA
     landing pages read once for same-host file links; exactly one -> chosen, several -> `file_pattern`, still several
     -> `ambiguous_download` with every candidate; none -> `no_csv_link`. A provisional child whose year has a final
-    child in a listing is not read. Never a guessed URL."""
+    child in a listing is not read. Never a guessed URL. T1: per record the DISCODATA year tables its metadata JSON
+    names (`record_tables`), and per year and status the table chosen (`year_table_choice`: choice["tables"])."""
     fetch_json = getattr(fetch, "json", fetch)
     api, pattern = str(csv_cfg.get("api") or ""), str(csv_cfg.get("title_pattern") or "")
     hosts = [str(h).lower() for h in csv_cfg.get("allowed_hosts") or ["eea.europa.eu", "data.europa.eu"]]
@@ -1179,6 +1286,11 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
                   "resources": [{k: r.get(k) for k in ("url", "class", "protocol", "format", "name")}
                                 for r in resources.values()][:40],
                   "references": [r["uuid"] for r in references][:40]}
+        if meta_data is not None:
+            tables = record_tables(json.dumps(meta_data, ensure_ascii=False), year, status,
+                                   (csv_cfg.get("year_tables") or {}).get("pattern"))
+            if tables["found"]:
+                record["discodata_tables"] = tables
         if named:
             record["folder_years"] = named
             if year and year not in named:
@@ -1250,6 +1362,13 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
             choice["reason"], choice["mismatch"] = "year_mismatch", mismatches
         elif len(files) != 1:
             choice["reason"] = "no_csv_link" if not files else "ambiguous_download"
+        tables = {}
+        for s in ("F", "P"):                                    # T1: the year tables per status, final first
+            named_by = [r for r in records if r["year"] == year and r["status"] == s and r.get("discodata_tables")]
+            if named_by:
+                tables[s] = year_table_choice(named_by)
+        if tables:
+            choice["tables"] = tables
         choices[year] = choice
     for listing in listings.values():
         reports.append({"kind": "folder", **{k: listing[k] for k in ("url", "method", "error", "subfolders")},
@@ -1258,7 +1377,7 @@ def eea_datahub_discover(fetch: Fetcher, csv_cfg: dict, *, max_depth: int | None
                "max_depth": max_depth, "max_records": max_records,
                "not_read": sum(1 for r in reports if "record limit" in str(r.get("status_note"))),
                "years": {str(y): {k: c.get(k) for k in ("status", "record", "title", "url", "reason", "classes",
-                                                       "mismatch") if c.get(k) is not None}
+                                                       "mismatch", "tables") if c.get(k) is not None}
                          | {"folders": [{k: f[k] for k in ("url", "method", "files", "error") if f.get(k) is not None}
                                         for f in c["folders"]]} for y, c in choices.items()}}
     return choices, reports + [summary]
@@ -1420,12 +1539,15 @@ def _rejoin(head: str, stream):
 
 def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, download: Downloader | None = None,
                   work: Path | None = None, progress: Progress = _noop, lacking_years: set[int] | None = None,
-                  join_years: set[int] | None = None) -> dict:
+                  join_years: set[int] | None = None,
+                  discovered: tuple[dict[int, dict], list[dict]] | None = None) -> dict:
     """K3: the years from `csv_years.from_year` that DISCODATA did not build, and the earlier `lacking_years` (Y1: the
     years DISCODATA lacks), from the datahub CSV found by `eea_datahub_discover` (D1). {rows, years (one report per
     year), absent_columns, urls, discovery, join}; a year up to `final_only_through_year` only from a final record; a
     year that fails stops only itself; never raises. D2: the `join_years` (built from DISCODATA) are downloaded and
-    grouped too, returned in `join` ({year: {rows, report, url, record}}) for the range join, never as rows."""
+    grouped too, returned in `join` ({year: {rows, report, url, record}}) for the range join, never as rows.
+    `discovered`: the D1 answer already read by the caller (`build_eea_all` reads it once, before DISCODATA, for the
+    year tables of T1); the CSV path is used only for a year in neither `skip_years` nor `join_years`."""
     import shutil
     import tempfile
 
@@ -1435,12 +1557,15 @@ def build_eea_csv(fetch: Fetcher, *, skip_years: set[int] | None = None, downloa
     if not csv_cfg:
         return out
     out["join"] = {}
-    progress("datahub records (record metadata, D1)")
-    try:
-        by_year, out["discovery"] = eea_datahub_discover(fetch, csv_cfg)
-    except Exception as exc:  # noqa: BLE001 - the CSV years never cost the DISCODATA years
-        out["discovery"] = [{"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}]
-        return out
+    if discovered is not None:
+        by_year, out["discovery"] = discovered
+    else:
+        progress("datahub records (record metadata, D1)")
+        try:
+            by_year, out["discovery"] = eea_datahub_discover(fetch, csv_cfg)
+        except Exception as exc:  # noqa: BLE001 - the CSV years never cost the DISCODATA years
+            out["discovery"] = [{"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}]
+            return out
     floor = int(csv_cfg.get("from_year") or 0)
     max_bytes = int(float(csv_cfg.get("max_download_mb") or 6000) * 1024 * 1024)
     if download is None:
@@ -1554,33 +1679,48 @@ def range_join(disco_rows: list[dict], csv_rows: list[dict], keys: list[str], co
 
 
 def build_eea_all(fetch: Fetcher, *, download: Downloader | None = None, progress: Progress = _noop) -> dict:
-    """The DISCODATA years, then the datahub CSV years DISCODATA does not have (K3, found by D1); stops only when no
-    year built. D2: for the `csv_years.range_join_years` built from DISCODATA (it stays the base), the CSV-only
+    """The datahub records first (D1, read once: T1 the DISCODATA year tables they name), then the DISCODATA years
+    ([latest], and from the year after `final_only_through_year` the validated year tables, T2), then the datahub CSV
+    years that have neither (K3); stops only when no year built. D2: for the `csv_years.range_join_years` built from
+    DISCODATA (it stays the base; none since T2), the CSV-only
     columns (`range_join_columns`: electric_range_km) are added from the datahub CSV of the same year, joined on the
     full identity key; the year's audit statistics are recomputed and a `range_join` report gives the join %."""
     from .audit import empty_columns, year_stats
 
+    cfg = ds.datasets()["eea_co2_cars"]
+    csv_cfg = cfg.get("csv_years") or {}
+    discovered: tuple[dict[int, dict], list[dict]] | None = None
+    year_tables: dict[int, dict] = {}
+    if csv_cfg:
+        # D1 first (T1): the yearly records name the DISCODATA year tables the DISCODATA build reads (T2)
+        progress("datahub records (record metadata, D1)")
+        try:
+            discovered = eea_datahub_discover(fetch, {**csv_cfg, "year_tables": cfg.get("year_tables") or {}})
+            year_tables = {y: c["tables"] for y, c in discovered[0].items() if c.get("tables")}
+        except Exception as exc:  # noqa: BLE001 - the datahub never costs the [latest] years
+            discovered = ({}, [{"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:300]}"}])
     stopped = None
     try:
-        built = build_eea(fetch, progress=progress)
+        built = build_eea(fetch, progress=progress, year_tables=year_tables)
     except BuildStopped as stop:
         stopped = stop
         built = {"rows": [], "schema": None, "urls": [], "years": list(stop.report.get("years") or []),
                  "absent_columns": {}, "discodata": {"reason": stop.reason}}
     done = {r["year"] for r in built["years"] if r.get("status") in ("built", "partial")}
-    cfg = ds.datasets()["eea_co2_cars"]
+    # T2: a year with a validated year table never reads the datahub CSV (even if its build then failed)
+    validated = {r["year"] for r in built["years"] if r.get("table") and r.get("table") != cfg["table"]}
     floor = int(cfg.get("years_from") or 0)
     csv_from = int((cfg.get("csv_years") or {}).get("from_year") or floor)
     # Y1: an earlier year DISCODATA lacks (not discovered, or no rows of the accepted status); a year that failed or
     # stopped there is reported, never re-read from the CSV
     handled = {r["year"] for r in built["years"] if r.get("status") != "skipped"}
     lacking = {y for y in range(floor, csv_from) if y not in handled} if floor else set()
-    csv_cfg = cfg.get("csv_years") or {}
     join_years = {int(y) for y in csv_cfg.get("range_join_years") or []} & done
-    extra = build_eea_csv(fetch, skip_years=done, download=download, work=ds.snapshot_dir(), progress=progress,
-                          lacking_years=lacking, join_years=join_years)
+    extra = build_eea_csv(fetch, skip_years=done | validated, download=download, work=ds.snapshot_dir(),
+                          progress=progress, lacking_years=lacking, join_years=join_years, discovered=discovered)
     built["rows"] += extra["rows"]
-    built["years"] += [y for y in extra["years"] if y.get("year") not in done or y.get("status") != "skipped"]
+    built["years"] += [y for y in extra["years"] if y.get("year") not in done | validated
+                       or y.get("status") != "skipped"]
     join_columns = [str(c) for c in csv_cfg.get("range_join_columns") or ["electric_range_km"]]
     for year, joined in sorted((extra.get("join") or {}).items()):
         disco = next(r for r in built["years"] if r.get("year") == year and r.get("status") in ("built", "partial"))

@@ -6,6 +6,7 @@ recorded from a live source by the author. Each header below says where it comes
 
     EEA_2018_HEADER        verbatim from the reviewer's brief (DISCODATA `SELECT TOP 1 * ... WHERE year=2018 AND
                            status='F'`, verified by the reviewer against the live source on 2026-10-06)
+    EEA_2025P_HEADER       the 2018 header plus Ech / RLFI (the reviewer's live TOP 1 of co2cars_2025Pv31, 2026-10-08)
     ADEME_ORIGINAL_NAMES   the original names the reviewer's brief lists from the live field schema (the brief elides
                            the rest with "..."); the Min / Max split of the "Min/Max" names is this PR's reading of the
                            brief's map table, NOT verified
@@ -25,6 +26,11 @@ EEA_2018_HEADER = [
     "IT", "Ernedc (g/km)", "Erwltp (g/km)", "De", "Vf", "R", "Year", "Status", "Version_file", "E (g/km)", "Er (g/km)",
     "Zr", "Dr", "Fc",
 ]
+
+# T1 (reviewer, live DISCODATA `SELECT TOP 1 * FROM [CO2Emission].[latest].[co2cars_2025Pv31]`, 2026-10-08): "the same
+# columns as [latest].[co2cars]" plus Ech and RLFI; the brief lists them with "..." for the rest, so the rest is the 2018
+# header above (NOT verified column by column). Per-vehicle rows (R = 1, ID); no electric-range column.
+EEA_2025P_HEADER = EEA_2018_HEADER + ["Ech", "RLFI"]
 
 ADEME_ORIGINAL_NAMES = [
     "Marque", "Libellé modèle", "Modèle", "Groupe", "Description Commerciale", "Energie", "Carrosserie", "Cylindrée",
