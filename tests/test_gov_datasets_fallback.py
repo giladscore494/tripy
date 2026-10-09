@@ -9,6 +9,7 @@ import email.message
 import gzip
 import hashlib
 import io
+import json
 import urllib.error
 import urllib.parse
 from pathlib import Path
@@ -172,7 +173,9 @@ def test_redirects_are_followed_only_to_gov_il_hosts():
     transport = Transport({start: [(301, "https://evil.example.com/f.csv?k=secret")]})
     with pytest.raises(ckan.DownloadError) as caught:
         ckan.Http(transport=transport, sleep=lambda s: None).open(start)
-    assert caught.value.kind == "redirect" and "evil.example.com" in str(caught.value)
+    assert caught.value.kind == "redirect_off_gov" and caught.value.fallback and "evil.example.com" in str(caught.value)
+    assert caught.value.redirect_host == "evil.example.com" and caught.value.host == "data.gov.il"
+    assert caught.value.status == 301
     assert "secret" not in str(caught.value) and len(transport.requests) == 1
     assert not ckan.gov_host("gov.il.evil.com") and not ckan.gov_host("notgov.il") and ckan.gov_host("data.gov.il")
 
@@ -332,14 +335,69 @@ def test_the_datastore_keeps_the_fail_safes(gov, change, reason):
     assert status["status"] == "failed" and status["reason"] == reason
 
 
-def test_a_redirect_to_a_non_gov_host_fails_without_the_fallback(gov):
+GOOGLE = (302, "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fe.data.gov.il%2Fx&sig=abc")
+
+
+def test_a_redirect_off_gov_il_is_not_followed_and_falls_back_to_the_datastore(gov, tmp_path):
     out, work = gov
-    http = FallbackCkan(bodies(), file_answers={PRICES: [(302, "https://cdn.example.net/prices.csv?x=1")]},
-                        datastore={PRICES: store_of(bodies()[PRICES])})
+    build(tmp_path / "by-file", tmp_path / "w1", FakeCkan(bodies()), names=["new_car_prices"])
+    http = FallbackCkan(bodies(), file_answers={PRICES: [GOOGLE]}, datastore={PRICES: store_of(bodies()[PRICES])})
+    outcome = build(out, work, http, names=["new_car_prices"])
+    status = outcome["status"][0]
+    assert status["status"] == "built"
+    assert [u for u, _ in http.transport.requests] == [file_url(PRICES)]               # Google is never requested
+    res = status["resources"][0]
+    assert res["access_method"] == "datastore_api" and res["file_http_status"] == 302
+    assert res["file_redirect_host"] == "accounts.google.com"
+    entry = outcome["manifest"]["datasets"]["new_car_prices"]["resources"][0]
+    assert entry["access_method"] == "datastore_api"
+    attempt = entry["file_attempt"]
+    assert {"http_status": attempt["http_status"], "redirect_host": attempt["redirect_host"]} == \
+        {"http_status": 302, "redirect_host": "accounts.google.com"}
+    assert "sig=abc" not in json.dumps(entry) and "ServiceLogin" not in json.dumps(entry)
+    assert (out / "new_car_prices.sqlite.gz").read_bytes() == \
+        (tmp_path / "by-file" / "new_car_prices.sqlite.gz").read_bytes()
+    assert "redirect to accounts.google.com" in B.exit_summary(outcome["status"])["text"]
+
+
+def test_a_redirect_off_gov_il_without_the_datastore_fails_with_both_reasons(gov):
+    out, work = gov
+    http = FallbackCkan(bodies(), file_answers={PRICES: [GOOGLE]})
     status = build(out, work, http, names=["new_car_prices"])["status"][0]
     assert status["status"] == "failed" and status["reason"] == "resource_unavailable"
-    assert "cdn.example.net" in status["detail"] and "x=1" not in status["detail"]
+    assert status["detail"] == ("file: download: HTTP 302 from files.test: redirect to a non-gov host "
+                                "accounts.google.com refused; datastore: not used (datastore_active is not true)")
     assert http.datastore_requests == [] and not (out / "new_car_prices.sqlite.gz").exists()
+
+
+def test_a_redirect_off_gov_il_and_a_failed_datastore_fail_with_both_reasons(gov):
+    out, work = gov
+    store = {**store_of(bodies()[PRICES]), "total": 8}
+    http = FallbackCkan(bodies(), file_answers={PRICES: [GOOGLE]}, datastore={PRICES: store})
+    status = build(out, work, http, names=["new_car_prices"])["status"][0]
+    assert status["status"] == "failed" and status["reason"] == "datastore_incomplete"
+    assert status["detail"].startswith("file: download: HTTP 302 from files.test: redirect to a non-gov host "
+                                       "accounts.google.com refused; datastore: total 8, 7 rows read")
+
+
+def test_every_survival_resource_is_tried_and_reported_but_nothing_is_built_unless_all_succeed(gov):
+    out, work = gov
+    files = bodies()
+    # the first cancelled file is redirected to Google without a datastore; the other three are fine
+    http = FallbackCkan(files, file_answers={CANCELLED[0]: [GOOGLE]})
+    outcome = build(out, work, http, names=["road_survival"])
+    status = outcome["status"][0]
+    assert status["status"] == "failed" and status["resource_id"] == CANCELLED[0]
+    assert status["detail"].startswith(f"1 of 4 resources failed: [{CANCELLED[0]}] resource_unavailable: file: "
+                                       "download: HTTP 302")
+    assert [(r["resource_id"], r["status"]) for r in status["resources"]] == \
+        [(CANCELLED[0], "failed"), (CANCELLED[1], "ok"), (CANCELLED[2], "ok"), (ACTIVE, "ok")]
+    assert [r["rows"] for r in status["resources"]] == [None, 10, 0, 300]
+    assert status["resources"][0]["file_redirect_host"] == "accounts.google.com"
+    assert not (out / "road_survival.sqlite.gz").exists()
+    text = B.exit_summary(outcome["status"])["text"]
+    assert text.count(" via file_download") == 4 and "redirect to accounts.google.com" in text
+    assert "failed: resource_unavailable" in B.report(outcome)
 
 
 # --- D4: the pull-request step ---------------------------------------------------------------------------------------
@@ -361,8 +419,9 @@ def test_every_dataset_failed_skips_the_pull_request_step(gov, tmp_path, monkeyp
     outputs, summary, _ = _summarize(tmp_path, out / "build_status.json", monkeypatch)
     assert outputs["create_pr"] == "false" and outputs["built"] == "0" and outputs["failed"] == "3"
     assert "every dataset failed; the pull-request step is skipped" in summary
-    for name in ("new_car_prices", "road_survival", "recall_notices"):
-        assert f"- {name}: failed: resource_unavailable (download: HTTP 403 from files.test" in summary
+    for name in ("new_car_prices", "recall_notices"):
+        assert f"- {name}: failed: resource_unavailable (file: download: HTTP 403 from files.test" in summary
+    assert "- road_survival: failed: resource_unavailable (4 of 4 resources failed: " in summary
     assert "file HTTP status 403" in summary
     # no status file at all (the build crashed): skipped too
     outputs, summary, _ = _summarize(tmp_path, tmp_path / "missing.json", monkeypatch)
