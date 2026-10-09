@@ -236,10 +236,10 @@ def test_a_403_on_the_file_falls_back_to_the_datastore(gov, tmp_path):
     status = outcome["status"][0]
     assert status["status"] == "built"
     res = status["resources"][0]
-    assert res["access_method"] == "datastore_api" and res["file_http_status"] == 403 and res["rows"] == 7
+    assert res["access_method"] == "datastore_api" and res["file_http_status"] == 403 and res["rows"] == 6
     assert "HTTP 403" in res["file_error"] and "files.test" in res["file_error"] and "\x00" not in res["file_error"]
     entry = outcome["manifest"]["datasets"]["new_car_prices"]["resources"][0]
-    assert entry["access_method"] == "datastore_api" and entry["file_size"] is None and entry["row_count"] == 7
+    assert entry["access_method"] == "datastore_api" and entry["file_size"] is None and entry["row_count"] == 6
     assert entry["source_url"] == f"https://data.gov.il/api/3/action/datastore_search?resource_id={PRICES}"
     assert entry["file_attempt"]["http_status"] == 403 and entry["file_attempt"]["host"] == "files.test"
     projected = []
@@ -377,7 +377,7 @@ def test_a_redirect_off_gov_il_and_a_failed_datastore_fail_with_both_reasons(gov
     status = build(out, work, http, names=["new_car_prices"])["status"][0]
     assert status["status"] == "failed" and status["reason"] == "datastore_incomplete"
     assert status["detail"].startswith("file: download: HTTP 302 from files.test: redirect to a non-gov host "
-                                       "accounts.google.com refused; datastore: total 8, 7 rows read")
+                                       "accounts.google.com refused; datastore: total 8, 6 rows read")
 
 
 def test_every_survival_resource_is_tried_and_reported_but_nothing_is_built_unless_all_succeed(gov):
@@ -551,12 +551,12 @@ def test_the_estimate_check_is_recorded_in_the_report(gov):
             body = super().get_json(url, retries)
             if "datastore_search" in url and "sort=" in url:
                 body["result"]["total_was_estimated"] = True
-                body["result"]["total"] = 7
+                body["result"]["total"] = 6
             return body
     http = Estimated(bodies(), file_answers={PRICES: [FORBIDDEN]}, datastore={PRICES: store})
     outcome = build(out, work, http, names=["new_car_prices"])
     res = outcome["manifest"]["datasets"]["new_car_prices"]["resources"][0]
     assert res["total_check"] == "estimate_within_2pct" and res["total_was_estimated"] is True
-    assert res["datastore_total"] == 7
+    assert res["datastore_total"] == 6
     text = B.report(outcome)
     assert "total check estimate_within_2pct" in text and "| estimate_within_2pct |" in text

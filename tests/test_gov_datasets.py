@@ -46,14 +46,15 @@ PRICE_HEADER = ["tozeret_cd", "degem_cd", "shnat_yitzur", "mehir", "kinuy_mishar
                 "sug_degem", "tozeret_nm", "degem_nm", "extra_column"]
 
 
-def price_body(extra_rows: int = 0) -> bytes:
+def price_body(extra_rows: int = 0, broken: bool = False) -> bytes:
     rows = [[413, 100, 2022, 119900, "COROLLA", 7, "יבואן א", "P", "טויוטה יפן", "ZWE211L", "x"],
             [413, 100, 2022, 129900, "COROLLA", 7, "יבואן א", "P", "טויוטה יפן", "ZWE211L", "x"],
             [413, 100, 2022, 139900, "COROLLA", 7, "יבואן א", "P", "טויוטה יפן", "ZWE211L", "x"],
             [413, 101, 2022, 99900, "YARIS", 7, "יבואן א", "P", "טויוטה יפן", "KSP210", "x"],
             [413, 101, 2022, 99900, "YARIS", 7, "יבואן א", "P", "טויוטה יפן", "KSP210", "x"],    # duplicate: kept
-            [413, 102, 2017, 150000, "C-HR", 7, "יבואן א", "P", "טויוטה יפן", "NGX10", "x"],
-            ["", 5, 2020, 1, "BROKEN", "", "", "", "", "", ""]]
+            [413, 102, 2017, 150000, "C-HR", 7, "יבואן א", "P", "טויוטה יפן", "NGX10", "x"]]
+    if broken:                                                                    # no code key: unkeyed
+        rows.append(["", 5, 2020, 1, "BROKEN", "", "", "", "", "", ""])
     rows += [[413, 900 + n, 2021, 100000 + n, "FILL", 7, "יבואן א", "P", "טויוטה יפן", "F", "x"]
              for n in range(extra_rows)]
     return _csv(PRICE_HEADER, rows)
@@ -183,7 +184,7 @@ def test_the_file_url_comes_from_resource_show(gov):
     for key in ("resource_id", "source_url", "downloaded_at", "source_last_modified", "license", "row_count",
                 "file_size", "sha256", "schema_hash", "ingestion_version"):
         assert res.get(key) not in (None, ""), key
-    assert res["license"] == "Other (Open)" and res["row_count"] == 7
+    assert res["license"] == "Other (Open)" and res["row_count"] == 6
     assert (out / "new_car_prices.sqlite.gz").is_file() and not list(out.glob("*.raw"))
     assert not list((work / "raw").glob("*")) if (work / "raw").exists() else True
 
@@ -282,7 +283,7 @@ def test_a_single_price_is_a_value_and_duplicates_are_counted(gov, tmp_path):
     path = SN.materialize("new_car_prices")
     assert SN.query(path, "SELECT rows FROM prices WHERE degem_cd = 101") == [{"rows": 2}]
     stats = outcome["manifest"]["datasets"]["new_car_prices"]["stats"]
-    assert stats["distinct_price_buckets"] == {"1": 2, "2-3": 1, ">3": 0} and stats["unkeyed_rows"] == 1
+    assert stats["distinct_price_buckets"] == {"1": 2, "2-3": 1, ">3": 0} and stats["unkeyed_rows"] == 0
     assert stats["multi_price_examples"][0]["kinuy_mishari"] == ["COROLLA"]
 
 

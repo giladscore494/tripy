@@ -23,6 +23,8 @@ and the build writes {"dataset", "status": "failed", "reason", "previous_snapsho
     datastore_incomplete       the datastore fallback read fewer / more rows than its first page's exact `total` (or
                                the datastore_search_sql COUNT(*)); an estimated total without an exact count: more
                                than 2 % off, or the last page was not short
+    date_unparsed              under 95 % of a resource's rows parse a date column the dataset needs (road_survival)
+    unkeyed_rows               over 1 % of a resource's rows have no code key (road_survival, new_car_prices)
 
 The other datasets continue.
 """
@@ -34,13 +36,15 @@ from typing import Any
 
 FAIL_REASONS = ("resource_unavailable", "licence_changed", "format_changed", "required_column_missing",
                 "row_count_drop", "html_body",
-                "datastore_incomplete")
+                "datastore_incomplete", "date_unparsed", "unkeyed_rows")
 
 
 class DatasetFailed(RuntimeError):
-    def __init__(self, reason: str, detail: str = "", resource_id: str | None = None):
+    def __init__(self, reason: str, detail: str = "", resource_id: str | None = None,
+                 report_lines: list[str] | None = None):
         super().__init__(f"{reason}: {detail}")
         self.reason, self.detail, self.resource_id = reason, detail, resource_id
+        self.report_lines = report_lines or []
 
 
 def utc_now() -> str:
@@ -52,7 +56,7 @@ def failure(dataset: str, exc: DatasetFailed, previous_exists: bool = True) -> d
     out: dict[str, Any] = {"dataset": dataset, "status": "failed", "reason": exc.reason,
                            "previous_snapshot_preserved": True}
     if exc.detail:
-        out["detail"] = exc.detail[:500]
+        out["detail"] = exc.detail[:4000]
     if exc.resource_id:
         out["resource_id"] = exc.resource_id
     if not previous_exists:
