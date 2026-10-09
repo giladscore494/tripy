@@ -123,7 +123,19 @@ def build_prices(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[st
 def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
     agg = G3.Survival()
     resources = _ingest(ctx, name, spec, prev, agg.add)
-    state["survival"] = agg
+    state["survival"] = agg                     # the registry names (G2) and kinuy_mishari (G1 report) stay usable
+    date_min = float(spec.get("date_parsed_min", G3.DATE_PARSED_MIN))
+    findings = G3.checks(agg, date_min, float(spec.get("unkeyed_max", G3.UNKEYED_MAX)))
+    if findings:
+        first = findings[0]
+        lines = ["", "Fail-safe findings (patterns only: digits -> 9, letters -> a):", "",
+                 "| resource | reason | detail | 10 patterns |", "|---|---|---|---|"]
+        lines += [f"| `{f['resource_id']}` | {f['reason']} | {f['detail']} | "
+                  f"{', '.join(f'`{p}` ({n})' for p, n in f['patterns']) or '—'} |" for f in findings]
+        raise P.DatasetFailed(first["reason"], "; ".join(f"[{f['resource_id']}] {f['detail']}" for f in findings),
+                              first["resource_id"], lines=lines + G3.diagnostics_lines(agg),
+                              findings=[{k: f[k] for k in ("reason", "resource_id", "column", "patterns")}
+                                        for f in findings])
     coverage = agg.year_coverage()
     basis = G3.BASIS_MODEL_YEAR if coverage >= float(spec.get("year_coverage_min", 0.95)) else G3.BASIS_FIRST_ROAD
     active = next((r for r in resources if r.get("role") == "active"), {})
@@ -135,7 +147,7 @@ def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[
         ref_ym = max(dated) if dated else 0
     low, high = (int(a) for a in spec.get("ages") or (3, 20))
     min_size = int(spec.get("min_cohort_size", 200))
-    rows, stats = G3.cohorts(agg, basis, ref_ym, min_size, (low, high))
+    rows, stats = G3.cohorts(agg, basis, ref_ym, min_size, (low, high), date_min)
     map_rows = G3.model_year_map(agg)
     min_share = float(spec.get("model_year_min_share", 0.9))
     lines, summary = G3.report(agg, coverage, basis, rows, stats, map_rows, min_size, min_share, ref_ym)
@@ -240,7 +252,7 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
             results[name] = record
             sections[name] = [f"- **failed**: {exc.reason}" + (f" ({exc.detail})" if exc.detail else "")
                               + (f" [resource {exc.resource_id}]" if exc.resource_id else ""),
-                              "- the previous snapshot and its manifest entry are kept"]
+                              "- the previous snapshot and its manifest entry are kept", *exc.lines]
             if prev_entry:
                 prev_entry["build_status"] = "failed"
             prev_entry["last_attempt"] = {"at": attempt_at, "status": "failed", "reason": exc.reason,
@@ -258,6 +270,12 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
                          "resources": attempts(name)})
         results[name] = {"status": "built", **entry}
         sections[name] = lines
+    if state.get("prices") is not None and state.get("survival") is not None and \
+            (results.get("new_car_prices") or {}).get("status") == "built":
+        # F3: the price per model name over the active registry's (key, kinuy_mishari) pairs
+        lines, stats = G1.name_resolution(state["prices"], state["survival"].registry_names)
+        sections["new_car_prices"] = [*sections.get("new_car_prices", []), "", *lines]
+        entries["new_car_prices"].setdefault("stats", {})["name_resolution"] = stats
     manifest = {"version": SN.MANIFEST_VERSION, "built_at": now(), "run_url": run_url,
                 "config_version": cfg.get("version"), "ingestion_version": ctx.ingestion_version,
                 "datasets": {k: entries[k] for k in sorted(entries)}}

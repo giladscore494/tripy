@@ -5,8 +5,11 @@ catalogue's variant identity includes the trim: one key can carry several prices
 is dropped: every distinct (mehir, kinuy_mishari, shem_yevuan, + the kept columns) of a key is stored with its row
 count. A row whose key or price does not parse is counted (`unkeyed`), never stored.
 
-Facts (facts.py): one distinct mehir for the key -> {value}; several -> only {range: [min, max], n_prices}, never one
-value; `original_importer` only when the key has a single shem_yevuan. A list price, never a transaction price.
+Facts (facts.py): the key's degem_cd is not unique per model (19 / 10 / 2007: A3 and Q7), so the rows are first
+filtered by model name (`by_model_name`): the rows whose norm_model(kinuy_mishari) equals the catalogue row's; none ->
+the key's rows only when every row carries one single kinuy_mishari, else withheld `price_model_ambiguous`. Then one
+distinct mehir -> {value}; several -> only {range: [min, max], n_prices}, never one value; `original_importer` only
+when those rows have a single shem_yevuan. A list price, never a transaction price.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from .names import to_int
+from .names import norm_model, to_int, to_number
 
 DATASET = "new_car_prices"
 COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "shnat_yitzur": "INTEGER", "mehir": "INTEGER",
@@ -37,7 +40,8 @@ class Prices:
     def add(self, row: dict) -> None:
         self.rows += 1
         key = (to_int(row.get("tozeret_cd")), to_int(row.get("degem_cd")), to_int(row.get("shnat_yitzur")))
-        price = to_int(row.get("mehir"))
+        number = to_number(row.get("mehir"))            # a price may be stated with thousands separators
+        price = int(number) if number is not None and number.is_integer() else None
         if None in key or price is None or price <= 0:
             self.unkeyed += 1
             return
@@ -67,6 +71,51 @@ class Prices:
             if group[8] and group[4]:
                 out[(group[8], group[4])] += n
         return out
+
+
+BY_NAME, SINGLE_NAME_KEY, AMBIGUOUS = "name", "single_name_key", "price_model_ambiguous"
+
+
+def by_model_name(rows: list, kinuy: Any, name_of) -> tuple[str, list]:
+    """(how, rows) of one key for a catalogue model name: `name` (the rows of that normalized kinuy_mishari),
+    `single_name_key` (no row of that name, and every row of the key carries one single kinuy_mishari: all of them) or
+    `price_model_ambiguous` (no rows)."""
+    want = norm_model(kinuy)
+    if want:
+        matched = [r for r in rows if norm_model(name_of(r)) == want]
+        if matched:
+            return BY_NAME, matched
+    if len({norm_model(name_of(r)) for r in rows}) == 1:
+        return SINGLE_NAME_KEY, list(rows)
+    return AMBIGUOUS, []
+
+
+def name_resolution(agg: Prices, registry_names: Counter) -> tuple[list[str], dict]:
+    """F3: keys whose rows carry more than one kinuy_mishari, and how the registry's (key, kinuy_mishari) pairs that
+    join the price list resolve (by name / by a single-name key / withheld): distinct pairs and vehicles."""
+    by_key = agg.by_key()
+    multi = sum(1 for groups in by_key.values() if len({norm_model(g[1]) for g in groups}) > 1)
+    pairs = {BY_NAME: 0, SINGLE_NAME_KEY: 0, AMBIGUOUS: 0}
+    vehicles = dict(pairs)
+    for (tc, dc, shnat, kinuy), n in registry_names.items():
+        groups = by_key.get((tc, dc, shnat))
+        if not groups:
+            continue
+        how, _ = by_model_name(groups, kinuy, lambda g: g[1])
+        pairs[how] += 1
+        vehicles[how] += n
+
+    def pct(part: int, counts: dict) -> str:
+        total = sum(counts.values())
+        return f"{part / total * 100:.1f} %" if total else "—"
+    stats = {"keys_multi_kinuy": multi, "registry_pairs": pairs, "registry_vehicles": vehicles}
+    lines = [f"- keys whose rows carry more than one kinuy_mishari: {multi} of {len(by_key)}",
+             f"- the price per model name over the registry's (tozeret_cd, degem_cd, shnat_yitzur, kinuy_mishari) "
+             f"pairs that join the price list: {sum(pairs.values())} pairs ({sum(vehicles.values())} vehicles):",
+             "", "| resolved | pairs | share | vehicles | share |", "|---|---|---|---|---|"]
+    lines += [f"| {how} | {pairs[how]} | {pct(pairs[how], pairs)} | {vehicles[how]} | {pct(vehicles[how], vehicles)} |"
+              for how in (BY_NAME, SINGLE_NAME_KEY, AMBIGUOUS)]
+    return lines, stats
 
 
 def tables(agg: Prices) -> dict:

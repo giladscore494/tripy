@@ -59,6 +59,8 @@
    "ages": [3, 20],
    "year_coverage_min": 0.95,
    "model_year_min_share": 0.9,
+   "date_parsed_min": 0.95,
+   "unkeyed_max": 0.01,
    "columns": {
     "required": ["tozeret_cd", "degem_cd", "moed_aliya_lakvish"],
     "required_by_role": {"cancelled": ["bitul_dt"]},

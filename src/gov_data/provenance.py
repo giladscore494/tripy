@@ -38,9 +38,13 @@ FAIL_REASONS = ("resource_unavailable", "licence_changed", "format_changed", "re
 
 
 class DatasetFailed(RuntimeError):
-    def __init__(self, reason: str, detail: str = "", resource_id: str | None = None):
+    """A fail-safe stop. `lines`: report lines shown under the failed dataset (diagnostic tables: patterns, counts)."""
+
+    def __init__(self, reason: str, detail: str = "", resource_id: str | None = None,
+                 lines: list[str] | None = None, findings: list[dict] | None = None):
         super().__init__(f"{reason}: {detail}")
         self.reason, self.detail, self.resource_id = reason, detail, resource_id
+        self.lines, self.findings = list(lines or []), list(findings or [])
 
 
 def utc_now() -> str:
@@ -55,6 +59,8 @@ def failure(dataset: str, exc: DatasetFailed, previous_exists: bool = True) -> d
         out["detail"] = exc.detail[:500]
     if exc.resource_id:
         out["resource_id"] = exc.resource_id
+    if exc.findings:
+        out["findings"] = exc.findings
     if not previous_exists:
         out["note"] = "no previous snapshot existed; nothing is served for this dataset"
     return out

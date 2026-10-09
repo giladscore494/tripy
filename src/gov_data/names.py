@@ -1,13 +1,18 @@
 """Exact normalizations shared by the builds and the facts side. Never fuzzy, never a model.
 
-    to_int / to_number   a numeric cell ("2019", "2019.0", " 145,900 ") or None
+    to_number            a numeric cell ("2019", "2019.0", " 145,900 ") or None
+    to_int               a code / year cell: 588, "588", 588.0, "588.0", " 588 " -> 588; anything else -> None
+                         ("588.5", "5,88", "5e2", "-1", "abc", True)
     norm_model           a model name as compared: NFKC, upper case, every non letter / digit a space, collapsed
                          ("C-HR" -> "C HR"; "CHR" stays "CHR": not equal)
     makes_of_name        the canonical make(s) of a manufacturer name through data/make_canonical.json: the `tozar`
                          table (a registry tozeret_nm such as "טויוטה יפן" counts as its tozar when the tozar is a
                          whole-word prefix of it: the country suffix of the registry), else a Latin spelling's
                          normalization (makes.canonical_of); only the plain makes of a tozar, never a model-gated one
-    year_of / ym_of      the year / (year, month) of a date cell ("2015-3", "2015-03-01", "01/03/2015", "201503")
+    year_of / ym_of      the year / (year, month) of a date cell: YYYY-MM, YYYY-M, YYYYMM (int or text), YYYYMMDD,
+                         YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS[.fff][Z] (or a space before the time), DD/MM/YYYY
+    shape                the format pattern of a cell for the build reports: digits -> 9, letters -> a, the rest as
+                         stated ("2019-03-12T00:00:00" -> "9999-99-99a99:99:99"); never the value itself
 """
 
 from __future__ import annotations
@@ -21,6 +26,8 @@ _YM = re.compile(r"^\s*(\d{4})[-/.](\d{1,2})(?:[-/.]\d{1,2})?(?:[ T].*)?\s*$")
 _DMY = re.compile(r"^\s*(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[ T].*)?\s*$")
 _COMPACT = re.compile(r"^\s*(\d{4})(\d{2})(\d{2})?\s*$")
 _YEAR = re.compile(r"^\s*(\d{4})(?:\.0+)?\s*$")
+_INT = re.compile(r"^\s*(\d+)(?:\.0+)?\s*$")
+SHAPE_MAX = 32
 
 
 def to_number(value: Any) -> float | None:
@@ -37,8 +44,21 @@ def to_number(value: Any) -> float | None:
 
 
 def to_int(value: Any) -> int | None:
-    number = to_number(value)
-    return int(number) if number is not None and float(number).is_integer() else None
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value == value and value >= 0 and value.is_integer() else None
+    m = _INT.match(str(value))
+    return int(m.group(1)) if m else None
+
+
+def shape(value: Any) -> str:
+    """The format pattern of a cell (digits -> 9, letters of any script -> a), at most SHAPE_MAX characters."""
+    text = str(value)
+    out = "".join("9" if ch.isdigit() else "a" if ch.isalpha() else ch for ch in text[:SHAPE_MAX])
+    return out + ("…" if len(text) > SHAPE_MAX else "")
 
 
 def norm_model(value: Any) -> str:

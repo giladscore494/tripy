@@ -15,7 +15,12 @@ Matching, exact only (no fuzzy matching, no model):
     2. model           data/gov/recall_model_map.json, reviewed: (canonical make, DEGEM normalized) -> catalogue
                        kinuy_mishari values. The build adds an entry only when a catalogue kinuy_mishari of that make
                        is exactly equal to DEGEM after normalization (names.norm_model); everything else is listed
-                       under `unresolved` for the reviewer
+                       under `unresolved` for the reviewer. A DEGEM naming several models ("X5 X6", "VITO,VIANO",
+                       "F 150 F 250 F 350") is split on , / ; and whitespace (norm_model) only when the WHOLE of it
+                       segments into catalogue models of that make, each equal after normalization (a model may span
+                       several words: GRAND CHEROKEE, C HR, TOWN AND COUNTRY); each model then proposes its own entry
+                       (origin exact_normalized_equality, `split_token`). Any word left over: unresolved (no partial
+                       match)
     3. production      BUILD_BEGIN_A – BUILD_END_A overlapping the variant's model year (both years stated, else the
                        variant's recalls are not resolved)
 A notice without a resolved make or a map entry is match_status `unresolved`.
@@ -105,12 +110,35 @@ def load_map(path: Path) -> dict:
 
 
 def map_pairs(data: dict) -> dict[tuple[str, str], list[str]]:
-    """{(make, DEGEM normalized): [catalogue kinuy_mishari]} of the reviewed map."""
-    out: dict[tuple[str, str], list[str]] = {}
+    """{(make, DEGEM normalized): [catalogue kinuy_mishari]} of the reviewed map (the entries of one multi-model DEGEM,
+    one per split token, merged)."""
+    out: dict[tuple[str, str], set[str]] = {}
     for entry in data.get("entries") or []:
         if isinstance(entry, dict) and entry.get("make") and entry.get("degem") and entry.get("kinuy_mishari"):
-            out[(str(entry["make"]), norm_model(entry["degem"]))] = [str(k) for k in entry["kinuy_mishari"]]
-    return out
+            out.setdefault((str(entry["make"]), norm_model(entry["degem"])), set()).update(
+                str(k) for k in entry["kinuy_mishari"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def split_models(degem: str, models: dict[str, set]) -> list[str] | None:
+    """The catalogue models (normalized) a multi-model DEGEM names, in order, when its words segment ENTIRELY into
+    catalogue models of the make (fewest models first, then the first in order); None when any word is left over or the
+    DEGEM is one model. Exact equality only."""
+    words = norm_model(degem).split()
+    if len(words) < 2 or not models:
+        return None
+    longest = max(len(k.split()) for k in models)
+    best: dict[int, list[str] | None] = {len(words): []}
+    for start in range(len(words) - 1, -1, -1):
+        options = []
+        for end in range(start + 1, min(len(words), start + longest) + 1):
+            token = " ".join(words[start:end])
+            rest = best.get(end)
+            if token in models and rest is not None:
+                options.append([token, *rest])
+        best[start] = min(options, key=lambda o: (len(o), o)) if options else None
+    found = list(dict.fromkeys(best[0] or []))
+    return found if len(found) >= 2 else None
 
 
 def propose_map(agg: Recalls, previous: dict, models: dict[str, dict[str, set]], table: dict | None = None) -> dict:
@@ -133,10 +161,17 @@ def propose_map(agg: Recalls, previous: dict, models: dict[str, dict[str, set]],
             entries.append({"make": make, "degem": degem, "kinuy_mishari": exact, "origin": "exact_normalized_equality"})
             known[(make, degem)] = exact
             continue
+        tokens = split_models(degem, models.get(make) or {}) if make and degem else None
+        if tokens:
+            for token in tokens:
+                entries.append({"make": make, "degem": degem, "split_token": token,
+                                "kinuy_mishari": sorted(models[make][token]), "origin": "exact_normalized_equality"})
+            known[(make, degem)] = sorted({k for t in tokens for k in models[make][t]})
+            continue
         reason = "make_unresolved" if not make else "degem_empty" if not degem else "no_exact_catalogue_model"
         unresolved.append({"make": make, "tozar_teur": teur[(make, degem)].most_common(1)[0][0] or None,
                            "degem": degem or None, "notice_rows": n, "reason": reason})
-    entries.sort(key=lambda e: (str(e.get("make")), norm_model(e.get("degem"))))
+    entries.sort(key=lambda e: (str(e.get("make")), norm_model(e.get("degem")), str(e.get("split_token") or "")))
     unresolved.sort(key=lambda u: (-u["notice_rows"], str(u["make"]), str(u["degem"])))
     return {"_about": "Reviewed mapping (canonical make, DEGEM normalized) -> catalogue kinuy_mishari values for the "
                       "recall notices (src/gov_data/recalls.py). The build only ADDS entries whose DEGEM equals a "
@@ -144,7 +179,8 @@ def propose_map(agg: Recalls, previous: dict, models: dict[str, dict[str, set]],
                       "the pull request is the review. A reviewer may add entries by hand (origin reviewer) or delete "
                       "a wrong one. `unresolved` lists every (make, DEGEM) the build could not map, largest first: "
                       "no recall is served for a model until its entry is here.",
-            "version": MAP_VERSION, "entries": entries, "unresolved": unresolved}
+            "version": MAP_VERSION, "entries": entries, "unresolved": unresolved,
+            "entries_before": len([e for e in previous.get("entries") or [] if isinstance(e, dict)])}
 
 
 def table_rows(agg: Recalls, pairs: dict, code_key: bool, table: dict | None = None) -> list[tuple]:
@@ -163,12 +199,17 @@ def report(agg: Recalls, agreement: dict, code_key: bool, new_map: dict, min_rat
     stats = {"rows": agg.count, "distinct_rows": len(agg.rows),
              "recall_ids": len({k[0] for k in agg.rows if k[0]}), "tozar_cd_agreement": {
                  k: agreement[k] for k in ("codes", "agreeing", "rate")}, "tozar_cd_used_as_key": code_key,
-             "map_entries": len(new_map.get("entries") or []), "unresolved_models": len(unresolved)}
+             "map_entries": len(new_map.get("entries") or []), "unresolved_models": len(unresolved),
+             "map_entries_before": new_map.get("entries_before"),
+             "split_entries": sum(1 for e in new_map.get("entries") or [] if e.get("split_token")),
+             "split_degem": len({(e["make"], e["degem"]) for e in new_map.get("entries") or [] if e.get("split_token")})}
     lines = [f"- rows {agg.count} ({len(agg.rows)} distinct), recall ids {stats['recall_ids']}",
              f"- TOZAR_CD agreement with the registry tozeret_cd (same canonical make): {agreement['agreeing']} of "
              f"{agreement['codes']} codes = {agreement['rate'] * 100:.1f} % -> "
              + ("**used as a make key**" if code_key else f"not used as a key (needs >= {min_rate * 100:.0f} %)"),
-             f"- model map: {stats['map_entries']} entries; unresolved (make, DEGEM): {len(unresolved)}"]
+             f"- model map: {stats['map_entries']} entries (before this build: {stats['map_entries_before']}; "
+             f"{stats['split_entries']} of them from {stats['split_degem']} multi-model DEGEM split into catalogue "
+             f"models); unresolved (make, DEGEM): {len(unresolved)}"]
     if unresolved:
         lines += ["", "Unresolved models (top 50 by notice rows):", "",
                   "| make | TOZAR_TEUR | DEGEM | notice rows | reason |", "|---|---|---|---|---|"]

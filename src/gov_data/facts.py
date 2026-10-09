@@ -4,7 +4,9 @@ Every field carries source, source_level "government_dataset", licence (as the p
 resource_id, identity_level and basis. Only a field with a value appears; everything else is a `withheld` reason
 (owner diagnostics only).
 
-    original_new_price_ils   key (tozeret_cd, degem_cd, shnat_yitzur). One distinct price -> {value, unit ILS,
+    original_new_price_ils   key (tozeret_cd, degem_cd, shnat_yitzur), then the rows of the catalogue row's
+                             kinuy_mishari (prices.by_model_name: by name, else a single-name key, else withheld
+                             price_model_ambiguous: one degem_cd can name A3 and Q7). One distinct price -> {value, unit ILS,
                              label_he}; several (trims or updates: the list has neither) -> ONLY {range: [min, max],
                              n_prices}, never one value. The only field allowed a `range` instead of a `value`. A list
                              price of a new car, never a transaction price.
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import json
 from . import SOURCE_LEVEL, SOURCES
+from . import prices as G1
 from . import recalls as G2
 from . import snapshot as SN
 from . import survival as G3
@@ -56,11 +59,20 @@ def price_facts(row: dict) -> tuple[dict, list[dict]]:
         return {}, [{"source": SOURCES[dataset], "field": "original_new_price_ils", "reason": "gov_snapshot_missing"}]
     if None in key:
         return {}, [{"source": SOURCES[dataset], "field": "original_new_price_ils", "reason": "no_government_key"}]
-    rows = SN.query(path, "SELECT mehir, shem_yevuan, rows FROM prices WHERE tozeret_cd = ? AND degem_cd = ? AND "
-                          "shnat_yitzur = ?", key)
+    rows = SN.query(path, "SELECT mehir, shem_yevuan, kinuy_mishari, rows FROM prices WHERE tozeret_cd = ? AND "
+                          "degem_cd = ? AND shnat_yitzur = ?", key)
     if not rows:
         return {}, [{"source": SOURCES[dataset], "field": "original_new_price_ils", "reason": "not_in_price_list"}]
-    base = _provenance(dataset, _entry(dataset), "model_year", "tozeret_cd+degem_cd+shnat_yitzur")
+    how, rows = G1.by_model_name(rows, row.get("kinuy_mishari"), lambda r: r.get("kinuy_mishari"))
+    if how == G1.AMBIGUOUS:
+        names = sorted({str(r["kinuy_mishari"]) for r in SN.query(
+            path, "SELECT DISTINCT kinuy_mishari FROM prices WHERE tozeret_cd = ? AND degem_cd = ? AND shnat_yitzur = ?",
+            key) if r.get("kinuy_mishari")})
+        return {}, [{"source": SOURCES[dataset], "field": "original_new_price_ils", "reason": G1.AMBIGUOUS,
+                     "detail": "the key's rows name several models and none is the catalogue model", "values": names}]
+    basis = "tozeret_cd+degem_cd+shnat_yitzur+kinuy_mishari" if how == G1.BY_NAME else \
+        "tozeret_cd+degem_cd+shnat_yitzur (one kinuy_mishari)"
+    base = _provenance(dataset, _entry(dataset), "model_year", basis)
     prices = sorted({int(r["mehir"]) for r in rows})
     price = {**base, "unit": "ILS", "label_he": PRICE_LABEL_HE, "price_type": "new_car_list_price"}
     if len(prices) == 1:
@@ -160,6 +172,9 @@ def survival_facts(row: dict) -> tuple[dict, list[dict]]:
         return hold("no_cohort")
     cohort = rows[0]
     if cohort.get("shares") is None:
+        if int(cohort["cohort_size"]) >= int(meta.get("min_cohort_size") or 0):
+            return hold("undated_cancellations", detail=f"{cohort.get('dated_cancelled')} of "
+                                                         f"{cohort.get('cancelled_count')} cancellations dated")
         return hold("small_cohort", detail=f"cohort_size {cohort['cohort_size']} < {meta.get('min_cohort_size')}")
     value = _clean({"cohort_size": int(cohort["cohort_size"]),
                     "cancelled_share_by_age": json.loads(cohort["shares"]),
