@@ -44,8 +44,10 @@ jobs:
     env:
       DATASETS: ${{ inputs.datasets || 'all' }}
       GOV_DATA_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      GOV_WORK: ${{ runner.temp }}/gov-work
     steps:
+      # the runner context is not available in the job-level env, so the work folder is set by the first step
+      - name: Work folder on the runner disk
+        run: echo "GOV_WORK=$RUNNER_TEMP/gov-work" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
