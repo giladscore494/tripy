@@ -15,6 +15,14 @@ Open-data facts (source = the dataset; data/facts_admission.json):
     3. government wins: a field the government record has is never returned from open data (equal: government_wins,
        different: contradicts_government); a survivor row stating a government-overlap column (power, displacement,
        co2_wltp, seats) with another value is counted as contradicts_government
+    E1 / E2 (src/open_data/offers.py, data/facts_admission.json `agreement`, data/open_datasets.json
+       `consistency_bands`): before agreement a survivor's consumption value outside its fuel's CO2 / consumption band
+       is dropped (inconsistent_co2_consumption), and so is one whose own MIN / MAX is wider than the field's precision
+       (row_range_dropped); survivors then agree within the field's precision (the fact's value: the lower median,
+       rounded; `agreement` {rule, spread, n_values} on the fact when the spread is not 0). Each drop is a withheld entry
+    E3: a WLTP-year target without a government co2_wltp reads an entry's `wltp_no_gov_co2` requirements (curb weight:
+       type_code_match instead of co2_selected; basis `type_code_match (no government CO2)`); every other entry keeps
+       its `wltp` list (consumption keeps co2_selected)
     4. two open sources for one field: every other `offered` offer of the field equal within D1 (a number stated in
        the field's own unit equals only the same number; a converted one, e.g. CVS cm -> mm, within half its source
        step) -> the admitted fact is returned with the others as `corroborated_by`; any different -> neither
@@ -71,6 +79,9 @@ GOVERNMENT_FIELDS: tuple[tuple[str, str, str, str | None, str | None], ...] = (
     ("esc", "bakarat_yatzivut_ind", "bool", None, None),
 )
 SUBSET_BASIS = {"type_code+co2": "type_code_match+co2", "type_code": "type_code_match", "co2": "co2_match"}
+NO_GOV_CO2_CYCLE = "wltp_no_gov_co2"                     # E3: a WLTP-year target whose government row has no co2_wltp
+NO_GOV_CO2_BASIS = "type_code_match (no government CO2)"
+DROP_REASONS = ("inconsistent_co2_consumption", "row_range_dropped")
 
 
 def level_index(level: Any) -> int:
@@ -208,11 +219,15 @@ def _requirement(name: str, offer: dict, src: dict) -> bool:
     return False                                            # an unknown requirement never holds
 
 
-def _requires(entry: dict, cycle: str) -> list[str]:
+def _requires(entry: dict, cycle: str) -> tuple[list[str], str]:
+    """(the entry's requirements for the target cycle, the cycle they were read for). E3: an entry without a
+    `wltp_no_gov_co2` list uses its `wltp` list for that cycle."""
     require = entry.get("require") or []
-    if isinstance(require, dict):
-        require = require.get(cycle) or []
-    return [str(r) for r in require]
+    if not isinstance(require, dict):
+        return [str(r) for r in require], "any"
+    if cycle not in require and cycle == NO_GOV_CO2_CYCLE:
+        cycle = "wltp"
+    return [str(r) for r in require.get(cycle) or []], cycle
 
 
 def _offer_rows(offer: dict, src: dict) -> list[dict]:
@@ -299,11 +314,13 @@ def open_data_facts(result: dict, offers: list[dict], government: dict, adm: dic
     route = result.get("route") or "unknown"
     level = result.get("level")
     sources = result.get("sources") or {}
-    cycle = "nedc" if result.get("nedc_target") else "wltp"            # Y3: an EEA NEDC registration year
+    cycle = "nedc" if result.get("nedc_target") else \
+        NO_GOV_CO2_CYCLE if result.get("co2_key") == "unavailable" else "wltp"    # Y3: NEDC year; E3: no gov CO2
     entries = [e for e in adm.get("entries") or [] if isinstance(e, dict)]
     field_units = adm.get("fields") or {}
     withheld: list[dict] = []
     admitted: list[tuple[int, dict]] = []
+    no_gov_co2: set[int] = set()                                        # E3: offers admitted under wltp_no_gov_co2
 
     def hold(offer: dict, reason: str, **extra: Any) -> None:
         item = {"source": offer.get("source"), "field": offer.get("field"), "reason": reason, **extra}
@@ -314,6 +331,10 @@ def open_data_facts(result: dict, offers: list[dict], government: dict, adm: dic
         withheld.append(item)
 
     for offer in offers:
+        for reason in DROP_REASONS:                 # E1 / the row MIN / MAX rule: one entry per dropped value (debug)
+            for item in (offer.get("dropped") or {}).get(reason) or []:
+                withheld.append(_clean({"source": offer.get("source"), "field": offer.get("field"), "reason": reason,
+                                        **{k: item.get(k) for k in ("row_id", "value", "co2", "range")}}))
         never = _never(offer, route, sources, adm.get("never") or [])
         if never:
             hold(offer, "never_admitted", detail=never)
@@ -332,10 +353,13 @@ def open_data_facts(result: dict, offers: list[dict], government: dict, adm: dic
         if level_index(level) < level_index(entry.get("min_level") or "exact_technical_variant"):
             hold(offer, "below_admission_level", detail=f"match level {level}, entry min_level {entry.get('min_level')}")
             continue
-        failed = [r for r in _requires(entry, cycle) if not _requirement(r, offer, sources.get(offer["source"]) or {})]
+        requires, used = _requires(entry, cycle)
+        failed = [r for r in requires if not _requirement(r, offer, sources.get(offer["source"]) or {})]
         if failed:
             hold(offer, "requirement_unmet", detail=failed)
             continue
+        if used == NO_GOV_CO2_CYCLE:
+            no_gov_co2.add(id(offer))
         gov = (government.get(offer["field"]) or {}).get("value")
         if gov is not None:
             hold(offer, "government_wins" if _equal(offer.get("value"), gov, 0.0) else "contradicts_government",
@@ -364,9 +388,12 @@ def open_data_facts(result: dict, offers: list[dict], government: dict, adm: dic
         src = sources.get(chosen["source"]) or {}
         companion = chosen.get("companion") or {}
         unit_spec = field_units.get(field) or {}
+        provenance = _provenance(chosen, src, result)
+        if id(chosen) in no_gov_co2:
+            provenance["basis"] = NO_GOV_CO2_BASIS
         fact = {"value": chosen["value"], "unit": unit_spec.get("unit"),
                 "standard": unit_spec.get("standard") or next(iter(companion.values()), None),
-                "definition": chosen.get("definition"), **_provenance(chosen, src, result),
+                "definition": chosen.get("definition"), **provenance, "agreement": chosen.get("agreement"),
                 "corroborated_by": [_clean({"source": o["source"], "value": o["value"],
                                             "row_ids": [str(r) for r in o.get("row_ids") or []]})
                                     for o in sorted(peers, key=lambda o: o["source"])]}
@@ -399,8 +426,8 @@ def co2_selections(result: dict, offers: list[dict], entries: list[dict]) -> dic
         for offer in offers:
             if offer.get("source") != name or offer.get("field") not in fields:
                 continue
-            stated = [offer["value"]] if offer.get("value") is not None else \
-                [_number(v) if _number(v) is not None else v for v in offer.get("values") or []]
+            stated = [_number(v) if _number(v) is not None else v for v in offer.get("values") or []] or \
+                ([offer["value"]] if offer.get("value") is not None else [])     # agreed / disagreeing: every value
             if stated:
                 values[offer["field"]] = sorted(set(stated), key=lambda v: (isinstance(v, str),
                                                                             v if isinstance(v, str) else float(v)))
@@ -418,7 +445,7 @@ def open_data_part(row: dict, government: dict, *, folder=None, rows_by_source: 
 
     payload = build_level15_payload(row)
     result = match(identity_fingerprint(payload), payload, folder=folder, rows_by_source=rows_by_source)
-    part = open_data_facts(result, field_offers(result), government)
+    part = open_data_facts(result, field_offers(result, agreement=V.admission().get("agreement") or {}), government)
     skipped = sorted({str(s.get("problem")) for src in result["sources"].values() for s in src.get("skipped_shards") or []})
     if skipped:
         part["skipped_shards"] = skipped

@@ -57,6 +57,9 @@ def build_context(secret: Callable[[str], str] = env_secret) -> ApiContext:
     browser = CatalogBrowser(query)
     manager.derived_index.start()          # PR #47 (B2): the weekly derived catalog trim index (no-op without a DSN)
     facts = FactsService(query, paths.data_dir / "derived" / "facts_cache")
+    from ..open_data.shard_index import start_warmup
+
+    start_warmup()                          # E4: index the 2015-2025 EEA shards in the background (requests never wait)
     return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True,
                       catalog_browser=browser, facts=facts)
 

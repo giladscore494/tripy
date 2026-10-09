@@ -1,6 +1,6 @@
 {
   "_about": "The facts admission of the vehicle facts API (src/facts, GET/POST /api/facts/v1): which open-data offers (src/open_data/offers.py, status `offered`) become facts in a `vehicle-facts/1` record. Separate from the run allowlist data/open_data_admission.json (runs stay in shadow). An offer becomes a fact only when an entry names its (source, field, route), the match level reaches min_level and every `require` holds; everything else is withheld (owner diagnostics, never in the record). `field` is the offer field name of data/open_datasets.json field_map; `named` is the descriptive name the PR used. `require` is a list, or {wltp: [...], nedc: [...]} chosen by the target's cycle (match.nedc_target: an EEA NEDC registration year). Reviewer-edited data: the code infers nothing beyond it.",
-  "version": "facts-admission-v1",
+  "version": "facts-admission-v2",
   "consumer": "yeda_rechev",
   "requires": {
     "all_survivors_agree": "every surviving row that states the value states the same value (offer identified_by unique | all_survivors_agree)",
@@ -12,7 +12,8 @@
      "require": ["all_survivors_agree"]},
     {"source": "eea_co2_cars", "field": "curb_weight_kg", "named": "mass_running_order_kg", "definition": "eu_running_order",
      "route": "european", "min_level": "exact_technical_variant",
-     "require": {"wltp": ["all_survivors_agree", "co2_selected"], "nedc": ["all_survivors_agree", "type_code_match"]}},
+     "require": {"wltp": ["all_survivors_agree", "co2_selected"], "nedc": ["all_survivors_agree", "type_code_match"],
+                 "wltp_no_gov_co2": ["all_survivors_agree", "type_code_match"]}},
     {"source": "eea_co2_cars", "field": "fuel_consumption_combined_l_100km", "named": "fuel_consumption_l_100km",
      "route": "european", "min_level": "exact_technical_variant", "require": ["all_survivors_agree", "co2_selected"]},
     {"source": "eea_co2_cars", "field": "energy_consumption_kwh_100km", "named": "energy_wh_km (/10)",
@@ -36,6 +37,17 @@
     {"source": "epa_fueleconomy", "field": "gear_count", "route": "american", "min_level": "exact_technical_variant",
      "require": ["all_survivors_agree"]}
   ],
+  "_require_cycles": "E3: `require` per target cycle. wltp: a WLTP registration year whose government row states co2_wltp; nedc: an EEA NEDC registration year (match.nedc_target); wltp_no_gov_co2: a WLTP year whose government row has no co2_wltp (match co2_key `unavailable`), where co2_selected is impossible: only an entry naming this cycle uses it (curb_weight_kg: the type-code identity, the rule NEDC years already use, plus the E1 / E2 rules), and its fact's basis reads `type_code_match (no government CO2)`. Every other entry falls back to its wltp list: fuel / energy consumption keep co2_selected strictly (consumption depends on the configuration, and without the government CO2 there is no selector). Wheelbase never required co2_selected.",
+  "agreement": {
+    "_about": "E2 (reviewed, 2026-10-09): survivors of these sources agree on a field of `fields` when the spread (max - min) of their values is within the field's published precision: `spread` (the field's unit) and, when set, `spread_pct` % of the median. The returned value is the lower median of one value per configuration row (no registration weights: the EEA shards store none), rounded to `round`. A fact admitted under a non-zero spread carries agreement {rule: within_precision, spread, n_values (distinct values)}; an exact agreement carries none (byte-identical records). Anything wider stays withheld (offer_survivors_disagree). A field not listed (wheelbase_mm, electric_range_km) agrees only exactly. `row_range` (fields whose EEA value is a median between MIN and MAX, range_policy equal_only): a row whose own MAX - MIN is within it counts with its stored value; a wider row, or one whose MIN or MAX is outside the E1 band, loses only its own value (row_range_dropped, debug only); when more than row_range_max_share of the survivors lose it that way the offer is withheld as offer_range (no fact from a mostly-ranged set). Without row_range a row with MIN != MAX withholds the offer (offer_range) as before.",
+    "sources": ["eea_co2_cars"],
+    "fields": {
+      "fuel_consumption_combined_l_100km": {"spread": 0.1, "round": 0.1, "row_range": 0.1, "row_range_max_share": 0.25},
+      "energy_consumption_kwh_100km": {"spread": 0.2, "round": 0.1, "row_range": 0.2, "row_range_max_share": 0.25},
+      "curb_weight_kg": {"spread": 40, "spread_pct": 2.5, "round": 5},
+      "co2_nedc_g_km": {"spread": 1}
+    }
+  },
   "never": [
     {"sources": ["epa_fueleconomy"], "fields": ["cargo_volume_l"], "reason": "SAE luggage volume (cu ft), not the VDA cargo definition"},
     {"sources": ["epa_fueleconomy", "nrcan_fuel_ratings"], "fields": ["fuel_consumption_combined_l_100km"], "reason": "US / Canadian test cycle, not comparable with WLTP"},

@@ -110,12 +110,17 @@ def test_22010_merges_the_government_row_and_the_admitted_eea_facts():
     # never: the CVS dimensions of a European target, EPA cargo / consumption, an American gearbox
     for name in ("length_mm", "width_mm", "height_mm", "cargo_volume_l", "gearbox_type", "gear_count"):
         assert name not in facts
-    assert set(_open(facts)) == {"wheelbase_mm", "curb_weight_kg", "fuel_consumption_combined_l_100km"}
+    assert set(_open(facts)) == {"wheelbase_mm", "curb_weight_kg", "fuel_consumption_combined_l_100km",
+                                 "energy_consumption_kwh_100km"}
+    # E2 (the row MIN / MAX rule): the one JP91 + CO2 47 row states 177 Wh/km with MIN 177 / MAX 178 (17.7-17.8
+    # kWh/100km, within 0.2): it counts with its stored value, exactly (no agreement key); main withheld it (offer_range)
+    energy = facts["energy_consumption_kwh_100km"]
+    assert (energy["value"], energy["unit"], energy["row_ids"]) == (17.7, "kWh/100km", ["eea-2021-F-30738"])
+    assert "agreement" not in energy and "agreement" not in consumption and "agreement" not in mass
     reasons = {(w["source"], w["field"]): w["reason"] for w in record["withheld"]}
     assert reasons[("tc_cvs", "length_mm")] == "never_admitted"
     assert reasons[("epa_fueleconomy", "cargo_volume_l")] == "never_admitted"
     assert reasons[("epa_fueleconomy", "gearbox_type")] == "never_admitted"
-    assert reasons[("eea_co2_cars", "energy_consumption_kwh_100km")] == "offer_range"
     assert record["open_data_match"] == {"route": "european", "level": "exact_technical_variant",
                                          "designation": "530E XDRIVE IPERFORMANCE JP91"}
     gov = facts["horsepower"]
@@ -456,7 +461,7 @@ def test_the_contract_endpoint(api):
     with TestClient(create_app(context=api, mount_mcp=False)) as client:
         data = client.get("/api/facts/v1/contract").json()
     assert data["contract"] == "vehicle-facts/1" and data["schema"]["title"] == "vehicle-facts/1"
-    assert data["admission"] == {"version": "facts-admission-v1", "consumer": "yeda_rechev"}
+    assert data["admission"] == {"version": "facts-admission-v2", "consumer": "yeda_rechev"}
     assert data["snapshots"]["manifest_sha256"] == V.snapshots()["sha256"] != "no_manifest"
     assert data["snapshots"]["built_at"] == ds.manifest()["built_at"]
 

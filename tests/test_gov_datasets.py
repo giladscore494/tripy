@@ -458,7 +458,7 @@ def test_without_gov_snapshots_no_gov_field_appears(tmp_path):
 
 def test_the_contract_allows_a_range_only_for_the_price():
     contract = json.loads((ROOT / "data/facts_contract.json").read_text("utf-8"))
-    assert contract["version"] == "vehicle-facts/1.1"
+    assert contract["version"] == "vehicle-facts/1.2"
     facts = contract["$defs"]["record"]["oneOf"][0]["properties"]["facts"]["properties"]
     assert set(facts) == {"original_new_price_ils", "original_importer", "recalls", "recall_count", "road_survival"}
     assert "range" in contract["$defs"]["gov_price_fact"]["properties"]
