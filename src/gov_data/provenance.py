@@ -2,7 +2,11 @@
 
 Every resource of a build records: resource_id, source_url (the `resource_show` URL), downloaded_at,
 source_last_modified, license (exactly as the package states it), row_count, file_size, sha256, schema_hash,
-ingestion_version (+ format, the package title and organization).
+ingestion_version, access_method (+ format, the package title and organization). access_method `file_download`: the
+resource file, sha256 / file_size of its bytes, schema_hash of its header. access_method `datastore_api` (the file
+download failed and the resource is in the datastore): source_url is the datastore_search endpoint, sha256 is over the
+canonical JSON lines of the projected rows in `_id` order, file_size is null and schema_hash is of the datastore fields;
+`file_attempt` records why the file failed (HTTP status, host, reason).
 
 Any of these stops the whole dataset (DatasetFailed); the previous committed snapshot and its manifest entry stay,
 and the build writes {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}:
@@ -14,6 +18,7 @@ and the build writes {"dataset", "status": "failed", "reason", "previous_snapsho
     required_column_missing    a required column is not in the live header
     row_count_drop             fewer rows than min_row_ratio (70 %) of the previous build's rows of that resource
     html_body                  an HTML page / error body instead of the data
+    datastore_incomplete       the datastore fallback read fewer / more rows than its first page's `total`
 
 The other datasets continue.
 """
@@ -24,7 +29,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 FAIL_REASONS = ("resource_unavailable", "licence_changed", "format_changed", "required_column_missing",
-                "row_count_drop", "html_body")
+                "row_count_drop", "html_body",
+                "datastore_incomplete")
 
 
 class DatasetFailed(RuntimeError):
@@ -79,10 +85,11 @@ def check_row_count(previous: dict, rows: int, ratio: float, resource_id: str) -
 
 
 def record(*, resource_id: str, source_url: str, downloaded_at: str, source_last_modified: Any, license: Any,
-           row_count: int, file_size: int, sha256: str, schema_hash: str, ingestion_version: str, **extra: Any) -> dict:
+           row_count: int, file_size: int | None, sha256: str, schema_hash: str, ingestion_version: str,
+           **extra: Any) -> dict:
     out = {"resource_id": resource_id, "source_url": source_url, "downloaded_at": downloaded_at,
            "source_last_modified": source_last_modified, "license": license, "row_count": int(row_count),
-           "file_size": int(file_size), "sha256": sha256, "schema_hash": schema_hash,
+           "file_size": None if file_size is None else int(file_size), "sha256": sha256, "schema_hash": schema_hash,
            "ingestion_version": ingestion_version}
     out.update({k: v for k, v in extra.items() if v is not None})
     return out

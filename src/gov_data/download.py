@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
+from .ckan import body_snippet
+
 csv.field_size_limit(min(sys.maxsize, 2 ** 31 - 1))
 HEAD_BYTES = 64 * 1024
 DELIMITERS = (",", "|", ";", "\t")
@@ -25,9 +27,9 @@ DELIMITERS = (",", "|", ";", "\t")
 class DownloadRefused(RuntimeError):
     """The body is not the data: `reason` is html_body or format_changed."""
 
-    def __init__(self, reason: str, detail: str = ""):
+    def __init__(self, reason: str, detail: str = "", snippet: str = ""):
         super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason, self.detail = reason, detail
+        self.reason, self.detail, self.snippet = reason, detail, snippet
 
 
 class HashingStream(io.RawIOBase):
@@ -96,7 +98,7 @@ class CsvDownload:
         reason = is_error_body(head)
         if reason:
             self.close()
-            raise DownloadRefused("html_body", reason)
+            raise DownloadRefused("html_body", reason, body_snippet(head[:4096]))
         self.encoding = _encoding(head)
         first = head.decode(self.encoding, errors="ignore").splitlines()[0] if head else ""
         self.delimiter = _delimiter(first)

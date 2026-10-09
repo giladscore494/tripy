@@ -5,15 +5,20 @@
     recall_notices   data/gov/recall_notices.sqlite.gz   (G2) + data/gov/recall_model_map.json (proposals)
 
 plus data/gov/manifest.json (per dataset: file, sha256, bytes, rows, provenance per resource, stats, last_attempt),
-data/gov/build_status.json (one {dataset, status, ...} per selected dataset) and data/gov/report.md (the pull-request
-body). Each dataset is all-or-nothing: any fail-safe stop (src/gov_data/provenance.py) keeps the previous snapshot and
-manifest entry and records {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}; the other
+data/gov/build_status.json (one {dataset, status, ..., resources: [{resource_id, status, access_method,
+file_http_status, rows, ...}]} per selected dataset) and data/gov/report.md (the pull-request body). Each dataset is
+all-or-nothing: any fail-safe stop (src/gov_data/provenance.py) keeps the previous snapshot and manifest entry and
+records {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}; the other
 datasets continue. Raw files only ever live in --work (the runner's disk), never in git. Never run on the server.
 
     python scripts/build_gov_datasets.py [--datasets all|new_car_prices,...] [--out data/gov] [--work DIR]
                                          [--report data/gov/report.md] [--body gov-pr-body.md]
+    python scripts/build_gov_datasets.py --summarize-status data/gov/build_status.json
 
 Exit 0 when at least one dataset was built, 1 when every selected dataset failed (the report is written either way).
+--summarize-status (the workflow's step after the build) reads build_status.json and writes `create_pr=true|false`
+to $GITHUB_OUTPUT (false when nothing was built: every dataset failed, or no status file) and the per-dataset outcome
+with the failure reasons to $GITHUB_STEP_SUMMARY; it always exits 0.
 """
 
 from __future__ import annotations
@@ -203,6 +208,10 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
                   now=now)
     state: dict[str, Any] = {"previous": previous, "registry_index": registry_index}
     results, statuses, sections = {}, [], {}
+
+    def attempts(dataset: str) -> list[dict]:
+        return [{k: v for k, v in a.items() if k != "dataset"} for a in ctx.attempts if a["dataset"] == dataset]
+
     for name in [n for n in ORDER if n in names]:
         spec = specs[name]
         prev_entry = dict(entries.get(name) or {})
@@ -211,6 +220,7 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
             built, lines = BUILDERS[name](ctx, name, spec, prev_entry, out, work, state)
         except P.DatasetFailed as exc:
             record = P.failure(name, exc, previous_exists=bool(prev_entry.get("file")))
+            record["resources"] = attempts(name)
             statuses.append(record)
             results[name] = record
             sections[name] = [f"- **failed**: {exc.reason}" + (f" ({exc.detail})" if exc.detail else "")
@@ -229,7 +239,8 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
                  "run_url": run_url, "build_status": "built", "source": SOURCES[name],
                  "last_attempt": {"at": attempt_at, "status": "built", "run_url": run_url}}
         entries[name] = entry
-        statuses.append({"dataset": name, "status": "built", "rows": built["rows"], "sha256": built["sha256"]})
+        statuses.append({"dataset": name, "status": "built", "rows": built["rows"], "sha256": built["sha256"],
+                         "resources": attempts(name)})
         results[name] = {"status": "built", **entry}
         sections[name] = lines
     manifest = {"version": SN.MANIFEST_VERSION, "built_at": now(), "run_url": run_url,
@@ -257,6 +268,13 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
             status = f"failed: {result.get('reason')} (previous snapshot kept)"
         lines.append(f"| {name} | {status} | {entry.get('rows', '—') if result.get('status') == 'built' else '—'} | "
                      f"{entry.get('file') or '—'} | {str(entry.get('sha256') or '—')[:12]} |")
+    lines += ["", "| dataset | resource | status | access method | file HTTP status | rows |",
+              "|---|---|---|---|---|---|"]
+    for item in outcome["status"]:
+        for res in item.get("resources") or []:
+            lines.append(f"| {item['dataset']} | `{res['resource_id']}` ({res.get('role')}) | {res.get('status')} | "
+                         f"{res.get('access_method')} | {res.get('file_http_status') or '—'} | "
+                         f"{res.get('rows') if res.get('rows') is not None else '—'} |")
     for name, section in outcome["sections"].items():
         spec = specs.get(name) or {}
         entry = (manifest.get("datasets") or {}).get(name) or {}
@@ -265,9 +283,12 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
             lines.append(f"- licence as stated by the package: {entry.get('licence')!r} (brief: "
                          f"{spec.get('stated_licence')!r})")
             for res in entry.get("resources") or []:
-                lines.append(f"- resource `{res['resource_id']}` ({res.get('role')}): {res['row_count']} rows, "
-                             f"{res['file_size']} bytes, sha256 {res['sha256'][:12]}, last modified "
-                             f"{res.get('source_last_modified')}, schema hash {res['schema_hash'][:12]}")
+                size = f"{res['file_size']} bytes" if res.get("file_size") is not None else "no file"
+                lines.append(f"- resource `{res['resource_id']}` ({res.get('role')}): {res['row_count']} rows via "
+                             f"{res.get('access_method') or 'file_download'}, {size}, sha256 {res['sha256'][:12]}, "
+                             f"last modified {res.get('source_last_modified')}, schema hash {res['schema_hash'][:12]}")
+                if res.get("file_attempt"):
+                    lines.append(f"  - file attempt: {res['file_attempt'].get('detail')}")
                 lines.append(f"  - schema: `{' | '.join(res.get('schema') or [])}`")
         lines += section
         samples = [s for rid, s in (outcome.get("samples") or {}).items()
@@ -279,6 +300,52 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
     return text if len(text) <= BODY_LIMIT else text[:BODY_LIMIT - 80] + "\n\n_(cut at the body limit: see data/gov/report.md)_\n"
 
 
+def exit_summary(statuses: list[dict] | None) -> dict:
+    """{create_pr, built, failed, text}: the pull request is opened only when at least one dataset was built; the text
+    lists every dataset's outcome, the failure reasons verbatim and each resource's access method."""
+    statuses = [s for s in statuses or [] if isinstance(s, dict)]
+    built = [s for s in statuses if s.get("status") == "built"]
+    failed = [s for s in statuses if s.get("status") != "built"]
+    if not statuses:
+        head = "no build status: nothing was built; the pull-request step is skipped"
+    elif not built:
+        head = "every dataset failed; the pull-request step is skipped"
+    else:
+        head = f"{len(built)} built, {len(failed)} failed; the pull request is opened"
+    lines = [f"## build-gov-datasets: {head}", ""]
+    for item in statuses:
+        if item.get("status") == "built":
+            lines.append(f"- {item.get('dataset')}: built, {item.get('rows')} rows")
+        else:
+            lines.append(f"- {item.get('dataset')}: failed: {item.get('reason')}"
+                         + (f" ({item.get('detail')})" if item.get("detail") else "")
+                         + (f" [resource {item.get('resource_id')}]" if item.get("resource_id") else ""))
+        for res in item.get("resources") or []:
+            lines.append(f"  - `{res.get('resource_id')}` ({res.get('role')}): {res.get('status')} via "
+                         f"{res.get('access_method')}, file HTTP status {res.get('file_http_status') or '—'}, "
+                         f"rows {res.get('rows') if res.get('rows') is not None else '—'}")
+    return {"create_pr": bool(built), "built": len(built), "failed": len(failed), "text": "\n".join(lines) + "\n"}
+
+
+def summarize_status(path: Path) -> dict:
+    """The workflow step after the build: build_status.json -> $GITHUB_OUTPUT (create_pr, built, failed) and the
+    step summary."""
+    try:
+        statuses = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        statuses = []
+    summary = exit_summary(statuses if isinstance(statuses, list) else [])
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+            handle.write(f"create_pr={'true' if summary['create_pr'] else 'false'}\n"
+                         f"built={summary['built']}\nfailed={summary['failed']}\n")
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+            handle.write(summary["text"] + "\n")
+    print(summary["text"])
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--datasets", default="all")
@@ -286,7 +353,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", default="")
     parser.add_argument("--report", default="")
     parser.add_argument("--body", default="")
+    parser.add_argument("--summarize-status", default="", metavar="BUILD_STATUS_JSON")
     args = parser.parse_args(argv)
+    if args.summarize_status:
+        summarize_status(Path(args.summarize_status))
+        return 0
     names = S.selected(args.datasets)
     work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="gov-data-"))
     outcome = run(names, Path(args.out), work, run_url=os.environ.get("GOV_DATA_RUN_URL") or None)
@@ -301,7 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     print(full)
     for status in outcome["status"]:
         if status["status"] == "failed":
-            print(f"::warning::{status['dataset']}: {status['reason']}; the previous snapshot is kept", file=sys.stderr)
+            print(f"::warning::{status['dataset']}: {status['reason']} ({status.get('detail') or ''}); the previous "
+                  "snapshot is kept", file=sys.stderr)
     built = sum(1 for s in outcome["status"] if s["status"] == "built")
     return 0 if built else 1
 

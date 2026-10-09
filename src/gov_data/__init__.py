@@ -13,11 +13,13 @@ snapshots in data/gov/ built by the build-gov-datasets GitHub Action (the open-d
 Model / model-year level only: no per-vehicle record is stored or served; licence-plate, chassis and engine numbers
 are dropped by the projection while the stream is read and never written, logged or sampled.
 
-    ckan.py        resource_show / package_show / datastore_search (QA samples only)
+    ckan.py        resource_show / package_show / datastore_search (QA samples and the datastore fallback); the
+                   file request (headers, one retry, redirects only to *.gov.il, diagnosable errors)
     download.py    the streamed download: sha256, size, the HTML / error-body guard, the projected CSV reader
     schemas.py     the dataset config (data/gov_datasets.json), column resolution, the schema hash
     provenance.py  the per-resource provenance record and the fail-safe checks (licence, format, row count)
-    ingest.py      one resource end to end: CKAN metadata, the checks, the streamed projected rows, the provenance
+    ingest.py      one resource end to end: CKAN metadata, the checks, the streamed projected rows (the file, else the
+                   datastore), the provenance
     names.py       the exact normalizations (numbers, dates, model names, make resolution via make_canonical.json)
     snapshot.py    deterministic SQLite snapshots, gzip and the read side (sha256-verified, decompressed once)
     prices.py / recalls.py / survival.py   the aggregations and their reports
