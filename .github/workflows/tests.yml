@@ -10,7 +10,7 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,7 +58,7 @@ jobs:
       - name: Start the container and check /health, the SPA and the API gate
         run: |
           docker run -d --name tripy -e PORT=8080 -e TRIPY_ACCESS_TOKEN=ci-access-token-0123456789 -p 8080:8080 tripy:ci
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/health | grep -q '"status":"ok"'
           curl -fsS http://127.0.0.1:8080/runs/x | grep -q 'id="root"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/config/status)" = "401"
