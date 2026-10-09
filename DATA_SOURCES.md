@@ -6,8 +6,8 @@ data.gov.il terms permit copying, storage, processing, derived works, commercial
 
 | publisher | portal | dataset | resource id / source | licence (as stated) | retrieved |
 |---|---|---|---|---|---|
-| Ministry of Transport and Road Safety | data.gov.il | מחירון רכב חדש (New-car price list) — new_car_prices, prices | `39f455bf-6db0-4926-859d-017f34eacbcb` | Other (Open) (as briefed; not built yet) | not built yet |
-| Ministry of Transport and Road Safety | data.gov.il | קריאות שירות (ריקול) (Vehicle recall notices) — recall_notices, recalls | `2c33523f-87aa-44ec-a736-edbb0a82975e` | CC BY (as briefed; not built yet) | not built yet |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | יבואנים ומחירוני רכב חדש — new_car_prices, prices | `39f455bf-6db0-4926-859d-017f34eacbcb` | Other (Open) | 2026-10-09 |
+| משרד התחבורה והבטיחות בדרכים | data.gov.il | הודעות יצרני הרכב RECALL — recall_notices, recalls | `2c33523f-87aa-44ec-a736-edbb0a82975e` | Creative Commons Attribution | 2026-10-09 |
 | Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `851ecab1-0622-4dbe-a6c7-f950cf82abf9` | Other (Open) (as briefed; not built yet) | not built yet |
 | Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `4e6b9724-4c1e-43f0-909a-154d4cc4e046` | Other (Open) (as briefed; not built yet) | not built yet |
 | Ministry of Transport and Road Safety | data.gov.il | ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים (Final vehicle cancellations + the active vehicle registry) — road_survival, cancelled | `ec8cbc34-72e1-4b69-9c48-22821ba0bd6c` | Other (Open) (as briefed; not built yet) | not built yet |

@@ -1,0 +1,589 @@
+{
+ "version": "gov-manifest-v1",
+ "built_at": "2026-10-09T19:48:38+00:00",
+ "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+ "config_version": "gov-datasets-v1",
+ "ingestion_version": "gov-ingestion-v1",
+ "datasets": {
+  "new_car_prices": {
+   "file": "new_car_prices.sqlite.gz",
+   "sha256": "f2cd4060c37f9203f2dfa1df9e2a2120b9548adec0c11ce6a1d58bb1d481a995",
+   "bytes": 1541275,
+   "rows": 101824,
+   "resources": [
+    {
+     "resource_id": "39f455bf-6db0-4926-859d-017f34eacbcb",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=39f455bf-6db0-4926-859d-017f34eacbcb",
+     "downloaded_at": "2026-10-09T19:48:23+00:00",
+     "source_last_modified": "2026-10-09T02:35:44.381052",
+     "license": "Other (Open)",
+     "row_count": 101824,
+     "file_size": null,
+     "sha256": "e8fe1d4bccfe38832062b9ff7ae00e249a78a105747811e3a4c64cd0349e6fbe",
+     "schema_hash": "b13e47f580829156d5b8a0d9ad32f581b37f23c15b021a422758a94c6beef5d4",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "prices",
+     "format": "CSV",
+     "package_title": "יבואנים ומחירוני רכב חדש",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "semel_yevuan",
+      "shem_yevuan",
+      "sug_degem",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "shnat_yitzur",
+      "mehir",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 101824,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    }
+   ],
+   "stats": {
+    "rows": 101824,
+    "unkeyed_rows": 0,
+    "unkeyed_codes": 0,
+    "keys": 100869,
+    "distinct_price_buckets": {
+     "1": 99978,
+     "2-3": 891,
+     ">3": 0
+    },
+    "multi_name_keys": 698,
+    "model_resolution": {
+     "pairs": {
+      "kinuy_mishari": 67582,
+      "single_name_key": 1,
+      "price_model_ambiguous": 0
+     },
+     "vehicles": {
+      "kinuy_mishari": 4185627,
+      "single_name_key": 91,
+      "price_model_ambiguous": 0
+     },
+     "pairs_total": 67583,
+     "share": {
+      "kinuy_mishari": 1.0,
+      "single_name_key": 0.0,
+      "price_model_ambiguous": 0.0
+     }
+    },
+    "registry_join": {
+     "matched": 67305,
+     "unmatched": 33564,
+     "pct": 66.7
+    },
+    "multi_price_examples": [
+     {
+      "key": [
+       19,
+       10,
+       2007
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       12,
+       2007
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       20,
+       2007
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       22,
+       2007
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       22,
+       2008
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       32,
+       2008
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "A3",
+       "Q7"
+      ]
+     },
+     {
+      "key": [
+       19,
+       1383,
+       2024
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "R8 COUPE",
+       "RS3 SPORTBACK"
+      ]
+     },
+     {
+      "key": [
+       74,
+       256,
+       2024
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "GIULIA QUADRIFO",
+       "STELVIO"
+      ]
+     },
+     {
+      "key": [
+       76,
+       1,
+       2014
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "ASTRA",
+       "VIVARO"
+      ]
+     },
+     {
+      "key": [
+       76,
+       1,
+       2015
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "ASTRA",
+       "VIVARO"
+      ]
+     },
+     {
+      "key": [
+       76,
+       1,
+       2016
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "ASTRA",
+       "VIVARO"
+      ]
+     },
+     {
+      "key": [
+       76,
+       1,
+       2017
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "ASTRA",
+       "VIVARO"
+      ]
+     },
+     {
+      "key": [
+       177,
+       1,
+       2011
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO1.3",
+       "FIORINO"
+      ]
+     },
+     {
+      "key": [
+       177,
+       1,
+       2012
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO1.3",
+       "FIORINO"
+      ]
+     },
+     {
+      "key": [
+       177,
+       2,
+       2011
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO",
+       "DOBLO PANORAMA"
+      ]
+     },
+     {
+      "key": [
+       177,
+       3,
+       2011
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO 1.6 COMBY",
+       "DOBLO PANORAMA"
+      ]
+     },
+     {
+      "key": [
+       177,
+       3,
+       2012
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO 1.6 COMBY",
+       "DOBLO PANORAMA"
+      ]
+     },
+     {
+      "key": [
+       177,
+       3,
+       2013
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO 1.6 COMBY",
+       "DOBLO PANORAMA"
+      ]
+     },
+     {
+      "key": [
+       177,
+       3,
+       2014
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO 1.6 COMBY",
+       "DOBLO PANORAMA"
+      ]
+     },
+     {
+      "key": [
+       177,
+       3,
+       2015
+      ],
+      "n_prices": 2,
+      "kinuy_mishari": [
+       "DOBLO 1.6 COMBY",
+       "DOBLO PANORAMA"
+      ]
+     }
+    ]
+   },
+   "licence": "Other (Open)",
+   "stated_licence": "Other (Open)",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — מחירון רכב חדש (39f455bf-6db0-4926-859d-017f34eacbcb), נכון ל-2026-10-09",
+   "title": "New-car price list",
+   "title_he": "מחירון רכב חדש",
+   "ministry": "Ministry of Transport and Road Safety",
+   "built_at": "2026-10-09T19:48:22+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+   "build_status": "built",
+   "source": "gov_new_car_prices",
+   "last_attempt": {
+    "at": "2026-10-09T19:48:22+00:00",
+    "status": "built",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+   }
+  },
+  "recall_notices": {
+   "file": "recall_notices.sqlite.gz",
+   "sha256": "b86f193143a6080f8faf956cdbd9323bdfec2a245e8cbf05373373e48f2d366c",
+   "bytes": 241213,
+   "rows": 3628,
+   "resources": [
+    {
+     "resource_id": "2c33523f-87aa-44ec-a736-edbb0a82975e",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=2c33523f-87aa-44ec-a736-edbb0a82975e",
+     "downloaded_at": "2026-10-09T19:48:35+00:00",
+     "source_last_modified": "2026-10-09T02:35:29.070580",
+     "license": "Creative Commons Attribution",
+     "row_count": 3628,
+     "file_size": null,
+     "sha256": "ae44430c0ae4299d094619e8a09fa6cba7e0570750fe6e5d6af0d9432a41d290",
+     "schema_hash": "ca749ab5a3b6eed071fb732753fc4ef3b971ffddd3b5a05a556f4efc841f3154",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "recalls",
+     "format": "CSV",
+     "package_title": "הודעות יצרני הרכב RECALL",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "RECALL_ID",
+      "TOZAR_CD",
+      "TOZAR_TEUR",
+      "DEGEM",
+      "SHNAT_RECALL",
+      "BUILD_BEGIN_A",
+      "BUILD_END_A",
+      "SUG_RECALL",
+      "SUG_TAKALA",
+      "TEUR_TAKALA",
+      "OFEN_TIKUN",
+      "TKINA_EU",
+      "YEVUAN_TEUR",
+      "TELEPHONE",
+      "WEBSITE"
+     ],
+     "datastore_total": 3628,
+     "total_was_estimated": false,
+     "total_check": "exact_total",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    }
+   ],
+   "stats": {
+    "rows": 3628,
+    "distinct_rows": 3628,
+    "recall_ids": 3628,
+    "tozar_cd_agreement": {
+     "codes": 84,
+     "agreeing": 0,
+     "rate": 0.0
+    },
+    "tozar_cd_used_as_key": false,
+    "map_entries": 1075,
+    "unresolved_models": 941,
+    "map_entries_before_split": 341,
+    "split_entries": 734,
+    "split_degems": 266,
+    "unresolved_before_split": 1207,
+    "tozar_cd_disagreeing_sample": [
+     {
+      "tozar_cd": 1,
+      "notice_makes": [
+       "TOYOTA"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 2,
+      "notice_makes": [
+       "MAZDA"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 3,
+      "notice_makes": [
+       "HONDA"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 4,
+      "notice_makes": [
+       "ALFA ROMEO"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 6,
+      "notice_makes": [
+       "AUDI"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 7,
+      "notice_makes": [
+       "BENTLEY"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 9,
+      "notice_makes": [
+       "BMW"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 10,
+      "notice_makes": [
+       "CADILLAC"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 11,
+      "notice_makes": [
+       "CHEVROLET"
+      ],
+      "registry_names": [
+       "סיאט פורטוגל"
+      ]
+     },
+     {
+      "tozar_cd": 12,
+      "notice_makes": [
+       "CHRYSLER"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 13,
+      "notice_makes": [
+       "CITROEN"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 16,
+      "notice_makes": [
+       "unresolved"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 19,
+      "notice_makes": [
+       "DODGE"
+      ],
+      "registry_names": [
+       "אאודי גרמניה"
+      ]
+     },
+     {
+      "tozar_cd": 20,
+      "notice_makes": [
+       "unresolved"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 21,
+      "notice_makes": [
+       "FERRARI"
+      ],
+      "registry_names": [
+       "אאודי סלובקיה"
+      ]
+     },
+     {
+      "tozar_cd": 23,
+      "notice_makes": [
+       "FORD"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 24,
+      "notice_makes": [
+       "GMC"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 25,
+      "notice_makes": [
+       "unresolved"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 26,
+      "notice_makes": [
+       "HYUNDAI"
+      ],
+      "registry_names": []
+     },
+     {
+      "tozar_cd": 27,
+      "notice_makes": [
+       "unresolved"
+      ],
+      "registry_names": []
+     }
+    ]
+   },
+   "licence": "Creative Commons Attribution",
+   "stated_licence": "CC BY",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — קריאות שירות (ריקול) (2c33523f-87aa-44ec-a736-edbb0a82975e), נכון ל-2026-10-09. רישיון CC BY",
+   "title": "Vehicle recall notices",
+   "title_he": "קריאות שירות (ריקול)",
+   "ministry": "Ministry of Transport and Road Safety",
+   "built_at": "2026-10-09T19:48:34+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+   "build_status": "built",
+   "source": "gov_recall_notices",
+   "last_attempt": {
+    "at": "2026-10-09T19:48:34+00:00",
+    "status": "built",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+   }
+  },
+  "road_survival": {
+   "last_attempt": {
+    "at": "2026-10-09T19:38:43+00:00",
+    "status": "failed",
+    "reason": "date_unparsed",
+    "detail": "[851ecab1-0622-4dbe-a6c7-f950cf82abf9] moed_aliya_lakvish parsed 0.00% of 1218960 rows (needs >= 95%); unparsed shapes [('(empty)', 653622), ('9999', 565338)]; raw examples ['2025', '2026', '2022', '2021', '2018', '2019', '2016', '', '2008', '2020']; [4e6b9724-4c1e-43f0-909a-154d4cc4e046] moed_aliya",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+   }
+  }
+ }
+}

@@ -1,0 +1,429 @@
+[
+ {
+  "dataset": "road_survival",
+  "status": "failed",
+  "reason": "date_unparsed",
+  "previous_snapshot_preserved": true,
+  "detail": "[851ecab1-0622-4dbe-a6c7-f950cf82abf9] moed_aliya_lakvish parsed 0.00% of 1218960 rows (needs >= 95%); unparsed shapes [('(empty)', 653622), ('9999', 565338)]; raw examples ['2025', '2026', '2022', '2021', '2018', '2019', '2016', '', '2008', '2020']; [4e6b9724-4c1e-43f0-909a-154d4cc4e046] moed_aliya_lakvish parsed 0.00% of 670293 rows (needs >= 95%); unparsed shapes [('(empty)', 595518), ('9999', 74775)]; raw examples ['', '2008', '2009', '2010', '2011', '2001', '2016', '2014', '2015', '2012']; [ec8cbc34-72e1-4b69-9c48-22821ba0bd6c] moed_aliya_lakvish parsed 0.00% of 499791 rows (needs >= 95%); unparsed shapes [('(empty)', 498248), ('9999', 1543)]; raw examples ['', '2008', '2009', '2000', '2003']; [053cea08-09bc-40ec-8f7a-156f0677aff3] moed_aliya_lakvish parsed 94.27% of 4187011 rows (needs >= 95%); unparsed shapes [('(empty)', 240113)]; raw examples ['']; [851ecab1-0622-4dbe-a6c7-f950cf82abf9] unkeyed 177467 of 1218960 rows (14.56%, allowed 1%); code examples [{'tozeret_cd': '1391', 'degem_cd': None}, {'tozeret_cd': '593', 'degem_cd': None}, {'tozeret_cd': '665', 'degem_cd': None}, {'tozeret_cd': '255', 'degem_cd': None}, {'tozeret_cd': '388', 'degem_cd': None}, {'tozeret_cd': '388', 'degem_cd': None}, {'tozeret_cd': '127', 'degem_cd': None}, {'tozeret_cd': '101', 'degem_cd': None}, {'tozeret_cd': '593', 'degem_cd': None}, {'tozeret_cd': '928', 'degem_cd': None}]; [4e6b9724-4c1e-43f0-909a-154d4cc4e046] unkeyed 280668 of 670293 rows (41.87%, allowed 1%); code examples [{'tozeret_cd': '0588', 'degem_cd': None}, {'tozeret_cd': '0127', 'degem_cd': None}, {'tozeret_cd': '0928', 'degem_cd': None}, {'tozeret_cd': '0590', 'degem_cd': None}, {'tozeret_cd': '0817', 'degem_cd': None}, {'tozeret_cd': '0928', 'degem_cd': None}, {'tozeret_cd': '0634', 'degem_cd': None}, {'tozeret_cd': '0817', 'degem_cd': None}, {'tozeret_cd': '0940', 'degem_cd': None}, {'tozeret_cd': '0683', 'degem_cd': None}]; [ec8cbc34-72e1-4b69-9c48-22821ba0bd6c] unkeyed 349228 of 499791 rows (69.87%, allowed 1%); code examples [{'tozeret_cd': '0300', 'degem_cd': None}, {'tozeret_cd': '0687', 'degem_cd': None}, {'tozeret_cd': '0687', 'degem_cd': None}, {'tozeret_cd': '0892', 'degem_cd': None}, {'tozeret_cd': '0994', 'degem_cd': None}, {'tozeret_cd': '0791', 'degem_cd': None}, {'tozeret_cd': '0791', 'degem_cd': None}, {'tozeret_cd': '0476', 'degem_cd': None}, {'tozeret_cd': '0791', 'degem_cd': None}, {'tozeret_cd': '0569', 'degem_cd': None}]",
+  "resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+  "note": "no previous snapshot existed; nothing is served for this dataset",
+  "resources": [
+   {
+    "resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 1218960,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct",
+    "checks": {
+     "role": "cancelled",
+     "rows": 1218960,
+     "unkeyed": 177467,
+     "unkeyed_share": 0.1456,
+     "unkeyed_examples": [
+      {
+       "tozeret_cd": "1391",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "593",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "665",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "255",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "388",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "388",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "127",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "101",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "593",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "928",
+       "degem_cd": null
+      }
+     ],
+     "dates": {
+      "moed_aliya_lakvish": {
+       "parsed_share": 0.0,
+       "examples": [
+        "2025",
+        "2026",
+        "2022",
+        "2021",
+        "2018"
+       ],
+       "unparsed_examples": [
+        "2025",
+        "2026",
+        "2022",
+        "2021",
+        "2018",
+        "2019",
+        "2016",
+        "",
+        "2008",
+        "2020"
+       ],
+       "unparsed_patterns": [
+        [
+         "(empty)",
+         653622
+        ],
+        [
+         "9999",
+         565338
+        ]
+       ]
+      },
+      "bitul_dt": {
+       "parsed_share": 1.0,
+       "examples": [
+        "2026-08-27",
+        "2026-09-23",
+        "2026-08-29",
+        "2026-09-14",
+        "2026-09-08"
+       ],
+       "unparsed_examples": [],
+       "unparsed_patterns": []
+      }
+     },
+     "age_years": {
+      "n": 0,
+      "p10": null,
+      "p50": null,
+      "p90": null
+     }
+    }
+   },
+   {
+    "resource_id": "4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 670293,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct",
+    "checks": {
+     "role": "cancelled",
+     "rows": 670293,
+     "unkeyed": 280668,
+     "unkeyed_share": 0.4187,
+     "unkeyed_examples": [
+      {
+       "tozeret_cd": "0588",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0127",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0928",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0590",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0817",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0928",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0634",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0817",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0940",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0683",
+       "degem_cd": null
+      }
+     ],
+     "dates": {
+      "moed_aliya_lakvish": {
+       "parsed_share": 0.0,
+       "examples": [
+        "2008",
+        "2009",
+        "2010",
+        "2011",
+        "2001"
+       ],
+       "unparsed_examples": [
+        "",
+        "2008",
+        "2009",
+        "2010",
+        "2011",
+        "2001",
+        "2016",
+        "2014",
+        "2015",
+        "2012"
+       ],
+       "unparsed_patterns": [
+        [
+         "(empty)",
+         595518
+        ],
+        [
+         "9999",
+         74775
+        ]
+       ]
+      },
+      "bitul_dt": {
+       "parsed_share": 1.0,
+       "examples": [
+        "2015-02-01",
+        "2015-07-01",
+        "2014-08-19",
+        "2015-10-27",
+        "2012-08-23"
+       ],
+       "unparsed_examples": [],
+       "unparsed_patterns": []
+      }
+     },
+     "age_years": {
+      "n": 0,
+      "p10": null,
+      "p50": null,
+      "p90": null
+     }
+    }
+   },
+   {
+    "resource_id": "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+    "role": "cancelled",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 499791,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct",
+    "checks": {
+     "role": "cancelled",
+     "rows": 499791,
+     "unkeyed": 349228,
+     "unkeyed_share": 0.6987,
+     "unkeyed_examples": [
+      {
+       "tozeret_cd": "0300",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0687",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0687",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0892",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0994",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0791",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0791",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0476",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0791",
+       "degem_cd": null
+      },
+      {
+       "tozeret_cd": "0569",
+       "degem_cd": null
+      }
+     ],
+     "dates": {
+      "moed_aliya_lakvish": {
+       "parsed_share": 0.0,
+       "examples": [
+        "2008",
+        "2009",
+        "2000",
+        "2003"
+       ],
+       "unparsed_examples": [
+        "",
+        "2008",
+        "2009",
+        "2000",
+        "2003"
+       ],
+       "unparsed_patterns": [
+        [
+         "(empty)",
+         498248
+        ],
+        [
+         "9999",
+         1543
+        ]
+       ]
+      },
+      "bitul_dt": {
+       "parsed_share": 1.0,
+       "examples": [
+        "2009-06-30",
+        "2006-09-22",
+        "2004-07-14",
+        "2006-04-27",
+        "2007-06-16"
+       ],
+       "unparsed_examples": [],
+       "unparsed_patterns": []
+      }
+     },
+     "age_years": {
+      "n": 0,
+      "p10": null,
+      "p50": null,
+      "p90": null
+     }
+    }
+   },
+   {
+    "resource_id": "053cea08-09bc-40ec-8f7a-156f0677aff3",
+    "role": "active",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 4187011,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct",
+    "checks": {
+     "role": "active",
+     "rows": 4187011,
+     "unkeyed": 0,
+     "unkeyed_share": 0.0,
+     "unkeyed_examples": [],
+     "dates": {
+      "moed_aliya_lakvish": {
+       "parsed_share": 0.9427,
+       "examples": [
+        "2016-10",
+        "2011-10",
+        "2009-9",
+        "2018-10",
+        "2019-10"
+       ],
+       "unparsed_examples": [
+        ""
+       ],
+       "unparsed_patterns": [
+        [
+         "(empty)",
+         240113
+        ]
+       ]
+      }
+     },
+     "age_years": {
+      "n": 0,
+      "p10": null,
+      "p50": null,
+      "p90": null
+     }
+    }
+   }
+  ]
+ },
+ {
+  "dataset": "new_car_prices",
+  "status": "built",
+  "rows": 101824,
+  "sha256": "f2cd4060c37f9203f2dfa1df9e2a2120b9548adec0c11ce6a1d58bb1d481a995",
+  "resources": [
+   {
+    "resource_id": "39f455bf-6db0-4926-859d-017f34eacbcb",
+    "role": "prices",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 101824,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "estimate_within_2pct"
+   }
+  ]
+ },
+ {
+  "dataset": "recall_notices",
+  "status": "built",
+  "rows": 3628,
+  "sha256": "b86f193143a6080f8faf956cdbd9323bdfec2a245e8cbf05373373e48f2d366c",
+  "resources": [
+   {
+    "resource_id": "2c33523f-87aa-44ec-a736-edbb0a82975e",
+    "role": "recalls",
+    "status": "ok",
+    "access_method": "datastore_api",
+    "file_http_status": 302,
+    "file_error": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused",
+    "datastore_active": true,
+    "rows": 3628,
+    "file_redirect_host": "accounts.google.com",
+    "total_check": "exact_total"
+   }
+  ]
+ }
+]
