@@ -35,6 +35,9 @@ Vetoes (data-driven, data/open_datasets.json): displacement (+-1 % or the source
 (A4, both definitions of koah_sus), drive (4X2 = FWD / RWD, 4X4 = AWD / 4WD), fuel / propulsion, transmission class,
 body / doors, co2_wltp when both have it, battery token, mass window. A key the source does not state is `unknown`,
 never a match. Pure and deterministic: the same snapshot rows always give the same match.
+
+co2_selection (the European sources; diagnostics only, it decides nothing): the survivors before the CO2 step, their
+CO2 values, the count after it and why the step was skipped or kept rows of another CO2 (co2_selection()).
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ from . import datasets as ds
 
 MATCH_VERSION = "open-data-match-v1"
 LEVEL_EXACT, LEVEL_BODY = "exact_technical_variant", "body_powertrain"
+CO2_VALUES_MAX = 30                     # the co2_selection diagnostic lists at most this many distinct CO2 values
 SOURCE_ORDER = ("eea_co2_cars", "ademe_car_labelling", "epa_fueleconomy", "nrcan_fuel_ratings", "tc_cvs")
 EUROPEAN_SOURCES = ("eea_co2_cars", "ademe_car_labelling")
 AMERICAN_SOURCES = ("epa_fueleconomy", "nrcan_fuel_ratings", "tc_cvs")
@@ -523,6 +527,8 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
             verdict["matched"] = verdict["matched"] + ["type_code_match"]
         entry = {"row_id": row.get("row_id"), "designation": designation(row, source), **verdict}
         (vetoed if verdict["vetoes"] else survivors).append((row, entry))
+    # the survivors before the CO2 step (untyped: the co2_wltp veto is that step), for the co2_selection diagnostic
+    before_co2 = survivors + [(r, e) for r, e in vetoed if e["vetoes"] == ["co2_wltp"]] if not typed else survivors
     superseded: list[tuple[dict, dict]] = []
     if typed and keys.get("co2_wltp"):
         equal = [(r, e) for r, e in survivors if _num(r.get("co2_wltp")) == keys["co2_wltp"]]
@@ -544,6 +550,8 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
             # M3: the narrowest exact subset the measured-value offers come from
             out["exact_subset"] = {"basis": basis, "rows": len(survivors),
                                    "row_ids": [e["row_id"] for _, e in survivors][:40]}
+    if source in EUROPEAN_SOURCES:
+        out["co2_selection"] = co2_selection(keys, [r for r, _ in before_co2], len(survivors), typed)
     out["vetoed"] = [{"row_id": e["row_id"], "designation": e["designation"], "vetoes": e["vetoes"]}
                      for _, e in vetoed][:40]
     out["veto_counts"] = {}
@@ -570,6 +578,22 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
         if out["designation"] is None and len(named) == 1:
             out["designation"] = named.pop()        # one model + type code (Va); the versions differ
     return out
+
+
+def co2_selection(keys: dict, before: list[dict], selected: int, typed: bool) -> dict:
+    """What the CO2 step did (diagnostics only; it decides nothing): {gov_co2_wltp, survivors (before the step),
+    survivor_co2_values, selected (after it), rule: equal | none, tolerance (no tolerance rule exists: null), fallback:
+    nedc_year | gov_co2_missing | no_equal_co2 | null (why the step was skipped or kept rows of another CO2)}."""
+    gov = keys.get("co2_wltp")
+    stated = {_num(r.get("co2_wltp")) for r in before}
+    values = sorted(int(v) if float(v).is_integer() else v for v in stated - {None})[:CO2_VALUES_MAX]
+    equal = bool(gov) and gov in stated
+    fallback = "nedc_year" if nedc_target(keys) else "gov_co2_missing" if not gov else None if equal \
+        else "no_equal_co2"
+    return {"gov_co2_wltp": int(gov) if gov and float(gov).is_integer() else gov, "survivors": len(before),
+            "survivor_co2_values": values + ([None] if None in stated else []), "selected": selected,
+            "rule": "equal" if equal else "none", "tolerance": None, "fallback": fallback,
+            "basis": "type_code" if typed else "co2_veto"}
 
 
 def match(fingerprint: dict, payload: dict | None, identity=None, folder=None,

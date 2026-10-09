@@ -2218,6 +2218,15 @@ run, no paid call, no vPIC, never a write to MILO.
   versions) in an in-process LRU (2,000) and `<TRIPY_DATA_DIR>/derived/facts_cache/` (free-space guarded); the
   government row is read on every call. Responses are canonical JSON (sorted keys): the same versions give
   byte-identical bodies. Every call is logged (keys, status, latency, cache hits, facts count, withheld counts by
-  reason; never a value). The MCP's `facts_preview(variant_identity_key)` returns the same record plus `withheld`.
+  reason; never a value). The MCP's `facts_preview(variant_identity_key)` returns the same record plus `withheld`;
+  an EEA entry withheld `offer_survivors_disagree` (or for an unmet `co2_selected`) carries `co2_selection` (the
+  government CO2, the survivors and their CO2 values before the CO2 step, the count it selected, `rule`, `fallback`:
+  `no_equal_co2` / `gov_co2_missing` / `nedc_year`, and the values left per field). Diagnostics only: the public
+  record is unchanged.
+- **Coverage probe** (MCP `facts_coverage(model_year_from, model_year_to, per_year=120, manufacturer=None)`, read-only):
+  per model year, the first `per_year` (max 300) private keys by `md5(variant_identity_key)` (one MILO query per year),
+  each computed exactly as the API: route split, match levels, % with an open-data fact, per admitted field % returned
+  and withheld counts by reason, the EEA `co2_selection` aggregate; per manufacturer (top 15) % with an EEA fact. At most
+  90 s per call (`truncated: true` returns what is done).
 - **Setup (one time)**: Railway → TRIPY → Variables → add `TRIPY_FACTS_TOKEN` (`openssl rand -hex 32`) and give the
   same value to yeda-rechev.

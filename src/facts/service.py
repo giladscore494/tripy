@@ -6,7 +6,7 @@
                  catalogue
     open data    record.open_data_part, cached by (variant_identity_key, the row's content_sha256, the snapshot
                  manifest sha, the matcher version, the admission version, the zero-semantics version, the gov
-                 manifest sha and the recall model map sha): an in-process
+                 manifest sha, the recall model map sha and the diagnostics version): an in-process
                  LRU (LRU_SIZE entries) in front of <data>/derived/facts_cache/<digest>.json on the volume (written only
                  when storage.disk.check_free allows it; a refused write costs only the next cold call)
     snapshots    the shards stay decompressed in the temp dir (open_data.datasets); only the year-window shards are
@@ -39,6 +39,9 @@ from .record import build_record, government_facts, not_found, open_data_part, w
 
 LRU_SIZE = 2000
 MAX_KEYS = 3
+# the cached part's diagnostics (co2_selection): part of the cache key only (a part cached without them is recomputed),
+# never of a record's `versions`
+DIAGNOSTICS_VERSION = "facts-diagnostics-co2-selection-v1"
 log = get_logger("facts")
 
 
@@ -77,12 +80,25 @@ class FactsService:
         except Exception as exc:  # noqa: BLE001 - an unreachable MILO is reported, never a fallback
             raise CatalogUnavailable(f"The MILO catalogue query failed: {type(exc).__name__}") from None
 
+    def sample_rows(self, year: int, n: int, manufacturer: str | None = None) -> list[dict]:
+        """The coverage probe's sample of one model year (db.LEVEL15_SAMPLE_SQL: the first n private-segment keys by
+        md5(variant_identity_key)), one read-only query. Raises CatalogUnavailable like government_rows."""
+        from ..db import LEVEL15_SAMPLE_SQL, _jsonable
+
+        if self._query is None:
+            raise CatalogUnavailable("DATABASE_URL is not set: the MILO catalogue is not available")
+        try:
+            rows = self._query(LEVEL15_SAMPLE_SQL, {"year": int(year), "n": int(n), "manufacturer": manufacturer})
+        except Exception as exc:  # noqa: BLE001 - an unreachable MILO is reported, never a fallback
+            raise CatalogUnavailable(f"The MILO catalogue query failed: {type(exc).__name__}") from None
+        return [_jsonable(dict(r)) for r in rows if r.get("variant_identity_key")]
+
     # -- open data (cached) -------------------------------------------------------------------------------------------
     @staticmethod
     def cache_key(key: str, row: dict) -> str:
         v = V.versions()
         parts = [key, str(row.get("content_sha256") or ""), v["snapshots_sha"], v["matcher"], v["admission"],
-                 v["zero_semantics"], v["gov_datasets"], v["gov_recall_model_map"]]
+                 v["zero_semantics"], v["gov_datasets"], v["gov_recall_model_map"], DIAGNOSTICS_VERSION]
         return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
     def _remember(self, digest: str, part: dict) -> None:

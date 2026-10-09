@@ -204,6 +204,18 @@ class Observer:
         except SnapshotsUnavailable as exc:
             return {"available": False, "error": "snapshots_unavailable", "message": str(exc)}
 
+    def facts_coverage(self, model_year_from: Any, model_year_to: Any, per_year: Any = 120,
+                       manufacturer: Any = None) -> dict:
+        from ..catalog import CatalogUnavailable
+        from ..facts.coverage import CoverageInputError, facts_coverage
+
+        try:
+            return facts_coverage(self._facts_service(), model_year_from, model_year_to, per_year, manufacturer)
+        except CoverageInputError as exc:
+            raise ToolInputError(str(exc)) from None
+        except CatalogUnavailable as exc:
+            return {"available": False, "error": "catalog_unavailable", "message": str(exc)}
+
     def list_runs(self, limit: Any = 20, offset: Any = 0) -> dict:
         from ..runstate.report import elapsed_s
 
