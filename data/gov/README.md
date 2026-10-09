@@ -16,10 +16,15 @@ per-vehicle record is stored or served, and raw downloads never enter git.
   review, and a reviewer may add or delete entries by hand. A model without an entry gets no `recalls` field;
 - `manifest.json`: per dataset its file, sha256, rows, the provenance of every resource (resource_id, source_url,
   downloaded_at, source_last_modified, license as stated, row_count, file_size, sha256, schema_hash,
-  ingestion_version), its stats and last attempt. Its sha256 is the facts record's `versions.gov_datasets` and part of
+  ingestion_version, access_method), its stats and last attempt. `access_method` is `file_download` (the resource
+  file) or `datastore_api` (the file download failed with an HTTP error or an HTML body and the resource is in the CKAN
+  datastore: `source_url` is the `datastore_search` endpoint, `sha256` is over the canonical JSON lines of the projected
+  rows in `_id` order, `file_size` is null, `schema_hash` is of the datastore fields, `file_attempt` says why the file
+  failed). Its sha256 is the facts record's `versions.gov_datasets` and part of
   the facts cache key;
 - `build_status.json`: the last build's outcome per dataset (`{"dataset", "status": "failed", "reason",
-  "previous_snapshot_preserved": true}` for a stopped one);
+  "previous_snapshot_preserved": true}` for a stopped one), with per resource its status, access method, the HTTP
+  status of the file attempt and the rows read;
 - `report.md`: the last build's report (the pull-request body).
 
 The server verifies each file against the manifest's sha256 and decompresses it into the container's temporary

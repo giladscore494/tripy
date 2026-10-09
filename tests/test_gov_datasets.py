@@ -197,8 +197,15 @@ def test_an_html_body_fails_the_dataset_and_keeps_the_previous_snapshot(gov):
     outcome = build(out, work, FakeCkan(bodies(**{PRICES: html})), names=["new_car_prices", "recall_notices"])
     failed = next(s for s in outcome["status"] if s["dataset"] == "new_car_prices")
     assert failed == {"dataset": "new_car_prices", "status": "failed", "reason": "html_body",
-                      "previous_snapshot_preserved": True, "detail": "an HTML page instead of the data",
-                      "resource_id": PRICES}
+                      "previous_snapshot_preserved": True,
+                      "detail": "an HTML page instead of the data from files.test: '<!DOCTYPE html><html><body>Service "
+                                "unavailable</body></html>'; no datastore fallback (datastore_active is not true)",
+                      "resource_id": PRICES,
+                      "resources": [{"resource_id": PRICES, "role": "prices", "status": "failed",
+                                     "access_method": "file_download", "file_http_status": None,
+                                     "file_error": failed["resources"][0]["file_error"], "datastore_active": False,
+                                     "rows": None}]}
+    assert failed["resources"][0]["file_error"].startswith("an HTML page instead of the data from files.test")
     assert (out / "new_car_prices.sqlite.gz").read_bytes() == before
     assert SN.manifest(out)["datasets"]["new_car_prices"]["sha256"] == entry_before
     assert SN.manifest(out)["datasets"]["new_car_prices"]["build_status"] == "failed"
