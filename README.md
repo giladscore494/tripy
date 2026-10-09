@@ -2132,7 +2132,7 @@ runs/<batch>/diagnostics/              benchmark.json, per_vehicle.jsonl / .csv 
 ## Tests
 
 ```bash
-pip install pytest
+pip install -r requirements-dev.txt                 # requirements.txt + pytest pinned to the CI version
 python -m pytest
 ```
 

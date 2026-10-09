@@ -568,17 +568,12 @@ def test_the_rate_limit_is_60_per_minute_per_token(api):
         assert limited.json()["error"]["code"] == "rate_limited" and int(limited.headers["Retry-After"]) >= 1
 
 
-def test_every_call_is_logged_without_values(caplog):
-    import logging
-
-    logger = logging.getLogger("tripy.facts")
-    logger.addHandler(caplog.handler)                   # the `tripy` logger does not propagate (server_logging)
-    try:
-        with caplog.at_level(logging.INFO, logger="tripy.facts"):
-            service().records([KEY["22010"], "missing"])
-    finally:
-        logger.removeHandler(caplog.handler)
-    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("facts call "))
+def test_every_call_is_logged_without_values(caplog, tripy_log):
+    with tripy_log("tripy.facts"):
+        service().records([KEY["22010"], "missing"])
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("facts call ")]
+    assert len(lines) == 1                                                   # one line per call, captured once
+    line = lines[0]
     data = json.loads(line[len("facts call "):])
     assert set(data) == {"time", "keys", "debug", "status", "cache", "facts", "withheld", "latency_ms"}
     assert data["status"] == {KEY["22010"]: "ok", "missing": "not_found"} and data["facts"][KEY["22010"]] > 40

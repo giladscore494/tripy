@@ -1,0 +1,4 @@
+# Tests (CI .github/workflows/tests.yml and local runs): the runtime requirements plus the pinned test runner, so a
+# local run and CI use the same pytest. requirements.txt alone is what the Dockerfile installs.
+-r requirements.txt
+pytest==9.1.1
