@@ -137,6 +137,7 @@ def build_prices(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[st
 def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
     agg = G3.Survival()
     resources = _ingest(ctx, name, spec, prev, agg.add)
+    agg.resolve()                               # S2: the degem_nm fallback, once every row was read
     state["survival"] = agg                     # the registry's names (G1 report, G2) even when a check fails below
     checks = {rid: s.summary() for rid, s in agg.resources.items()}
     _record_checks(ctx, name, checks)
@@ -145,24 +146,22 @@ def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[
         failed = next((rid for rid in agg.resources if any(p.startswith(f"[{rid}]") for p in problems)), None)
         raise P.DatasetFailed(reason, "; ".join(problems), failed, report_lines=G3.resource_lines(agg))
     coverage = agg.year_coverage()
-    basis = G3.BASIS_MODEL_YEAR if coverage >= float(spec.get("year_coverage_min", 0.95)) else G3.BASIS_FIRST_ROAD
     active = next((r for r in resources if r.get("role") == "active"), {})
     ref = ym_of(active.get("source_last_modified"))
     if ref:
-        ref_ym = ref[0] * 12 + ref[1] - 1
+        ref_year = ref[0]
     else:
-        dated = [k[4] for k in agg.cancelled if k[4] is not None]
-        ref_ym = max(dated) if dated else 0
+        dated = [k[3] for k in agg.cancelled if k[3] is not None]
+        ref_year = max(dated) if dated else 0
     low, high = (int(a) for a in spec.get("ages") or (3, 20))
     min_size = int(spec.get("min_cohort_size", 200))
-    rows, stats = G3.cohorts(agg, basis, ref_ym, min_size, (low, high))
+    rows, stats = G3.cohorts(agg, ref_year, min_size, (low, high))
     map_rows = G3.model_year_map(agg)
-    min_share = float(spec.get("model_year_min_share", 0.9))
-    lines, summary = G3.report(agg, coverage, basis, rows, stats, map_rows, min_size, min_share, ref_ym)
-    meta = {"dataset": name, "cohort_basis": basis, "shnat_yitzur_coverage": coverage, "reference_month":
-            summary["reference_month"], "min_cohort_size": min_size, "ages": [low, high],
-            "model_year_min_share": min_share, "exclusion": G3.EXCLUSION, "definition_he": G3.DEFINITION_HE[basis],
-            "source": SOURCES[name]}
+    lines, summary = G3.report(agg, coverage, rows, stats, map_rows, min_size, ref_year)
+    meta = {"dataset": name, "cohort_basis": G3.BASIS_MODEL_YEAR, "shnat_yitzur_coverage": coverage,
+            "reference_year": ref_year, "reference_month": f"{ref[0]}-{ref[1]:02d}" if ref else str(ref_year),
+            "age_unit": "whole_years", "min_cohort_size": min_size, "ages": [low, high], "exclusion": G3.EXCLUSION,
+            "definition_he": G3.DEFINITION_HE[G3.BASIS_MODEL_YEAR], "source": SOURCES[name]}
     written = _write(out, work, name, G3.table_payload(rows, map_rows, agg), meta)
     return {**written, "rows": sum(agg.rows.values()), "resources": resources, "stats": summary}, lines
 
