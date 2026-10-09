@@ -11,11 +11,12 @@ per-vehicle record is stored or served, and raw downloads never enter git.
 - `recall_notices.sqlite.gz` (G2): the recall notices with their canonical make, normalized DEGEM, production range and
   match status (TELEPHONE / WEBSITE are never read);
 - `road_survival.sqlite.gz` (G3): per `(tozeret_cd, degem_cd, cohort year)` the cohort (active + finally cancelled),
-  the age at final cancellation and the cancelled share by age (none for a cohort under 200 vehicles, or with under
-  95 % of its cancellations dated: `withheld` small_cohort / undated_cancellations); the model-year -> first-road-year
-  map; the registry's model names (for the recall map). The build fails the dataset (`date_unparsed`) when a resource
-  parses under 95 % of a date column, and (`unkeyed_rows`, also new_car_prices) when over 1 % of a resource's rows
-  have no code key;
+  the age at final cancellation (whole years) and the cancelled share by age (none for a cohort under 200 vehicles,
+  with under 95 % of its cancellations dated, or whose (tozeret_cd, shnat_yitzur) has unkeyed cancellations over 10 %
+  of its own: `withheld` small_cohort / undated_cancellations / unkeyed_cancellations); the model-year ->
+  first-road-year map; the registry's model names (for the recall map). The build fails the dataset
+  (`date_unparsed`) when a resource parses under 95 % of a date column, and (`unkeyed_rows`) when a cancellation file
+  has over 20 % of its rows still unkeyed after the degem_nm fallback (1 % for the active registry and new_car_prices);
 - `recall_model_map.json`: the REVIEWED map (canonical make, DEGEM normalized) -> catalogue kinuy_mishari. The build only
   adds entries from exact normalized equality (a multi-model DEGEM such as `VITO,VIANO` only when every part is
   exactly a catalogue model of the make: one entry per model, origin `exact_normalized_equality_split`) and lists the

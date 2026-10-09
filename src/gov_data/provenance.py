@@ -24,7 +24,9 @@ and the build writes {"dataset", "status": "failed", "reason", "previous_snapsho
                                the datastore_search_sql COUNT(*)); an estimated total without an exact count: more
                                than 2 % off, or the last page was not short
     date_unparsed              under 95 % of a resource's rows parse a date column the dataset needs (road_survival)
-    unkeyed_rows               over 1 % of a resource's rows have no code key (road_survival, new_car_prices)
+    unkeyed_rows               too many of a resource's rows have no code key: over 20 % of a road_survival
+                               cancellation file's (after the degem_nm fallback), 1 % of the active registry's or of
+                               new_car_prices' rows
 
 The other datasets continue.
 """

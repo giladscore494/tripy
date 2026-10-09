@@ -118,15 +118,33 @@ def _cancel_rows(keyed: int, unknown: int, *, filler: int = 0) -> bytes:
     return _csv(SURV_COLUMNS + ["bitul_dt"], rows)
 
 
-def test_six_percent_still_unkeyed_fails_unkeyed_rows_with_shapes_only(gov):
+def test_twenty_two_percent_still_unkeyed_fails_unkeyed_rows_with_shapes_only(gov):
     out, work = gov
-    outcome = build(out, work, FakeCkan(bodies(**{CANCELLED[0]: _cancel_rows(47, 3)})), names=["road_survival"])
+    outcome = build(out, work, FakeCkan(bodies(**{CANCELLED[0]: _cancel_rows(39, 11)})), names=["road_survival"])
     status = outcome["status"][0]
     assert status["status"] == "failed" and status["reason"] == "unkeyed_rows"
-    assert f"[{CANCELLED[0]}] unkeyed 3 of 50 rows (6.00%, allowed 5%) after the degem_nm fallback" in status["detail"]
-    assert "'degem_nm_unknown': 3" in status["detail"] and "NO SUCH CODE" not in status["detail"]
+    assert f"[{CANCELLED[0]}] unkeyed 11 of 50 rows (22.00%, allowed 20%) after the degem_nm fallback" in \
+        status["detail"]
+    assert "'degem_nm_unknown': 11" in status["detail"] and "NO SUCH CODE" not in status["detail"]
     text = B.report(outcome)
     assert "NO SUCH CODE" not in text and PLATE not in text and CHASSIS not in text
+
+
+def test_twelve_percent_unkeyed_builds_and_the_cohort_guard_withholds_the_cohort(gov, tmp_path):
+    out, work = gov
+    # 6 of 50 cancellation rows unkeyed (12 %, under the 20 % resource limit); all of (413, 2017): the cohort
+    # 413/100/2017 has 44 cancellations, so 6 > 10 % of 44 -> withheld unkeyed_cancellations
+    outcome = build(out, work, FakeCkan(bodies(**{CANCELLED[0]: _cancel_rows(44, 6)})), names=["road_survival"])
+    assert outcome["status"][0]["status"] == "built"
+    stats = outcome["manifest"]["datasets"]["road_survival"]["stats"]
+    assert stats["withheld"]["unkeyed_cancellations"] == 1
+    assert stats["active_in_withheld"]["unkeyed_cancellations"] == 250
+    assert stats["active_share_in_withheld"]["unkeyed_cancellations"] == round(250 / stats["active_in_cohorts"], 4)
+    text = "\n".join(outcome["sections"]["road_survival"])
+    assert "- active vehicles in withheld cohorts (of 300 in all cohorts): unkeyed_cancellations 250 (83.33 %)" in text
+    serve(out, tmp_path)
+    facts, withheld = F.survival_facts(row(shnat_yitzur=2017))
+    assert facts == {} and withheld[0]["reason"] == "unkeyed_cancellations"
 
 
 def test_a_cancellation_keyed_via_degem_nm_in_a_build(gov):
