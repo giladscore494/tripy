@@ -394,3 +394,110 @@ def test_the_workflow_skips_the_pull_request_on_the_status_summary():
     assert "add-paths: ${{ steps.paths.outputs.list }}" in cpr and "data/gov/*.sqlite.gz" not in cpr
     assert 'if [ -e "$path" ]' in paths
     assert text.index("id: status") < text.index("id: paths") < text.index("id: cpr")
+
+
+# --- D3: an estimated datastore total ---------------------------------------------------------------------------------
+
+class BigDatastore:
+    """A datastore of `rows` generated records (field `a`) whose first page reports `total` (estimated or not), with
+    or without datastore_search_sql."""
+
+    def __init__(self, rows: int, total: int, estimated: bool, sql_count: int | None = None):
+        self.rows, self.total, self.estimated, self.sql_count = rows, total, estimated, sql_count
+        self.calls: list[tuple[str, dict]] = []
+
+    def get_json(self, url: str, retries: int | None = None) -> dict:
+        parsed = urllib.parse.urlparse(url)
+        action, params = parsed.path.rsplit("/", 1)[-1], dict(urllib.parse.parse_qsl(parsed.query))
+        self.calls.append((action, params))
+        if action == "datastore_search_sql":
+            if self.sql_count is None:
+                return {"success": False, "error": {"message": "Access denied: datastore_search_sql"}}
+            return {"success": True, "result": {"records": [{"n": self.sql_count}], "fields": [{"id": "n"}]}}
+        assert action == "datastore_search", url
+        if params["limit"] == "0":
+            return {"success": True, "result": {"fields": [{"id": "_id"}, {"id": "a"}], "records": [],
+                                                "total": self.total, "total_was_estimated": self.estimated}}
+        offset, limit = int(params["offset"]), int(params["limit"])
+        page = [{"a": "x"}] * max(0, min(limit, self.rows - offset))
+        return {"success": True, "result": {"records": page, "total": self.total,
+                                            "total_was_estimated": self.estimated}}
+
+
+def read_big(store: BigDatastore) -> dict:
+    from src.gov_data import ingest as I
+    from src.gov_data import provenance as P
+    ctx = I.Context(http=store, base="https://data.gov.il/api/3/action", accepted_formats=["CSV"], min_row_ratio=0.7,
+                    ingestion_version="v", rate=ckan.RateLimit(clock=lambda: 0.0, sleep=lambda s: None))
+    seen = [0]
+
+    def on_row(row):
+        seen[0] += 1
+    try:
+        fields, _ = I._from_datastore(ctx, {"columns": {"required": ["a"]}}, "res-1", None, on_row, {})
+    except P.DatasetFailed as exc:
+        return {"failed": exc.reason, "detail": exc.detail, "seen": seen[0]}
+    return {**fields, "seen": seen[0]}
+
+
+def test_an_estimated_total_within_2_percent_and_a_short_last_page_is_accepted():
+    store = BigDatastore(rows=995_000, total=1_000_000, estimated=True)
+    out = read_big(store)
+    assert "failed" not in out, out
+    assert out["row_count"] == out["seen"] == 995_000
+    assert out["datastore_total"] == 1_000_000 and out["total_was_estimated"] is True
+    assert out["total_check"] == "estimate_within_2pct" and "datastore_exact_count" not in out
+    assert [a for a, _ in store.calls].count("datastore_search_sql") == 1                    # tried once
+    sql = next(p for a, p in store.calls if a == "datastore_search_sql")["sql"]
+    assert sql == 'SELECT COUNT(*) AS n FROM "res-1"'
+
+
+def test_an_estimated_total_more_than_2_percent_off_fails():
+    out = read_big(BigDatastore(rows=900_000, total=1_000_000, estimated=True))
+    assert out["failed"] == "datastore_incomplete" and "1000000 (estimated)" in out["detail"]
+    assert "900000 rows read" in out["detail"] and "10.00% off" in out["detail"]
+
+
+def test_an_exact_total_keeps_strict_equality():
+    out = read_big(BigDatastore(rows=99_999, total=100_000, estimated=False))
+    assert out["failed"] == "datastore_incomplete" and out["detail"] == "total 100000, 99999 rows read"
+    store = BigDatastore(rows=100_000, total=100_000, estimated=False)
+    assert read_big(store)["total_check"] == "exact_total"
+    assert "datastore_search_sql" not in [a for a, _ in store.calls]                          # not needed
+
+
+def test_the_sql_count_is_used_when_available():
+    store = BigDatastore(rows=995_000, total=1_000_000, estimated=True, sql_count=995_000)
+    out = read_big(store)
+    assert out["total_check"] == "exact_count" and out["datastore_exact_count"] == 995_000
+    assert out["total_was_estimated"] is True and out["datastore_total"] == 1_000_000
+    # an exact count is strict: one row off fails, even inside the 2 % of the estimate
+    out = read_big(BigDatastore(rows=995_000, total=1_000_000, estimated=True, sql_count=995_001))
+    assert out["failed"] == "datastore_incomplete" and "exact count 995001" in out["detail"]
+
+
+def test_the_sql_count_rejects_an_unsafe_resource_id():
+    store = BigDatastore(rows=1, total=1, estimated=True, sql_count=1)
+    rate = ckan.RateLimit(clock=lambda: 0.0, sleep=lambda s: None)
+    assert ckan.datastore_count(store, "https://b", 'x" ; DROP TABLE y; --', rate) is None and store.calls == []
+    assert ckan.datastore_count(store, "https://b", "053cea08-09bc-40ec-8f7a-156f0677aff3", rate) == 1
+
+
+def test_the_estimate_check_is_recorded_in_the_report(gov):
+    out, work = gov
+    store = store_of(bodies()[PRICES])
+
+    class Estimated(FallbackCkan):
+        def get_json(self, url, retries=None):
+            body = super().get_json(url, retries)
+            if "datastore_search" in url and "sort=" in url:
+                body["result"]["total_was_estimated"] = True
+                body["result"]["total"] = 7
+            return body
+    http = Estimated(bodies(), file_answers={PRICES: [FORBIDDEN]}, datastore={PRICES: store})
+    outcome = build(out, work, http, names=["new_car_prices"])
+    res = outcome["manifest"]["datasets"]["new_car_prices"]["resources"][0]
+    assert res["total_check"] == "estimate_within_2pct" and res["total_was_estimated"] is True
+    assert res["datastore_total"] == 7
+    text = B.report(outcome)
+    assert "total check estimate_within_2pct" in text and "| estimate_within_2pct |" in text

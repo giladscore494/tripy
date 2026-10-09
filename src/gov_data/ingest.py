@@ -6,8 +6,11 @@ The rows come from the resource file (`file_download`). When the file cannot be 
 error body instead of the data) and resource_show reports `datastore_active: true`, they come from the CKAN datastore
 instead (`datastore_api`): `datastore_search` pages of 32000 rows sorted by `_id`, only the projected fields requested
 (a `never` column is never asked for), at most 4 requests per second. The datastore keeps every fail-safe: a required
-field missing, the row-count drop and `total` != the rows read (`datastore_incomplete`). No raw file is written for
-it. A redirect off *.gov.il or a download with no HTTP answer stops the resource without the fallback.
+field missing, the row-count drop and `total` != the rows read (`datastore_incomplete`). When the first page's
+`total` is an estimate (`total_was_estimated`), one exact `datastore_search_sql` COUNT(*) is tried; without it the read
+is accepted only when the last page was short, no page failed and the rows are within 2 % of the estimate
+(`total_check: estimate_within_2pct`). No raw file is written for it. A redirect off *.gov.il or a download with
+no HTTP answer stops the resource without the fallback.
 """
 
 from __future__ import annotations
@@ -187,13 +190,16 @@ def _from_datastore(ctx: Context, spec: dict, resource_id: str, role: str | None
         raise P.DatasetFailed("required_column_missing", f"missing {missing} in the datastore fields", resource_id)
     never = {str(c).lower() for c in (spec.get("columns") or {}).get("never") or []}
     wanted = {canon: live[index] for canon, index in columns.items() if live[index].lower() not in never}
-    digest, rows, total, estimated = hashlib.sha256(), 0, None, False
+    digest, rows, total, estimated, exact_count, ended_short = hashlib.sha256(), 0, None, False, None, False
     try:
         pages = ckan.datastore_pages(ctx.http, ctx.base, resource_id, list(wanted.values()), ctx.rate,
                                      ctx.datastore_page)
         for page, (page_total, records, page_estimated) in enumerate(pages):
             if page == 0:
                 total, estimated = page_total, page_estimated
+                if estimated:
+                    exact_count = ckan.datastore_count(ctx.http, ctx.base, resource_id, ctx.rate)
+            ended_short = len(records) < ctx.datastore_page
             for record in records:
                 projected = {canon: cell(record.get(field_id)) for canon, field_id in wanted.items()}
                 digest.update(canonical_line(projected))
@@ -205,10 +211,37 @@ def _from_datastore(ctx: Context, spec: dict, resource_id: str, role: str | None
         raise P.DatasetFailed("resource_unavailable", f"page at row {rows}: {type(exc).__name__}: "
                               f"{str(exc)[:300]}", resource_id) from None
     attempt["rows"] = rows
-    if total is None or total != rows:
-        note = " (estimated by the server)" if estimated else ""
-        raise P.DatasetFailed("datastore_incomplete", f"total {total}{note}, {rows} rows read", resource_id)
+    check = _total_check(rows, total, estimated, exact_count, ended_short, resource_id)
+    attempt["total_check"] = check
     fields = {"source_url": ckan.datastore_endpoint(ctx.base, resource_id), "access_method": DATASTORE_API,
               "row_count": rows, "file_size": None, "sha256": digest.hexdigest(), "schema_hash": S.schema_hash(live),
-              "schema": [S.clean_name(h) for h in live], "datastore_total": total}
+              "schema": [S.clean_name(h) for h in live], "datastore_total": total,
+              "total_was_estimated": estimated, "total_check": check}
+    if exact_count is not None:
+        fields["datastore_exact_count"] = exact_count
     return fields, list(wanted.values())
+
+
+def _total_check(rows: int, total: int | None, estimated: bool, exact_count: int | None, ended_short: bool,
+                 resource_id: str) -> str:
+    """How the rows read were checked against the server's count (DatasetFailed datastore_incomplete otherwise):
+    exact_total (an exact `total`, equal), exact_count (an estimated `total`, the datastore_search_sql COUNT(*) equal)
+    or estimate_within_2pct (no exact count: the last page short and the rows within 2 % of the estimate)."""
+    if not estimated:
+        if total is None or total != rows:
+            raise P.DatasetFailed("datastore_incomplete", f"total {total}, {rows} rows read", resource_id)
+        return "exact_total"
+    if exact_count is not None:
+        if exact_count != rows:
+            raise P.DatasetFailed("datastore_incomplete", f"exact count {exact_count} (datastore_search_sql; total "
+                                  f"{total} estimated), {rows} rows read", resource_id)
+        return "exact_count"
+    if not total:
+        raise P.DatasetFailed("datastore_incomplete", f"total {total} (estimated), no exact count, {rows} rows read",
+                              resource_id)
+    deviation = abs(rows - total) / total
+    if ended_short and deviation <= ckan.ESTIMATE_TOLERANCE:
+        return "estimate_within_2pct"
+    raise P.DatasetFailed("datastore_incomplete", f"total {total} (estimated), no exact count, {rows} rows read "
+                          f"({deviation:.2%} off; tolerance {ckan.ESTIMATE_TOLERANCE:.0%}"
+                          f"{'' if ended_short else ', the last page was not short'})", resource_id)

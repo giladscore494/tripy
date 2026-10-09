@@ -6,7 +6,9 @@ ingestion_version, access_method (+ format, the package title and organization).
 resource file, sha256 / file_size of its bytes, schema_hash of its header. access_method `datastore_api` (the file
 download failed and the resource is in the datastore): source_url is the datastore_search endpoint, sha256 is over the
 canonical JSON lines of the projected rows in `_id` order, file_size is null and schema_hash is of the datastore fields;
-`file_attempt` records why the file failed (HTTP status, host, reason).
+`file_attempt` records why the file failed (HTTP status, host, reason); datastore_total, total_was_estimated and
+total_check (exact_total / exact_count / estimate_within_2pct) record how the rows were checked against the server's
+count.
 
 Any of these stops the whole dataset (DatasetFailed); the previous committed snapshot and its manifest entry stay,
 and the build writes {"dataset", "status": "failed", "reason", "previous_snapshot_preserved": true}:
@@ -18,7 +20,9 @@ and the build writes {"dataset", "status": "failed", "reason", "previous_snapsho
     required_column_missing    a required column is not in the live header
     row_count_drop             fewer rows than min_row_ratio (70 %) of the previous build's rows of that resource
     html_body                  an HTML page / error body instead of the data
-    datastore_incomplete       the datastore fallback read fewer / more rows than its first page's `total`
+    datastore_incomplete       the datastore fallback read fewer / more rows than its first page's exact `total` (or
+                               the datastore_search_sql COUNT(*)); an estimated total without an exact count: more
+                               than 2 % off, or the last page was not short
 
 The other datasets continue.
 """

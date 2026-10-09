@@ -30,6 +30,8 @@ DOWNLOAD_RETRY_WAIT_S = 10.0
 DATASTORE_PAGE = 32000
 DATASTORE_RATE = 4.0                    # requests per second, at most
 DATASTORE_RETRIES = 3                   # per page, on 429 / 5xx
+ESTIMATE_TOLERANCE = 0.02               # an estimated total: |rows - total| / total at most this
+_RESOURCE_ID = re.compile(r"^[0-9A-Za-z-]+$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 
 
@@ -234,6 +236,25 @@ def datastore_schema(http: Http, base: str, resource_id: str, rate: RateLimit) -
     fields = (result or {}).get("fields") if isinstance(result, dict) else None
     ids = [str(f.get("id")) for f in fields or [] if isinstance(f, dict) and f.get("id") is not None]
     return [i for i in ids if i not in ("_id", "_full_text")]
+
+
+def datastore_count(http: Http, base: str, resource_id: str, rate: RateLimit) -> int | None:
+    """The exact row count through `datastore_search_sql` (`SELECT COUNT(*)`), or None when the action is
+    unavailable, refused or errors (one try, no retries)."""
+    if not _RESOURCE_ID.match(str(resource_id)):
+        return None
+    rate.wait()
+    try:
+        result = _action(http, base, "datastore_search_sql",
+                         {"sql": f'SELECT COUNT(*) AS n FROM "{resource_id}"'}, retries=0)
+    except Exception:  # noqa: BLE001 - no exact count: the caller falls back to the estimate check
+        return None
+    records = (result or {}).get("records") if isinstance(result, dict) else None
+    if not records or not isinstance(records[0], dict) or len(records[0]) != 1:
+        return None
+    value = next(iter(records[0].values()))
+    text = str(value).strip()
+    return int(text) if text.isdigit() else None
 
 
 def datastore_pages(http: Http, base: str, resource_id: str, fields: list[str], rate: RateLimit,

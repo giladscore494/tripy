@@ -268,13 +268,14 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
             status = f"failed: {result.get('reason')} (previous snapshot kept)"
         lines.append(f"| {name} | {status} | {entry.get('rows', '—') if result.get('status') == 'built' else '—'} | "
                      f"{entry.get('file') or '—'} | {str(entry.get('sha256') or '—')[:12]} |")
-    lines += ["", "| dataset | resource | status | access method | file HTTP status | rows |",
-              "|---|---|---|---|---|---|"]
+    lines += ["", "| dataset | resource | status | access method | file HTTP status | rows | total check |",
+              "|---|---|---|---|---|---|---|"]
     for item in outcome["status"]:
         for res in item.get("resources") or []:
             lines.append(f"| {item['dataset']} | `{res['resource_id']}` ({res.get('role')}) | {res.get('status')} | "
                          f"{res.get('access_method')} | {res.get('file_http_status') or '—'} | "
-                         f"{res.get('rows') if res.get('rows') is not None else '—'} |")
+                         f"{res.get('rows') if res.get('rows') is not None else '—'} | "
+                         f"{res.get('total_check') or '—'} |")
     for name, section in outcome["sections"].items():
         spec = specs.get(name) or {}
         entry = (manifest.get("datasets") or {}).get(name) or {}
@@ -289,6 +290,11 @@ def report(outcome: dict, cfg: dict | None = None) -> str:
                              f"last modified {res.get('source_last_modified')}, schema hash {res['schema_hash'][:12]}")
                 if res.get("file_attempt"):
                     lines.append(f"  - file attempt: {res['file_attempt'].get('detail')}")
+                if res.get("access_method") == "datastore_api":
+                    lines.append(f"  - datastore total {res.get('datastore_total')} (estimated: "
+                                 f"{bool(res.get('total_was_estimated'))}), total check {res.get('total_check')}"
+                                 + (f", exact count {res['datastore_exact_count']}"
+                                    if res.get("datastore_exact_count") is not None else ""))
                 lines.append(f"  - schema: `{' | '.join(res.get('schema') or [])}`")
         lines += section
         samples = [s for rid, s in (outcome.get("samples") or {}).items()
@@ -323,7 +329,8 @@ def exit_summary(statuses: list[dict] | None) -> dict:
         for res in item.get("resources") or []:
             lines.append(f"  - `{res.get('resource_id')}` ({res.get('role')}): {res.get('status')} via "
                          f"{res.get('access_method')}, file HTTP status {res.get('file_http_status') or '—'}, "
-                         f"rows {res.get('rows') if res.get('rows') is not None else '—'}")
+                         f"rows {res.get('rows') if res.get('rows') is not None else '—'}"
+                         + (f", total check {res['total_check']}" if res.get("total_check") else ""))
     return {"create_pr": bool(built), "built": len(built), "failed": len(failed), "text": "\n".join(lines) + "\n"}
 
 
