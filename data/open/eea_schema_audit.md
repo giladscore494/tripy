@@ -1,6 +1,6 @@
 ## EEA schema audit (per year)
 
-Build: https://github.com/giladscore494/tripy/actions/runs/37705406002
+Build: https://github.com/giladscore494/tripy/actions/runs/37846014981
 
 Coverage % weighted by registrations (`absent`: no live column; `0.0`: mapped, no value):
 
@@ -19,7 +19,9 @@ Coverage % weighted by registrations (`absent`: no live column; `0.0`: mapped, n
 | 2020 | built | F | 259740 | 235021 | 10943487 | 3.5 MB | 100.0 | 99.9 | 100.0 | 99.9 | 99.9 | 100.0 | 94.1 | 89.8 | 100.0 | 99.9 | 99.8 | 100.0 | 0.0 | 9.6 | absent |
 | 2021 | built | F | 284061 | 173428 | 9212221 | 3.0 MB | 100.0 | 99.9 | 100.0 | 99.8 | 99.8 | 100.0 | 90.5 | 98.5 | 100.0 | 99.9 | 99.9 | 16.5 | 84.3 | 18.4 | absent |
 | 2022 | built | P | 337291 | 163851 | 8614200 | 3.1 MB | 100.0 | 98.4 | 100.0 | 99.8 | 99.7 | 100.0 | 87.1 | 99.7 | 100.0 | 99.9 | 99.9 | 15.7 | 82.9 | 22.2 | absent |
-| 2025 | stopped (no_csv_link) | P | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| 2023 | built | F | 217220 | 147954 | 9769778 | 2.5 MB | 100.0 | 100.0 | 100.0 | 99.8 | 99.7 | 100.0 | 85.2 | 99.5 | 100.0 | 0.0 | 99.9 | 0.0 | 84.7 | 22.8 | absent |
+| 2024 | built | F | 235888 | 131370 | 9764284 | 2.3 MB | 100.0 | 100.0 | 99.9 | 99.8 | 99.4 | 100.0 | 86.1 | 99.9 | 100.0 | 0.0 | 99.9 | 0.0 | 85.9 | 21.3 | absent |
+| 2025 | built | P | 307071 | 164070 | 9493724 | 2.9 MB | 100.0 | 100.0 | 99.9 | 99.8 | 99.5 | 100.0 | 82.1 | 95.6 | 100.0 | 0.0 | 99.9 | 0.0 | 81.2 | 26.0 | absent |
 
 ### 2010 (F, discodata)
 
@@ -333,6 +335,78 @@ Live header: `ID, MS, Mp, VFN, Mh, Man, MMS, TAN, T, Va, Ve, Mk, Cn, Ct, Cr, M (
 | fuel_consumption_l_100km | Fc | mapped | REAL | 15.4 | 195 | 82.9 |
 | year | Year | mapped | INTEGER | 0.0 | 1 | 100.0 |
 
+### 2023 (F, discodata)
+
+Live header: `ID, MS, Mp, VFN, Mh, Man, MMS, TAN, T, Va, Ve, Mk, Cn, Ct, Cr, M (kg), Mt, Enedc (g/km), Ewltp (g/km), W (mm), At1 (mm), At2 (mm), Ft, Fm, Ec (cm3), Ep (KW), Z (Wh/km), IT, Ernedc (g/km), Erwltp (g/km), De, Vf, R, Year, Status, Version_file, E (g/km), Er (g/km), Zr, Dr, Fc, Ech, RLFI`
+
+| key | live column | state | type | null % | distinct | coverage % (reg.) |
+|---|---|---|---|---|---|---|
+| make | Mk | mapped | TEXT | 0.0 | 66 | 100.0 |
+| model | Cn | mapped | MIXED | 0.1 | 5251 | 100.0 |
+| type_approval | T | mapped | MIXED | 0.4 | 1313 | 100.0 |
+| variant | Va | mapped | MIXED | 2.4 | 3741 | 99.8 |
+| version | Ve | mapped | MIXED | 3.4 | 19168 | 99.7 |
+| fuel | Ft | mapped | TEXT | 0.0 | 9 | 100.0 |
+| fuel_mode | Fm | mapped | TEXT | 0.0 | 6 | 100.0 |
+| displacement_cc | Ec (cm3) | mapped | INTEGER | 4.8 | 251 | 85.2 |
+| power_kw | Ep (KW) | mapped | INTEGER | 1.6 | 373 | 99.5 |
+| co2_wltp | Ewltp (g/km) | mapped | INTEGER | 1.9 | 376 | 99.9 |
+| co2_nedc | Enedc (g/km) | empty | — | 100.0 | 0 | 0.0 |
+| wheelbase_mm | W (mm) | empty | — | 100.0 | 0 | 0.0 |
+| mass_running_order_kg | M (kg) | mapped | INTEGER | 0.1 | 1852 | 100.0 |
+| energy_wh_km | Z (Wh/km) | mapped | INTEGER | 90.6 | 249 | 22.8 |
+| electric_range_km | — | absent | — | 100.0 | 0 | 0.0 |
+| fuel_consumption_l_100km | Fc | mapped | REAL | 14.8 | 163 | 84.7 |
+| year | Year | mapped | INTEGER | 0.0 | 1 | 100.0 |
+
+### 2024 (F, discodata)
+
+Live header: `ID, MS, Mp, VFN, Mh, Man, MMS, TAN, T, Va, Ve, Mk, Cn, Ct, Cr, M (kg), Mt, Enedc (g/km), Ewltp (g/km), W (mm), At1 (mm), At2 (mm), Ft, Fm, Ec (cm3), Ep (KW), Z (Wh/km), IT, Ernedc (g/km), Erwltp (g/km), De, Vf, R, Year, Status, Version_file, E (g/km), Er (g/km), Zr, Dr, Fc, Ech, RLFI`
+
+| key | live column | state | type | null % | distinct | coverage % (reg.) |
+|---|---|---|---|---|---|---|
+| make | Mk | mapped | TEXT | 0.0 | 65 | 100.0 |
+| model | Cn | mapped | MIXED | 0.1 | 5020 | 100.0 |
+| type_approval | T | mapped | MIXED | 0.1 | 1250 | 99.9 |
+| variant | Va | mapped | MIXED | 2.1 | 4036 | 99.8 |
+| version | Ve | mapped | MIXED | 4.6 | 20137 | 99.4 |
+| fuel | Ft | mapped | TEXT | 0.0 | 10 | 100.0 |
+| fuel_mode | Fm | mapped | TEXT | 0.0 | 6 | 100.0 |
+| displacement_cc | Ec (cm3) | mapped | INTEGER | 5.0 | 206 | 86.1 |
+| power_kw | Ep (KW) | mapped | INTEGER | 0.5 | 369 | 99.9 |
+| co2_wltp | Ewltp (g/km) | mapped | INTEGER | 1.7 | 388 | 99.9 |
+| co2_nedc | Enedc (g/km) | empty | — | 100.0 | 0 | 0.0 |
+| wheelbase_mm | W (mm) | empty | — | 100.0 | 0 | 0.0 |
+| mass_running_order_kg | M (kg) | mapped | INTEGER | 0.0 | 1854 | 100.0 |
+| energy_wh_km | Z (Wh/km) | mapped | INTEGER | 89.6 | 250 | 21.3 |
+| electric_range_km | — | absent | — | 100.0 | 0 | 0.0 |
+| fuel_consumption_l_100km | Fc | mapped | REAL | 8.2 | 161 | 85.9 |
+| year | Year | mapped | INTEGER | 0.0 | 1 | 100.0 |
+
+### 2025 (P, discodata)
+
+Live header: `ID, MS, Mp, VFN, Mh, Man, MMS, TAN, T, Va, Ve, Mk, Cn, Ct, Cr, M (kg), Mt, Enedc (g/km), Ewltp (g/km), W (mm), At1 (mm), At2 (mm), Ft, Fm, Ec (cm3), Ep (KW), Z (Wh/km), IT, Ernedc (g/km), Erwltp (g/km), De, Vf, R, Year, Status, Version_file, E (g/km), Er (g/km), Zr, Dr, Fc, Ech, RLFI`
+
+| key | live column | state | type | null % | distinct | coverage % (reg.) |
+|---|---|---|---|---|---|---|
+| make | Mk | mapped | TEXT | 0.0 | 74 | 100.0 |
+| model | Cn | mapped | MIXED | 0.1 | 5838 | 100.0 |
+| type_approval | T | mapped | MIXED | 0.1 | 1254 | 99.9 |
+| variant | Va | mapped | MIXED | 1.6 | 4369 | 99.8 |
+| version | Ve | mapped | MIXED | 3.4 | 19099 | 99.5 |
+| fuel | Ft | mapped | TEXT | 0.0 | 10 | 100.0 |
+| fuel_mode | Fm | mapped | TEXT | 0.0 | 7 | 100.0 |
+| displacement_cc | Ec (cm3) | mapped | INTEGER | 5.7 | 215 | 82.1 |
+| power_kw | Ep (KW) | mapped | INTEGER | 20.0 | 382 | 95.6 |
+| co2_wltp | Ewltp (g/km) | mapped | INTEGER | 0.5 | 428 | 99.9 |
+| co2_nedc | Enedc (g/km) | empty | — | 100.0 | 0 | 0.0 |
+| wheelbase_mm | W (mm) | empty | — | 100.0 | 0 | 0.0 |
+| mass_running_order_kg | M (kg) | mapped | INTEGER | 0.0 | 1998 | 100.0 |
+| energy_wh_km | Z (Wh/km) | mapped | INTEGER | 87.7 | 433 | 26.0 |
+| electric_range_km | — | absent | — | 100.0 | 0 | 0.0 |
+| fuel_consumption_l_100km | Fc | mapped | REAL | 9.9 | 163 | 81.2 |
+| year | Year | mapped | INTEGER | 0.0 | 1 | 100.0 |
+
 ### Sanity checks
 
 | year | shard rows | rows of another year | HTML / error bodies |
@@ -350,10 +424,12 @@ Live header: `ID, MS, Mp, VFN, Mh, Man, MMS, TAN, T, Va, Ve, Mk, Cn, Ct, Cr, M (
 | 2020 | 235021 | 0 | 0 |
 | 2021 | 173428 | 0 | 0 |
 | 2022 | 163851 | 0 | 0 |
-| 2025 | — | — | — |
+| 2023 | 147954 | 0 | 0 |
+| 2024 | 131370 | 0 | 0 |
+| 2025 | 164070 | 0 | 0 |
 
 DISCODATA bodies are parsed only through `eea_response` (H1): an HTML page, an error message or a body without `results` is a query error, never a year without cars.
 
 ### Per-year failures
 
-- 2025: stopped (no_csv_link)
+- none

@@ -220,4 +220,54 @@ year,status,status_used,source,source_rows,rows,registrations,key,live_column,st
 2022,built,P,discodata,337291,163851,8614200,electric_range_km,,absent,—,100.0,0,0.0
 2022,built,P,discodata,337291,163851,8614200,fuel_consumption_l_100km,Fc,mapped,REAL,15.4,195,82.9
 2022,built,P,discodata,337291,163851,8614200,year,Year,mapped,INTEGER,0.0,1,100.0
-2025,stopped,P,datahub_csv,,,,,,,,,,
+2023,built,F,discodata,217220,147954,9769778,make,Mk,mapped,TEXT,0.0,66,100.0
+2023,built,F,discodata,217220,147954,9769778,model,Cn,mapped,MIXED,0.1,5251,100.0
+2023,built,F,discodata,217220,147954,9769778,type_approval,T,mapped,MIXED,0.4,1313,100.0
+2023,built,F,discodata,217220,147954,9769778,variant,Va,mapped,MIXED,2.4,3741,99.8
+2023,built,F,discodata,217220,147954,9769778,version,Ve,mapped,MIXED,3.4,19168,99.7
+2023,built,F,discodata,217220,147954,9769778,fuel,Ft,mapped,TEXT,0.0,9,100.0
+2023,built,F,discodata,217220,147954,9769778,fuel_mode,Fm,mapped,TEXT,0.0,6,100.0
+2023,built,F,discodata,217220,147954,9769778,displacement_cc,Ec (cm3),mapped,INTEGER,4.8,251,85.2
+2023,built,F,discodata,217220,147954,9769778,power_kw,Ep (KW),mapped,INTEGER,1.6,373,99.5
+2023,built,F,discodata,217220,147954,9769778,co2_wltp,Ewltp (g/km),mapped,INTEGER,1.9,376,99.9
+2023,built,F,discodata,217220,147954,9769778,co2_nedc,Enedc (g/km),empty,—,100.0,0,0.0
+2023,built,F,discodata,217220,147954,9769778,wheelbase_mm,W (mm),empty,—,100.0,0,0.0
+2023,built,F,discodata,217220,147954,9769778,mass_running_order_kg,M (kg),mapped,INTEGER,0.1,1852,100.0
+2023,built,F,discodata,217220,147954,9769778,energy_wh_km,Z (Wh/km),mapped,INTEGER,90.6,249,22.8
+2023,built,F,discodata,217220,147954,9769778,electric_range_km,,absent,—,100.0,0,0.0
+2023,built,F,discodata,217220,147954,9769778,fuel_consumption_l_100km,Fc,mapped,REAL,14.8,163,84.7
+2023,built,F,discodata,217220,147954,9769778,year,Year,mapped,INTEGER,0.0,1,100.0
+2024,built,F,discodata,235888,131370,9764284,make,Mk,mapped,TEXT,0.0,65,100.0
+2024,built,F,discodata,235888,131370,9764284,model,Cn,mapped,MIXED,0.1,5020,100.0
+2024,built,F,discodata,235888,131370,9764284,type_approval,T,mapped,MIXED,0.1,1250,99.9
+2024,built,F,discodata,235888,131370,9764284,variant,Va,mapped,MIXED,2.1,4036,99.8
+2024,built,F,discodata,235888,131370,9764284,version,Ve,mapped,MIXED,4.6,20137,99.4
+2024,built,F,discodata,235888,131370,9764284,fuel,Ft,mapped,TEXT,0.0,10,100.0
+2024,built,F,discodata,235888,131370,9764284,fuel_mode,Fm,mapped,TEXT,0.0,6,100.0
+2024,built,F,discodata,235888,131370,9764284,displacement_cc,Ec (cm3),mapped,INTEGER,5.0,206,86.1
+2024,built,F,discodata,235888,131370,9764284,power_kw,Ep (KW),mapped,INTEGER,0.5,369,99.9
+2024,built,F,discodata,235888,131370,9764284,co2_wltp,Ewltp (g/km),mapped,INTEGER,1.7,388,99.9
+2024,built,F,discodata,235888,131370,9764284,co2_nedc,Enedc (g/km),empty,—,100.0,0,0.0
+2024,built,F,discodata,235888,131370,9764284,wheelbase_mm,W (mm),empty,—,100.0,0,0.0
+2024,built,F,discodata,235888,131370,9764284,mass_running_order_kg,M (kg),mapped,INTEGER,0.0,1854,100.0
+2024,built,F,discodata,235888,131370,9764284,energy_wh_km,Z (Wh/km),mapped,INTEGER,89.6,250,21.3
+2024,built,F,discodata,235888,131370,9764284,electric_range_km,,absent,—,100.0,0,0.0
+2024,built,F,discodata,235888,131370,9764284,fuel_consumption_l_100km,Fc,mapped,REAL,8.2,161,85.9
+2024,built,F,discodata,235888,131370,9764284,year,Year,mapped,INTEGER,0.0,1,100.0
+2025,built,P,discodata,307071,164070,9493724,make,Mk,mapped,TEXT,0.0,74,100.0
+2025,built,P,discodata,307071,164070,9493724,model,Cn,mapped,MIXED,0.1,5838,100.0
+2025,built,P,discodata,307071,164070,9493724,type_approval,T,mapped,MIXED,0.1,1254,99.9
+2025,built,P,discodata,307071,164070,9493724,variant,Va,mapped,MIXED,1.6,4369,99.8
+2025,built,P,discodata,307071,164070,9493724,version,Ve,mapped,MIXED,3.4,19099,99.5
+2025,built,P,discodata,307071,164070,9493724,fuel,Ft,mapped,TEXT,0.0,10,100.0
+2025,built,P,discodata,307071,164070,9493724,fuel_mode,Fm,mapped,TEXT,0.0,7,100.0
+2025,built,P,discodata,307071,164070,9493724,displacement_cc,Ec (cm3),mapped,INTEGER,5.7,215,82.1
+2025,built,P,discodata,307071,164070,9493724,power_kw,Ep (KW),mapped,INTEGER,20.0,382,95.6
+2025,built,P,discodata,307071,164070,9493724,co2_wltp,Ewltp (g/km),mapped,INTEGER,0.5,428,99.9
+2025,built,P,discodata,307071,164070,9493724,co2_nedc,Enedc (g/km),empty,—,100.0,0,0.0
+2025,built,P,discodata,307071,164070,9493724,wheelbase_mm,W (mm),empty,—,100.0,0,0.0
+2025,built,P,discodata,307071,164070,9493724,mass_running_order_kg,M (kg),mapped,INTEGER,0.0,1998,100.0
+2025,built,P,discodata,307071,164070,9493724,energy_wh_km,Z (Wh/km),mapped,INTEGER,87.7,433,26.0
+2025,built,P,discodata,307071,164070,9493724,electric_range_km,,absent,—,100.0,0,0.0
+2025,built,P,discodata,307071,164070,9493724,fuel_consumption_l_100km,Fc,mapped,REAL,9.9,163,81.2
+2025,built,P,discodata,307071,164070,9493724,year,Year,mapped,INTEGER,0.0,1,100.0
