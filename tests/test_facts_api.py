@@ -70,6 +70,15 @@ def _open(facts: dict) -> dict:
     return {k: v for k, v in facts.items() if v["source"] != "government"}
 
 
+@pytest.fixture
+def no_gov_snapshots(tmp_path):
+    """An empty government-dataset folder: the record does not depend on the committed data/gov/ snapshots."""
+    from src.gov_data import snapshot as SN
+    SN.set_gov_dir(tmp_path / "no-gov", tmp_path / "no-gov-decompressed")
+    yield
+    SN.set_gov_dir(None)
+
+
 # --- the admission data ------------------------------------------------------------------------------------------------
 
 def test_every_admission_entry_names_an_existing_offer():
@@ -90,7 +99,7 @@ def test_every_admission_entry_names_an_existing_offer():
 
 # --- 22010 ---------------------------------------------------------------------------------------------------------------
 
-def test_22010_merges_the_government_row_and_the_admitted_eea_facts():
+def test_22010_merges_the_government_row_and_the_admitted_eea_facts(no_gov_snapshots):
     record = one(service(), "22010")
     facts = record["facts"]
     assert record["status"] == "ok" and record["variant_identity_key"] == KEY["22010"]
@@ -601,3 +610,33 @@ def test_mcp_facts_preview_returns_the_record_plus_withheld(tmp_path):
     assert Observer(resolve_paths({"TRIPY_DATA_DIR": str(tmp_path)}.get),
                     facts=FactsService(None)).facts_preview(KEY["22010"])["error"] == "catalog_unavailable"
     assert not list(tmp_path.rglob("*.json"))                              # the MCP writes nothing
+
+
+def test_22010_carries_the_government_price_from_a_gov_snapshot(tmp_path):
+    """The government-dataset path through the facts service: a fixture gov folder with one price row for 22010's key
+    (tozeret_cd, degem_cd, shnat_yitzur and kinuy_mishari of the Level 1.5 row)."""
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_gov_datasets as B
+    from src.gov_data import snapshot as SN
+    from test_gov_datasets import PRICE_HEADER, FakeCkan, _csv, bodies
+
+    row = ROWS["22010"]
+    body = _csv(PRICE_HEADER, [[row["tozeret_cd"], row["degem_cd"], row["shnat_yitzur"], 389000, row["kinuy_mishari"],
+                                12, "יבואן בדיקה", "P", "ב מ וו גרמניה", row["degem_nm"], "x"]])
+    out = tmp_path / "gov"
+    outcome = B.run(["new_car_prices"], out, tmp_path / "work",
+                    http=FakeCkan(bodies(**{"39f455bf-6db0-4926-859d-017f34eacbcb": body})),
+                    now=lambda: "2026-10-09T00:00:00+00:00", registry_index=tmp_path / "no-index.json")
+    assert outcome["status"][0]["status"] == "built"
+    SN.set_gov_dir(out, tmp_path / "decompressed")
+    try:
+        facts = one(service(), "22010")["facts"]
+    finally:
+        SN.set_gov_dir(None)
+    price, importer = facts["original_new_price_ils"], facts["original_importer"]
+    assert price["value"] == 389000 and price["unit"] == "ILS" and "range" not in price
+    assert importer["value"] == "יבואן בדיקה"
+    for fact in (price, importer):
+        assert fact["source_level"] == "government_dataset" and fact["source"] == "gov_new_car_prices"
+        assert fact["basis"] == "tozeret_cd+degem_cd+shnat_yitzur+kinuy_mishari"
