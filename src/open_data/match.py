@@ -21,10 +21,12 @@ Every source is matched and recorded (the other route's sources corroborate); th
 
 Type-code key (K1, EEA, data/open_datasets.json `eea_type_code_rules`): when the target's government type code
 (degem_nm) names EEA rows by its make's rule (exact_va: degem_nm == Va; toyota_style: degem_nm == Ve or Va without a
-trailing "(...)"), those rows are the candidates before any other key (`type_code_match`): only the power (A4) and
-displacement vetoes apply, an equal co2_wltp selects among them when some row states it, and a surviving type-code
-match is exact_technical_variant on the european route even without a co2 match (the co2 narrows the measured values;
-the identity is the type code). A make without a rule, or a code no row carries: the match below, unchanged.
+trailing "(...)"; dotless_va: degem_nm without dots / spaces == Va, else Ve; second_token_t: the second of exactly two
+tokens (>= 4 characters) == T, else Va), those rows are the candidates before any other key (`type_code_match`): only
+the power (A4) and displacement vetoes apply, an equal co2_wltp selects among them when some row states it, and a
+surviving type-code match is exact_technical_variant on the european route even without a co2 match (the co2 narrows
+the measured values; the identity is the type code). A make without a rule, or a code no row carries: the match below,
+unchanged.
 
 NEDC years (Y3, data/open_datasets.json eea_co2_cars.nedc_years: 2010-2016): the target has no CO2 key (MILO 2010-2016:
 co2_wltp 0 %), so the CO2 step is skipped (`co2_key: unavailable`); an EEA row's NEDC CO2 (co2_nedc) is never compared
@@ -328,16 +330,35 @@ def _code_field(value: Any) -> str:
     return ds.norm_text(str(value or "")) or ""
 
 
+def _rule_rank(rule: str, code: Any, row: dict) -> int | None:
+    """How an EEA row carries the government type code under this rule: 0 by its first field, 1 by its fallback field
+    (dotless_va: Ve; second_token_t: Va), None not at all."""
+    raw = ds.norm_text(str(code or "")) or ""
+    code = _type_code(raw)
+    if len(code) < 2:
+        return None
+    if rule == "exact_va":
+        return 0 if code == _code_field(row.get("variant")) else None
+    if rule == "toyota_style":
+        return 0 if any(code == _type_code(PAREN_SUFFIX.sub("", str(row.get(k) or "")))
+                        for k in ("version", "variant")) else None
+    if rule == "dotless_va":                    # '253.981' = Va '253981', or else Ve
+        wanted = re.sub(r"[.\s]+", "", raw)
+        fields = ("variant", "version")
+    elif rule == "second_token_t":              # 'LF5E R2EW' = T 'R2EW', or else Va; equality only
+        tokens = raw.split()
+        if len(tokens) != 2 or len(tokens[1]) < 4:
+            return None
+        wanted = tokens[1]
+        fields = ("type_approval", "variant")
+    else:
+        return None                             # an unknown rule name never matches
+    return next((n for n, k in enumerate(fields) if len(wanted) >= 2 and wanted == _code_field(row.get(k))), None)
+
+
 def type_code_rule(rule: str, code: Any, row: dict) -> bool:
     """Does an EEA row carry the government type code under this rule (data/open_datasets.json eea_type_code_rules)?"""
-    code = _type_code(code)
-    if len(code) < 2:
-        return False
-    if rule == "exact_va":
-        return code == _code_field(row.get("variant"))
-    if rule == "toyota_style":
-        return any(code == _type_code(PAREN_SUFFIX.sub("", str(row.get(k) or ""))) for k in ("version", "variant"))
-    return False                                # an unknown rule name never matches
+    return _rule_rank(rule, code, row) is not None
 
 
 def type_code_rules(config: dict | None = None) -> dict[str, list[str]]:
@@ -374,8 +395,10 @@ def type_code_match(rows: list[dict], code: Any, config: dict | None = None) -> 
     for make, make_rows in sorted(by_make.items()):
         for rule in rules[make]:
             tried.append(rule)
-            found = [r for r in make_rows if type_code_rule(rule, code, r)]
-            if found:
+            ranked = [(rank, r) for r in make_rows if (rank := _rule_rank(rule, code, r)) is not None]
+            if ranked:                          # the first field's rows; the fallback field's only without them
+                best = min(rank for rank, _ in ranked)
+                found = [r for rank, r in ranked if rank == best]
                 return {"status": "match", "rule": rule, "make": make, "rows": found}
     return {"status": "no_match", "rules": sorted(set(tried)), "rows": []}
 
@@ -387,12 +410,15 @@ def type_code_coverage(codes_by_make: dict[str, list[str]], rows_by_make: dict[s
     rules = type_code_rules(config)
     out = {}
     for make, codes in sorted(codes_by_make.items()):
-        codes = sorted({_type_code(c) for c in codes if _type_code(c)})
+        spelled: dict[str, str] = {}                     # one code per compared form, kept as spelled (second_token_t)
+        for c in codes:
+            spelled.setdefault(_type_code(c), str(c))
+        codes = sorted(c for c in spelled if c)
         make_rows = rows_by_make.get(make) or []
         per_rule: dict[str, int] = {}
         unmatched = []
         for code in codes:
-            hit = next((rule for rule in rules.get(make.upper(), []) if any(type_code_rule(rule, code, r)
+            hit = next((rule for rule in rules.get(make.upper(), []) if any(type_code_rule(rule, spelled[code], r)
                                                                             for r in make_rows)), None)
             if hit:
                 per_rule[hit] = per_rule.get(hit, 0) + 1
