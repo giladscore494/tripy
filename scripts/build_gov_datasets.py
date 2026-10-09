@@ -1,7 +1,7 @@
 """The build-gov-datasets GitHub Action: data.gov.il government datasets -> committed, aggregated snapshots in data/gov/.
 
+    road_survival    data/gov/road_survival.sqlite.gz    (G3; built first: G1's report and G2 read its registry names)
     new_car_prices   data/gov/new_car_prices.sqlite.gz   (G1)
-    road_survival    data/gov/road_survival.sqlite.gz    (G3; built before G2, which reads its registry names)
     recall_notices   data/gov/recall_notices.sqlite.gz   (G2) + data/gov/recall_model_map.json (proposals)
 
 plus data/gov/manifest.json (per dataset: file, sha256, bytes, rows, provenance per resource, stats, last_attempt),
@@ -46,7 +46,7 @@ from src.gov_data.ckan import Http  # noqa: E402
 from src.gov_data.ingest import Context, read_resource  # noqa: E402
 from src.gov_data.names import ym_of  # noqa: E402
 
-ORDER = ("new_car_prices", "road_survival", "recall_notices")
+ORDER = ("road_survival", "new_car_prices", "recall_notices")
 REGISTRY_INDEX = ROOT / "data" / "gov_registry_index.json"
 BODY_LIMIT = 55000
 
@@ -92,6 +92,13 @@ def _ingest(ctx: Context, name: str, spec: dict, previous_entry: dict, sink) -> 
                           first.resource_id)
 
 
+def _record_checks(ctx: Context, name: str, checks: dict[str, dict]) -> None:
+    """Attach the per-resource checks (date shares, unkeyed rows, ages) to the resource's build_status entry."""
+    for attempt in ctx.attempts:
+        if attempt["dataset"] == name and attempt["resource_id"] in checks:
+            attempt["checks"] = checks[attempt["resource_id"]]
+
+
 def _write(out: Path, work: Path, name: str, tables: dict, meta: dict) -> dict:
     raw = SN.write_sqlite(work / f"{name}.sqlite", tables, meta)
     target = out / f"{name}.sqlite.gz"
@@ -114,7 +121,14 @@ def build_prices(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[st
     agg = G1.Prices()
     resources = _ingest(ctx, name, spec, prev, agg.add)
     state["prices"] = agg
-    lines, stats = G1.report(agg, registry_keys(state["registry_index"]))
+    survival = state.get("survival")
+    key_names = survival.key_names() if survival is not None else None
+    lines, stats = G1.report(agg, registry_keys(state["registry_index"]), key_names)
+    failure = agg.check()
+    if failure:
+        rid = spec["resources"][0]["resource_id"]
+        _record_checks(ctx, name, {rid: {"unkeyed": agg.unkeyed_codes, "unkeyed_examples": agg.unkeyed_examples}})
+        raise P.DatasetFailed("unkeyed_rows", f"[{rid}] {failure}", rid, report_lines=lines)
     written = _write(out, work, name, G1.tables(agg), {"dataset": name, "rows": agg.rows, "keys": stats["keys"],
                                                        "unkeyed_rows": agg.unkeyed, "source": SOURCES[name]})
     return {**written, "rows": agg.rows, "resources": resources, "stats": stats}, lines
@@ -123,7 +137,13 @@ def build_prices(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[st
 def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[str]]:
     agg = G3.Survival()
     resources = _ingest(ctx, name, spec, prev, agg.add)
-    state["survival"] = agg
+    state["survival"] = agg                     # the registry's names (G1 report, G2) even when a check fails below
+    checks = {rid: s.summary() for rid, s in agg.resources.items()}
+    _record_checks(ctx, name, checks)
+    reason, problems = agg.check()
+    if reason:
+        failed = next((rid for rid in agg.resources if any(p.startswith(f"[{rid}]") for p in problems)), None)
+        raise P.DatasetFailed(reason, "; ".join(problems), failed, report_lines=G3.resource_lines(agg))
     coverage = agg.year_coverage()
     basis = G3.BASIS_MODEL_YEAR if coverage >= float(spec.get("year_coverage_min", 0.95)) else G3.BASIS_FIRST_ROAD
     active = next((r for r in resources if r.get("role") == "active"), {})
@@ -240,7 +260,7 @@ def run(names: list[str], out: Path, work: Path, *, http=None, now=P.utc_now, ru
             results[name] = record
             sections[name] = [f"- **failed**: {exc.reason}" + (f" ({exc.detail})" if exc.detail else "")
                               + (f" [resource {exc.resource_id}]" if exc.resource_id else ""),
-                              "- the previous snapshot and its manifest entry are kept"]
+                              "- the previous snapshot and its manifest entry are kept", *exc.report_lines]
             if prev_entry:
                 prev_entry["build_status"] = "failed"
             prev_entry["last_attempt"] = {"at": attempt_at, "status": "failed", "reason": exc.reason,

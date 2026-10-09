@@ -5,14 +5,21 @@ Built by the `build-gov-datasets` GitHub Action (`.github/workflows/build-gov-da
 per-vehicle record is stored or served, and raw downloads never enter git.
 
 - `new_car_prices.sqlite.gz` (G1): per `(tozeret_cd, degem_cd, shnat_yitzur)` every distinct (mehir, kinuy_mishari,
-  shem_yevuan, ...) with its row count; the facts API serves one price as a value and several only as a range;
+  shem_yevuan, ...) with its row count; the facts API first selects the key's rows by the catalogue's kinuy_mishari
+  (else a key with one single name, else withheld `price_model_ambiguous`: one degem_cd can carry several models), then
+  serves one price as a value and several only as a range;
 - `recall_notices.sqlite.gz` (G2): the recall notices with their canonical make, normalized DEGEM, production range and
   match status (TELEPHONE / WEBSITE are never read);
 - `road_survival.sqlite.gz` (G3): per `(tozeret_cd, degem_cd, cohort year)` the cohort (active + finally cancelled),
-  the age at final cancellation and the cancelled share by age; the model-year -> first-road-year map; the registry's
-  model names (for the recall map);
+  the age at final cancellation and the cancelled share by age (none for a cohort under 200 vehicles, or with under
+  95 % of its cancellations dated: `withheld` small_cohort / undated_cancellations); the model-year -> first-road-year
+  map; the registry's model names (for the recall map). The build fails the dataset (`date_unparsed`) when a resource
+  parses under 95 % of a date column, and (`unkeyed_rows`, also new_car_prices) when over 1 % of a resource's rows
+  have no code key;
 - `recall_model_map.json`: the REVIEWED map (canonical make, DEGEM normalized) -> catalogue kinuy_mishari. The build only
-  adds entries from exact normalized equality and lists the rest under `unresolved`; the Action's pull request is the
+  adds entries from exact normalized equality (a multi-model DEGEM such as `VITO,VIANO` only when every part is
+  exactly a catalogue model of the make: one entry per model, origin `exact_normalized_equality_split`) and lists the
+  rest under `unresolved`; the Action's pull request is the
   review, and a reviewer may add or delete entries by hand. A model without an entry gets no `recalls` field;
 - `manifest.json`: per dataset its file, sha256, rows, the provenance of every resource (resource_id, source_url,
   downloaded_at, source_last_modified, license as stated, row_count, file_size, sha256, schema_hash,

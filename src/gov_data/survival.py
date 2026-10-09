@@ -19,6 +19,15 @@ last-modified month). A cohort under `min_cohort_size` (200) gets no survival fi
 
 Named road_survival / final_cancellation_rate / median_age_at_final_cancellation: the reason for a cancellation is
 unknown (accident, total loss, export and failure are not distinguished).
+
+Never a silent zero from missing dates or codes (checks, per resource, after the rows are read):
+    date_unparsed      under 95 % of a resource's rows parse moed_aliya_lakvish (both roles) or bitul_dt (cancelled):
+                       the dataset fails with 10 raw example values of the column
+    unkeyed_rows       over 1 % of a resource's rows have no tozeret_cd / degem_cd code: the dataset fails with 10 raw
+                       code examples (codes only)
+and per cohort: when under 95 % of its cancellations carry both dates, the cohort gets no survival fields (withheld
+`undated_cancellations`). The report lists per resource the parsed share of each date column, 5 raw values, the top 5
+shapes of the unparsed values (digits -> 9, letters -> a) and the age distribution of the cancelled vehicles.
 """
 
 from __future__ import annotations
@@ -26,14 +35,18 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from .names import norm_name, to_int, ym_of
+from .names import date_pattern, norm_name, to_int, ym_of
 
 DATASET = "road_survival"
 BASIS_MODEL_YEAR = "shnat_yitzur"
 BASIS_FIRST_ROAD = "first_road_year"
 COHORT_COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "cohort_year": "INTEGER", "cohort_size": "INTEGER",
                   "active_count": "INTEGER", "cancelled_count": "INTEGER", "dated_cancelled": "INTEGER",
-                  "age_p25": "REAL", "age_median": "REAL", "age_p75": "REAL", "shares": "TEXT"}
+                  "age_p25": "REAL", "age_median": "REAL", "age_p75": "REAL", "shares": "TEXT", "withheld": "TEXT"}
+DATE_MIN_SHARE = 0.95           # a resource's parsed share of each date column, else date_unparsed
+UNKEYED_MAX_SHARE = 0.01        # a resource's rows without a code key, else unkeyed_rows
+COHORT_DATED_MIN_SHARE = 0.95   # a cohort's cancellations with both dates, else undated_cancellations
+DATE_COLUMNS = {"active": ("moed_aliya_lakvish",), "cancelled": ("moed_aliya_lakvish", "bitul_dt")}
 MAP_COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "shnat_yitzur": "INTEGER", "first_road_year": "INTEGER",
                "n": "INTEGER"}
 MODEL_COLUMNS = {"tozeret_cd": "INTEGER", "tozeret_nm": "TEXT", "kinuy_mishari": "TEXT", "n": "INTEGER"}
@@ -56,29 +69,113 @@ def _ym(value: Any) -> int | None:
     return ym[0] * 12 + ym[1] - 1 if ym else None
 
 
+class ResourceStats:
+    """Per resource: rows, unkeyed rows (with 10 raw code examples), per date column the parsed count, 5 raw values,
+    10 raw unparsed values and the shapes of the unparsed ones, and the ages (months) of its cancellations."""
+
+    def __init__(self, role: str):
+        self.role, self.rows, self.unkeyed = role, 0, 0
+        self.unkeyed_examples: list[dict] = []
+        self.dates = {c: {"parsed": 0, "examples": [], "unparsed_examples": [], "patterns": Counter()}
+                      for c in DATE_COLUMNS[role]}
+        self.ages: Counter = Counter()
+
+    def date(self, column: str, raw, parsed) -> None:
+        item = self.dates[column]
+        text = "" if raw is None else str(raw)
+        if len(item["examples"]) < 5 and text and text not in item["examples"]:
+            item["examples"].append(text)
+        if parsed is not None:
+            item["parsed"] += 1
+            return
+        item["patterns"][date_pattern(raw)] += 1
+        if len(item["unparsed_examples"]) < 10 and text not in item["unparsed_examples"]:
+            item["unparsed_examples"].append(text)
+
+    def share(self, column: str) -> float:
+        return round(self.dates[column]["parsed"] / self.rows, 4) if self.rows else 1.0
+
+    def unkeyed_share(self) -> float:
+        return round(self.unkeyed / self.rows, 4) if self.rows else 0.0
+
+    def summary(self) -> dict:
+        return {"role": self.role, "rows": self.rows, "unkeyed": self.unkeyed, "unkeyed_share": self.unkeyed_share(),
+                "unkeyed_examples": self.unkeyed_examples,
+                "dates": {c: {"parsed_share": self.share(c), "examples": d["examples"],
+                              "unparsed_examples": d["unparsed_examples"],
+                              "unparsed_patterns": d["patterns"].most_common(5)} for c, d in self.dates.items()},
+                "age_years": age_distribution(self.ages)}
+
+
 class Survival:
     def __init__(self):
         self.active: Counter = Counter()        # (tc, dc, shnat, road_ym)
         self.cancelled: Counter = Counter()     # (tc, dc, shnat, road_ym, bitul_ym)
         self.models: Counter = Counter()        # (tc, tozeret_nm, kinuy_mishari)
+        self.key_models: Counter = Counter()    # (tc, dc, shnat, kinuy_mishari): the registry's names per key (G1)
         self.rows = {"active": 0, "cancelled": 0}
         self.unkeyed = {"active": 0, "cancelled": 0}
+        self.resources: dict[str, ResourceStats] = {}
 
     def add(self, row: dict) -> None:
         role = "cancelled" if row.get("_role") == "cancelled" else "active"
+        stats = self.resources.get(row.get("_resource_id") or role)
+        if stats is None:
+            stats = self.resources[row.get("_resource_id") or role] = ResourceStats(role)
         self.rows[role] += 1
+        stats.rows += 1
+        road, bitul = _ym(row.get("moed_aliya_lakvish")), None
+        stats.date("moed_aliya_lakvish", row.get("moed_aliya_lakvish"), road)
+        if role == "cancelled":
+            bitul = _ym(row.get("bitul_dt"))
+            stats.date("bitul_dt", row.get("bitul_dt"), bitul)
+            if road is not None and bitul is not None and bitul >= road:
+                stats.ages[bitul - road] += 1
         tc, dc = to_int(row.get("tozeret_cd")), to_int(row.get("degem_cd"))
         if tc is None or dc is None:
             self.unkeyed[role] += 1
+            stats.unkeyed += 1
+            if len(stats.unkeyed_examples) < 10:
+                stats.unkeyed_examples.append({"tozeret_cd": row.get("tozeret_cd"), "degem_cd": row.get("degem_cd")})
             return
-        shnat, road = to_int(row.get("shnat_yitzur")), _ym(row.get("moed_aliya_lakvish"))
+        shnat = to_int(row.get("shnat_yitzur"))
         if role == "cancelled":
-            self.cancelled[(tc, dc, shnat, road, _ym(row.get("bitul_dt")))] += 1
+            self.cancelled[(tc, dc, shnat, road, bitul)] += 1
         else:
             self.active[(tc, dc, shnat, road)] += 1
             name, kinuy = norm_name(row.get("tozeret_nm")), norm_name(row.get("kinuy_mishari"))
             if name and kinuy:
                 self.models[(tc, name, kinuy)] += 1
+            if shnat is not None and kinuy:
+                self.key_models[(tc, dc, shnat, kinuy)] += 1
+
+    def check(self) -> tuple[str | None, list[str]]:
+        """(failure reason or None, one line per failing resource): date_unparsed (a date column under 95 % parsed)
+        before unkeyed_rows (over 1 % of the rows without a code key)."""
+        dates, keys = [], []
+        for rid, stats in self.resources.items():
+            for column in stats.dates:
+                share = stats.share(column)
+                if stats.rows and share < DATE_MIN_SHARE:
+                    item = stats.dates[column]
+                    dates.append(f"[{rid}] {column} parsed {share:.2%} of {stats.rows} rows (needs >= "
+                                 f"{DATE_MIN_SHARE:.0%}); unparsed shapes {item['patterns'].most_common(5)}; raw "
+                                 f"examples {item['unparsed_examples'][:10]}")
+            if stats.unkeyed_share() > UNKEYED_MAX_SHARE:
+                keys.append(f"[{rid}] unkeyed {stats.unkeyed} of {stats.rows} rows ({stats.unkeyed_share():.2%}, "
+                            f"allowed {UNKEYED_MAX_SHARE:.0%}); code examples {stats.unkeyed_examples[:10]}")
+        if dates:
+            return "date_unparsed", dates + keys
+        if keys:
+            return "unkeyed_rows", keys
+        return None, []
+
+    def key_names(self) -> dict[tuple, Counter]:
+        """{(tozeret_cd, degem_cd, shnat_yitzur): Counter(kinuy_mishari)} of the active registry."""
+        out: dict[tuple, Counter] = {}
+        for (tc, dc, shnat, kinuy), n in self.key_models.items():
+            out.setdefault((tc, dc, shnat), Counter())[kinuy] += n
+        return out
 
     def year_coverage(self) -> float:
         total = sum(self.cancelled.values())
@@ -96,6 +193,12 @@ class Survival:
         for (_, name, kinuy), n in self.models.items():
             out[(name, kinuy)] += n
         return out
+
+
+def age_distribution(ages: Counter) -> dict:
+    """{n, p10, p50, p90} of ages in months, as years."""
+    return {"n": sum(ages.values()), "p10": _percentile(ages, 0.1), "p50": _percentile(ages, 0.5),
+            "p90": _percentile(ages, 0.9)}
 
 
 def _percentile(ages: Counter, q: float) -> float | None:
@@ -119,7 +222,7 @@ def reached(cohort_year: int, age: int, ref_ym: int) -> bool:
 
 def cohorts(agg: Survival, basis: str, ref_ym: int, min_size: int, ages: tuple[int, int]) -> tuple[list[dict], dict]:
     index = 2 if basis == BASIS_MODEL_YEAR else 3
-    stats = {"active_without_year": 0, "cancelled_without_year": 0, "bad_dates": 0}
+    stats = {"active_without_year": 0, "cancelled_without_year": 0, "bad_dates": 0, "undated_cohorts": 0}
     data: dict[tuple, dict] = {}
 
     def year(key: tuple) -> int | None:
@@ -152,8 +255,13 @@ def cohorts(agg: Survival, basis: str, ref_ym: int, min_size: int, ages: tuple[i
         row = {"tozeret_cd": tc, "degem_cd": dc, "cohort_year": cy, "cohort_size": size,
                "active_count": item["active"], "cancelled_count": item["cancelled"],
                "dated_cancelled": sum(item["ages"].values()), "age_p25": None, "age_median": None, "age_p75": None,
-               "shares": None}
-        if size >= min_size:
+               "shares": None, "withheld": None}
+        if size < min_size:
+            row["withheld"] = "small_cohort"
+        elif item["cancelled"] and row["dated_cancelled"] / item["cancelled"] < COHORT_DATED_MIN_SHARE:
+            row["withheld"] = "undated_cancellations"
+            stats["undated_cohorts"] += 1
+        else:
             row.update(age_p25=_percentile(item["ages"], 0.25), age_median=_percentile(item["ages"], 0.5),
                        age_p75=_percentile(item["ages"], 0.75))
             shares = {}
@@ -164,6 +272,28 @@ def cohorts(agg: Survival, basis: str, ref_ym: int, min_size: int, ages: tuple[i
             row["shares"] = shares
         out.append(row)
     return out, stats
+
+
+def resource_lines(agg: Survival) -> list[str]:
+    """Per resource: rows, unkeyed, the parsed share of each date column with 5 raw values and the shapes of the
+    unparsed ones, and the age distribution (years) of its cancellations."""
+    lines = ["", "Per resource (dates, codes, ages):", "",
+             "| resource | role | rows | unkeyed | moed_aliya_lakvish parsed | bitul_dt parsed "
+             "| age p10 / p50 / p90 (n) |",
+             "|---|---|---|---|---|---|---|"]
+    for rid, s in agg.resources.items():
+        ages = age_distribution(s.ages)
+        bitul = f"{s.share('bitul_dt') * 100:.2f} %" if "bitul_dt" in s.dates else "—"
+        age = (f"{ages['p10']} / {ages['p50']} / {ages['p90']} ({ages['n']})" if s.role == "cancelled" else "—")
+        lines.append(f"| `{rid}` | {s.role} | {s.rows} | {s.unkeyed} ({s.unkeyed_share() * 100:.2f} %) | "
+                     f"{s.share('moed_aliya_lakvish') * 100:.2f} % | {bitul} | {age} |")
+    for rid, s in agg.resources.items():
+        for column, d in s.dates.items():
+            lines.append(f"- `{rid}` {column}: raw values {d['examples']}; unparsed shapes "
+                         f"{d['patterns'].most_common(5) or 'none'}")
+        if s.unkeyed:
+            lines.append(f"- `{rid}` unkeyed code examples: {s.unkeyed_examples[:10]}")
+    return lines
 
 
 def model_year_map(agg: Survival) -> list[tuple]:
@@ -203,6 +333,9 @@ def report(agg: Survival, coverage: float, basis: str, cohort_rows: list[dict], 
                "cohort_basis": basis, "cohorts": len(cohort_rows), "cohorts_with_survival": served,
                "reference_month": f"{ref_ym // 12}-{ref_ym % 12 + 1:02d}", "exclusion": EXCLUSION,
                "model_year_keys": len(by_my), "model_year_keys_dominant": dominant_ok, **stats}
+    undated = sum(r["cancelled_count"] - r["dated_cancelled"] for r in cohort_rows)
+    undated_large = sum(r["cancelled_count"] - r["dated_cancelled"] for r in cohort_rows
+                        if r["cohort_size"] >= min_size)
     lines = [f"- rows: active {agg.rows['active']}, finally cancelled {agg.rows['cancelled']} (unkeyed: active "
              f"{agg.unkeyed['active']}, cancelled {agg.unkeyed['cancelled']})",
              f"- shnat_yitzur coverage on the cancellation rows: {coverage * 100:.1f} % -> cohort basis **{basis}**",
@@ -210,13 +343,22 @@ def report(agg: Survival, coverage: float, basis: str, cohort_rows: list[dict], 
              f"- rows without a cohort year: active {stats['active_without_year']}, cancelled "
              f"{stats['cancelled_without_year']}; cancellations dated before their first-on-road month: "
              f"{stats['bad_dates']}",
-             f"- cohorts {len(cohort_rows)}, with survival fields (cohort_size >= {min_size}): {served}; reference "
-             f"month {summary['reference_month']}"]
+             f"- cohorts {len(cohort_rows)}, with survival fields (cohort_size >= {min_size}): {served}; withheld "
+             f"undated_cancellations (under {COHORT_DATED_MIN_SHARE:.0%} of the cancellations dated): "
+             f"{stats.get('undated_cohorts', 0)}; reference month {summary['reference_month']}",
+             f"- cancellations without a date (cancelled_count − dated_cancelled): all cohorts {undated}, cohorts "
+             f"with cohort_size >= {min_size}: {undated_large}"]
+    lines += resource_lines(agg)
+    summary["resources"] = {rid: s.summary() for rid, s in agg.resources.items()}
+    pct = round(100.0 * dominant_ok / len(by_my), 1) if by_my else 0.0
     if basis == BASIS_FIRST_ROAD:
-        pct = round(100.0 * dominant_ok / len(by_my), 1) if by_my else 0.0
         lines.append(f"- model year -> first-road year (active registry): {len(by_my)} (tozeret_cd, degem_cd, "
                      f"shnat_yitzur) keys; one first-road year holds >= {min_share * 100:.0f} % in {dominant_ok} "
                      f"({pct} %): only those variants get road_survival")
+    else:
+        lines.append(f"- model year -> first-road year (active registry, not used: the basis is the model year): "
+                     f"{len(by_my)} keys; one first-road year holds >= {min_share * 100:.0f} % in {dominant_ok} "
+                     f"({pct} %)")
     largest = sorted(cohort_rows, key=lambda r: (-r["cohort_size"], r["tozeret_cd"], r["degem_cd"],
                                                  r["cohort_year"]))[:20]
     if largest:
