@@ -24,7 +24,8 @@ INSTRUCTIONS = (
     "or writes anything. Start with list_runs, then run_status / run_events (tail with the returned `next` cursor). "
     "Every response is JSON, redacted and capped at 60,000 characters; long outputs page with offset / limit (or "
     "since / next for events) and report what remains.")
-_AUDIT_KEYS = ("run_id", "record_id", "run_ids", "doc_id", "field", "since", "offset", "limit", "lines")
+_AUDIT_KEYS = ("run_id", "record_id", "run_ids", "doc_id", "field", "since", "offset", "limit", "lines",
+               "model_year_from", "model_year_to", "per_year")
 
 log = get_logger("mcp")
 
@@ -249,6 +250,21 @@ def build(observer_factory: Callable[[], Observer] = Observer):
                          lambda: observer_factory().facts_preview(variant_identity_key))
 
     @tool
+    async def facts_coverage(model_year_from: int, model_year_to: int, per_year: int = 120,
+                             manufacturer: str | None = None) -> str:
+        """The facts API's open-data coverage per model year over a deterministic catalogue sample: the first
+        `per_year` (max 300) private-segment variant identity keys of each year by md5(variant_identity_key),
+        optionally one manufacturer (tozar). Each key is computed exactly as POST /api/facts/v1/vehicles (same
+        admission, cache and versions; no network, no vPIC). Per year: n, route split, open_data_match level
+        distribution, % with an open-data fact, per admitted field % returned and withheld counts by reason, the EEA
+        co2_selection aggregate; per manufacturer (top 15) % with an EEA fact. At most 90 s: `truncated: true` returns
+        what is done. Read-only: one MILO query per year, nothing written."""
+        args = {"model_year_from": model_year_from, "model_year_to": model_year_to, "per_year": per_year,
+                "manufacturer": manufacturer}
+        return await run("facts_coverage", args, lambda: observer_factory().facts_coverage(
+            model_year_from, model_year_to, per_year, manufacturer))
+
+    @tool
     async def server_log_tail(lines: int = 200, grep: str | None = None) -> str:
         """The last lines of the server log (the rotating data/logs/tripy.log), optionally only lines containing
         `grep` (case-insensitive substring). lines max 2000."""
@@ -261,4 +277,4 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
               "open_data_coverage", "open_data_status", "open_data_shadow_report", "list_bakeoffs", "bakeoff_result",
-              "catalog_search", "facts_preview", "server_log_tail")
+              "catalog_search", "facts_preview", "facts_coverage", "server_log_tail")

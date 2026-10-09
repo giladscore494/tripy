@@ -52,6 +52,35 @@ WHERE v.variant_identity_key = ANY(%(keys)s::text[])
   AND v.vehicle_segment = 'private'
 """
 
+# The facts coverage probe (src/facts/coverage.py, MCP facts_coverage): a deterministic sample of one model year's
+# private-segment keys (the first `n` by md5(variant_identity_key), optionally one manufacturer) and their Level 1.5
+# rows. One short read-only query per model year.
+LEVEL15_SAMPLE_SQL = """
+WITH sample AS (
+  SELECT v.variant_identity_key
+  FROM public.catalog_variants_current AS v
+  WHERE v.vehicle_segment = 'private'
+    AND v.shnat_yitzur = %(year)s
+    AND v.variant_identity_key IS NOT NULL
+    AND (%(manufacturer)s::text IS NULL OR v.tozar = %(manufacturer)s::text)
+  GROUP BY v.variant_identity_key
+  ORDER BY md5(v.variant_identity_key)
+  LIMIT %(n)s
+)
+SELECT
+  v.*,
+  public.catalog_variant_equipment(
+    v.equipment_stated,
+    v.equipment_on,
+    v.equipment_sources
+  ) AS equipment
+FROM public.catalog_variants_current AS v
+JOIN sample AS s ON s.variant_identity_key = v.variant_identity_key
+WHERE v.vehicle_segment = 'private'
+  AND v.shnat_yitzur = %(year)s
+ORDER BY md5(v.variant_identity_key), v.upstream_record_id
+"""
+
 # Order matches public.catalog_variant_equipment_keys(): 19 indicator bits, then
 # the 5 installation-source fields.
 EQUIPMENT_BITS: list[tuple[str, str, str]] = [

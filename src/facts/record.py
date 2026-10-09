@@ -26,6 +26,9 @@ original_new_price_ils, original_importer, recalls, recall_count, road_survival.
 
 Everything that does not become a fact is listed in `withheld` ({source, field, reason, ...}): owner diagnostics only
 (?debug=1 with the operator token, the MCP facts_preview, counts in the call log), never in the yeda-rechev record.
+A withheld entry of a European source with reason offer_survivors_disagree, or one whose unmet requirement is
+co2_selected, carries `co2_selection` (what the match's CO2 step did, and the values it left per admitted field); the
+debug record lists every source's `co2_selection`. Diagnostics only: nothing here decides a fact.
 """
 
 from __future__ import annotations
@@ -369,8 +372,40 @@ def open_data_facts(result: dict, offers: list[dict], government: dict, adm: dic
                                     for o in sorted(peers, key=lambda o: o["source"])]}
         facts[field] = _clean(fact)
     match_view = _clean({"route": route, "level": level, "designation": result.get("designation")})
+    selections = co2_selections(result, offers, entries)
+    for item in withheld:
+        detail = item.get("detail") if isinstance(item.get("detail"), list) else []
+        if item.get("source") in selections and (item.get("reason") == "offer_survivors_disagree"
+                                                 or "co2_selected" in detail):
+            item["co2_selection"] = dict(selections[item["source"]])
     withheld.sort(key=lambda w: (str(w.get("source")), str(w.get("field")), str(w.get("reason"))))
-    return {"facts": facts, "open_data_match": match_view, "withheld": withheld}
+    out = {"facts": facts, "open_data_match": match_view, "withheld": withheld}
+    if selections:
+        out["co2_selection"] = selections
+    return out
+
+
+def co2_selections(result: dict, offers: list[dict], entries: list[dict]) -> dict[str, dict]:
+    """{source: the match's co2_selection + selected_values} (diagnostics only: the debug / MCP withheld detail and
+    facts_coverage, never the public record). selected_values: per admitted field of the source, the values the offers
+    read after the CO2 step (the offer's value, or its disagreeing values; at most the match's 40 survivor rows)."""
+    out: dict[str, dict] = {}
+    for name, src in sorted((result.get("sources") or {}).items()):
+        selection = src.get("co2_selection")
+        if not isinstance(selection, dict):
+            continue
+        fields = {e.get("field") for e in entries if e.get("source") == name}
+        values: dict[str, list] = {}
+        for offer in offers:
+            if offer.get("source") != name or offer.get("field") not in fields:
+                continue
+            stated = [offer["value"]] if offer.get("value") is not None else \
+                [_number(v) if _number(v) is not None else v for v in offer.get("values") or []]
+            if stated:
+                values[offer["field"]] = sorted(set(stated), key=lambda v: (isinstance(v, str),
+                                                                            v if isinstance(v, str) else float(v)))
+        out[name] = {**selection, "selected_values": dict(sorted(values.items()))}
+    return out
 
 
 def open_data_part(row: dict, government: dict, *, folder=None, rows_by_source: dict | None = None) -> dict:
@@ -405,6 +440,8 @@ def build_record(key: str, row: dict, open_part: dict, *, debug: bool = False,
                           key=lambda w: (str(w.get("source")), str(w.get("field")), str(w.get("reason"))))
         record["withheld"] = withheld
         record["withheld_counts"] = withheld_counts(withheld)
+        if open_part.get("co2_selection"):
+            record["co2_selection"] = open_part["co2_selection"]        # every CO2-step decision, per source
     return record
 
 
