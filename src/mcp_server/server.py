@@ -257,7 +257,8 @@ def build(observer_factory: Callable[[], Observer] = Observer):
         optionally one manufacturer (tozar). Each key is computed exactly as POST /api/facts/v1/vehicles (same
         admission, cache and versions; no network, no vPIC). Per year: n, route split, open_data_match level
         distribution, % with an open-data fact, per admitted field % returned and withheld counts by reason, the EEA
-        co2_selection aggregate; per manufacturer (top 15) % with an EEA fact. At most 90 s: `truncated: true` returns
+        co2_selection aggregate, ms_per_key p50 / p95; per manufacturer (top 15) % with an EEA fact. At most 90 s:
+        `truncated: true` returns
         what is done. Read-only: one MILO query per year, nothing written."""
         args = {"model_year_from": model_year_from, "model_year_to": model_year_to, "per_year": per_year,
                 "manufacturer": manufacturer}

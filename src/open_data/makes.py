@@ -110,13 +110,40 @@ def canonical_makes(table: dict | None = None) -> list[str]:
     return sorted(out)
 
 
+_MEMO_TABLES = 8                      # canonical_of: the tables memoized at once (the reviewed one, plus test tables)
+_MEMO_VALUES = 50_000                 # spellings memoized per table (a dataset has a few hundred)
+_CANONICAL_MEMO: dict[int, tuple[dict, dict[str, str], dict[Any, str | None]]] = {}
+
+
+def _memo(table: dict) -> tuple[dict[str, str], dict[Any, str | None]]:
+    """({normalization key: canonical make}, {spelling: canonical_of}) of one table object (a table re-read after an
+    edit is a new object: a new memo). The first canonical make in sorted order wins a shared key, as before."""
+    hit = _CANONICAL_MEMO.get(id(table))
+    if hit is not None and hit[0] is table:
+        return hit[1], hit[2]
+    if len(_CANONICAL_MEMO) >= _MEMO_TABLES:
+        _CANONICAL_MEMO.clear()
+    keys: dict[str, str] = {}
+    for make in canonical_makes(table):
+        keys.setdefault(normalize_make(make, table), make)
+    _CANONICAL_MEMO[id(table)] = (table, keys, {})
+    return keys, _CANONICAL_MEMO[id(table)][2]
+
+
 def canonical_of(value: Any, table: dict | None = None) -> str | None:
-    """The canonical make a spelling normalizes to (None: no make; never fuzzy)."""
+    """The canonical make a spelling normalizes to (None: no make; never fuzzy). Memoized per spelling and table: the
+    match calls it once per candidate row (E4 profile: 94 % of a cold facts key before the memo)."""
     table = canonical() if table is None else table
+    keys, values = _memo(table)
+    memo_key = value if isinstance(value, (str, int, float, type(None))) else str(value)
+    if memo_key in values:
+        return values[memo_key]
     key = normalize_make(value, table)
-    if not key:
-        return None
-    return next((m for m in canonical_makes(table) if normalize_make(m, table) == key), None)
+    out = keys.get(key) if key else None
+    if len(values) >= _MEMO_VALUES:
+        values.clear()
+    values[memo_key] = out
+    return out
 
 
 def spellings_of(values: Iterable[Any], table: dict | None = None) -> dict[str, list[str]]:

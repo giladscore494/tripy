@@ -64,18 +64,22 @@ def test_the_co2_step_selects_the_two_equal_rows():
 
 
 def test_a_disagreement_after_the_co2_step_carries_the_selection():
-    values = [(127, 1500, 4.8), (133, 1395, 5.8), (133, 1395, 5.9)]
+    values = [(127, 1500, 4.8), (133, 1395, 5.8), (133, 1395, 6.0)]        # 0.2 l apart: wider than the 0.1 precision
     record = co2_service(values).records([KEY["22010"]], debug=True)[0][0]
     held = next(w for w in record["withheld"] if w["source"] == EEA and w["field"] == "fuel_consumption_combined_l_100km")
-    assert held["reason"] == "offer_survivors_disagree" and held["values"] == ["5.8", "5.9"]
+    assert held["reason"] == "offer_survivors_disagree" and held["values"] == ["5.8", "6"]
     assert held["co2_selection"]["selected"] == 2 and held["co2_selection"]["survivors"] == 3
-    assert held["co2_selection"]["selected_values"]["fuel_consumption_combined_l_100km"] == [5.8, 5.9]
+    assert held["co2_selection"]["selected_values"]["fuel_consumption_combined_l_100km"] == [5.8, 6]
 
 
 def test_no_equal_co2_is_the_fallback_and_nothing_is_selected_out():
     record = co2_service(CASES["co2_no_equal"]).records([KEY["22010"]], debug=True)[0][0]
     held = {w["field"]: w for w in record["withheld"] if w["source"] == EEA and w["reason"] == "offer_survivors_disagree"}
-    assert set(held) == {"curb_weight_kg", "fuel_consumption_combined_l_100km"}
+    assert set(held) == {"fuel_consumption_combined_l_100km"}
+    # E2: the masses {1365, 1395} agree within precision (30 kg, 2.2 %), but no CO2 selected them: requirement_unmet
+    mass = next(w for w in record["withheld"] if w["source"] == EEA and w["field"] == "curb_weight_kg")
+    assert (mass["reason"], mass["detail"], mass["value"]) == ("requirement_unmet", ["co2_selected"], 1395)
+    assert mass["co2_selection"]["fallback"] == "no_equal_co2"
     selection = held["fuel_consumption_combined_l_100km"]["co2_selection"]
     assert (selection["fallback"], selection["rule"]) == ("no_equal_co2", "none")
     assert selection["survivors"] == selection["selected"] == 3
@@ -87,8 +91,14 @@ def test_no_equal_co2_is_the_fallback_and_nothing_is_selected_out():
 def test_the_public_record_is_byte_identical_to_main():
     from test_facts_api import service
 
-    for record_id in ("22010", "19754", "85167"):
+    for record_id in ("19754", "85167"):
         assert public(service(), KEY[record_id]) == GOLDEN[record_id], record_id
+    # 22010: every fact of main byte-identical (exact agreement carries no `agreement`); the one addition is the energy
+    # consumption its row MIN / MAX (17.7 / 17.8 kWh) now admits within the 0.2 precision (decision 2 of this PR)
+    record = json.loads(public(service(), KEY["22010"]))
+    added = record["facts"].pop("energy_consumption_kwh_100km")
+    assert dumps(record) == GOLDEN["22010"]
+    assert added["value"] == 17.7 and "agreement" not in added
     for name, values in CASES.items():
         svc = co2_service(values)
         assert public(svc, KEY["22010"]) == GOLDEN[name], name
@@ -150,7 +160,8 @@ def test_coverage_counts_per_year():
     assert y2021["with_eea_fact"] == 0 and y2021["with_open_data_fact"] == 2
     fields = y2020["fields"]
     assert fields["wheelbase_mm"]["returned"] == 4 and fields["curb_weight_kg"]["returned_pct"] == 100.0
-    assert fields["energy_consumption_kwh_100km"]["withheld"] == {"offer_range": 4}
+    assert fields["energy_consumption_kwh_100km"]["returned"] == 4          # the 17.7 / 17.8 row (E2 row MIN / MAX)
+    assert y2020["ms_per_key"]["n"] == 4 and y2020["ms_per_key"]["p95"] >= y2020["ms_per_key"]["p50"] >= 0
     assert fields["length_mm"]["withheld"] == {"never_admitted": 4}
     assert set(fields) == set(C.admitted_fields())
     co2 = y2020["co2_selection"]
@@ -167,8 +178,12 @@ def test_the_sample_is_deterministic_and_bounded():
     first = C.facts_coverage(svc, 2020, 2021, per_year=2)
     assert [y["n"] for y in first["years"]] == [2, 2]
     again = C.facts_coverage(svc, 2020, 2021, per_year=2)
-    assert dumps({k: v for k, v in first.items() if k != "elapsed_s"}) == \
-        dumps({k: v for k, v in again.items() if k != "elapsed_s"})
+
+    def stable(out):                                # the times vary: elapsed_s and ms_per_key left out
+        return dumps({**{k: v for k, v in out.items() if k != "elapsed_s"},
+                      "years": [{k: v for k, v in y.items() if k != "ms_per_key"} for y in out["years"]]})
+
+    assert stable(first) == stable(again)
     keys = [r["variant_identity_key"] for r in svc.sample_rows(2020, 2)]
     expected = sorted((r["variant_identity_key"] for r in CATALOGUE if r["shnat_yitzur"] == 2020),
                       key=lambda k: hashlib.md5(k.encode()).hexdigest())[:2]

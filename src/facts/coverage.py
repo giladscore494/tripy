@@ -12,6 +12,8 @@ returns.
                open-data fact (and an EEA fact), per admitted field (data/facts_admission.json) the % returned and the
                withheld counts by reason, and the EEA co2_selection aggregate; per manufacturer (the top 15 by count)
                the share with an EEA fact
+    latency    per model year `ms_per_key` {p50, p95, n}: the time of each key's open part + record (nearest rank; a key
+               the facts cache already holds is counted with its cache-hit time)
     budget     BUDGET_S per call: when reached, what is done is returned with `truncated: true`
     log        one line per call like the facts API: counts only, never a value
 
@@ -20,6 +22,7 @@ Never a write to MILO.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any, Callable
 
@@ -80,6 +83,19 @@ def admitted_fields(adm: dict | None = None) -> list[str]:
     return sorted({str(e["field"]) for e in adm.get("entries") or [] if isinstance(e, dict) and e.get("field")})
 
 
+def _rank(values: list[float], q: float) -> float:
+    """The nearest-rank percentile (q in 0..1) of a non-empty list."""
+    ordered = sorted(values)
+    return ordered[max(0, min(len(ordered) - 1, math.ceil(q * len(ordered)) - 1))]
+
+
+def latency(ms: list[float]) -> dict:
+    """{p50, p95, n} of the per-key times (ms; nearest rank), {n: 0} without a key."""
+    if not ms:
+        return {"n": 0}
+    return {"p50": round(_rank(ms, 0.50), 1), "p95": round(_rank(ms, 0.95), 1), "n": len(ms)}
+
+
 class _Year:
     """The counters of one model year."""
 
@@ -92,6 +108,7 @@ class _Year:
         self.returned = {f: 0 for f in fields}
         self.withheld: dict[str, dict[str, int]] = {f: {} for f in fields}
         self.errors: dict[str, int] = {}
+        self.ms: list[float] = []
         self.co2 = {"decisions": 0, "by_fallback": {}, "by_rule": {}, "noop": 0, "zero": 0, "withheld_disagree": 0,
                     "withheld_disagree_noop": 0, "withheld_disagree_zero": 0,
                     "withheld_disagree_after_selection": 0}
@@ -146,6 +163,7 @@ class _Year:
                               "withheld": dict(sorted(self.withheld[f].items()))} for f in self.fields},
                "co2_selection": {k: dict(sorted(v.items())) if isinstance(v, dict) else v
                                  for k, v in self.co2.items()}}
+        out["ms_per_key"] = latency(self.ms)
         if self.errors:
             out["errors"] = dict(sorted(self.errors.items()))
         if truncated:
@@ -154,7 +172,8 @@ class _Year:
 
 
 def facts_coverage(service, year_from: Any, year_to: Any, per_year: Any = DEFAULT_PER_YEAR, manufacturer: Any = None,
-                   *, budget_s: float = BUDGET_S, clock: Callable[[], float] = time.monotonic) -> dict:
+                   *, budget_s: float = BUDGET_S, clock: Callable[[], float] = time.monotonic,
+                   timer: Callable[[], float] = time.perf_counter) -> dict:
     """The coverage of a FactsService over the sample (module docstring). Raises CoverageInputError (arguments) and
     CatalogUnavailable (no MILO, or a failed sample query)."""
     from ..facts.service import SnapshotsUnavailable, dumps
@@ -180,6 +199,7 @@ def facts_coverage(service, year_from: Any, year_to: Any, per_year: Any = DEFAUL
             if clock() - started >= budget_s:
                 truncated = cut = True
                 break
+            started_key = timer()
             try:
                 gov = government_facts(row)
                 part, _ = service.open_part(key, row, gov[0])
@@ -187,6 +207,7 @@ def facts_coverage(service, year_from: Any, year_to: Any, per_year: Any = DEFAUL
                 stats.error("snapshots_unavailable")
                 continue
             record = build_record(key, row, part, debug=True, government=gov)
+            stats.ms.append((timer() - started_key) * 1000.0)
             eea = stats.add(record)
             name = str((record.get("identity") or {}).get("manufacturer") or "unknown")
             counts = makers.setdefault(name, [0, 0])
@@ -206,5 +227,6 @@ def facts_coverage(service, year_from: Any, year_to: Any, per_year: Any = DEFAUL
         "years": [low, high], "per_year": n, "manufacturer_filter": maker is not None, "truncated": truncated,
         "elapsed_s": out["elapsed_s"], "n": {y["model_year"]: y["n"] for y in years},
         "with_open_data_fact": {y["model_year"]: y["with_open_data_fact"] for y in years},
-        "withheld_disagree": {y["model_year"]: y["co2_selection"]["withheld_disagree"] for y in years}}))
+        "withheld_disagree": {y["model_year"]: y["co2_selection"]["withheld_disagree"] for y in years},
+        "ms_per_key": {y["model_year"]: y["ms_per_key"] for y in years}}))
     return out

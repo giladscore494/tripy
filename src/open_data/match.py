@@ -42,6 +42,7 @@ CO2 values, the count after it and why the step was skipped or kept rows of anot
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any
 
@@ -111,8 +112,19 @@ def target_keys(fingerprint: dict, payload: dict | None, identity=None) -> dict:
             "bev_or_no_co2": propulsion == "battery_electric" or not (co2 and co2 > 0)}
 
 
+_VALUES: dict[tuple[int, str], tuple[dict, dict[str, list[str]]]] = {}
+
+
 def _values(config: dict, group: str) -> dict[str, list[str]]:
-    return {k: [str(x).lower() for x in v] for k, v in (config.get(group) or {}).items() if isinstance(v, list)}
+    """{key: [lower-case values]} of a config group (computed once per config object: _check reads it per row)."""
+    hit = _VALUES.get((id(config), group))
+    if hit is not None and hit[0] is config:
+        return hit[1]
+    if len(_VALUES) > 64:
+        _VALUES.clear()
+    table = {k: [str(x).lower() for x in v] for k, v in (config.get(group) or {}).items() if isinstance(v, list)}
+    _VALUES[(id(config), group)] = (config, table)
+    return table
 
 
 def _classify(text: Any, table: dict[str, list[str]]) -> set[str]:
@@ -135,9 +147,20 @@ def transmission_of(code: Any, config: dict | None = None) -> dict | None:
     return None
 
 
+@functools.lru_cache(maxsize=1024)
+def _models_pattern(models: tuple[str, ...]) -> re.Pattern | None:
+    """One alternation of the model aliases (a match of any alias, each bounded by a non-alphanumeric)."""
+    if not models:
+        return None
+    return re.compile(r"(?<![A-Z0-9])(?:" + "|".join(re.escape(m) for m in models) + r")(?![A-Z0-9])")
+
+
 def _model_matches(row: dict, keys: dict) -> bool:
+    pattern = _models_pattern(tuple(keys["models"]))
+    if pattern is None:
+        return False
     text = ds.norm_text(" ".join(str(row.get(k) or "") for k in ("model", "base_model", "variant", "version"))) or ""
-    return any(re.search(rf"(?<![A-Z0-9]){re.escape(m)}(?![A-Z0-9])", text) for m in keys["models"])
+    return pattern.search(text) is not None
 
 
 def _drive_from_text(text: str, config: dict, dataset: dict) -> str | None:
@@ -146,6 +169,12 @@ def _drive_from_text(text: str, config: dict, dataset: dict) -> str | None:
         if tokens & {v.lower() for v in values}:
             return drive
     return dataset.get("drive_default")
+
+
+@functools.lru_cache(maxsize=1024)
+def _tokens_pattern(tokens: tuple[str, ...]) -> re.Pattern | None:
+    """One alternation of drive tokens, each at the start of a word."""
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(t) for t in tokens) + ")") if tokens else None
 
 
 def drive_from_model_text(row: dict, source: str, config: dict) -> str | None:
@@ -162,7 +191,8 @@ def drive_from_model_text(row: dict, source: str, config: dict) -> str | None:
     found = set()
     for group in (table.get("any") or {}, (table.get("makes") or {}).get(make) or {}):
         for drive, tokens in group.items():
-            if any(re.search(rf"(?<![a-z0-9]){re.escape(str(t).lower())}", text) for t in tokens):
+            pattern = _tokens_pattern(tuple(str(t).lower() for t in tokens))
+            if pattern is not None and pattern.search(text):
                 found.add(drive)
     return found.pop() if len(found) == 1 else None
 
@@ -328,8 +358,14 @@ def type_code_match(rows: list[dict], code: Any, config: dict | None = None) -> 
         return {"status": "no_rows", "rows": []}         # no EEA row of the make / years (e.g. a 2023+ year before K3)
     rules = type_code_rules(config)
     by_make: dict[str, list[dict]] = {}
+    seen: dict[Any, str] = {}                           # the few make spellings of the rows, resolved once
     for row in rows:
-        make = canonical_of(row.get("make")) or str(row.get("make") or "").strip().upper()
+        raw = row.get("make")
+        make = seen.get(raw) if isinstance(raw, (str, type(None))) else None
+        if make is None:
+            make = canonical_of(raw) or str(raw or "").strip().upper()
+            if isinstance(raw, (str, type(None))):
+                seen[raw] = make
         if make in rules:
             by_make.setdefault(make, []).append(row)
     if not by_make:
@@ -469,6 +505,37 @@ def catalogue_months(source: str, keys: dict, history: dict, folder=None, report
     return period, rows
 
 
+def _group_key(row: dict) -> tuple:
+    from .shard_index import GROUP_COLUMNS
+
+    return tuple(row.get(c) for c in GROUP_COLUMNS)
+
+
+def _indexed_candidates(source: str, keys: dict, config: dict, coded: bool, folder, report: dict
+                        ) -> tuple[list[dict], dict] | None:
+    """E4: (rows, type-code match) from the shard index, or None (no ready index: the caller scans). The rows are the
+    groups whose text passes the model-alias filter or the type-code rule, read in the scan's order; the type-code
+    status / rule come from every group of the make (the same answer the scan gives over every row)."""
+    from .shard_index import indexed_candidates
+
+    state: dict[str, Any] = {}
+
+    def keep(reps: list[dict]) -> set[int]:
+        code = type_code_match(reps, keys.get("type_code"), config) if coded else {"status": "no_code", "rows": []}
+        state["code"] = code
+        code_ids = {id(r) for r in code["rows"]}
+        state["code_keys"] = {_group_key(r) for r in code["rows"]}
+        return {n for n, rep in enumerate(reps) if id(rep) in code_ids or _model_matches(rep, keys)}
+
+    found = indexed_candidates(source, keys["makes"], _years(source, keys), keep, folder=folder, report=report)
+    if found is None:
+        return None
+    _, rows = found
+    code = dict(state["code"])
+    code["rows"] = [r for r in rows if _group_key(r) in state["code_keys"]]
+    return rows, code
+
+
 def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None = None) -> dict:
     """The `international_variant` of one source."""
     config = ds.config()
@@ -488,14 +555,22 @@ def match_source(source: str, keys: dict, folder=None, rows: list[dict] | None =
         out["catalogue"] = period
         if period["status"] == "out_of_period":
             return {**out, "status": "out_of_period"}
+    rules = config.get("eea_type_code_rules") or {}
+    coded = source in (rules.get("sources") or [])
+    by_code = {"status": "no_code", "rows": []}
     if rows is None:
         read: dict = {}
-        rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder, report=read)
+        indexed = _indexed_candidates(source, keys, config, coded, folder, read) if ds.shard_spec(source) else None
+        if indexed is not None:
+            rows, by_code = indexed                                 # E4: the index's candidates (= the scan's)
+        else:
+            read = {}
+            rows = ds.query_rows(source, makes=keys["makes"], years=_years(source, keys), folder=folder, report=read)
+            if coded:
+                by_code = type_code_match(rows, keys.get("type_code"), config)
         if read.get("skipped_shards"):
             out["skipped_shards"] = read["skipped_shards"]          # a missing / mismatched shard: reported, skipped
-    rules = config.get("eea_type_code_rules") or {}
-    by_code = {"status": "no_code", "rows": []}
-    if source in (rules.get("sources") or []):
+    elif coded:
         by_code = type_code_match(rows, keys.get("type_code"), config)
     if by_code["status"] != "no_code":
         out["type_code"] = {**{k: v for k, v in by_code.items() if k != "rows"}, "code": keys.get("type_code"),

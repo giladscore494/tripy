@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tripy/contracts/vehicle-facts/1",
   "title": "vehicle-facts/1",
-  "version": "vehicle-facts/1.1",
-  "description": "One merged, provenance-tagged record per exact variant (POST /api/facts/v1/vehicles). Only fields with a value appear: never a null, a placeholder or an 'unknown' entry. Government facts use yeda-rechev's level15.GOVERNMENT_FACT_FIELDS names and adas.<flag> for its 19 ADAS flags; open-data facts use the offer field names of data/open_datasets.json field_map. Deterministic: the same data and versions give byte-identical JSON (sorted keys). Minor 1.1 (additive): the government-dataset facts of data.gov.il (src/gov_data, the data/gov/ snapshots): original_new_price_ils, original_importer, recalls, recall_count, road_survival, each with source_level government_dataset, licence, attribution and resource_id; original_new_price_ils is the only fact that may carry {range, n_prices} instead of value.",
+  "version": "vehicle-facts/1.2",
+  "description": "One merged, provenance-tagged record per exact variant (POST /api/facts/v1/vehicles). Only fields with a value appear: never a null, a placeholder or an 'unknown' entry. Government facts use yeda-rechev's level15.GOVERNMENT_FACT_FIELDS names and adas.<flag> for its 19 ADAS flags; open-data facts use the offer field names of data/open_datasets.json field_map. Deterministic: the same data and versions give byte-identical JSON (sorted keys). Minor 1.1 (additive): the government-dataset facts of data.gov.il (src/gov_data, the data/gov/ snapshots): original_new_price_ils, original_importer, recalls, recall_count, road_survival, each with source_level government_dataset, licence, attribution and resource_id; original_new_price_ils is the only fact that may carry {range, n_prices} instead of value. Minor 1.2 (additive): an open-data fact admitted under the within-precision survivor agreement (data/facts_admission.json `agreement`) carries agreement {rule: within_precision, spread, n_values}; an exactly agreeing fact carries none. A curb weight admitted without a government CO2 (WLTP year) has basis `type_code_match (no government CO2)`.",
   "type": "object",
   "required": ["contract", "vehicles"],
   "properties": {
@@ -68,12 +68,16 @@
         "source": {"enum": ["government", "eea_co2_cars", "epa_fueleconomy", "tc_cvs", "nrcan_fuel_ratings", "ademe_car_labelling"]},
         "source_level": {"enum": ["government", "open_data"]},
         "identity_level": {"enum": ["body_powertrain", "exact_technical_variant", "exact_market_trim"]},
-        "basis": {"type": "string", "description": "government: variant_identity_key; open data: type_code_match+co2 | type_code_match | co2_match | unique | all_survivors_agree"},
+        "basis": {"type": "string", "description": "government: variant_identity_key; open data: type_code_match+co2 | type_code_match | type_code_match (no government CO2) | co2_match | unique | all_survivors_agree"},
         "row_ids": {"type": "array", "items": {"type": "string"}},
         "dataset_year": {"oneOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
         "attribution": {"type": "string"},
         "licence": {"type": "string"},
-        "corroborated_by": {"type": "array", "items": {"type": "object", "required": ["source", "value"]}}
+        "corroborated_by": {"type": "array", "items": {"type": "object", "required": ["source", "value"]}},
+        "agreement": {"type": "object", "required": ["rule", "spread", "n_values"],
+                      "description": "only when the surviving configurations state values that differ within the field's published precision (data/facts_admission.json agreement); the value is their lower median, rounded",
+                      "properties": {"rule": {"const": "within_precision"}, "spread": {"type": "number", "exclusiveMinimum": 0},
+                                     "n_values": {"type": "integer", "minimum": 2}}}
       }
     },
     "versions": {

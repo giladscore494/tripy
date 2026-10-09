@@ -158,9 +158,24 @@ def _read_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_MANIFESTS: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
 def manifest() -> dict:
-    """data/open/manifest.json ({} before the first Action build)."""
-    return _read_json(repo_dir() / MANIFEST_NAME)
+    """data/open/manifest.json ({} before the first Action build); re-read when its size or mtime changes (a match
+    reads it once per shard)."""
+    path = repo_dir() / MANIFEST_NAME
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    stamp = (stat.st_size, stat.st_mtime_ns)
+    hit = _MANIFESTS.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    data = _read_json(path)
+    _MANIFESTS[str(path)] = (stamp, data)
+    return data
 
 
 def probe_summary() -> dict:
