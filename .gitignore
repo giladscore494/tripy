@@ -5,3 +5,7 @@ __pycache__/
 .pytest_cache/
 .tripy-data/
 .tripy-data-*/
+
+# raw government downloads live only in the runner work folder (build-gov-datasets)
+data/gov/*.raw
+data/gov/*.csv

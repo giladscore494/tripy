@@ -1,0 +1,71 @@
+{
+ "_about": "Government datasets (data.gov.il, CKAN) ingested by scripts/build_gov_datasets.py (the build-gov-datasets Action) into committed, aggregated snapshots data/gov/<dataset>.sqlite.gz (src/gov_data). Every file URL comes from resource_show at build time, never from this file. Model / model-year aggregates only: no per-vehicle record is stored or served. `columns.required`: the build stops the dataset when one is missing; `columns.kept`: stored when present; `columns.never`: never read into a stored, logged or sampled value (the projection drops them while the stream is read). Column names are matched case-insensitively.",
+ "version": "gov-datasets-v1",
+ "ingestion_version": "gov-ingestion-v1",
+ "ckan_base": "https://data.gov.il/api/3/action",
+ "min_row_ratio": 0.7,
+ "formats": ["CSV"],
+ "datasets": {
+  "new_car_prices": {
+   "title_he": "מחירון רכב חדש",
+   "title": "New-car price list",
+   "ministry": "Ministry of Transport and Road Safety",
+   "resources": [
+    {"resource_id": "39f455bf-6db0-4926-859d-017f34eacbcb", "role": "prices"}
+   ],
+   "stated_licence": "Other (Open)",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — {title_he} ({resource_id}), נכון ל-{date}",
+   "to_disk": true,
+   "qa_sample": true,
+   "columns": {
+    "required": ["tozeret_cd", "degem_cd", "shnat_yitzur", "mehir", "kinuy_mishari"],
+    "kept": ["semel_yevuan", "shem_yevuan", "sug_degem", "tozeret_nm", "degem_nm"],
+    "never": []
+   }
+  },
+  "recall_notices": {
+   "title_he": "קריאות שירות (ריקול)",
+   "title": "Vehicle recall notices",
+   "ministry": "Ministry of Transport and Road Safety",
+   "resources": [
+    {"resource_id": "2c33523f-87aa-44ec-a736-edbb0a82975e", "role": "recalls"}
+   ],
+   "stated_licence": "CC BY",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — {title_he} ({resource_id}), נכון ל-{date}. רישיון CC BY",
+   "to_disk": true,
+   "qa_sample": true,
+   "tozar_cd_key_min_agreement": 0.98,
+   "columns": {
+    "required": ["RECALL_ID", "TOZAR_TEUR", "DEGEM", "BUILD_BEGIN_A", "BUILD_END_A", "SUG_TAKALA", "TEUR_TAKALA"],
+    "kept": ["TOZAR_CD", "SHNAT_RECALL", "SUG_RECALL", "OFEN_TIKUN", "TKINA_EU", "YEVUAN_TEUR"],
+    "never": ["TELEPHONE", "WEBSITE"]
+   }
+  },
+  "road_survival": {
+   "title_he": "ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים",
+   "title": "Final vehicle cancellations + the active vehicle registry",
+   "ministry": "Ministry of Transport and Road Safety",
+   "resources": [
+    {"resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9", "role": "cancelled"},
+    {"resource_id": "4e6b9724-4c1e-43f0-909a-154d4cc4e046", "role": "cancelled"},
+    {"resource_id": "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c", "role": "cancelled"},
+    {"resource_id": "053cea08-09bc-40ec-8f7a-156f0677aff3", "role": "active"}
+   ],
+   "stated_licence": "Other (Open)",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — {title_he}, נכון ל-{date}",
+   "to_disk": false,
+   "qa_sample": false,
+   "min_cohort_size": 200,
+   "ages": [3, 20],
+   "year_coverage_min": 0.95,
+   "model_year_min_share": 0.9,
+   "columns": {
+    "required": ["tozeret_cd", "degem_cd", "moed_aliya_lakvish"],
+    "required_by_role": {"cancelled": ["bitul_dt"]},
+    "kept": ["tozeret_nm", "degem_nm", "shnat_yitzur", "bitul_dt", "ramat_gimur", "kinuy_mishari", "sug_delek_nm",
+             "sug_rechev_cd", "sug_rechev_nm"],
+    "never": ["mispar_rechev", "misgeret", "mispar_manoa"]
+   }
+  }
+ }
+}

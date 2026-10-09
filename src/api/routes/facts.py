@@ -8,7 +8,8 @@
                                                                    unknown key: status not_found, the others still
                                                                    return); ?debug=1 (operator token) adds `withheld`
     GET  /api/facts/v1/contract                                    the JSON schema, the admission / zero-semantics
-                                                                   versions, the snapshot manifest sha and built_at
+                                                                   versions, the snapshot manifest sha and built_at,
+                                                                   the gov manifest / recall model map shas
 
 The MILO DB unreachable (or no DATABASE_URL): 503 catalog_unavailable, never the 50-record benchmark snapshot. A shard
 the free-space guard refuses to decompress: 503 snapshots_unavailable. Responses are canonical JSON (sorted keys):
@@ -108,4 +109,4 @@ def facts_contract() -> CanonicalJSON:
                           "admission": {"version": adm.get("version"), "consumer": adm.get("consumer")},
                           "zero_semantics": {"version": zero.get("version")},
                           "snapshots": {"manifest_sha256": snap["sha256"], "built_at": snap.get("built_at")},
-                          "matcher": V.matcher_version()})
+                          "matcher": V.matcher_version(), "gov_datasets": V.gov()})

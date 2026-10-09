@@ -20,6 +20,10 @@ Open-data facts (source = the dataset; data/facts_admission.json):
        step) -> the admitted fact is returned with the others as `corroborated_by`; any different -> neither
        (source_conflict)
 
+Government-dataset facts (source_level `government_dataset`; src/gov_data/facts.py, the data/gov/ snapshots):
+original_new_price_ils, original_importer, recalls, recall_count, road_survival. They never replace a Level 1.5 field
+(no name is shared) and win over an open-data fact of the same name.
+
 Everything that does not become a fact is listed in `withheld` ({source, field, reason, ...}): owner diagnostics only
 (?debug=1 with the operator token, the MCP facts_preview, counts in the call log), never in the yeda-rechev record.
 """
@@ -391,11 +395,13 @@ def build_record(key: str, row: dict, open_part: dict, *, debug: bool = False,
     """The `vehicle-facts/1` record of one variant (government facts recomputed on every call; the open part as
     cached). debug adds `withheld` (+ counts by reason)."""
     gov_facts, gov_withheld = government if government is not None else government_facts(row)
-    facts = {**{k: v for k, v in (open_part.get("facts") or {}).items() if k not in gov_facts}, **gov_facts}
+    dataset_facts = open_part.get("gov_facts") or {}
+    facts = {**{k: v for k, v in (open_part.get("facts") or {}).items() if k not in gov_facts and k not in dataset_facts},
+             **{k: v for k, v in dataset_facts.items() if k not in gov_facts}, **gov_facts}
     record = {"variant_identity_key": key, "status": "ok", "identity": identity_of(row), "facts": facts,
               "open_data_match": open_part.get("open_data_match") or {}, "versions": V.versions()}
     if debug:
-        withheld = sorted([*gov_withheld, *(open_part.get("withheld") or [])],
+        withheld = sorted([*gov_withheld, *(open_part.get("withheld") or []), *(open_part.get("gov_withheld") or [])],
                           key=lambda w: (str(w.get("source")), str(w.get("field")), str(w.get("reason"))))
         record["withheld"] = withheld
         record["withheld_counts"] = withheld_counts(withheld)

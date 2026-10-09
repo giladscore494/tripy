@@ -5,12 +5,15 @@
                  CatalogUnavailable (503 catalog_unavailable); never the 50-record benchmark snapshot, which is not the
                  catalogue
     open data    record.open_data_part, cached by (variant_identity_key, the row's content_sha256, the snapshot
-                 manifest sha, the matcher version, the admission version, the zero-semantics version): an in-process
+                 manifest sha, the matcher version, the admission version, the zero-semantics version, the gov
+                 manifest sha and the recall model map sha): an in-process
                  LRU (LRU_SIZE entries) in front of <data>/derived/facts_cache/<digest>.json on the volume (written only
                  when storage.disk.check_free allows it; a refused write costs only the next cold call)
     snapshots    the shards stay decompressed in the temp dir (open_data.datasets); only the year-window shards are
                  opened; a decompression the free-space guard refuses -> SnapshotsUnavailable (503
                  snapshots_unavailable), never a smaller answer, and nothing is cached
+    gov data     src/gov_data/facts.gov_part: the government-dataset fields (data/gov/ snapshots), computed with the
+                 open part and cached with it (its key carries the gov manifest sha)
     log          one line per call: time, keys, status per key, latency, cache hit per key, facts count, withheld
                  count by reason. Never a value.
 
@@ -29,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..catalog import CatalogUnavailable
+from ..gov_data.facts import gov_part
 from ..server_logging import get_logger
 from . import versions as V
 from .record import build_record, government_facts, not_found, open_data_part, withheld_counts
@@ -78,7 +82,7 @@ class FactsService:
     def cache_key(key: str, row: dict) -> str:
         v = V.versions()
         parts = [key, str(row.get("content_sha256") or ""), v["snapshots_sha"], v["matcher"], v["admission"],
-                 v["zero_semantics"]]
+                 v["zero_semantics"], v["gov_datasets"], v["gov_recall_model_map"]]
         return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
     def _remember(self, digest: str, part: dict) -> None:
@@ -112,6 +116,8 @@ class FactsService:
         refusals = ds.disk_refusals()
         rows = self.rows_by_source(row) if callable(self.rows_by_source) else self.rows_by_source
         part = open_data_part(row, government, folder=self.folder, rows_by_source=rows)
+        gov = gov_part(row)
+        part["gov_facts"], part["gov_withheld"] = gov["facts"], gov["withheld"]
         if ds.disk_refusals() != refusals or "insufficient_disk" in (part.get("skipped_shards") or []):
             raise SnapshotsUnavailable("an open-data snapshot shard could not be decompressed: the free-space guard "
                                        "refused it")
@@ -154,7 +160,7 @@ class FactsService:
                 gov = government_facts(row)
                 part, cache[key] = self.open_part(key, row, gov[0])
                 record = build_record(key, row, part, debug=debug, government=gov)
-                withheld_all += [*gov[1], *(part.get("withheld") or [])]
+                withheld_all += [*gov[1], *(part.get("withheld") or []), *(part.get("gov_withheld") or [])]
                 out.append(record)
                 statuses[key], counts[key] = "ok", len(record["facts"])
             line.update(status=statuses, cache=cache, facts=counts, withheld=withheld_counts(withheld_all))

@@ -2,7 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tripy/contracts/vehicle-facts/1",
   "title": "vehicle-facts/1",
-  "description": "One merged, provenance-tagged record per exact variant (POST /api/facts/v1/vehicles). Only fields with a value appear: never a null, a placeholder or an 'unknown' entry. Government facts use yeda-rechev's level15.GOVERNMENT_FACT_FIELDS names and adas.<flag> for its 19 ADAS flags; open-data facts use the offer field names of data/open_datasets.json field_map. Deterministic: the same data and versions give byte-identical JSON (sorted keys).",
+  "version": "vehicle-facts/1.1",
+  "description": "One merged, provenance-tagged record per exact variant (POST /api/facts/v1/vehicles). Only fields with a value appear: never a null, a placeholder or an 'unknown' entry. Government facts use yeda-rechev's level15.GOVERNMENT_FACT_FIELDS names and adas.<flag> for its 19 ADAS flags; open-data facts use the offer field names of data/open_datasets.json field_map. Deterministic: the same data and versions give byte-identical JSON (sorted keys). Minor 1.1 (additive): the government-dataset facts of data.gov.il (src/gov_data, the data/gov/ snapshots): original_new_price_ils, original_importer, recalls, recall_count, road_survival, each with source_level government_dataset, licence, attribution and resource_id; original_new_price_ils is the only fact that may carry {range, n_prices} instead of value.",
   "type": "object",
   "required": ["contract", "vehicles"],
   "properties": {
@@ -19,7 +20,7 @@
             "variant_identity_key": {"type": "string"},
             "status": {"const": "ok"},
             "identity": {"$ref": "#/$defs/identity"},
-            "facts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/fact"}},
+            "facts": {"type": "object", "properties": {"original_new_price_ils": {"$ref": "#/$defs/gov_price_fact"}, "original_importer": {"$ref": "#/$defs/gov_fact"}, "recalls": {"allOf": [{"$ref": "#/$defs/gov_fact"}, {"properties": {"value": {"type": "array", "items": {"$ref": "#/$defs/recall"}}}}]}, "recall_count": {"allOf": [{"$ref": "#/$defs/gov_fact"}, {"properties": {"value": {"type": "integer", "minimum": 0}}}]}, "road_survival": {"allOf": [{"$ref": "#/$defs/gov_fact"}, {"properties": {"value": {"$ref": "#/$defs/road_survival"}}}]}}, "additionalProperties": {"$ref": "#/$defs/fact"}},
             "open_data_match": {
               "type": "object",
               "properties": {
@@ -77,11 +78,17 @@
     },
     "versions": {
       "type": "object",
-      "required": ["contract", "admission", "zero_semantics", "snapshots_sha", "matcher"],
+      "required": ["contract", "admission", "zero_semantics", "snapshots_sha", "matcher", "gov_datasets"],
       "properties": {
         "contract": {"const": "vehicle-facts/1"}, "admission": {"type": "string"}, "zero_semantics": {"type": "string"},
-        "snapshots_sha": {"type": "string"}, "matcher": {"type": "string"}
+        "snapshots_sha": {"type": "string"}, "matcher": {"type": "string"},
+        "gov_datasets": {"type": "string", "description": "sha256 of data/gov/manifest.json (no_manifest before the first build)"},
+        "gov_recall_model_map": {"type": "string", "description": "sha256 of data/gov/recall_model_map.json (no_map before the first build)"}
       }
-    }
+    },
+    "gov_fact": {"type": "object", "required": ["value", "source", "source_level", "licence", "attribution", "resource_id"], "properties": {"value": {}, "source": {"enum": ["gov_new_car_prices", "gov_recall_notices", "gov_road_survival"]}, "source_level": {"const": "government_dataset"}, "licence": {"type": "string", "description": "exactly as the data.gov.il package states it"}, "attribution": {"type": "string"}, "resource_id": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}, "identity_level": {"enum": ["model", "model_year"]}, "basis": {"type": "string"}, "dataset_built_at": {"type": "string", "description": "the build date of the data/gov snapshot (YYYY-MM-DD)"}}, "not": {"anyOf": [{"required": ["range"]}, {"required": ["n_prices"]}]}},
+    "gov_price_fact": {"type": "object", "description": "A new-car LIST price (מחיר מחירון חדש מקורי), never a transaction price. One distinct price for (tozeret_cd, degem_cd, shnat_yitzur): value; several (the list has no trim and no price date): only range + n_prices, never a value.", "required": ["source", "source_level", "licence", "attribution", "resource_id", "unit", "label_he"], "properties": {"value": {"type": "integer"}, "range": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "n_prices": {"type": "integer", "minimum": 2}, "unit": {"const": "ILS"}, "label_he": {"const": "מחיר מחירון חדש מקורי"}, "price_type": {"const": "new_car_list_price"}, "source": {"enum": ["gov_new_car_prices", "gov_recall_notices", "gov_road_survival"]}, "source_level": {"const": "government_dataset"}, "licence": {"type": "string", "description": "exactly as the data.gov.il package states it"}, "attribution": {"type": "string"}, "resource_id": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}, "identity_level": {"enum": ["model", "model_year"]}, "basis": {"type": "string"}, "dataset_built_at": {"type": "string", "description": "the build date of the data/gov snapshot (YYYY-MM-DD)"}}, "oneOf": [{"required": ["value"], "not": {"anyOf": [{"required": ["range"]}, {"required": ["n_prices"]}]}}, {"required": ["range", "n_prices"], "not": {"required": ["value"]}}]},
+    "recall": {"type": "object", "required": ["recall_id"], "properties": {"recall_id": {"type": "string"}, "recall_year": {"type": "integer"}, "affected_system": {"type": "string"}, "fault_description": {"type": "string"}, "repair_method": {"type": "string"}, "production_range": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}}}}},
+    "road_survival": {"type": "object", "description": "Final cancellations of the cohort (active + finally cancelled vehicles of the same key; inactive-not-cancelled vehicles excluded). The reason for a cancellation is unknown (accident, total loss, export and failure are not distinguished): never a reliability measure.", "required": ["cohort_size", "cancelled_share_by_age", "definition_he"], "properties": {"cohort_size": {"type": "integer", "minimum": 200}, "cancelled_share_by_age": {"type": "object", "description": "age in years (3..20, only ages the whole cohort has reached) -> share of the cohort finally cancelled at that age or younger", "propertyNames": {"pattern": "^([3-9]|1[0-9]|20)$"}, "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}}, "median_age_at_final_cancellation": {"type": "number"}, "final_cancellation_rate": {"type": "number", "minimum": 0, "maximum": 1}, "definition_he": {"type": "string"}, "cohort_basis": {"enum": ["first_road_year", "shnat_yitzur"]}, "cohort_year": {"type": "integer"}, "model_year_share": {"type": "number"}, "reference_month": {"type": "string"}}}
   }
 }

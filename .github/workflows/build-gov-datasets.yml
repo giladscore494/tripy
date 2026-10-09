@@ -1,0 +1,96 @@
+name: build-gov-datasets
+
+# Builds the government datasets of data.gov.il (src/gov_data, data/gov_datasets.json) on the runner and opens a pull
+# request committing the aggregated snapshots to data/gov/: new_car_prices (G1), road_survival (G3: the final
+# cancellations + the active registry) and recall_notices (G2, after G3: it reads the registry names) as
+# data/gov/<dataset>.sqlite.gz, with data/gov/manifest.json, data/gov/build_status.json, data/gov/report.md,
+# data/gov/recall_model_map.json (the build's proposals; the pull request is the review) and DATA_SOURCES.md. The same
+# pattern as build-open-data: the deploy image carries the snapshots, the server only reads them; nothing is written to
+# MILO and nothing is built on the data volume. No secret.
+#
+#   0. G0 cleanup: the work folder on the runner disk is emptied and any non-snapshot file in data/gov/ removed, so a
+#      raw download can never be committed (raw files live only in the work folder; road_survival is never written to
+#      disk at all: it is projected and aggregated while the stream is read)
+#   1. build (scripts/build_gov_datasets.py): every file URL from resource_show; a dataset whose resource is
+#      unavailable, whose licence text or format changed, whose required column is missing, whose row count fell
+#      under 70 % of the previous build or whose body is an HTML / error page stops ALONE: its previous snapshot and
+#      manifest entry stay and build_status.json records {"dataset", "status": "failed", "reason",
+#      "previous_snapshot_preserved": true}; the others continue
+#   2. report: data/gov/report.md (= the pull-request body): per dataset row counts and schema, the registry join, the
+#      G1 multi-price stats, the G2 code-agreement rate and unresolved models (top 50), the G3 year coverage, cohort
+#      basis and 20 largest cohorts; DATA_SOURCES.md regenerated
+#   3. pull request on automation/gov-datasets (always, so a built dataset is never lost to a failed one). Creating it
+#      needs "Allow GitHub Actions to create and approve pull requests" (Settings -> Actions -> General); without it the
+#      branch is still pushed and the last step writes the compare URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: "Datasets to build: all, or a comma-separated list (new_car_prices, recall_notices, road_survival)"
+        required: false
+        default: all
+  schedule:
+    - cron: "41 4 3 * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATASETS: ${{ inputs.datasets || 'all' }}
+      GOV_DATA_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GOV_WORK: ${{ runner.temp }}/gov-work
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: G0 cleanup (empty work folder; nothing but snapshots, manifests and reports in data/gov)
+        run: |
+          rm -rf "$GOV_WORK" && mkdir -p "$GOV_WORK" data/gov
+          find data/gov -type f ! -name '*.sqlite.gz' ! -name '*.json' ! -name '*.md' -print -delete
+      - name: Build the snapshots (a failed dataset keeps its previous snapshot; the others continue)
+        run: python scripts/build_gov_datasets.py --datasets "$DATASETS" --out data/gov --work "$GOV_WORK" --report data/gov/report.md --body gov-pr-body.md
+      - name: Regenerate DATA_SOURCES.md
+        if: always()
+        run: python scripts/data_sources.py --out DATA_SOURCES.md
+      - name: G0 cleanup after the build (raw downloads never outlive the job)
+        if: always()
+        run: |
+          rm -rf "$GOV_WORK"
+          find data/gov -type f ! -name '*.sqlite.gz' ! -name '*.json' ! -name '*.md' -print -delete
+      - name: Open a pull request
+        id: cpr
+        if: always()
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: automation/gov-datasets
+          commit-message: Rebuild the government-dataset snapshots (data/gov)
+          title: Rebuild the government-dataset snapshots
+          body-path: gov-pr-body.md
+          add-paths: |
+            data/gov/*.sqlite.gz
+            data/gov/manifest.json
+            data/gov/build_status.json
+            data/gov/report.md
+            data/gov/recall_model_map.json
+            DATA_SOURCES.md
+      - name: Pull request fallback (the repository does not let Actions create pull requests)
+        if: always() && steps.cpr.outcome == 'failure'
+        run: |
+          {
+            echo "## Open the pull request by hand"
+            echo ""
+            echo "The pull request step failed (often: GitHub Actions is not permitted to create or approve pull requests; enable it under Settings -> Actions -> General -> \"Allow GitHub Actions to create and approve pull requests\"). If the branch was pushed, open the pull request here:"
+            echo ""
+            echo "https://github.com/${{ github.repository }}/compare/main...automation/gov-datasets?expand=1"
+          } >> "$GITHUB_STEP_SUMMARY"
