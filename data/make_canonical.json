@@ -1,7 +1,7 @@
 {
- "_about": "Reviewed data (replaces the consonant-skeleton transliteration as the source of truth): the MILO catalog's tozar (public.catalog_variants_current, read-only, 2026-10-06: 62 values) -> the canonical Latin make(s). `makes` count by make alone; `model_gated` makes (one tozar naming several makes: ב מ וו / MINI, סיאט / CUPRA, קרייזלר / RAM, אופל / VAUXHALL, דיימלר קרייזלר) count only when the row's model also matches a catalog model family of that tozar, never by make alone. Per dataset, the spellings of each canonical make are found by `normalization` only (src/open_data/makes.normalize_make): equal after normalization is a spelling of that make, nothing else, never fuzzy. scripts/build_make_aliases.py generates data/open_data_make_aliases.json from this file and the probe's distinct makes.",
- "version": "make-canonical-v1",
- "reviewed_at": "2026-10-06",
+ "_about": "Reviewed data (replaces the consonant-skeleton transliteration as the source of truth): the MILO catalog's tozar (public.catalog_variants_current, read-only, 2026-10-06: 62 values; 2026-10-09: 138 values, 54 more mapped as the reviewer proposed (with אסטון מרטין) and 13 more listed as unmapped) -> the canonical Latin make(s). `makes` count by make alone; `model_gated` makes (one tozar naming several makes: ב מ וו / MINI, סיאט / CUPRA, קרייזלר / RAM, אופל / VAUXHALL, דיימלר קרייזלר) count only when the row's model also matches a catalog model family of that tozar, never by make alone. Per dataset, the spellings of each canonical make are found by `normalization` only (src/open_data/makes.normalize_make): equal after normalization is a spelling of that make, nothing else, never fuzzy. scripts/build_make_aliases.py generates data/open_data_make_aliases.json from this file and the probe's distinct makes. `own_tozar_only` (מיני / MINI, קופרה / CUPRA): the make counts by make alone for the rows of that tozar only; under a tozar that model-gates it (ב מ וו, סיאט) it stays model-gated at match time exactly as before (src/open_data/makes.tozar_gate).",
+ "version": "make-canonical-v2",
+ "reviewed_at": "2026-10-09",
  "normalization": {
   "_about": "upper case (accents dropped); everything from the first whitespace token that carries a digit on is an address tail (dropped; \"1OYOTA\" -> nothing); dots and apostrophes are removed inside a word (B.M.W. -> BMW, S.A. -> SA), other punctuation separates words; a `legal_forms` word ends the name (it and the address after it are dropped); a `descriptors` word is dropped; the remaining words are compared with their spaces collapsed (LANDROVER = LAND ROVER)",
   "legal_forms": [
@@ -347,14 +347,301 @@
     "DODGE",
     "JEEP"
    ]
+  },
+  "מ.ג": {
+   "makes": [
+    "MG"
+   ]
+  },
+  "צ'רי": {
+   "makes": [
+    "CHERY"
+   ]
+  },
+  "בי ווי די": {
+   "makes": [
+    "BYD"
+   ]
+  },
+  "בנטלי": {
+   "makes": [
+    "BENTLEY"
+   ]
+  },
+  "פרארי": {
+   "makes": [
+    "FERRARI"
+   ]
+  },
+  "סאנגיונג": {
+   "makes": [
+    "SSANGYONG"
+   ]
+  },
+  "קיי גי מוביליט": {
+   "makes": [
+    "KGM",
+    "SSANGYONG"
+   ]
+  },
+  "סאאב": {
+   "makes": [
+    "SAAB"
+   ]
+  },
+  "קופרה": {
+   "makes": [
+    "CUPRA"
+   ],
+   "own_tozar_only": true
+  },
+  "מיני": {
+   "makes": [
+    "MINI"
+   ],
+   "own_tozar_only": true
+  },
+  "ניאו רכב": {
+   "makes": [
+    "NIO"
+   ]
+  },
+  "ניאו": {
+   "makes": [
+    "NIO"
+   ]
+  },
+  "למבורגיני": {
+   "makes": [
+    "LAMBORGHINI"
+   ]
+  },
+  "ג'אקו": {
+   "makes": [
+    "JAECOO"
+   ]
+  },
+  "אומודה": {
+   "makes": [
+    "OMODA"
+   ]
+  },
+  "אף אי דאבל יו": {
+   "makes": [
+    "FAW"
+   ]
+  },
+  "ליפמוטור": {
+   "makes": [
+    "LEAPMOTOR"
+   ]
+  },
+  "אורה": {
+   "makes": [
+    "ORA",
+    "GWM ORA"
+   ]
+  },
+  "זיקר": {
+   "makes": [
+    "ZEEKR"
+   ]
+  },
+  "לינק אנד קו": {
+   "makes": [
+    "LYNK & CO"
+   ]
+  },
+  "רולס רויס": {
+   "makes": [
+    "ROLLS-ROYCE"
+   ]
+  },
+  "סקיוול": {
+   "makes": [
+    "SKYWELL"
+   ]
+  },
+  "וואי": {
+   "makes": [
+    "WEY"
+   ]
+  },
+  "אלפין": {
+   "makes": [
+    "ALPINE"
+   ]
+  },
+  "סרס": {
+   "makes": [
+    "SERES"
+   ]
+  },
+  "וויה": {
+   "makes": [
+    "VOYAH"
+   ]
+  },
+  "פולסטאר": {
+   "makes": [
+    "POLESTAR"
+   ]
+  },
+  "איווייס": {
+   "makes": [
+    "AIWAYS"
+   ]
+  },
+  "ג'אק": {
+   "makes": [
+    "JAC"
+   ]
+  },
+  "ג'יי איי סי": {
+   "makes": [
+    "JAC"
+   ]
+  },
+  "קארמה": {
+   "makes": [
+    "KARMA"
+   ]
+  },
+  "פורתינג": {
+   "makes": [
+    "FORTHING"
+   ]
+  },
+  "ארקפוקס": {
+   "makes": [
+    "ARCFOX"
+   ]
+  },
+  "איון": {
+   "makes": [
+    "AION"
+   ]
+  },
+  "גי.אי.סי": {
+   "makes": [
+    "GAC"
+   ]
+  },
+  "באייק": {
+   "makes": [
+    "BAIC"
+   ]
+  },
+  "אוואטר": {
+   "makes": [
+    "AVATR"
+   ]
+  },
+  "נטע": {
+   "makes": [
+    "NETA"
+   ]
+  },
+  "לוטוס": {
+   "makes": [
+    "LOTUS"
+   ]
+  },
+  "יודו": {
+   "makes": [
+    "YUDO"
+   ]
+  },
+  "לינקולן": {
+   "makes": [
+    "LINCOLN"
+   ]
+  },
+  "אל אי וי סי": {
+   "makes": [
+    "LEVC"
+   ]
+  },
+  "פונטיאק": {
+   "makes": [
+    "PONTIAC"
+   ]
+  },
+  "אינאוס": {
+   "makes": [
+    "INEOS"
+   ]
+  },
+  "ג'יי.אמ.סי": {
+   "makes": [
+    "JMC"
+   ]
+  },
+  "מורגן": {
+   "makes": [
+    "MORGAN"
+   ]
+  },
+  "איווקו": {
+   "makes": [
+    "IVECO"
+   ]
+  },
+  "אקס אי וי": {
+   "makes": [
+    "XEV"
+   ]
+  },
+  "מקלארן": {
+   "makes": [
+    "MCLAREN"
+   ]
+  },
+  "לנצ'יה": {
+   "makes": [
+    "LANCIA"
+   ]
+  },
+  "אס דאבל יו אמ": {
+   "makes": [
+    "SWM"
+   ]
+  },
+  "איי אם": {
+   "makes": [
+    "IM"
+   ]
+  },
+  "מרוטי סוזוקי": {
+   "makes": [
+    "MARUTI SUZUKI"
+   ]
+  },
+  "אסטון מרטין": {
+   "makes": [
+    "ASTON MARTIN"
+   ]
   }
  },
  "unmapped": {
-  "_about": "catalog tozar left without a make: unknown brand (12 tozeret_nm variants in total); listed for review, never guessed",
+  "_about": "catalog tozar left without a make: unknown brand (no Latin name in the registry's tozeret_nm, no importer name in the catalogue); listed for review, never guessed. A value moves to `tozar` only with evidence: the brand's own Latin name in tozeret_nm or the importer name",
   "tozar": [
    "גמס",
    "דאבל יו אם איי",
-   "דאיון"
+   "דאיון",
+   "גיאיוואן",
+   "איויאיסי",
+   "ריהיי",
+   "אקסלנטיקס",
+   "גופל",
+   "מודרן",
+   "בואו",
+   "סנטרו",
+   "לינקסיס",
+   "טלקו",
+   "אמ.סי.סי",
+   ".ג'י.אמ",
+   "אל.טי.איי."
   ]
  }
 }

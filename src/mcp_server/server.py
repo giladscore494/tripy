@@ -24,7 +24,7 @@ INSTRUCTIONS = (
     "or writes anything. Start with list_runs, then run_status / run_events (tail with the returned `next` cursor). "
     "Every response is JSON, redacted and capped at 60,000 characters; long outputs page with offset / limit (or "
     "since / next for events) and report what remains.")
-_AUDIT_KEYS = ("run_id", "record_id", "run_ids", "doc_id", "field", "since", "offset", "limit", "lines",
+_AUDIT_KEYS = ("run_id", "record_id", "run_ids", "doc_id", "field", "since", "offset", "limit", "lines", "make",
                "model_year_from", "model_year_to", "per_year")
 
 log = get_logger("mcp")
@@ -74,7 +74,7 @@ async def call(tool: str, args: dict, fn: Callable[[], dict], slots: _Slots) -> 
 
 
 def build(observer_factory: Callable[[], Observer] = Observer):
-    """The FastMCP instance with the fourteen read-only tools (stateless Streamable HTTP, JSON responses)."""
+    """The FastMCP instance with the read-only tools (stateless Streamable HTTP, JSON responses)."""
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
     from mcp.types import ToolAnnotations
@@ -266,6 +266,21 @@ def build(observer_factory: Callable[[], Observer] = Observer):
             model_year_from, model_year_to, per_year, manufacturer))
 
     @tool
+    async def type_code_probe(make: str, model_year_from: int, model_year_to: int, per_year: int = 60) -> str:
+        """Whether a type-code rule can exist for a canonical make (MERCEDES-BENZ, HYUNDAI, MG, ...): a deterministic
+        catalogue sample (the first `per_year` (max 200) private-segment variant identity keys of each model year of
+        the make's tozar by md5) against the make's EEA rows of the year window. Per catalogue row, the relation of its
+        degem_nm (NFKC, upper case, no spaces / dots / dashes) to each EEA identity field (type_approval, variant,
+        version): equal / prefix / contains (>= 4 characters) / none; per (relation, field) the consistency rate (power
+        +-1 kW of hp x 0.7355 and cc +-20 agree), the CO2 agreement and 10 examples; 10 rows without a relation with the
+        closest EEA values of the same model text. At most 60 s: `truncated: true` returns what is done. Read-only: one
+        MILO query, the local snapshot, nothing written, no matching changed."""
+        args = {"make": make, "model_year_from": model_year_from, "model_year_to": model_year_to,
+                "per_year": per_year}
+        return await run("type_code_probe", args, lambda: observer_factory().type_code_probe(
+            make, model_year_from, model_year_to, per_year))
+
+    @tool
     async def server_log_tail(lines: int = 200, grep: str | None = None) -> str:
         """The last lines of the server log (the rotating data/logs/tripy.log), optionally only lines containing
         `grep` (case-insensitive substring). lines max 2000."""
@@ -278,4 +293,4 @@ def build(observer_factory: Callable[[], Observer] = Observer):
 TOOL_NAMES = ("list_runs", "run_status", "run_events", "run_result", "run_diagnostics", "binding_replay",
               "candidates", "documents", "document_text", "document_structure", "target_identity", "open_data_match",
               "open_data_coverage", "open_data_status", "open_data_shadow_report", "list_bakeoffs", "bakeoff_result",
-              "catalog_search", "facts_preview", "facts_coverage", "server_log_tail")
+              "catalog_search", "facts_preview", "facts_coverage", "type_code_probe", "server_log_tail")
