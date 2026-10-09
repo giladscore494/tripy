@@ -34,28 +34,28 @@ def test_a_date_shape_keeps_no_digit_or_letter():
     assert date_pattern(None) == "(empty)" and date_pattern("12 מרץ 19") == "99 aaa 99"
 
 
-def _cohort(cancellations: list[tuple[str, str]], active: int = 300) -> dict:
+def _cohort(cancellations: list[str], active: int = 300) -> dict:
     agg = G3.Survival()
     for _ in range(active):
         agg.add({"_role": "active", "_resource_id": "a", "tozeret_cd": "1", "degem_cd": "2", "shnat_yitzur": "2010",
                  "moed_aliya_lakvish": "2010-01"})
-    for road, bitul in cancellations:
+    for bitul in cancellations:
         agg.add({"_role": "cancelled", "_resource_id": "c", "tozeret_cd": "1", "degem_cd": "2",
-                 "shnat_yitzur": "2010", "moed_aliya_lakvish": road, "bitul_dt": bitul})
-    rows, stats = G3.cohorts(agg, G3.BASIS_MODEL_YEAR, 2026 * 12 + 9, 200, (3, 20))
+                 "shnat_yitzur": "2010", "moed_aliya_lakvish": "", "bitul_dt": bitul})
+    rows, stats = G3.cohorts(agg, 2026, 200, (3, 20))
     return {**rows[0], "_stats": stats, "_agg": agg}
 
 
 def test_ten_dated_cancellations_give_shares_above_zero():
-    cohort = _cohort([("2010-01-15T00:00:00", "2016-06-01T00:00:00")] * 10)
+    cohort = _cohort(["2016-06-01T00:00:00"] * 10)                      # age 6 in whole years
     assert cohort["dated_cancelled"] == 10 and cohort["withheld"] is None
     shares = json.loads(json.dumps(cohort["shares"]))
-    assert shares["7"] == round(10 / 310, 4) and shares["10"] == round(10 / 310, 4) and shares["6"] == 0.0
-    assert cohort["age_median"] == 6.4
+    assert shares["7"] == round(10 / 310, 4) and shares["10"] == round(10 / 310, 4) and shares["5"] == 0.0
+    assert shares["6"] == round(10 / 310, 4) and cohort["age_median"] == 6
 
 
 def test_a_cohort_with_undated_cancellations_gets_no_survival_fields():
-    cohort = _cohort([("2010-01", "2016-06")] * 10 + [("2010-01", "")] * 5)       # 10 of 15 dated: 67 %
+    cohort = _cohort(["2016-06"] * 10 + [""] * 5)                       # 10 of 15 with an age: 67 %
     assert cohort["shares"] is None and cohort["age_median"] is None
     assert cohort["withheld"] == "undated_cancellations" and cohort["_stats"]["undated_cohorts"] == 1
 
@@ -70,7 +70,7 @@ def _undated(body: bytes, column: str, value: str) -> bytes:
         cells = line.split(",")
         cells[index] = value
         out.append(",".join(cells))
-    return ("﻿" + "\r\n".join(out) + "\r\n").encode("utf-8")
+    return ("\ufeff" + "\r\n".join(out) + "\r\n").encode("utf-8")
 
 
 def test_a_resource_with_no_parsed_date_fails_date_unparsed(gov):
@@ -81,31 +81,35 @@ def test_a_resource_with_no_parsed_date_fails_date_unparsed(gov):
     assert status["status"] == "failed" and status["reason"] == "date_unparsed"
     assert status["resource_id"] == CANCELLED[0]
     assert f"[{CANCELLED[0]}] bitul_dt parsed 0.00% of 40 rows" in status["detail"]
-    assert "('99 aaaaa 99', 40)" in status["detail"] and "'12 March 22'" in status["detail"]
+    assert "('99 aaaaa 99', 40)" in status["detail"] and "12 March 22" not in status["detail"]    # shapes only
     checks = {r["resource_id"]: r.get("checks") for r in status["resources"]}
     assert checks[CANCELLED[2]] is None                                           # no rows: nothing to check
-    assert checks[CANCELLED[0]]["dates"]["bitul_dt"]["parsed_share"] == 0.0
-    assert checks[CANCELLED[0]]["dates"]["moed_aliya_lakvish"]["parsed_share"] == 1.0
-    assert checks[ACTIVE]["dates"]["moed_aliya_lakvish"]["parsed_share"] == 1.0
+    assert checks[CANCELLED[0]]["checked"]["bitul_dt"]["parsed_share"] == 0.0
+    assert checks[CANCELLED[0]]["checked"]["shnat_yitzur"]["parsed_share"] == 1.0
+    assert checks[ACTIVE]["checked"]["shnat_yitzur"]["parsed_share"] == 1.0
     assert not (out / "road_survival.sqlite.gz").exists()
     report = B.report(outcome)
-    assert "| bitul_dt parsed" in report and "0.00 %" in report and "99 aaaaa 99" in report
+    assert "bitul_dt parsed" in report and "0.00 %" in report and "99 aaaaa 99" in report
+    assert "12 March 22" not in report
     for token in (PLATE, CHASSIS, ENGINE):
         assert token not in report and token not in json.dumps(outcome["status"])
 
 
-def test_the_report_lists_date_shares_examples_and_ages(gov):
+def test_the_report_lists_date_shares_keys_and_ages(gov):
     out, work = gov
     outcome = build(out, work, FakeCkan(bodies()), names=["road_survival"])
     assert outcome["status"][0]["status"] == "built"
     stats = outcome["manifest"]["datasets"]["road_survival"]["stats"]["resources"]
     first = stats[CANCELLED[0]]
-    assert first["dates"]["bitul_dt"] == {"parsed_share": 1.0, "examples": ["2022-05-10"], "unparsed_examples": [],
-                                          "unparsed_patterns": []}
-    assert first["age_years"] == {"n": 40, "p10": 5.2, "p50": 5.2, "p90": 5.2}
-    assert stats[ACTIVE]["age_years"]["n"] == 0 and stats[ACTIVE]["unkeyed"] == 0
+    assert first["checked"]["bitul_dt"] == {"parsed_share": 1.0, "unparsed_patterns": []}
+    assert first["moed_aliya_lakvish"] == {"filled_share": 1.0, "parsed_share": 0.0, "patterns": [("9999", 40)]}
+    assert first["age_years"] == {"n": 40, "p10": 5, "p50": 5, "p90": 5}
+    assert first["keyed_directly"] == 40 and first["keyed_via_degem_nm"] == 0 and first["unkeyed"] == 0
+    assert stats[ACTIVE]["age_years"] is None and stats[ACTIVE]["unkeyed"] == 0
     text = "\n".join(outcome["sections"]["road_survival"])
-    assert f"| `{CANCELLED[0]}` | cancelled | 40 | 0 (0.00 %) | 100.00 % | 100.00 % | 5.2 / 5.2 / 5.2 (40) |" in text
+    assert (f"| `{CANCELLED[0]}` | cancelled | 40 | 100.00 % | 100.00 % | 100.00 % (0.00 %) | 40 | 0 | "
+            "0 / 0 / 0 / 0 (0.00 %) | 5 / 5 / 5 (40) |") in text
+    assert "2022-05-10" not in text                                              # counts and shapes only
 
 
 # --- F2: codes -------------------------------------------------------------------------------------------------------
@@ -129,7 +133,7 @@ def test_two_percent_unkeyed_cancellations_fail_unkeyed_rows(gov):
     status = build(out, work, FakeCkan(bodies(**{ACTIVE: body})), names=["road_survival"])["status"][0]
     assert status["status"] == "failed" and status["reason"] == "unkeyed_rows" and status["resource_id"] == ACTIVE
     assert f"[{ACTIVE}] unkeyed 6 of 300 rows (2.00%, allowed 1%)" in status["detail"]
-    assert "{'tozeret_cd': 'abc', 'degem_cd': '100'}" in status["detail"]
+    assert "('aaa / 999', 6)" in status["detail"] and "abc" not in status["detail"]
     assert PLATE not in status["detail"] and CHASSIS not in status["detail"]
 
 

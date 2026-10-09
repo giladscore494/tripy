@@ -57,13 +57,11 @@
    "qa_sample": false,
    "min_cohort_size": 200,
    "ages": [3, 20],
-   "year_coverage_min": 0.95,
-   "model_year_min_share": 0.9,
    "columns": {
-    "required": ["tozeret_cd", "degem_cd", "moed_aliya_lakvish"],
+    "required": ["tozeret_cd", "degem_cd", "shnat_yitzur"],
     "required_by_role": {"cancelled": ["bitul_dt"]},
-    "kept": ["tozeret_nm", "degem_nm", "shnat_yitzur", "bitul_dt", "ramat_gimur", "kinuy_mishari", "sug_delek_nm",
-             "sug_rechev_cd", "sug_rechev_nm"],
+    "kept": ["tozeret_nm", "degem_nm", "moed_aliya_lakvish", "bitul_dt", "ramat_gimur", "kinuy_mishari",
+             "sug_delek_nm", "sug_rechev_cd", "sug_rechev_nm"],
     "never": ["mispar_rechev", "misgeret", "mispar_manoa"]
    }
   }

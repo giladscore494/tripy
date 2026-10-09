@@ -12,6 +12,8 @@
     year_of / ym_of      the year / (year, month) of a date cell: YYYY-MM, YYYY-M, YYYYMM (int or text), YYYYMMDD,
                          YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS[.fff][Z] (any time part), DD/MM/YYYY
     date_pattern         the shape of a cell for diagnostics (digits -> 9, letters -> a): never the value itself
+    norm_code            a type code (degem_nm) as compared: NFKC, upper case, no whitespace / dots / dashes
+                         ("ZWE 211L-DEX" -> "ZWE211LDEX")
 """
 
 from __future__ import annotations
@@ -100,6 +102,13 @@ def ym_of(value: Any) -> tuple[int, int] | None:
         year, month = int(m.group(3)), int(m.group(2))
         return (year, month) if 1900 <= year <= 2100 and 1 <= month <= 12 else None
     return None
+
+
+_CODE_DROP = re.compile(r"[\s.\-‐-―]+")
+
+
+def norm_code(value: Any) -> str:
+    return _CODE_DROP.sub("", unicodedata.normalize("NFKC", str(value or "")).upper())
 
 
 def date_pattern(value: Any, limit: int = 40) -> str:

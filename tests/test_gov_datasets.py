@@ -93,13 +93,14 @@ def active_body(n_big: int = 250) -> bytes:
 def cancelled_body(part: int) -> bytes:
     rows = []
     if part == 0:
-        for i in range(40):        # 40 cancellations at 5 years 2 months (part 1: 10 more at 2 years 6 months)
-            rows.append([f"{PLATE}C{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", "", f"{CHASSIS}C{i}",
-                         f"{ENGINE}C{i}", "2017-3", "COROLLA", "בנזין", "2022-05-10"])
+        for i in range(40):        # 40 cancellations of model year 2017 in 2022: age 5 (part 1: 10 more in 2019, age 2;
+                                   # moed_aliya_lakvish as the datastore states it: a year, or empty)
+            rows.append([f"{PLATE}C{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", 2017, f"{CHASSIS}C{i}",
+                         f"{ENGINE}C{i}", "2017", "COROLLA", "בנזין", "2022-05-10"])
     if part == 1:
         for i in range(10):
-            rows.append([f"{PLATE}D{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", "", f"{CHASSIS}D{i}",
-                         f"{ENGINE}D{i}", "2017-3", "COROLLA", "בנזין", "2019-09-01"])
+            rows.append([f"{PLATE}D{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", 2017, f"{CHASSIS}D{i}",
+                         f"{ENGINE}D{i}", "", "COROLLA", "בנזין", "2019-09-01"])
     return _csv(SURV_COLUMNS + ["bitul_dt"], rows)
 
 
@@ -385,16 +386,18 @@ def test_survival_cohorts_small_cohorts_and_ages_not_reached(gov, tmp_path):
     out, work = gov
     outcome = build(out, work, FakeCkan(bodies()), names=["road_survival"])
     stats = outcome["manifest"]["datasets"]["road_survival"]["stats"]
-    assert stats["cohort_basis"] == "first_road_year" and stats["shnat_yitzur_coverage"] == 0.0
-    assert stats["reference_month"] == "2026-10" and "Inactive vehicles" in stats["exclusion"]
+    assert stats["cohort_basis"] == "shnat_yitzur" and stats["shnat_yitzur_coverage"] == 1.0
+    assert stats["reference_year"] == 2026 and "Inactive vehicles" in stats["exclusion"]
     serve(out, tmp_path)
     facts, _ = F.survival_facts(row(shnat_yitzur=2017))
     value = facts["road_survival"]["value"]
     assert value["cohort_size"] == 300 and value["cohort_year"] == 2017                 # 250 active + 50 cancelled
     shares = value["cancelled_share_by_age"]
-    assert sorted(int(a) for a in shares) == list(range(3, 9))                           # aged 8: no 9..20
+    assert sorted(int(a) for a in shares) == list(range(3, 9))       # 2026 - 2017 = 9 >= a + 1: no 9..20
     assert "12" not in shares
-    assert shares["3"] == shares["5"] == round(10 / 300, 4) and shares["6"] == shares["8"] == round(50 / 300, 4)
+    # whole years: 10 cancelled in 2019 (age 2), 40 in 2022 (age 5)
+    assert shares["3"] == shares["4"] == round(10 / 300, 4) and shares["5"] == shares["8"] == round(50 / 300, 4)
+    assert value["median_age_at_final_cancellation"] == 5
     assert value["final_cancellation_rate"] == round(50 / 300, 4)
     assert "סיבת הביטול אינה ידועה" in value["definition_he"]
     assert facts["road_survival"]["source_level"] == "government_dataset"
@@ -411,9 +414,9 @@ def test_survival_cohorts_small_cohorts_and_ages_not_reached(gov, tmp_path):
 def test_share_by_age_is_absent_for_an_age_the_cohort_has_not_reached():
     agg = G3.Survival()
     for i in range(300):
-        agg.add({"_role": "active", "tozeret_cd": "1", "degem_cd": "2", "moed_aliya_lakvish": "2018-01"})
-    rows, _ = G3.cohorts(agg, G3.BASIS_FIRST_ROAD, 2026 * 12 + 11, 200, (3, 20))    # cohort 2018 is aged 8
-    assert "8" in rows[0]["shares"] and "9" not in rows[0]["shares"] and "12" not in rows[0]["shares"]
+        agg.add({"_role": "active", "tozeret_cd": "1", "degem_cd": "2", "shnat_yitzur": "2018"})
+    rows, _ = G3.cohorts(agg, 2026, 200, (3, 20))                     # 2026 - 2018 = 8 >= a + 1: up to age 7
+    assert "7" in rows[0]["shares"] and "8" not in rows[0]["shares"] and "12" not in rows[0]["shares"]
 
 
 def test_dates_parse_exactly():

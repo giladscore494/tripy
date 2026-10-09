@@ -170,7 +170,11 @@ def survival_facts(row: dict) -> tuple[dict, list[dict]]:
     if cohort.get("shares") is None:
         if cohort.get("withheld") == "undated_cancellations":
             return hold("undated_cancellations", detail=f"{cohort['dated_cancelled']} of {cohort['cancelled_count']} "
-                                                        "cancellations carry both dates")
+                                                        "cancellations have an age")
+        if cohort.get("withheld") == "unkeyed_cancellations":
+            return hold("unkeyed_cancellations", detail=f"{cohort.get('unkeyed_same_make_year')} unkeyed "
+                                                        f"cancellations of the same tozeret_cd and year, "
+                                                        f"{cohort['cancelled_count']} of its own")
         return hold("small_cohort", detail=f"cohort_size {cohort['cohort_size']} < {meta.get('min_cohort_size')}")
     value = _clean({"cohort_size": int(cohort["cohort_size"]),
                     "cancelled_share_by_age": json.loads(cohort["shares"]),
