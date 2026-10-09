@@ -14,7 +14,6 @@ import urllib.parse
 from pathlib import Path
 
 import pytest
-import yaml
 
 from test_gov_datasets import (ACTIVE, CANCELLED, CHASSIS, ENGINE, PLATE, PRICES, RECALLS, ROOT, FakeCkan, B,
                                bodies, build, gov)  # noqa: F401 - gov is a fixture
@@ -379,12 +378,19 @@ def test_one_built_dataset_opens_the_pull_request(gov, tmp_path, monkeypatch):
     assert "- recall_notices: failed: resource_unavailable" in summary
 
 
+def _step(text: str, step_id: str) -> str:
+    """The text of the workflow step with this id (from its `- name:` line to the next step)."""
+    blocks = text.split("\n      - ")
+    return next(b for b in blocks if f"\n        id: {step_id}\n" in b)
+
+
 def test_the_workflow_skips_the_pull_request_on_the_status_summary():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/build-gov-datasets.yml").read_text("utf-8"))
-    steps = {s.get("id"): s for s in workflow["jobs"]["build"]["steps"] if s.get("id")}
-    assert steps["status"]["if"] == "always()"
-    assert "--summarize-status data/gov/build_status.json" in steps["status"]["run"]
-    assert steps["cpr"]["if"] == "always() && steps.status.outputs.create_pr == 'true'"
-    assert steps["paths"]["if"] == steps["cpr"]["if"]
-    assert steps["cpr"]["with"]["add-paths"] == "${{ steps.paths.outputs.list }}"
-    assert 'if [ -e "$path" ]' in steps["paths"]["run"]
+    text = (ROOT / ".github/workflows/build-gov-datasets.yml").read_text("utf-8")
+    status, paths, cpr = _step(text, "status"), _step(text, "paths"), _step(text, "cpr")
+    assert "        if: always()\n" in status
+    assert "run: python scripts/build_gov_datasets.py --summarize-status data/gov/build_status.json" in status
+    condition = "        if: always() && steps.status.outputs.create_pr == 'true'\n"
+    assert condition in cpr and condition in paths
+    assert "add-paths: ${{ steps.paths.outputs.list }}" in cpr and "data/gov/*.sqlite.gz" not in cpr
+    assert 'if [ -e "$path" ]' in paths
+    assert text.index("id: status") < text.index("id: paths") < text.index("id: cpr")
