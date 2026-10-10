@@ -15,7 +15,7 @@ import pytest
 from src.facts import coverage as C
 from src.facts import versions as V
 from src.facts.service import FactsService, dumps
-from test_facts_api import KEY, ROWS, FakeMilo, snapshot_rows
+from test_facts_api import KEY, ROWS, FakeMilo, no_gov_snapshots, snapshot_rows  # noqa: F401 - a fixture
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = json.loads((ROOT / "tests/fixtures/facts_public_golden.json").read_text("utf-8"))
@@ -88,7 +88,7 @@ def test_no_equal_co2_is_the_fallback_and_nothing_is_selected_out():
     assert selection["selected_values"]["fuel_consumption_combined_l_100km"] == [4.8, 5.8, 5.9]
 
 
-def test_the_public_record_is_byte_identical_to_main():
+def test_the_public_record_is_byte_identical_to_main(no_gov_snapshots):
     from test_facts_api import service
 
     for record_id in ("19754", "85167"):

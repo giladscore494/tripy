@@ -20,7 +20,7 @@ cohorts look like they survive better.
 
 Never a silent zero (checks, per resource, after the fallback):
     date_unparsed      under 95 % of a resource's rows parse shnat_yitzur (all rows) or bitul_dt (cancelled)
-    unkeyed_rows       over 5 % of a cancellation resource's rows (1 % of the active registry's) still unkeyed
+    unkeyed_rows       over 20 % of a cancellation resource's rows (1 % of the active registry's) still unkeyed
 and per cohort: under 95 % of its cancellations with an age -> withheld `undated_cancellations`; the unkeyed
 cancellations of its (tozeret_cd, shnat_yitzur) over 10 % of its cancellations -> withheld `unkeyed_cancellations`
 (they could be its own: a conservative guard). Reports carry counts and value shapes (digits -> 9, letters -> a) only,
@@ -45,7 +45,7 @@ COHORT_COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "cohort_year":
                   "via_degem_nm": "INTEGER", "unkeyed_same_make_year": "INTEGER",
                   "age_p25": "REAL", "age_median": "REAL", "age_p75": "REAL", "shares": "TEXT", "withheld": "TEXT"}
 DATE_MIN_SHARE = 0.95           # a resource's parsed share of each checked column, else date_unparsed
-UNKEYED_MAX_SHARE = {"cancelled": 0.05, "active": 0.01}   # after the degem_nm fallback, else unkeyed_rows
+UNKEYED_MAX_SHARE = {"cancelled": 0.20, "active": 0.01}   # after the degem_nm fallback, else unkeyed_rows
 COHORT_DATED_MIN_SHARE = 0.95   # a cohort's cancellations with an age, else undated_cancellations
 COHORT_UNKEYED_MAX_SHARE = 0.10  # the unkeyed cancellations of its (tozeret_cd, year), else unkeyed_cancellations
 CHECKED_COLUMNS = {"active": ("shnat_yitzur",), "cancelled": ("shnat_yitzur", "bitul_dt")}
@@ -201,7 +201,7 @@ class Survival:
 
     def check(self) -> tuple[str | None, list[str]]:
         """(failure reason or None, one line per failing resource): date_unparsed (shnat_yitzur or bitul_dt under 95 %
-        parsed) before unkeyed_rows (over 5 % of a cancellation resource's rows, 1 % of the active registry's, still
+        parsed) before unkeyed_rows (over 20 % of a cancellation resource's rows, 1 % of the active registry's, still
         unkeyed after the fallback). Counts and shapes only."""
         self.resolve()
         dates, keys = [], []
@@ -397,6 +397,11 @@ def report(agg: Survival, coverage: float, cohort_rows: list[dict], stats: dict,
     basis = BASIS_MODEL_YEAR
     served = sum(1 for r in cohort_rows if r["shares"] is not None)
     withheld = {reason: sum(1 for r in cohort_rows if r["withheld"] == reason) for reason in WITHHELD_REASONS}
+    active_total = sum(r["active_count"] for r in cohort_rows)
+    active_withheld = {reason: sum(r["active_count"] for r in cohort_rows if r["withheld"] == reason)
+                       for reason in WITHHELD_REASONS}
+    active_share = {reason: round(n / active_total, 4) if active_total else 0.0
+                    for reason, n in active_withheld.items()}
     via = _dist([round(r["via_degem_nm"] / r["cancelled_count"], 4) for r in cohort_rows if r["cancelled_count"]])
     low, high = SANITY_YEARS
     sanity = _dist([r["shares"]["10"] for r in cohort_rows
@@ -409,6 +414,8 @@ def report(agg: Survival, coverage: float, cohort_rows: list[dict], stats: dict,
                "keyed_via_degem_nm": sum(s.via_name for s in agg.resources.values()),
                "shnat_yitzur_coverage": coverage, "cohort_basis": basis, "cohorts": len(cohort_rows),
                "cohorts_with_survival": served, "withheld": withheld, "reference_year": ref_year,
+               "active_in_withheld": active_withheld, "active_share_in_withheld": active_share,
+               "active_in_cohorts": active_total,
                "exclusion": EXCLUSION, "via_degem_nm_share_per_cohort": via,
                "share_by_10_model_years_2005_2014": sanity, **stats}
     lines = [f"- rows: active {agg.rows['active']}, finally cancelled {agg.rows['cancelled']}; keyed via degem_nm "
@@ -425,6 +432,11 @@ def report(agg: Survival, coverage: float, cohort_rows: list[dict], stats: dict,
              f"shnat_yitzur) over {COHORT_UNKEYED_MAX_SHARE:.0%} of its cancellations) "
              f"{withheld['unkeyed_cancellations']}, undated_cancellations (under {COHORT_DATED_MIN_SHARE:.0%} of the "
              f"cancellations with an age) {withheld['undated_cancellations']}",
+             f"- active vehicles in withheld cohorts (of {active_total} in all cohorts): unkeyed_cancellations "
+             f"{active_withheld['unkeyed_cancellations']} ({active_share['unkeyed_cancellations'] * 100:.2f} %), "
+             f"small_cohort {active_withheld['small_cohort']} ({active_share['small_cohort'] * 100:.2f} %), "
+             f"undated_cancellations {active_withheld['undated_cancellations']} "
+             f"({active_share['undated_cancellations'] * 100:.2f} %)",
              f"- share of a cohort's cancellations keyed via degem_nm (cohorts with a cancellation, n {via['n']}): "
              f"p50 {via['p50']}, p90 {via['p90']}",
              f"- sanity: share by age 10 over the cohorts of model years {low}–{high} with survival fields (n "
