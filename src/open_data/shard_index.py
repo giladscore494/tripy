@@ -1,11 +1,11 @@
 """E4: the in-process candidate index of the year shards (EEA), so a match never scans every row of a make.
 
     index      per decompressed shard file: its rows grouped by the text the candidate search reads (make, model,
-               base_model, variant, version, year; the group key) -> the SQLite rowids of the group. A group's
-               representative row carries exactly those columns: the model-alias filter (match._model_matches) and the
-               type-code rules (match.type_code_rule, by canonical make) give one answer for every row of a group, so
-               they are evaluated once per group and only the groups they keep are read from the shard
-               (`SELECT * ... WHERE rowid IN (...)`, then the scan's row_id order)
+               base_model, type_approval, variant, version, year; the group key) -> the SQLite rowids of the group. A
+               group's representative row carries exactly those columns: the model-alias filter (match._model_matches)
+               and the type-code rules (match.type_code_rule, by canonical make; second_token_t reads T) give one
+               answer for every row of a group, so they are evaluated once per group and only the groups they keep
+               are read from the shard (`SELECT * ... WHERE rowid IN (...)`, then the scan's row_id order)
     build      never inside a request: the first request that opens a shard asks for it (`request`) and is answered by
                the scan; a single background worker builds it. At boot `start_warmup` asks for the shards of
                WARMUP_YEARS (2015-2025) through datasets.shard_files, so the free-space guard of the decompression
@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable
 
 from . import datasets as ds
 
-GROUP_COLUMNS = ("make", "model", "base_model", "variant", "version", "year")
+GROUP_COLUMNS = ("make", "model", "base_model", "type_approval", "variant", "version", "year")
 MEMORY_CAP_BYTES = 300 * 1024 * 1024
 WARMUP_YEARS = tuple(range(2015, 2026))
 WARMUP_DATASETS = ("eea_co2_cars",)
