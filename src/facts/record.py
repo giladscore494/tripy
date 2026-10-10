@@ -437,7 +437,8 @@ def co2_selections(result: dict, offers: list[dict], entries: list[dict]) -> dic
 
 def open_data_part(row: dict, government: dict, *, folder=None, rows_by_source: dict | None = None) -> dict:
     """The open-data half of a record: the match of the government row against the snapshots (no vPIC, no network),
-    its offers and the admission. {facts, open_data_match, withheld, skipped_shards}."""
+    its offers and the admission. {facts, open_data_match, withheld, skipped_shards (the problems), skipped_files
+    ([{source, file, problem}]: which snapshot files a skip left out, for the call log)}."""
     from ..db import build_level15_payload
     from ..gov_registry import identity_fingerprint
     from ..open_data.match import match
@@ -449,6 +450,9 @@ def open_data_part(row: dict, government: dict, *, folder=None, rows_by_source: 
     skipped = sorted({str(s.get("problem")) for src in result["sources"].values() for s in src.get("skipped_shards") or []})
     if skipped:
         part["skipped_shards"] = skipped
+        files = {(str(name), str(s.get("file")), str(s.get("problem"))) for name, src in result["sources"].items()
+                 for s in src.get("skipped_shards") or []}
+        part["skipped_files"] = [{"source": n, "file": f, "problem": p} for n, f, p in sorted(files)]
     return part
 
 

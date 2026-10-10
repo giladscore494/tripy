@@ -22,7 +22,8 @@
                  open part and cached with it (its key carries the gov manifest sha)
     log          one line per call: time, keys, status per key, latency, cache hit per key, facts count, withheld
                  count by reason, the government read (gov: cached / read keys and, when MILO was read, the
-                 acquire / execute / fetch / release / decode ms). Never a value.
+                 acquire / execute / fetch / release / decode ms) and, when a snapshot file was left out (the part is
+                 then answered but not cached), `skipped`: {key: [{source, file, problem}]}. Never a value.
 
 No vPIC, no web, no model, no write to MILO.
 """
@@ -220,6 +221,8 @@ class FactsService:
                     continue
                 gov = government_facts(row)
                 part, cache[key] = self.open_part(key, row, gov[0])
+                if part.get("skipped_files"):
+                    line.setdefault("skipped", {})[key] = part["skipped_files"]
                 record = build_record(key, row, part, debug=debug, government=gov)
                 withheld_all += [*gov[1], *(part.get("withheld") or []), *(part.get("gov_withheld") or [])]
                 out.append(record)

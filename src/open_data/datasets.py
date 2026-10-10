@@ -51,6 +51,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
+from ..storage.atomic import gunzip_once
+
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "open_datasets.json"
 ADMISSION_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "open_data_admission.json"
 REPO_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "open"
@@ -229,11 +231,7 @@ def _materialize_file(label: str, file: str, expected: str) -> tuple[Path | None
         if not _room_for(source, target.parent, f"open data {label} {file}"):
             return None, "insufficient_disk"            # not remembered: retried once there is room again
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-            with gzip.open(source, "rb") as src, open(tmp, "wb") as dst:
-                shutil.copyfileobj(src, dst, 1 << 20)
-            os.replace(tmp, target)
+            gunzip_once(source, target)          # one decompression per target, even for concurrent requests
         except (OSError, EOFError, gzip.BadGzipFile):
             log.error("open data %s: could not decompress %s", label, source, exc_info=True)
             _MATERIALIZED[f"{label}|{file}"] = (expected, None, "decompress_failed")
