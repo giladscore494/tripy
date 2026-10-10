@@ -36,6 +36,9 @@ def test_a_date_shape_keeps_no_digit_or_letter():
 
 def _cohort(cancellations: list[str], active: int = 300) -> dict:
     agg = G3.Survival()
+    for _ in range(10):                                    # dated 1999, another key: coverage_start 1999
+        agg.add({"_role": "cancelled", "_resource_id": "anchor", "tozeret_cd": "99", "degem_cd": "9",
+                 "shnat_yitzur": "1995", "moed_aliya_lakvish": "", "bitul_dt": "1999-06-01"})
     for _ in range(active):
         agg.add({"_role": "active", "_resource_id": "a", "tozeret_cd": "1", "degem_cd": "2", "shnat_yitzur": "2010",
                  "moed_aliya_lakvish": "2010-01"})
@@ -83,7 +86,7 @@ def test_a_resource_with_no_parsed_date_fails_date_unparsed(gov):
     assert f"[{CANCELLED[0]}] bitul_dt parsed 0.00% of 40 rows" in status["detail"]
     assert "('99 aaaaa 99', 40)" in status["detail"] and "12 March 22" not in status["detail"]    # shapes only
     checks = {r["resource_id"]: r.get("checks") for r in status["resources"]}
-    assert checks[CANCELLED[2]] is None                                           # no rows: nothing to check
+    assert checks[CANCELLED[2]]["rows"] == 5                                      # the 1999 anchor rows
     assert checks[CANCELLED[0]]["checked"]["bitul_dt"]["parsed_share"] == 0.0
     assert checks[CANCELLED[0]]["checked"]["shnat_yitzur"]["parsed_share"] == 1.0
     assert checks[ACTIVE]["checked"]["shnat_yitzur"]["parsed_share"] == 1.0

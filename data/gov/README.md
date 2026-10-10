@@ -11,9 +11,12 @@ per-vehicle record is stored or served, and raw downloads never enter git.
 - `recall_notices.sqlite.gz` (G2): the recall notices with their canonical make, normalized DEGEM, production range and
   match status (TELEPHONE / WEBSITE are never read);
 - `road_survival.sqlite.gz` (G3): per `(tozeret_cd, degem_cd, cohort year)` the cohort (active + finally cancelled),
-  the age at final cancellation (whole years) and the cancelled share by age (none for a cohort under 200 vehicles,
-  with under 95 % of its cancellations dated, or whose (tozeret_cd, shnat_yitzur) has unkeyed cancellations over 10 %
-  of its own: `withheld` small_cohort / undated_cancellations / unkeyed_cancellations); the model-year ->
+  the age at final cancellation (whole years) and the cancelled share by age (none for degem_cd 0, a placeholder code;
+  for a cohort under 200 vehicles; for a model year before coverage_start, the earliest cancellation year holding 1 %
+  of the cancellation rows, whose early cancellations are missing; when its (tozeret_cd, shnat_yitzur) has unkeyed or
+  placeholder cancellations over 10 % of its own; or with under 95 % of its cancellations dated: `withheld`
+  placeholder_model_code / small_cohort / left_truncated / unkeyed_cancellations / undated_cancellations; the
+  degem_nm fallback never maps a cancellation to degem_cd 0); the model-year ->
   first-road-year map; the registry's model names (for the recall map). The build fails the dataset
   (`date_unparsed`) when a resource parses under 95 % of a date column, and (`unkeyed_rows`) when a cancellation file
   has over 20 % of its rows still unkeyed after the degem_nm fallback (1 % for the active registry and new_car_prices);

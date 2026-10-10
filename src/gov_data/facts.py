@@ -171,6 +171,11 @@ def survival_facts(row: dict) -> tuple[dict, list[dict]]:
         if cohort.get("withheld") == "undated_cancellations":
             return hold("undated_cancellations", detail=f"{cohort['dated_cancelled']} of {cohort['cancelled_count']} "
                                                         "cancellations have an age")
+        if cohort.get("withheld") == "placeholder_model_code":
+            return hold("placeholder_model_code", detail="degem_cd 0 is a placeholder, not a model")
+        if cohort.get("withheld") == "left_truncated":
+            return hold("left_truncated", detail=f"model year {cohort['cohort_year']} is before the cancellation "
+                                                 f"files' coverage_start {meta.get('coverage_start')}")
         if cohort.get("withheld") == "unkeyed_cancellations":
             return hold("unkeyed_cancellations", detail=f"{cohort.get('unkeyed_same_make_year')} unkeyed "
                                                         f"cancellations of the same tozeret_cd and year, "

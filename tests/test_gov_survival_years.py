@@ -22,9 +22,14 @@ def cancelled(n: int, bitul: str, *, tc=1, dc=2, year=2010, name="ABC 12", rid="
              "shnat_yitzur": year, "moed_aliya_lakvish": "", "bitul_dt": bitul} for _ in range(n)]
 
 
-def survival(*groups: list[dict]) -> G3.Survival:
+def anchor(n: int = 10) -> list[dict]:
+    """Cancellations dated 1999 of another key and resource: coverage_start 1999, before every test cohort."""
+    return cancelled(n, "1999-06-01", tc=99, dc=9, year=1995, name="OLD 1", rid="anchor")
+
+
+def survival(*groups: list[dict], coverage: bool = True) -> G3.Survival:
     agg = G3.Survival()
-    for group in groups:
+    for group in groups + ((anchor(),) if coverage else ()):
         for item in group:
             agg.add(item)
     agg.resolve()
@@ -141,7 +146,8 @@ def test_twelve_percent_unkeyed_builds_and_the_cohort_guard_withholds_the_cohort
     assert stats["active_in_withheld"]["unkeyed_cancellations"] == 250
     assert stats["active_share_in_withheld"]["unkeyed_cancellations"] == round(250 / stats["active_in_cohorts"], 4)
     text = "\n".join(outcome["sections"]["road_survival"])
-    assert "- active vehicles in withheld cohorts (of 300 in all cohorts): unkeyed_cancellations 250 (83.33 %)" in text
+    assert "- active vehicles in withheld cohorts (of 300 in all cohorts): " in text
+    assert "unkeyed_cancellations 250 (83.33 %)" in text
     serve(out, tmp_path)
     facts, withheld = F.survival_facts(row(shnat_yitzur=2017))
     assert facts == {} and withheld[0]["reason"] == "unkeyed_cancellations"
@@ -184,7 +190,8 @@ def test_the_guard_reaches_the_facts_and_the_report(gov, tmp_path):
     stats = outcome["manifest"]["datasets"]["road_survival"]["stats"]
     assert stats["withheld"]["unkeyed_cancellations"] == 1                       # 6 > 10 % of its 50 cancellations
     text = "\n".join(outcome["sections"]["road_survival"])
-    assert "unkeyed_cancellations (the unkeyed cancellations of its (tozeret_cd, shnat_yitzur) over 10%" in text
+    assert "unkeyed_cancellations (the unkeyed and placeholder cancellations of its (tozeret_cd, shnat_yitzur) " \
+           "over 10%" in text
     assert "- sanity: share by age 10 over the cohorts of model years 2005–2014" in text
     assert "20 largest cohorts:" in text and "| withheld |" in text
     serve(out, tmp_path)
@@ -198,8 +205,105 @@ def test_the_report_carries_the_via_share_and_the_sanity_distribution():
                    cancelled(5, "2019-01-01", year=2008, dc=None))
     rows, stats = G3.cohorts(agg, 2026, 200, (3, 20))
     lines, summary = G3.report(agg, agg.year_coverage(), rows, stats, G3.model_year_map(agg), 200, 2026)
-    assert summary["via_degem_nm_share_per_cohort"] == {"n": 1, "p10": 0.5, "p50": 0.5, "p90": 0.5}
+    # the anchor cohort (1995, cancellations dated 1999, none via degem_nm) is the second cohort with a cancellation
+    assert summary["via_degem_nm_share_per_cohort"] == {"n": 2, "p10": 0.0, "p50": 0.0, "p90": 0.5}
     assert summary["share_by_10_model_years_2005_2014"] == {"n": 1, "p10": round(5 / 300, 4),
                                                             "p50": round(5 / 300, 4), "p90": round(5 / 300, 4)}
-    assert summary["withheld"] == {"small_cohort": 0, "unkeyed_cancellations": 0, "undated_cancellations": 0}
+    assert summary["withheld"] == {"placeholder_model_code": 0, "small_cohort": 1, "left_truncated": 0,
+                                   "unkeyed_cancellations": 0, "undated_cancellations": 0}
     assert json.dumps(summary, default=str).find("ABC 12") == -1                  # no degem_nm value in the summary
+
+
+# --- P1: degem_cd 0 is a placeholder ----------------------------------------------------------------------------------
+
+def test_a_degem_cd_0_cohort_gets_no_survival_fields():
+    agg = survival(active(250, dc=0), cancelled(50, "2016-01-01", dc=0))
+    row_, stats = cohort(agg, degem_cd=0)
+    assert row_["withheld"] == "placeholder_model_code" and row_["shares"] is None and row_["age_median"] is None
+
+
+def test_the_fallback_never_maps_to_0_and_a_0_only_name_is_a_placeholder_row():
+    # (1, "ZERO", 2010) is known only with degem_cd 0; (1, "XYZ 3", 2010) with {0, 5}
+    agg = survival(active(300), cancelled(1, "2016-01-01", dc=0, name="ZERO"),
+                   cancelled(1, "2016-01-01", dc=0, name="XYZ 3"), active(250, dc=5, name="XYZ 3"),
+                   cancelled(8, "2016-01-01", dc=None, name="ZERO"), cancelled(4, "2016-01-01", dc=None, name="XYZ 3"),
+                   cancelled(3, "2016-01-01", dc=None, year=1998, name="OLD NAME"),
+                   cancelled(1, "1999-01-01", dc=0, year=1998, name="OLD NAME"))
+    stats = agg.resources["c"]
+    assert stats.placeholder == {"from_2000": 8, "before_2000": 3}
+    assert stats.unkeyed_total() == 0 and stats.unkeyed_share() == 0.0           # not toward the file limit
+    assert stats.via_name == 4                                                    # {0, 5} -> 5
+    assert agg.placeholder_by_make_year[(1, 2010)] == 8 and agg.unkeyed_by_make_year[(1, 2010)] == 0
+    five, _ = cohort(agg, degem_cd=5)
+    assert five["via_degem_nm"] == 4 and five["cancelled_count"] == 4
+    summary = G3.report(agg, agg.year_coverage(), *G3.cohorts(agg, 2026, 200, (3, 20)), G3.model_year_map(agg),
+                        200, 2026)[1]
+    assert summary["degem_nm_placeholder"] == {"before_2000": 3, "from_2000": 8}
+
+
+def test_placeholder_rows_count_in_the_cohort_guard():
+    # 300 active + 50 cancellations of 1/2/2010; 6 placeholder rows of (1, 2010): 6 > 10 % of 50
+    agg = survival(active(300), cancelled(50, "2016-01-01"), active(10, dc=0, name="ZERO"),
+                   cancelled(6, "2016-01-01", dc=None, name="ZERO"))
+    row_, stats = cohort(agg)
+    assert row_["withheld"] == "unkeyed_cancellations" and row_["placeholder_same_make_year"] == 6
+    assert row_["unkeyed_same_make_year"] == 0 and stats["guard_due_to_placeholder_from_2000"] == 1
+
+
+# --- left truncation ----------------------------------------------------------------------------------------------
+
+def test_coverage_start_is_the_earliest_year_with_one_percent_of_the_cancellations():
+    agg = survival(active(300), cancelled(1, "1995-01-01"), cancelled(150, "2000-05-01"), cancelled(49, "2010-01-01"),
+                   coverage=False)
+    assert agg.coverage_start() == 2000                       # 1995 holds 1 of 200 rows: 0.5 %, under 1 %
+    assert survival(active(10), coverage=False).coverage_start() is None
+
+
+def test_a_model_year_before_coverage_start_is_left_truncated(gov, tmp_path):
+    agg = survival(active(300, year=1996), cancelled(60, "2004-01-01", year=1996), active(300, year=2001),
+                   cancelled(60, "2009-01-01", year=2001), coverage=False)
+    old, stats = cohort(agg, cohort_year=1996)
+    new, _ = cohort(agg, cohort_year=2001)
+    assert stats["coverage_start"] == 2004
+    assert old["withheld"] == "left_truncated" and old["shares"] is None and old["age_median"] is None
+    assert new["withheld"] == "left_truncated"                 # 2001 < 2004 too
+    agg = survival(active(300, year=2005), cancelled(60, "2009-01-01", year=2005), coverage=False)
+    served, stats = cohort(agg, cohort_year=2005)
+    assert stats["coverage_start"] == 2009 and served["withheld"] == "left_truncated"
+    agg = survival(active(300, year=2010), cancelled(60, "2009-01-01", year=2008), cancelled(60, "2015-01-01"),
+                   coverage=False)
+    served, stats = cohort(agg)
+    assert stats["coverage_start"] == 2009 and served["withheld"] is None and served["age_median"] == 5
+    summary = G3.report(agg, agg.year_coverage(), *G3.cohorts(agg, 2026, 200, (3, 20)), G3.model_year_map(agg),
+                        200, 2026)[1]
+    assert summary["coverage_start"] == 2009
+
+
+def test_a_fully_cancelled_cohort_inside_the_coverage_is_served():
+    agg = survival(cancelled(250, "2016-01-01", year=2008))
+    row_, stats = cohort(agg, cohort_year=2008)
+    assert stats["coverage_start"] == 1999 and row_["active_count"] == 0
+    assert row_["withheld"] is None and row_["shares"]["10"] == 1.0 and row_["age_median"] == 8
+    summary = G3.report(agg, agg.year_coverage(), *G3.cohorts(agg, 2026, 200, (3, 20)), G3.model_year_map(agg),
+                        200, 2026)[1]
+    assert summary["zero_active_cohorts_served"] == 1
+
+
+def test_left_truncated_and_placeholder_reach_the_facts_side(gov, tmp_path):
+    out, work = gov
+    lines = cancelled_body_with(year=1996)
+    outcome = build(out, work, FakeCkan(bodies(**{CANCELLED[0]: lines})), names=["road_survival"])
+    assert outcome["status"][0]["status"] == "built"
+    stats = outcome["manifest"]["datasets"]["road_survival"]["stats"]
+    assert stats["coverage_start"] == 1999
+    serve(out, tmp_path)
+    facts, withheld = F.survival_facts(row(tozeret_cd=413, degem_cd=100, shnat_yitzur=1996))
+    assert facts == {} and withheld[0]["reason"] == "left_truncated"
+    assert "coverage_start 1999" in withheld[0]["detail"]
+
+
+def cancelled_body_with(year: int) -> bytes:
+    """250 cancellations of 413/100 of model `year`, dated 2005."""
+    rows = [[f"{PLATE}Y{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", year, f"{CHASSIS}Y{i}", f"{ENGINE}Y{i}", "",
+             "COROLLA", "בנזין", "2005-01-01"] for i in range(250)]
+    return _csv(SURV_COLUMNS + ["bitul_dt"], rows)

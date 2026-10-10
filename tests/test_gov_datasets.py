@@ -101,6 +101,10 @@ def cancelled_body(part: int) -> bytes:
         for i in range(10):
             rows.append([f"{PLATE}D{i}", 413, "P", "טויוטה יפן", 100, "ZWE", "", 2017, f"{CHASSIS}D{i}",
                          f"{ENGINE}D{i}", "", "COROLLA", "בנזין", "2019-09-01"])
+    if part == 2:
+        for i in range(5):         # the oldest file: 5 cancellations dated 1999 of another key (coverage_start 1999)
+            rows.append([f"{PLATE}E{i}", 999, "P", "יצרן ישן", 1, "OLD", "", 1990, f"{CHASSIS}E{i}",
+                         f"{ENGINE}E{i}", "", "OLDIE", "בנזין", "1999-03-01"])
     return _csv(SURV_COLUMNS + ["bitul_dt"], rows)
 
 

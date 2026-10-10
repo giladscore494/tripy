@@ -21,9 +21,18 @@ cohorts look like they survive better.
 Never a silent zero (checks, per resource, after the fallback):
     date_unparsed      under 95 % of a resource's rows parse shnat_yitzur (all rows) or bitul_dt (cancelled)
     unkeyed_rows       over 20 % of a cancellation resource's rows (1 % of the active registry's) still unkeyed
-and per cohort: under 95 % of its cancellations with an age -> withheld `undated_cancellations`; the unkeyed
-cancellations of its (tozeret_cd, shnat_yitzur) over 10 % of its cancellations -> withheld `unkeyed_cancellations`
-(they could be its own: a conservative guard). Reports carry counts and value shapes (digits -> 9, letters -> a) only,
+and per cohort, in this order: degem_cd 0 (a placeholder code, not a model) -> withheld `placeholder_model_code`;
+under min_cohort_size -> `small_cohort`; a model year before coverage_start (the earliest cancellation year holding
+at least 1 % of the cancellation rows: earlier cancellations are missing from the files) -> `left_truncated`, so no
+share and no median is ever computed over missing early cancellations (a cohort with no active vehicle left is
+served when it is inside the coverage); the unkeyed and placeholder cancellations of its (tozeret_cd, shnat_yitzur)
+over 10 % of its cancellations -> `unkeyed_cancellations` (they could be its own: a conservative guard); under 95 %
+of its cancellations with an age -> `undated_cancellations`.
+
+Placeholder rows (P1): the degem_nm fallback never maps to degem_cd 0. A cancellation whose only candidate is 0 is a
+placeholder row (`degem_nm_placeholder`): counted per resource (model years before / from 2000), keyed into no
+cohort, not counted toward the unkeyed_rows file limit, but counted in the per-cohort guard. A triple whose
+candidates are {0, X} resolves to X. Reports carry counts and value shapes (digits -> 9, letters -> a) only,
 never a value.
 
 Named road_survival / final_cancellation_rate / median_age_at_final_cancellation: the reason for a cancellation is
@@ -43,14 +52,18 @@ BASIS_FIRST_ROAD = "first_road_year"             # read by facts.py for snapshot
 COHORT_COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "cohort_year": "INTEGER", "cohort_size": "INTEGER",
                   "active_count": "INTEGER", "cancelled_count": "INTEGER", "dated_cancelled": "INTEGER",
                   "via_degem_nm": "INTEGER", "unkeyed_same_make_year": "INTEGER",
+                  "placeholder_same_make_year": "INTEGER",
                   "age_p25": "REAL", "age_median": "REAL", "age_p75": "REAL", "shares": "TEXT", "withheld": "TEXT"}
 DATE_MIN_SHARE = 0.95           # a resource's parsed share of each checked column, else date_unparsed
 UNKEYED_MAX_SHARE = {"cancelled": 0.20, "active": 0.01}   # after the degem_nm fallback, else unkeyed_rows
 COHORT_DATED_MIN_SHARE = 0.95   # a cohort's cancellations with an age, else undated_cancellations
 COHORT_UNKEYED_MAX_SHARE = 0.10  # the unkeyed cancellations of its (tozeret_cd, year), else unkeyed_cancellations
+COVERAGE_MIN_SHARE = 0.01       # coverage_start: the earliest cancellation year with at least 1 % of the rows
+PLACEHOLDER_DEGEM_CD = 0
 CHECKED_COLUMNS = {"active": ("shnat_yitzur",), "cancelled": ("shnat_yitzur", "bitul_dt")}
 UNKEYED_REASONS = ("no_tozeret_cd", "no_degem_cd", "degem_nm_ambiguous", "degem_nm_unknown")
-WITHHELD_REASONS = ("small_cohort", "unkeyed_cancellations", "undated_cancellations")
+WITHHELD_REASONS = ("placeholder_model_code", "small_cohort", "left_truncated", "unkeyed_cancellations",
+                    "undated_cancellations")
 SANITY_YEARS = (2005, 2014)
 MAP_COLUMNS = {"tozeret_cd": "INTEGER", "degem_cd": "INTEGER", "shnat_yitzur": "INTEGER", "first_road_year": "INTEGER",
                "n": "INTEGER"}
@@ -86,6 +99,7 @@ class ResourceStats:
         self.road = {"filled": 0, "parsed": 0, "patterns": Counter()}
         self.direct = self.via_name = 0
         self.unkeyed: Counter = Counter()
+        self.placeholder: Counter = Counter()   # "before_2000" / "from_2000": rows whose only candidate is code 0
         self.code_patterns: Counter = Counter()
         self.ages: Counter = Counter()
 
@@ -110,6 +124,8 @@ class ResourceStats:
                 "unkeyed": self.unkeyed_total(), "unkeyed_share": self.unkeyed_share(),
                 "unkeyed_by_reason": {r: self.unkeyed[r] for r in UNKEYED_REASONS if self.unkeyed[r]},
                 "unkeyed_code_patterns": self.code_patterns.most_common(5),
+                "degem_nm_placeholder": {"before_2000": self.placeholder["before_2000"],
+                                         "from_2000": self.placeholder["from_2000"]},
                 "checked": {c: {"parsed_share": self.share(c), "unparsed_patterns": d["patterns"].most_common(5)}
                             for c, d in self.checked.items()},
                 "moed_aliya_lakvish": {"filled_share": round(self.road["filled"] / self.rows, 4) if self.rows else 0.0,
@@ -127,6 +143,8 @@ class Survival:
         self.names: dict[tuple, set] = {}       # (tc, degem_nm normalized, shnat) -> {degem_cd}
         self.pending: Counter = Counter()       # (resource, tc, degem_nm normalized, shnat, bitul_year): no degem_cd
         self.unkeyed_by_make_year: Counter = Counter()   # (tc, shnat) -> cancellations left unkeyed by the fallback
+        self.placeholder_by_make_year: Counter = Counter()   # (tc, shnat) -> placeholder rows (only candidate 0)
+        self.bitul_years: Counter = Counter()   # cancellation rows per year of bitul_dt (coverage_start)
         self.rows = {"active": 0, "cancelled": 0}
         self.unkeyed = {"active": 0, "cancelled": 0}
         self.resources: dict[str, ResourceStats] = {}
@@ -154,6 +172,8 @@ class Survival:
         if role == "cancelled":
             bitul = year_of(row.get("bitul_dt"))
             stats.check("bitul_dt", row.get("bitul_dt"), bitul)
+            if bitul is not None:
+                self.bitul_years[bitul] += 1
             if shnat is not None and bitul is not None and bitul >= shnat:
                 stats.ages[bitul - shnat] += 1
         tc, dc = to_int(row.get("tozeret_cd")), to_int(row.get("degem_cd"))
@@ -181,19 +201,26 @@ class Survival:
                 self.key_models[(tc, dc, shnat, kinuy)] += 1
 
     def resolve(self) -> None:
-        """S2: every cancellation without degem_cd takes the one degem_cd its (tozeret_cd, degem_nm, shnat_yitzur)
-        maps to, else stays unkeyed (degem_nm_ambiguous / degem_nm_unknown). Once, after every row was read."""
+        """S2: every cancellation without degem_cd takes the one real degem_cd its (tozeret_cd, degem_nm,
+        shnat_yitzur) maps to (the placeholder 0 is never a target: {0, X} resolves to X); when 0 is the only
+        candidate it is a placeholder row (P1); otherwise it stays unkeyed (degem_nm_ambiguous / degem_nm_unknown).
+        Once, after every row was read."""
         if self.resolved:
             return
         self.resolved = True
         for (rid, tc, name, shnat, bitul), n in sorted(self.pending.items(), key=lambda kv: tuple(map(str, kv[0]))):
             stats = self.resources[rid]
             found = self.names.get((tc, name, shnat)) if name else None
-            if found and len(found) == 1:
-                self.cancelled[(tc, next(iter(found)), shnat, bitul, 1)] += n
+            real = (found or set()) - {PLACEHOLDER_DEGEM_CD}
+            if len(real) == 1:
+                self.cancelled[(tc, next(iter(real)), shnat, bitul, 1)] += n
                 stats.via_name += n
                 continue
-            reason = "degem_nm_ambiguous" if found else "degem_nm_unknown"
+            if found and not real:
+                stats.placeholder["before_2000" if shnat is not None and shnat < 2000 else "from_2000"] += n
+                self.placeholder_by_make_year[(tc, shnat)] += n
+                continue
+            reason = "degem_nm_ambiguous" if real else "degem_nm_unknown"
             stats.unkeyed[reason] += n
             self.unkeyed["cancelled"] += n
             self.unkeyed_by_make_year[(tc, shnat)] += n
@@ -223,6 +250,12 @@ class Survival:
         if keys:
             return "unkeyed_rows", keys
         return None, []
+
+    def coverage_start(self) -> int | None:
+        """The earliest year of bitul_dt with at least 1 % of the cancellation rows (None without cancellations)."""
+        total = sum(self.bitul_years.values())
+        return next((y for y in sorted(self.bitul_years) if self.bitul_years[y] >= COVERAGE_MIN_SHARE * total),
+                    None) if total else None
 
     def key_names(self) -> dict[tuple, Counter]:
         """{(tozeret_cd, degem_cd, shnat_yitzur): Counter(kinuy_mishari)} of the active registry."""
@@ -275,8 +308,9 @@ def reached(cohort_year: int, age: int, ref_year: int) -> bool:
 
 def cohorts(agg: Survival, ref_year: int, min_size: int, ages: tuple[int, int]) -> tuple[list[dict], dict]:
     agg.resolve()
+    coverage = agg.coverage_start()
     stats = {"active_without_year": 0, "cancelled_without_year": 0, "bad_dates": 0, "undated_cohorts": 0,
-             "unkeyed_cohorts": 0}
+             "unkeyed_cohorts": 0, "coverage_start": coverage, "guard_due_to_placeholder_from_2000": 0}
     data: dict[tuple, dict] = {}
 
     def item_of(key: tuple) -> dict:
@@ -304,17 +338,27 @@ def cohorts(agg: Survival, ref_year: int, min_size: int, ages: tuple[int, int]) 
     low, high = ages
     for (tc, dc, cy), item in data.items():
         size = item["active"] + item["cancelled"]
-        nearby = agg.unkeyed_by_make_year.get((tc, cy), 0)
+        unkeyed_nearby = agg.unkeyed_by_make_year.get((tc, cy), 0)
+        placeholder_nearby = agg.placeholder_by_make_year.get((tc, cy), 0)
+        nearby = unkeyed_nearby + placeholder_nearby
         row = {"tozeret_cd": tc, "degem_cd": dc, "cohort_year": cy, "cohort_size": size,
                "active_count": item["active"], "cancelled_count": item["cancelled"],
                "dated_cancelled": sum(item["ages"].values()), "via_degem_nm": item["via"],
-               "unkeyed_same_make_year": nearby, "age_p25": None, "age_median": None, "age_p75": None,
+               "unkeyed_same_make_year": unkeyed_nearby, "placeholder_same_make_year": placeholder_nearby,
+               "age_p25": None, "age_median": None, "age_p75": None,
                "shares": None, "withheld": None}
-        if size < min_size:
+        limit = COHORT_UNKEYED_MAX_SHARE * item["cancelled"]
+        if dc == PLACEHOLDER_DEGEM_CD:
+            row["withheld"] = "placeholder_model_code"
+        elif size < min_size:
             row["withheld"] = "small_cohort"
-        elif nearby > COHORT_UNKEYED_MAX_SHARE * item["cancelled"]:
+        elif coverage is not None and cy < coverage:
+            row["withheld"] = "left_truncated"
+        elif nearby > limit:
             row["withheld"] = "unkeyed_cancellations"
             stats["unkeyed_cohorts"] += 1
+            if unkeyed_nearby <= limit and cy >= 2000:
+                stats["guard_due_to_placeholder_from_2000"] += 1
         elif item["cancelled"] and row["dated_cancelled"] / item["cancelled"] < COHORT_DATED_MIN_SHARE:
             row["withheld"] = "undated_cancellations"
             stats["undated_cohorts"] += 1
@@ -407,15 +451,20 @@ def report(agg: Survival, coverage: float, cohort_rows: list[dict], stats: dict,
     sanity = _dist([r["shares"]["10"] for r in cohort_rows
                     if r["shares"] and "10" in r["shares"] and low <= r["cohort_year"] <= high])
     unkeyed_by_reason = Counter()
+    placeholder = Counter()
     for s in agg.resources.values():
         unkeyed_by_reason.update(s.unkeyed)
+        placeholder.update(s.placeholder)
+    zero_active_served = sum(1 for r in cohort_rows if r["shares"] is not None and not r["active_count"])
     summary = {"rows": dict(agg.rows), "unkeyed": dict(agg.unkeyed),
                "unkeyed_by_reason": {r: unkeyed_by_reason[r] for r in UNKEYED_REASONS if unkeyed_by_reason[r]},
                "keyed_via_degem_nm": sum(s.via_name for s in agg.resources.values()),
                "shnat_yitzur_coverage": coverage, "cohort_basis": basis, "cohorts": len(cohort_rows),
                "cohorts_with_survival": served, "withheld": withheld, "reference_year": ref_year,
                "active_in_withheld": active_withheld, "active_share_in_withheld": active_share,
-               "active_in_cohorts": active_total,
+               "active_in_cohorts": active_total, "zero_active_cohorts_served": zero_active_served,
+               "degem_nm_placeholder": {"before_2000": placeholder["before_2000"],
+                                        "from_2000": placeholder["from_2000"]},
                "exclusion": EXCLUSION, "via_degem_nm_share_per_cohort": via,
                "share_by_10_model_years_2005_2014": sanity, **stats}
     lines = [f"- rows: active {agg.rows['active']}, finally cancelled {agg.rows['cancelled']}; keyed via degem_nm "
@@ -427,16 +476,24 @@ def report(agg: Survival, coverage: float, cohort_rows: list[dict], stats: dict,
              f"- rows without a model year: active {stats['active_without_year']}, cancelled "
              f"{stats['cancelled_without_year']}; cancellations dated before their model year (bad_dates, no age): "
              f"{stats['bad_dates']}",
-             f"- cohorts {len(cohort_rows)}, with survival fields: {served}; withheld: small_cohort (< {min_size}) "
-             f"{withheld['small_cohort']}, unkeyed_cancellations (the unkeyed cancellations of its (tozeret_cd, "
-             f"shnat_yitzur) over {COHORT_UNKEYED_MAX_SHARE:.0%} of its cancellations) "
-             f"{withheld['unkeyed_cancellations']}, undated_cancellations (under {COHORT_DATED_MIN_SHARE:.0%} of the "
-             f"cancellations with an age) {withheld['undated_cancellations']}",
-             f"- active vehicles in withheld cohorts (of {active_total} in all cohorts): unkeyed_cancellations "
-             f"{active_withheld['unkeyed_cancellations']} ({active_share['unkeyed_cancellations'] * 100:.2f} %), "
-             f"small_cohort {active_withheld['small_cohort']} ({active_share['small_cohort'] * 100:.2f} %), "
-             f"undated_cancellations {active_withheld['undated_cancellations']} "
-             f"({active_share['undated_cancellations'] * 100:.2f} %)",
+             f"- coverage_start (the earliest year of bitul_dt with at least {COVERAGE_MIN_SHARE:.0%} of the "
+             f"cancellation rows): {stats.get('coverage_start')}; a cohort of an earlier model year is withheld "
+             f"left_truncated (its early cancellations are missing)",
+             f"- degem_nm placeholder rows (the only candidate is degem_cd {PLACEHOLDER_DEGEM_CD}; keyed into no "
+             f"cohort, not counted toward unkeyed_rows, counted in the per-cohort guard): model years before 2000 "
+             f"{placeholder['before_2000']}, from 2000 {placeholder['from_2000']}; cohorts from 2000 withheld by the "
+             f"guard only because of placeholder rows: {stats.get('guard_due_to_placeholder_from_2000', 0)}",
+             f"- cohorts {len(cohort_rows)}, with survival fields: {served} (of which with no active vehicle left: "
+             f"{zero_active_served}); withheld: placeholder_model_code (degem_cd {PLACEHOLDER_DEGEM_CD}) "
+             f"{withheld['placeholder_model_code']}, small_cohort (< {min_size}) {withheld['small_cohort']}, "
+             f"left_truncated (model year < coverage_start) {withheld['left_truncated']}, unkeyed_cancellations (the "
+             f"unkeyed and placeholder cancellations of its (tozeret_cd, shnat_yitzur) over "
+             f"{COHORT_UNKEYED_MAX_SHARE:.0%} of its cancellations) {withheld['unkeyed_cancellations']}, "
+             f"undated_cancellations (under {COHORT_DATED_MIN_SHARE:.0%} of the cancellations with an age) "
+             f"{withheld['undated_cancellations']}",
+             f"- active vehicles in withheld cohorts (of {active_total} in all cohorts): "
+             + ", ".join(f"{reason} {active_withheld[reason]} ({active_share[reason] * 100:.2f} %)"
+                         for reason in WITHHELD_REASONS),
              f"- share of a cohort's cancellations keyed via degem_nm (cohorts with a cancellation, n {via['n']}): "
              f"p50 {via['p50']}, p90 {via['p90']}",
              f"- sanity: share by age 10 over the cohorts of model years {low}–{high} with survival fields (n "
