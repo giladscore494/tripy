@@ -142,12 +142,10 @@ def materialize(dataset: str) -> Path | None:
 
         if not _room_for(source, target.parent, f"gov data {dataset}"):
             return None                                  # counted as a refusal: the service answers 503
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        from ..storage.atomic import gunzip_once
+
         try:
-            with gzip.open(source, "rb") as src, open(tmp, "wb") as dst:
-                shutil.copyfileobj(src, dst, 1 << 20)
-            os.replace(tmp, target)
+            gunzip_once(source, target)          # one decompression per target, even for concurrent requests
         except (OSError, EOFError, gzip.BadGzipFile):
             _MATERIALIZED[dataset] = (expected, None)
             return None
