@@ -1,7 +1,7 @@
 {
  "version": "gov-manifest-v1",
- "built_at": "2026-10-09T19:48:38+00:00",
- "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+ "built_at": "2026-10-10T00:16:02+00:00",
+ "run_url": "https://github.com/giladscore494/tripy/actions/runs/38007325525",
  "config_version": "gov-datasets-v1",
  "ingestion_version": "gov-ingestion-v1",
  "datasets": {
@@ -577,12 +577,442 @@
    }
   },
   "road_survival": {
+   "file": "road_survival.sqlite.gz",
+   "sha256": "2bcf1fd26769543c2936d9e8517dc62bb3559b753989153d2f9b84561cfc3e89",
+   "bytes": 1647169,
+   "rows": 6576055,
+   "resources": [
+    {
+     "resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+     "downloaded_at": "2026-10-10T00:03:29+00:00",
+     "source_last_modified": "2026-10-09T02:34:57.865431",
+     "license": "Other (Open)",
+     "row_count": 1218960,
+     "file_size": null,
+     "sha256": "e23d4f4c853eb44953d5862e60994933e2690476559ae9ecd47237bbd717c2e1",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 1218960,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+     "downloaded_at": "2026-10-10T00:05:37+00:00",
+     "source_last_modified": "2021-11-01T11:07:35.917770",
+     "license": "Other (Open)",
+     "row_count": 670293,
+     "file_size": null,
+     "sha256": "07c83f40530dc0da933bb644a209a960588dc5e3007d134b1a3bf9f3850298eb",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 670293,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+     "downloaded_at": "2026-10-10T00:06:38+00:00",
+     "source_last_modified": "2023-05-02T04:26:32.042795",
+     "license": "Other (Open)",
+     "row_count": 499791,
+     "file_size": null,
+     "sha256": "92f5d17ab3201de5bb1951e956d04e6e19fc415f9148d009e58d3104c3b73618",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 499791,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "053cea08-09bc-40ec-8f7a-156f0677aff3",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=053cea08-09bc-40ec-8f7a-156f0677aff3",
+     "downloaded_at": "2026-10-10T00:07:27+00:00",
+     "source_last_modified": "2026-10-09T02:45:32.005995",
+     "license": "Other (Open)",
+     "row_count": 4187011,
+     "file_size": null,
+     "sha256": "9a2a02bbdfa12040af274011382b15dd2aa6623b1d5dd0389ecb4afe223991b5",
+     "schema_hash": "d204620964970bba8b5491f1892101f977ce2274ed0912f8749d5318259b9dbd",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "active",
+     "format": "CSV",
+     "package_title": "מספרי רישוי של כלי רכב פרטיים ומסחריים",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "sug_degem",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "degem_manoa",
+      "mivchan_acharon_dt",
+      "tokef_dt",
+      "baalut",
+      "misgeret",
+      "tzeva_cd",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "moed_aliya_lakvish",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 4187011,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    }
+   ],
+   "stats": {
+    "rows": {
+     "active": 4187011,
+     "cancelled": 2389044
+    },
+    "unkeyed": {
+     "active": 0,
+     "cancelled": 242035
+    },
+    "unkeyed_by_reason": {
+     "no_tozeret_cd": 2,
+     "degem_nm_ambiguous": 54120,
+     "degem_nm_unknown": 187913
+    },
+    "keyed_via_degem_nm": 565328,
+    "shnat_yitzur_coverage": 1.0,
+    "cohort_basis": "shnat_yitzur",
+    "cohorts": 77644,
+    "cohorts_with_survival": 5245,
+    "withheld": {
+     "small_cohort": 71502,
+     "unkeyed_cancellations": 896,
+     "undated_cancellations": 1
+    },
+    "reference_year": 2026,
+    "active_in_withheld": {
+     "small_cohort": 997375,
+     "unkeyed_cancellations": 148365,
+     "undated_cancellations": 201
+    },
+    "active_share_in_withheld": {
+     "small_cohort": 0.2382,
+     "unkeyed_cancellations": 0.0354,
+     "undated_cancellations": 0.0
+    },
+    "active_in_cohorts": 4187011,
+    "exclusion": "Inactive vehicles that were not finally cancelled are excluded: the cohort is active + finally cancelled vehicles of the same key.",
+    "via_degem_nm_share_per_cohort": {
+     "n": 37625,
+     "p10": 0.0,
+     "p50": 0.0,
+     "p90": 0.0
+    },
+    "share_by_10_model_years_2005_2014": {
+     "n": 1408,
+     "p10": 0.0518,
+     "p50": 0.1176,
+     "p90": 0.2925
+    },
+    "active_without_year": 0,
+    "cancelled_without_year": 0,
+    "bad_dates": 724,
+    "undated_cohorts": 1,
+    "unkeyed_cohorts": 896,
+    "resources": {
+     "851ecab1-0622-4dbe-a6c7-f950cf82abf9": {
+      "role": "cancelled",
+      "rows": 1218960,
+      "keyed_directly": 1041493,
+      "keyed_via_degem_nm": 79193,
+      "unkeyed": 98274,
+      "unkeyed_share": 0.0806,
+      "unkeyed_by_reason": {
+       "degem_nm_ambiguous": 17205,
+       "degem_nm_unknown": 81069
+      },
+      "unkeyed_code_patterns": [],
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.4638,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         565338
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 1218960,
+       "p10": 5,
+       "p50": 14,
+       "p90": 21
+      }
+     },
+     "4e6b9724-4c1e-43f0-909a-154d4cc4e046": {
+      "role": "cancelled",
+      "rows": 670293,
+      "keyed_directly": 389625,
+      "keyed_via_degem_nm": 211191,
+      "unkeyed": 69477,
+      "unkeyed_share": 0.1037,
+      "unkeyed_by_reason": {
+       "degem_nm_ambiguous": 25887,
+       "degem_nm_unknown": 43590
+      },
+      "unkeyed_code_patterns": [],
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.1116,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         74775
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 670291,
+       "p10": 5,
+       "p50": 15,
+       "p90": 21
+      }
+     },
+     "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c": {
+      "role": "cancelled",
+      "rows": 499791,
+      "keyed_directly": 150563,
+      "keyed_via_degem_nm": 274944,
+      "unkeyed": 74284,
+      "unkeyed_share": 0.1486,
+      "unkeyed_by_reason": {
+       "no_tozeret_cd": 2,
+       "degem_nm_ambiguous": 11028,
+       "degem_nm_unknown": 63254
+      },
+      "unkeyed_code_patterns": [
+       [
+        "99-9 / (empty)",
+        2
+       ]
+      ],
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.0031,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         1543
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 498980,
+       "p10": 4,
+       "p50": 13,
+       "p90": 20
+      }
+     },
+     "053cea08-09bc-40ec-8f7a-156f0677aff3": {
+      "role": "active",
+      "rows": 4187011,
+      "keyed_directly": 4187011,
+      "keyed_via_degem_nm": 0,
+      "unkeyed": 0,
+      "unkeyed_share": 0.0,
+      "unkeyed_by_reason": {},
+      "unkeyed_code_patterns": [],
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.9427,
+       "parsed_share": 0.9427,
+       "patterns": []
+      },
+      "age_years": null
+     }
+    }
+   },
+   "licence": "Other (Open)",
+   "stated_licence": "Other (Open)",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים, נכון ל-2026-10-10",
+   "title": "Final vehicle cancellations + the active vehicle registry",
+   "title_he": "ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים",
+   "ministry": "Ministry of Transport and Road Safety",
+   "built_at": "2026-10-10T00:03:28+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/38007325525",
+   "build_status": "built",
+   "source": "gov_road_survival",
    "last_attempt": {
-    "at": "2026-10-09T19:38:43+00:00",
-    "status": "failed",
-    "reason": "date_unparsed",
-    "detail": "[851ecab1-0622-4dbe-a6c7-f950cf82abf9] moed_aliya_lakvish parsed 0.00% of 1218960 rows (needs >= 95%); unparsed shapes [('(empty)', 653622), ('9999', 565338)]; raw examples ['2025', '2026', '2022', '2021', '2018', '2019', '2016', '', '2008', '2020']; [4e6b9724-4c1e-43f0-909a-154d4cc4e046] moed_aliya",
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+    "at": "2026-10-10T00:03:28+00:00",
+    "status": "built",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/38007325525"
    }
   }
  }
