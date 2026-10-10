@@ -2,6 +2,9 @@
 
     paths       storage.paths.resolve_paths (TRIPY_DATA_DIR / MILO_RUNS_DIR / MILO_CACHE_DIR)
     catalog     the benchmark vehicles (research_targets.VehicleCatalog)
+    MILO        one read-only query function over DATABASE_URL (catalog.database_query: the process-wide connection
+                pool), shared by the catalog browser and the facts service; at boot the facts picker is warmed in the
+                background (CatalogBrowser.start_picker_warmup) and the service / database regions are logged
     manager     jobs.manager.get_manager(...): the process-wide RunManager; creating it reconciles orphaned runs
                 (startup reconciliation) and it shares the process-wide ConcurrencyController (shared_controller)
 
@@ -10,6 +13,7 @@ Configuration is read from the process environment only.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Callable
@@ -60,6 +64,16 @@ def build_context(secret: Callable[[str], str] = env_secret) -> ApiContext:
     from ..open_data.shard_index import start_warmup
 
     start_warmup()                          # E4: index the 2015-2025 EEA shards in the background (requests never wait)
+    from ..facts.service import log as facts_log
+    from .routes.facts import SEGMENT
+
+    if dsn:
+        from ..catalog import placement
+
+        facts_log.info("facts placement %s", json.dumps(placement(dsn, secret), sort_keys=True))
+    # the facts picker: the manufacturer list and the 15 largest manufacturers' model lists (6 h cache), in the
+    # background after the shard warm-up has started; requests never wait for it, a failure only logs
+    browser.start_picker_warmup(SEGMENT, facts_log)
     return ApiContext(paths=paths, manager=manager, catalog=catalog, secret=secret, owns_manager=True,
                       catalog_browser=browser, facts=facts)
 

@@ -1,9 +1,11 @@
 """The vehicle facts API for yeda-rechev (src/facts), `Authorization: Bearer <TRIPY_FACTS_TOKEN | TRIPY_ACCESS_TOKEN>`:
 
-    GET  /api/facts/v1/catalog/manufacturers                       the picker: the same CatalogBrowser and caching as
-    GET  /api/facts/v1/catalog/models?manufacturer=                /api/catalog, the private segment only; a trim item
-    GET  /api/facts/v1/catalog/years?manufacturer=&model=          is one variant with its variant_identity_key and a
-    GET  /api/facts/v1/catalog/trims?manufacturer=&model=&year=    display label
+    GET  /api/facts/v1/catalog/manufacturers                       the picker: the same CatalogBrowser as /api/catalog,
+    GET  /api/facts/v1/catalog/models?manufacturer=                the private segment only, its lists cached for 6 h
+    GET  /api/facts/v1/catalog/years?manufacturer=&model=          (catalog.PICKER_TTL_S; the manufacturers and the 15
+    GET  /api/facts/v1/catalog/trims?manufacturer=&model=&year=    largest manufacturers' models warmed at boot); a
+                                                                   trim item is one variant with its
+                                                                   variant_identity_key and a display label
     POST /api/facts/v1/vehicles  {"variant_identity_keys": [1-3]}  one `vehicle-facts/1` record per key, in order (an
                                                                    unknown key: status not_found, the others still
                                                                    return); ?debug=1 (operator token) adds `withheld`

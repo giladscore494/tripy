@@ -1,9 +1,15 @@
 """The facts service: the government read, the open-data cache and the call log.
 
-    government   one short read-only query by variant_identity_key on EVERY call (db.LEVEL15_BY_KEY_SQL, the private
-                 segment): MILO updates appear without a sync. No DATABASE_URL, or the query fails ->
-                 CatalogUnavailable (503 catalog_unavailable); never the 50-record benchmark snapshot, which is not the
-                 catalogue
+    government   the Level 1.5 row by variant_identity_key (db.LEVEL15_BY_KEY_SQL, the private segment) through the
+                 pooled read-only connection (catalog.database_query), kept in an in-process TTL cache: GOV_TTL_S (10
+                 minutes) per key, at most GOV_CACHE_SIZE entries (least recently used dropped), a key MILO does not
+                 have included. A MILO update is therefore visible within 10 minutes, without a sync (it replaces the
+                 read on every call; measured 2026-10-09: that read alone was 1.3-1.4 s of every call). The catalogue
+                 view has no updated_at column; its version columns (content_sha256, snapshot_id) are only known
+                 after the read, so the entry is keyed by the key alone and the row's content_sha256 keys the
+                 open-data part below. Only the keys not in the cache are read, in one query. No DATABASE_URL, or the
+                 query fails -> CatalogUnavailable (503 catalog_unavailable), nothing cached; never the 50-record
+                 benchmark snapshot, which is not the catalogue
     open data    record.open_data_part, cached by (variant_identity_key, the row's content_sha256, the snapshot
                  manifest sha, the matcher version, the admission version, the zero-semantics version, the gov
                  manifest sha, the recall model map sha and the diagnostics version): an in-process
@@ -15,13 +21,15 @@
     gov data     src/gov_data/facts.gov_part: the government-dataset fields (data/gov/ snapshots), computed with the
                  open part and cached with it (its key carries the gov manifest sha)
     log          one line per call: time, keys, status per key, latency, cache hit per key, facts count, withheld
-                 count by reason. Never a value.
+                 count by reason, the government read (gov: cached / read keys and, when MILO was read, the
+                 acquire / execute / fetch / release / decode ms). Never a value.
 
 No vPIC, no web, no model, no write to MILO.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -38,6 +46,8 @@ from . import versions as V
 from .record import build_record, government_facts, not_found, open_data_part, withheld_counts
 
 LRU_SIZE = 2000
+GOV_TTL_S = 600.0
+GOV_CACHE_SIZE = 5000
 MAX_KEYS = 3
 # the cached part's diagnostics (co2_selection): part of the cache key only (a part cached without them is recomputed),
 # never of a record's `versions`
@@ -57,8 +67,12 @@ def dumps(value: Any) -> str:
 class FactsService:
     def __init__(self, query: Callable[[str, dict], list[dict]] | None, cache_dir: Path | str | None = None, *,
                  lru_size: int = LRU_SIZE, folder: Path | None = None, rows_by_source: Any = None,
-                 clock: Callable[[], float] = time.perf_counter):
+                 clock: Callable[[], float] = time.perf_counter, gov_ttl_s: float = GOV_TTL_S,
+                 gov_cache_size: int = GOV_CACHE_SIZE, gov_clock: Callable[[], float] = time.monotonic):
         self._query, self.lru_size, self.clock = query, int(lru_size), clock
+        self.gov_ttl_s, self.gov_cache_size, self.gov_clock = float(gov_ttl_s), int(gov_cache_size), gov_clock
+        # {variant_identity_key: (read at, the row | None for a key MILO does not have)}
+        self._gov: OrderedDict[str, tuple[float, dict | None]] = OrderedDict()
         self.cache_dir = Path(cache_dir) if cache_dir else None
         # tests: a snapshot folder, or injected rows ({source: rows}, or a function of the government row giving them)
         self.folder, self.rows_by_source = folder, rows_by_source
@@ -70,15 +84,44 @@ class FactsService:
         return self._query is not None
 
     # -- government -----------------------------------------------------------------------------------------------
-    def government_rows(self, keys: list[str]) -> dict[str, dict]:
+    def government_rows(self, keys: list[str], stats: dict | None = None) -> dict[str, dict]:
+        """{key: Level 1.5 row} of the keys MILO has: the cached rows (GOV_TTL_S) and one query for the others.
+        `stats` (optional) receives the call's numbers (the log line's `gov`)."""
+        from ..catalog import take_timings
         from ..db import load_level15_by_keys
 
         if self._query is None:
             raise CatalogUnavailable("DATABASE_URL is not set: the MILO catalogue is not available")
-        try:
-            return load_level15_by_keys(keys, self._query)
-        except Exception as exc:  # noqa: BLE001 - an unreachable MILO is reported, never a fallback
-            raise CatalogUnavailable(f"The MILO catalogue query failed: {type(exc).__name__}") from None
+        keys = [str(k) for k in keys]
+        now = self.gov_clock()
+        out: dict[str, dict] = {}
+        missing: list[str] = []
+        with self._lock:
+            for key in keys:
+                hit = self._gov.get(key)
+                if hit is not None and now - hit[0] < self.gov_ttl_s:
+                    self._gov.move_to_end(key)
+                    if hit[1] is not None:
+                        out[key] = copy.deepcopy(hit[1])          # the caller's own row: the cached one stays intact
+                else:
+                    missing.append(key)
+        stats = stats if stats is not None else {}
+        stats.update(cached=len(keys) - len(missing), read=len(missing))
+        if missing:
+            take_timings()
+            try:
+                rows = load_level15_by_keys(missing, self._query, timings=stats)
+            except Exception as exc:  # noqa: BLE001 - an unreachable MILO is reported, never a fallback
+                raise CatalogUnavailable(f"The MILO catalogue query failed: {type(exc).__name__}") from None
+            stats.update(take_timings())
+            with self._lock:
+                for key in missing:
+                    self._gov[key] = (now, copy.deepcopy(rows[key]) if key in rows else None)
+                    self._gov.move_to_end(key)
+                while len(self._gov) > self.gov_cache_size:
+                    self._gov.popitem(last=False)
+            out.update(rows)
+        return out
 
     def sample_rows(self, year: int, n: int, manufacturer: str | None = None) -> list[dict]:
         """The coverage probe's sample of one model year (db.LEVEL15_SAMPLE_SQL: the first n private-segment keys by
@@ -165,7 +208,9 @@ class FactsService:
         line: dict[str, Any] = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "keys": keys,
                                 "debug": bool(debug)}
         try:
-            rows = self.government_rows(sorted(set(keys)))
+            gov_stats: dict[str, Any] = {}
+            line["gov"] = gov_stats
+            rows = self.government_rows(sorted(set(keys)), gov_stats)
             out, statuses, cache, counts, withheld_all = [], {}, {}, {}, []
             for key in keys:
                 row = rows.get(key)
