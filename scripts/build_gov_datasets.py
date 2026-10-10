@@ -161,6 +161,7 @@ def build_survival(ctx, name, spec, prev, out, work, state) -> tuple[dict, list[
     meta = {"dataset": name, "cohort_basis": G3.BASIS_MODEL_YEAR, "shnat_yitzur_coverage": coverage,
             "reference_year": ref_year, "reference_month": f"{ref[0]}-{ref[1]:02d}" if ref else str(ref_year),
             "age_unit": "whole_years", "min_cohort_size": min_size, "ages": [low, high], "exclusion": G3.EXCLUSION,
+            "coverage_start": stats.get("coverage_start"),
             "definition_he": G3.DEFINITION_HE[G3.BASIS_MODEL_YEAR], "source": SOURCES[name]}
     written = _write(out, work, name, G3.table_payload(rows, map_rows, agg), meta)
     return {**written, "rows": sum(agg.rows.values()), "resources": resources, "stats": summary}, lines

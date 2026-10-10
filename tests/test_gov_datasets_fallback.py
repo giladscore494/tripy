@@ -392,7 +392,7 @@ def test_every_survival_resource_is_tried_and_reported_but_nothing_is_built_unle
                                        "download: HTTP 302")
     assert [(r["resource_id"], r["status"]) for r in status["resources"]] == \
         [(CANCELLED[0], "failed"), (CANCELLED[1], "ok"), (CANCELLED[2], "ok"), (ACTIVE, "ok")]
-    assert [r["rows"] for r in status["resources"]] == [None, 10, 0, 300]
+    assert [r["rows"] for r in status["resources"]] == [None, 10, 5, 300]
     assert status["resources"][0]["file_redirect_host"] == "accounts.google.com"
     assert not (out / "road_survival.sqlite.gz").exists()
     text = B.exit_summary(outcome["status"])["text"]
