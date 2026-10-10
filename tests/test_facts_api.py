@@ -334,8 +334,9 @@ def test_two_calls_are_byte_identical():
 
 # --- caching and availability ---------------------------------------------------------------------------------------------
 
-def test_the_open_part_is_cached_in_memory_and_on_disk_and_the_government_row_is_read_every_call(tmp_path):
+def test_the_open_part_is_cached_in_memory_and_on_disk_and_a_milo_update_shows_within_ten_minutes(tmp_path):
     milo = FakeMilo()
+    now = [0.0]
     calls = []
 
     def rows(row):
@@ -345,12 +346,14 @@ def test_the_open_part_is_cached_in_memory_and_on_disk_and_the_government_row_is
     _, line = svc.records([KEY["22010"]])
     assert line["cache"] == {KEY["22010"]: "miss"} and len(list((tmp_path / "facts_cache").glob("*.json"))) == 1
     _, line = svc.records([KEY["22010"]])
-    assert line["cache"] == {KEY["22010"]: "memory"} and len(milo.queries) == 2 and calls == ["22010"]
-    fresh = FactsService(milo, tmp_path / "facts_cache", rows_by_source=rows)
+    assert line["cache"] == {KEY["22010"]: "memory"} and len(milo.queries) == 1 and calls == ["22010"]
+    fresh = FactsService(milo, tmp_path / "facts_cache", rows_by_source=rows, gov_clock=lambda: now[0])
     _, line = fresh.records([KEY["22010"]])
     assert line["cache"] == {KEY["22010"]: "disk"} and calls == ["22010"]
-    # a MILO update reaches the record without a sync: the government row is read every call
+    # a MILO update reaches the record without a sync, within 10 minutes (the government row cache's TTL)
     milo.rows[KEY["22010"]] = {**ROWS["22010"], "mispar_moshavim": 4, "content_sha256": "changed"}
+    assert fresh.records([KEY["22010"]])[0][0]["facts"]["seats"]["value"] != 4         # still the cached row
+    now[0] += 600.0
     assert fresh.records([KEY["22010"]])[0][0]["facts"]["seats"]["value"] == 4
 
 
@@ -589,7 +592,8 @@ def test_every_call_is_logged_without_values(caplog, tripy_log):
     assert len(lines) == 1                                                   # one line per call, captured once
     line = lines[0]
     data = json.loads(line[len("facts call "):])
-    assert set(data) == {"time", "keys", "debug", "status", "cache", "facts", "withheld", "latency_ms"}
+    assert set(data) == {"time", "keys", "debug", "status", "cache", "facts", "withheld", "latency_ms", "gov"}
+    assert data["gov"]["cached"] == 0 and data["gov"]["read"] == 2              # timings only, never a row
     assert data["status"] == {KEY["22010"]: "ok", "missing": "not_found"} and data["facts"][KEY["22010"]] > 40
     assert data["withheld"]["never_admitted"] == 9
     assert "2975" not in line and "1935" not in line                     # counts only, never a value

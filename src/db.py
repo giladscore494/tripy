@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -38,7 +39,7 @@ ORDER BY array_position(%(ids)s::text[], v.upstream_record_id)
 """
 
 # The vehicle facts API (src/facts): the Level 1.5 rows of variant identity keys (catalog_variants_identity_idx), the
-# private segment only. One short read-only query per call.
+# private segment only. One short read-only query for the keys not in the facts service's 10-minute row cache.
 LEVEL15_BY_KEY_SQL = """
 SELECT
   v.*,
@@ -168,12 +169,17 @@ def load_from_database(ids: list[str], dsn: str) -> list[dict]:
             return [_jsonable(dict(row)) for row in cur.fetchall()]
 
 
-def load_level15_by_keys(keys: list[str], query) -> dict[str, dict]:
+def load_level15_by_keys(keys: list[str], query, timings: dict | None = None) -> dict[str, dict]:
     """{variant_identity_key: Level 1.5 row} through a read-only query function (src/catalog.database_query); unknown
-    keys are simply absent. Never the snapshot: the 50 benchmark records are not the catalogue."""
+    keys are simply absent. Never the snapshot: the 50 benchmark records are not the catalogue. `timings` (optional)
+    receives decode_ms: the rows made JSON-safe."""
     keys = [str(k) for k in keys]
     rows = query(LEVEL15_BY_KEY_SQL, {"keys": keys}) if keys else []
-    return {str(r["variant_identity_key"]): _jsonable(dict(r)) for r in rows if r.get("variant_identity_key")}
+    started = time.perf_counter()
+    out = {str(r["variant_identity_key"]): _jsonable(dict(r)) for r in rows if r.get("variant_identity_key")}
+    if timings is not None:
+        timings["decode_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    return out
 
 
 def load_snapshot(ids: list[str], path: Path = SNAPSHOT_PATH) -> list[dict]:

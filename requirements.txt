@@ -3,6 +3,8 @@ requests>=2.32
 beautifulsoup4>=4.12
 pdfplumber>=0.11
 psycopg[binary]>=3.2
+# the process-wide MILO connection pool (src/catalog.connection_pool). LGPL-3.0, like psycopg
+psycopg-pool>=3.2
 # The web application (src/api; `uvicorn src.api.app:app`, scripts/start.sh): API, React bundle, health, MCP mount
 fastapi>=0.115,<1
 uvicorn>=0.30
