@@ -1,7 +1,7 @@
 {
  "version": "open-data-manifest-v1",
- "built_at": "2026-10-09T20:06:37+00:00",
- "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765",
+ "built_at": "2026-11-02T03:24:56+00:00",
+ "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222",
  "config_version": "open-datasets-v5",
  "datasets": {
   "eea_co2_cars": {
@@ -11053,10 +11053,10 @@
     ]
    },
    "last_attempt": {
-    "at": "2026-10-09T20:05:58+00:00",
-    "status": "built",
-    "reason": null,
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765"
+    "at": "2026-11-02T03:24:47+00:00",
+    "status": "skipped",
+    "reason": "probe failed: HTTPError: 403 Client Error: Forbidden for url: https://discodata.eea.europa.eu/sql?query=SELECT%20TOP%201%20%2A%20FROM%20%5BCO2Emission%5D.%5Blatest%5D.%5Bco2cars%5D&p=1&nrOfHits=5000",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222"
    }
   },
   "ademe_car_labelling": {
@@ -11071,12 +11071,22 @@
      "rows": 3604,
      "bytes": 283489,
      "sha256": "72435f3175634b138bf4b5eee22e7fb542af81e2e161034587ecca331d87f277"
+    },
+    {
+     "file": "ademe_car_labelling/2026-11.sqlite.gz",
+     "month": "2026-11",
+     "catalogue_date": "2026-10-14T23:00:23.819Z",
+     "year": 2026,
+     "part": null,
+     "rows": 3604,
+     "bytes": 283485,
+     "sha256": "7430a3f25114576d28ee03baf280003328543b0ce03d654a7539562c72de5819"
     }
    ],
    "rows": 3604,
-   "bytes": 577001,
-   "built_at": "2026-10-09T20:06:28+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765",
+   "bytes": 860486,
+   "built_at": "2026-11-02T03:24:48+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222",
    "build_status": "built",
    "files": [
     {
@@ -11505,9 +11515,9 @@
      "VOLVO"
     ]
    },
-   "catalogue_date": "2026-09-14T23:00:09.295Z",
+   "catalogue_date": "2026-10-14T23:00:23.819Z",
    "catalogue": {
-    "date": "2026-09-14T23:00:09.295Z",
+    "date": "2026-10-14T23:00:23.819Z",
     "basis": "dataUpdatedAt"
    },
    "legacy": {
@@ -11521,18 +11531,18 @@
     "month": "2026-09"
    },
    "last_attempt": {
-    "at": "2026-10-09T20:06:28+00:00",
+    "at": "2026-11-02T03:24:48+00:00",
     "status": "built",
     "reason": null,
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222"
    }
   },
   "epa_fueleconomy": {
    "file": "epa_fueleconomy.sqlite.gz",
-   "sha256": "399b7830aeaa4c346b03b1df1a7f95ba28ba5a63147247d8a7982e77c5b98209",
-   "bytes": 1297438,
-   "built_at": "2026-10-09T20:06:30+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765",
+   "sha256": "adb5aed5d37a27cf07fda792709a1d6a5f1a991dec3522f46d8a52ab348e850b",
+   "bytes": 1297439,
+   "built_at": "2026-11-02T03:24:50+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222",
    "build_status": "built",
    "rows": 25695,
    "files": [
@@ -11828,18 +11838,18 @@
     ]
    },
    "last_attempt": {
-    "at": "2026-10-09T20:06:31+00:00",
+    "at": "2026-11-02T03:24:51+00:00",
     "status": "built",
     "reason": null,
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222"
    }
   },
   "nrcan_fuel_ratings": {
    "file": "nrcan_fuel_ratings.sqlite.gz",
-   "sha256": "2a7c5171d7e6f064215ed451f74882f79654e3c711b6747916e9d73289d8f647",
+   "sha256": "ef40f8b0b8b5dd96c5ea6fc1c55e866683c6e8437c642c5d2a00c558209cb9cc",
    "bytes": 931133,
-   "built_at": "2026-10-09T20:06:33+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765",
+   "built_at": "2026-11-02T03:24:53+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222",
    "build_status": "built",
    "rows": 23594,
    "files": [
@@ -12207,18 +12217,18 @@
     ]
    },
    "last_attempt": {
-    "at": "2026-10-09T20:06:34+00:00",
+    "at": "2026-11-02T03:24:53+00:00",
     "status": "built",
     "reason": null,
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222"
    }
   },
   "tc_cvs": {
    "file": "tc_cvs.sqlite.gz",
-   "sha256": "d10078440b7c1ae222564bc14dcaea187d238a96088608e131b511d6cfe671d2",
-   "bytes": 520573,
-   "built_at": "2026-10-09T20:06:36+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765",
+   "sha256": "9964c292d1434201043df4d1cd4e7964fe1aaa7740ed39660efd9a1e38b573f1",
+   "bytes": 520575,
+   "built_at": "2026-11-02T03:24:56+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222",
    "build_status": "built",
    "rows": 10840,
    "files": [
@@ -12775,10 +12785,10 @@
     ]
    },
    "last_attempt": {
-    "at": "2026-10-09T20:06:37+00:00",
+    "at": "2026-11-02T03:24:56+00:00",
     "status": "built",
     "reason": null,
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37980414765"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41382923222"
    }
   }
  }
