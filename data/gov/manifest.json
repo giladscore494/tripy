@@ -1,25 +1,25 @@
 {
  "version": "gov-manifest-v1",
- "built_at": "2026-10-09T19:48:38+00:00",
- "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+ "built_at": "2026-11-03T04:58:19+00:00",
+ "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301",
  "config_version": "gov-datasets-v1",
  "ingestion_version": "gov-ingestion-v1",
  "datasets": {
   "new_car_prices": {
    "file": "new_car_prices.sqlite.gz",
-   "sha256": "f2cd4060c37f9203f2dfa1df9e2a2120b9548adec0c11ce6a1d58bb1d481a995",
-   "bytes": 1541275,
-   "rows": 101824,
+   "sha256": "62bb3a296f577a08045accc19ceb06200f059d1360fd3d28b0ee252995a424ec",
+   "bytes": 1552010,
+   "rows": 102292,
    "resources": [
     {
      "resource_id": "39f455bf-6db0-4926-859d-017f34eacbcb",
      "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=39f455bf-6db0-4926-859d-017f34eacbcb",
-     "downloaded_at": "2026-10-09T19:48:23+00:00",
-     "source_last_modified": "2026-10-09T02:35:44.381052",
+     "downloaded_at": "2026-11-03T04:57:59+00:00",
+     "source_last_modified": "2026-11-03T03:35:59.281697",
      "license": "Other (Open)",
-     "row_count": 101824,
+     "row_count": 102292,
      "file_size": null,
-     "sha256": "e8fe1d4bccfe38832062b9ff7ae00e249a78a105747811e3a4c64cd0349e6fbe",
+     "sha256": "aecdbc80b7ddc3bac879af78891be3281e1cf4586ac73fcd2f84a0c03af304a8",
      "schema_hash": "b13e47f580829156d5b8a0d9ad32f581b37f23c15b021a422758a94c6beef5d4",
      "ingestion_version": "gov-ingestion-v1",
      "role": "prices",
@@ -39,7 +39,7 @@
       "mehir",
       "kinuy_mishari"
      ],
-     "datastore_total": 101824,
+     "datastore_total": 102292,
      "total_was_estimated": true,
      "total_check": "estimate_within_2pct",
      "file_attempt": {
@@ -52,28 +52,28 @@
     }
    ],
    "stats": {
-    "rows": 101824,
+    "rows": 102292,
     "unkeyed_rows": 0,
     "unkeyed_codes": 0,
-    "keys": 100869,
+    "keys": 101334,
     "distinct_price_buckets": {
-     "1": 99978,
-     "2-3": 891,
+     "1": 100440,
+     "2-3": 894,
      ">3": 0
     },
-    "multi_name_keys": 698,
+    "multi_name_keys": 699,
     "model_resolution": {
      "pairs": {
-      "kinuy_mishari": 67582,
+      "kinuy_mishari": 67849,
       "single_name_key": 1,
       "price_model_ambiguous": 0
      },
      "vehicles": {
-      "kinuy_mishari": 4185627,
-      "single_name_key": 91,
+      "kinuy_mishari": 4196806,
+      "single_name_key": 90,
       "price_model_ambiguous": 0
      },
-     "pairs_total": 67583,
+     "pairs_total": 67850,
      "share": {
       "kinuy_mishari": 1.0,
       "single_name_key": 0.0,
@@ -82,8 +82,8 @@
     },
     "registry_join": {
      "matched": 67305,
-     "unmatched": 33564,
-     "pct": 66.7
+     "unmatched": 34029,
+     "pct": 66.4
     },
     "multi_price_examples": [
      {
@@ -330,35 +330,35 @@
    },
    "licence": "Other (Open)",
    "stated_licence": "Other (Open)",
-   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — מחירון רכב חדש (39f455bf-6db0-4926-859d-017f34eacbcb), נכון ל-2026-10-09",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — מחירון רכב חדש (39f455bf-6db0-4926-859d-017f34eacbcb), נכון ל-2026-11-03",
    "title": "New-car price list",
    "title_he": "מחירון רכב חדש",
    "ministry": "Ministry of Transport and Road Safety",
-   "built_at": "2026-10-09T19:48:22+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+   "built_at": "2026-11-03T04:57:59+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301",
    "build_status": "built",
    "source": "gov_new_car_prices",
    "last_attempt": {
-    "at": "2026-10-09T19:48:22+00:00",
+    "at": "2026-11-03T04:57:59+00:00",
     "status": "built",
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301"
    }
   },
   "recall_notices": {
    "file": "recall_notices.sqlite.gz",
-   "sha256": "b86f193143a6080f8faf956cdbd9323bdfec2a245e8cbf05373373e48f2d366c",
-   "bytes": 241213,
-   "rows": 3628,
+   "sha256": "b46364e6ceb2061c5c64a5689ddf000e910191285c541b027fe9be1b72ee6687",
+   "bytes": 242322,
+   "rows": 3642,
    "resources": [
     {
      "resource_id": "2c33523f-87aa-44ec-a736-edbb0a82975e",
      "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=2c33523f-87aa-44ec-a736-edbb0a82975e",
-     "downloaded_at": "2026-10-09T19:48:35+00:00",
-     "source_last_modified": "2026-10-09T02:35:29.070580",
+     "downloaded_at": "2026-11-03T04:58:15+00:00",
+     "source_last_modified": "2026-11-03T03:35:40.878762",
      "license": "Creative Commons Attribution",
-     "row_count": 3628,
+     "row_count": 3642,
      "file_size": null,
-     "sha256": "ae44430c0ae4299d094619e8a09fa6cba7e0570750fe6e5d6af0d9432a41d290",
+     "sha256": "c582ea1ff52753f2bd20a66fb5e83da6ba1e8c9768625b1ef077db1a70eaf6ad",
      "schema_hash": "ca749ab5a3b6eed071fb732753fc4ef3b971ffddd3b5a05a556f4efc841f3154",
      "ingestion_version": "gov-ingestion-v1",
      "role": "recalls",
@@ -383,7 +383,7 @@
       "TELEPHONE",
       "WEBSITE"
      ],
-     "datastore_total": 3628,
+     "datastore_total": 3642,
      "total_was_estimated": false,
      "total_check": "exact_total",
      "file_attempt": {
@@ -396,21 +396,21 @@
     }
    ],
    "stats": {
-    "rows": 3628,
-    "distinct_rows": 3628,
-    "recall_ids": 3628,
+    "rows": 3642,
+    "distinct_rows": 3642,
+    "recall_ids": 3642,
     "tozar_cd_agreement": {
      "codes": 84,
      "agreeing": 0,
      "rate": 0.0
     },
     "tozar_cd_used_as_key": false,
-    "map_entries": 1075,
-    "unresolved_models": 941,
-    "map_entries_before_split": 341,
+    "map_entries": 1078,
+    "unresolved_models": 947,
+    "map_entries_before_split": 344,
     "split_entries": 734,
-    "split_degems": 266,
-    "unresolved_before_split": 1207,
+    "split_degems": 0,
+    "unresolved_before_split": 947,
     "tozar_cd_disagreeing_sample": [
      {
       "tozar_cd": 1,
@@ -562,27 +562,486 @@
    },
    "licence": "Creative Commons Attribution",
    "stated_licence": "CC BY",
-   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — קריאות שירות (ריקול) (2c33523f-87aa-44ec-a736-edbb0a82975e), נכון ל-2026-10-09. רישיון CC BY",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — קריאות שירות (ריקול) (2c33523f-87aa-44ec-a736-edbb0a82975e), נכון ל-2026-11-03. רישיון CC BY",
    "title": "Vehicle recall notices",
    "title_he": "קריאות שירות (ריקול)",
    "ministry": "Ministry of Transport and Road Safety",
-   "built_at": "2026-10-09T19:48:34+00:00",
-   "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729",
+   "built_at": "2026-11-03T04:58:14+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301",
    "build_status": "built",
    "source": "gov_recall_notices",
    "last_attempt": {
-    "at": "2026-10-09T19:48:34+00:00",
+    "at": "2026-11-03T04:58:14+00:00",
     "status": "built",
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301"
    }
   },
   "road_survival": {
+   "file": "road_survival.sqlite.gz",
+   "sha256": "5e1f539b06d114fd0360a6a01a6035a216069a0866c92cfd1eef258ade499519",
+   "bytes": 1638994,
+   "rows": 6596415,
+   "resources": [
+    {
+     "resource_id": "851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=851ecab1-0622-4dbe-a6c7-f950cf82abf9",
+     "downloaded_at": "2026-11-03T04:46:28+00:00",
+     "source_last_modified": "2026-11-03T03:35:04.644950",
+     "license": "Other (Open)",
+     "row_count": 1228156,
+     "file_size": null,
+     "sha256": "b9c5fa221f2f3cc91f9cd5cf73baac35eb3370f71d61c2dfb17ce4c509007871",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 1228156,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=4e6b9724-4c1e-43f0-909a-154d4cc4e046",
+     "downloaded_at": "2026-11-03T04:48:16+00:00",
+     "source_last_modified": "2021-11-01T11:07:35.917770",
+     "license": "Other (Open)",
+     "row_count": 670293,
+     "file_size": null,
+     "sha256": "07c83f40530dc0da933bb644a209a960588dc5e3007d134b1a3bf9f3850298eb",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 670293,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=ec8cbc34-72e1-4b69-9c48-22821ba0bd6c",
+     "downloaded_at": "2026-11-03T04:49:09+00:00",
+     "source_last_modified": "2023-05-02T04:26:32.042795",
+     "license": "Other (Open)",
+     "row_count": 499791,
+     "file_size": null,
+     "sha256": "92f5d17ab3201de5bb1951e956d04e6e19fc415f9148d009e58d3104c3b73618",
+     "schema_hash": "e4ac4bd39c0c76f878c6fa1858bd5a63742f634b5fc66dc3e69f301e6b057180",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "cancelled",
+     "format": "CSV",
+     "package_title": "כלי רכב שירדו מהכביש ובסטטוס ביטול סופי",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "sug_rechev_cd",
+      "sug_rechev_nm",
+      "moed_aliya_lakvish",
+      "bitul_dt",
+      "misgeret",
+      "tozar_manoa",
+      "degem_manoa",
+      "mispar_manoa",
+      "mishkal_kolel",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "baalut",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 499791,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    },
+    {
+     "resource_id": "053cea08-09bc-40ec-8f7a-156f0677aff3",
+     "source_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=053cea08-09bc-40ec-8f7a-156f0677aff3",
+     "downloaded_at": "2026-11-03T04:49:48+00:00",
+     "source_last_modified": "2026-11-03T03:41:19.243253",
+     "license": "Other (Open)",
+     "row_count": 4198175,
+     "file_size": null,
+     "sha256": "189449f0a8d1964b1a832ee7edf0fdb40fee6ab680bbc583994b13eaf3880500",
+     "schema_hash": "d204620964970bba8b5491f1892101f977ce2274ed0912f8749d5318259b9dbd",
+     "ingestion_version": "gov-ingestion-v1",
+     "role": "active",
+     "format": "CSV",
+     "package_title": "מספרי רישוי של כלי רכב פרטיים ומסחריים",
+     "organization": "משרד התחבורה והבטיחות בדרכים",
+     "access_method": "datastore_api",
+     "schema": [
+      "mispar_rechev",
+      "tozeret_cd",
+      "sug_degem",
+      "tozeret_nm",
+      "degem_cd",
+      "degem_nm",
+      "ramat_gimur",
+      "ramat_eivzur_betihuty",
+      "kvutzat_zihum",
+      "shnat_yitzur",
+      "degem_manoa",
+      "mivchan_acharon_dt",
+      "tokef_dt",
+      "baalut",
+      "misgeret",
+      "tzeva_cd",
+      "tzeva_rechev",
+      "zmig_kidmi",
+      "zmig_ahori",
+      "sug_delek_nm",
+      "horaat_rishum",
+      "moed_aliya_lakvish",
+      "kinuy_mishari"
+     ],
+     "datastore_total": 4198175,
+     "total_was_estimated": true,
+     "total_check": "estimate_within_2pct",
+     "file_attempt": {
+      "http_status": 302,
+      "redirect_host": "accounts.google.com",
+      "host": "e.data.gov.il",
+      "reason": "resource_unavailable",
+      "detail": "download: HTTP 302 from e.data.gov.il: redirect to a non-gov host accounts.google.com refused"
+     }
+    }
+   ],
+   "stats": {
+    "rows": {
+     "active": 4198175,
+     "cancelled": 2398240
+    },
+    "unkeyed": {
+     "active": 0,
+     "cancelled": 207600
+    },
+    "unkeyed_by_reason": {
+     "no_tozeret_cd": 2,
+     "degem_nm_ambiguous": 19401,
+     "degem_nm_unknown": 188197
+    },
+    "keyed_via_degem_nm": 82543,
+    "shnat_yitzur_coverage": 1.0,
+    "cohort_basis": "shnat_yitzur",
+    "cohorts": 78000,
+    "cohorts_with_survival": 4916,
+    "withheld": {
+     "placeholder_model_code": 1626,
+     "small_cohort": 70559,
+     "left_truncated": 326,
+     "unkeyed_cancellations": 572,
+     "undated_cancellations": 1
+    },
+    "reference_year": 2026,
+    "active_in_withheld": {
+     "placeholder_model_code": 0,
+     "small_cohort": 996211,
+     "left_truncated": 3000,
+     "unkeyed_cancellations": 148746,
+     "undated_cancellations": 201
+    },
+    "active_share_in_withheld": {
+     "placeholder_model_code": 0.0,
+     "small_cohort": 0.2373,
+     "left_truncated": 0.0007,
+     "unkeyed_cancellations": 0.0354,
+     "undated_cancellations": 0.0
+    },
+    "active_in_cohorts": 4198175,
+    "zero_active_cohorts_served": 73,
+    "degem_nm_placeholder": {
+     "before_2000": 492093,
+     "from_2000": 25698
+    },
+    "exclusion": "Inactive vehicles that were not finally cancelled are excluded: the cohort is active + finally cancelled vehicles of the same key.",
+    "via_degem_nm_share_per_cohort": {
+     "n": 37814,
+     "p10": 0.0,
+     "p50": 0.0,
+     "p90": 0.0
+    },
+    "share_by_10_model_years_2005_2014": {
+     "n": 1416,
+     "p10": 0.052,
+     "p50": 0.1172,
+     "p90": 0.2928
+    },
+    "active_without_year": 0,
+    "cancelled_without_year": 0,
+    "bad_dates": 743,
+    "undated_cohorts": 1,
+    "unkeyed_cohorts": 572,
+    "coverage_start": 2000,
+    "guard_due_to_placeholder_from_2000": 71,
+    "resources": {
+     "851ecab1-0622-4dbe-a6c7-f950cf82abf9": {
+      "role": "cancelled",
+      "rows": 1228156,
+      "keyed_directly": 1050118,
+      "keyed_via_degem_nm": 47462,
+      "unkeyed": 86354,
+      "unkeyed_share": 0.0703,
+      "unkeyed_by_reason": {
+       "degem_nm_ambiguous": 4957,
+       "degem_nm_unknown": 81397
+      },
+      "unkeyed_code_patterns": [],
+      "degem_nm_placeholder": {
+       "before_2000": 34552,
+       "from_2000": 9670
+      },
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.4658,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         572117
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 1228156,
+       "p10": 5,
+       "p50": 14,
+       "p90": 21
+      }
+     },
+     "4e6b9724-4c1e-43f0-909a-154d4cc4e046": {
+      "role": "cancelled",
+      "rows": 670293,
+      "keyed_directly": 389625,
+      "keyed_via_degem_nm": 26663,
+      "unkeyed": 53889,
+      "unkeyed_share": 0.0804,
+      "unkeyed_by_reason": {
+       "degem_nm_ambiguous": 10334,
+       "degem_nm_unknown": 43555
+      },
+      "unkeyed_code_patterns": [],
+      "degem_nm_placeholder": {
+       "before_2000": 189035,
+       "from_2000": 11081
+      },
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.1116,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         74775
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 670291,
+       "p10": 5,
+       "p50": 15,
+       "p90": 21
+      }
+     },
+     "ec8cbc34-72e1-4b69-9c48-22821ba0bd6c": {
+      "role": "cancelled",
+      "rows": 499791,
+      "keyed_directly": 150563,
+      "keyed_via_degem_nm": 8418,
+      "unkeyed": 67357,
+      "unkeyed_share": 0.1348,
+      "unkeyed_by_reason": {
+       "no_tozeret_cd": 2,
+       "degem_nm_ambiguous": 4110,
+       "degem_nm_unknown": 63245
+      },
+      "unkeyed_code_patterns": [
+       [
+        "99-9 / (empty)",
+        2
+       ]
+      ],
+      "degem_nm_placeholder": {
+       "before_2000": 268506,
+       "from_2000": 4947
+      },
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       },
+       "bitul_dt": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.0031,
+       "parsed_share": 0.0,
+       "patterns": [
+        [
+         "9999",
+         1543
+        ]
+       ]
+      },
+      "age_years": {
+       "n": 498980,
+       "p10": 4,
+       "p50": 13,
+       "p90": 20
+      }
+     },
+     "053cea08-09bc-40ec-8f7a-156f0677aff3": {
+      "role": "active",
+      "rows": 4198175,
+      "keyed_directly": 4198175,
+      "keyed_via_degem_nm": 0,
+      "unkeyed": 0,
+      "unkeyed_share": 0.0,
+      "unkeyed_by_reason": {},
+      "unkeyed_code_patterns": [],
+      "degem_nm_placeholder": {
+       "before_2000": 0,
+       "from_2000": 0
+      },
+      "checked": {
+       "shnat_yitzur": {
+        "parsed_share": 1.0,
+        "unparsed_patterns": []
+       }
+      },
+      "moed_aliya_lakvish": {
+       "filled_share": 0.9436,
+       "parsed_share": 0.9436,
+       "patterns": []
+      },
+      "age_years": null
+     }
+    }
+   },
+   "licence": "Other (Open)",
+   "stated_licence": "Other (Open)",
+   "attribution": "מקור: משרד התחבורה והבטיחות בדרכים, data.gov.il — ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים, נכון ל-2026-11-03",
+   "title": "Final vehicle cancellations + the active vehicle registry",
+   "title_he": "ביטולים סופיים של כלי רכב + מאגר כלי רכב פעילים",
+   "ministry": "Ministry of Transport and Road Safety",
+   "built_at": "2026-11-03T04:46:26+00:00",
+   "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301",
+   "build_status": "built",
+   "source": "gov_road_survival",
    "last_attempt": {
-    "at": "2026-10-09T19:38:43+00:00",
-    "status": "failed",
-    "reason": "date_unparsed",
-    "detail": "[851ecab1-0622-4dbe-a6c7-f950cf82abf9] moed_aliya_lakvish parsed 0.00% of 1218960 rows (needs >= 95%); unparsed shapes [('(empty)', 653622), ('9999', 565338)]; raw examples ['2025', '2026', '2022', '2021', '2018', '2019', '2016', '', '2008', '2020']; [4e6b9724-4c1e-43f0-909a-154d4cc4e046] moed_aliya",
-    "run_url": "https://github.com/giladscore494/tripy/actions/runs/37981588729"
+    "at": "2026-11-03T04:46:26+00:00",
+    "status": "built",
+    "run_url": "https://github.com/giladscore494/tripy/actions/runs/41580020301"
    }
   }
  }
